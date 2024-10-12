@@ -75,7 +75,6 @@
     :implements IEntityUtils, IUtilsRepository
     :where T :has ctor :implements IEntity :inherits BaseEntity
     (let :private :readonly :ctor dbContext <- DbContext)
-    (async fn )
 )
 
 (defenum :public SomeEnum :with Flags {

@@ -1,0 +1,33 @@
+- [ ] AST transformation
+  - [ ] Inline simple functions
+  - [ ] Remove unreachable code
+  - [ ] Constant folding
+  - [ ] Sanitize tree (remove comments, trim whitespace, etc., flatten nested expressions)
+  - [ ] ...
+- [ ] Syntax rules validation
+- [ ] Semantic validation
+- [ ] Dependency graph building
+  - [ ] Process imports
+  - [ ] Process exports
+  - [ ] Symbol table building
+- [ ] Type inferring
+- [ ] Type validation
+
+- [ ] Standard library
+  - [ ] std.string
+  - [ ] std.number
+  - [ ] std.vector
+  - [ ] std.list
+  - [ ] std.map
+  - [ ] std.quote
+  - [ ] std.console
+  - [ ] std.io
+  - [ ] std.math
+  - [ ] std.promise
+  - [ ] std.thread
+  - [ ] std.process
+  - [ ] ...
+
+- [ ] LLVM codegen
+- [ ] ...
+- [ ] PROFIT!

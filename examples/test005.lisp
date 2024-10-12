@@ -1,12 +1,11 @@
 (
-    (let x '(
+    (let expression '(
         (let :nullable msg <- string "Hello, world!")
         (std.console.log msg)
     ))
-    (let yy 120)
-    (let v (/ (std.math.log (+ yy 1000))
-              (std.math.sqrt yy)
-              0.001))
+    (let value (Number (std.console.read "Enter a number: ")))
+    (let v (/ (std.math.log (std.math.abs value))
+              (std.math.sqrt (std.math.abs value))))
     (std.console.log v)
-    (eval x)
+    (eval expression)
 )
