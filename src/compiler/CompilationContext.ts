@@ -1,9 +1,35 @@
+import chalk from "chalk";
 import path from "path";
 import { formatWithOptions } from "util";
 
 import { AstVisitorConstructor, DependencyGraph } from "./visitors";
 import { SymbolTable } from "./SymbolTable";
 import { AstProvider } from "./AstProvider";
+
+
+export function caller(): string {
+  return Error().stack?.split('\n')[2].replace(/\s*at\s/gi, '').replace(/\s+\(.*?\)/gi, "") ?? "";
+}
+
+function formatLogMessage(level: LogLevel, msg: any)  {
+
+  const coloredLogLevel: Record<LogLevel, string> = {
+    [LogLevel.Verbose]: chalk.gray("Verbose"),
+    [LogLevel.Debug]: chalk.cyan("Debug"),
+    [LogLevel.Info]: chalk.green("Info"),
+    [LogLevel.Warning]: chalk.yellow("Warning"),
+    [LogLevel.Error]: chalk.red("Error"),
+  }
+
+  const datetime = ""; // chalk.green(new Date().toISOString());
+
+  return typeof msg === "string"
+    ? `${datetime}${coloredLogLevel[level]}: ${msg}`
+    : `${datetime}${coloredLogLevel[level]}: ${formatWithOptions({ depth: null, colors: true }, msg)}`;
+}
+
+export const VERSION = "0.0.1";
+
 
 export enum LogLevel { 
   Verbose,
@@ -12,14 +38,6 @@ export enum LogLevel {
   Warning,
   Error,
 };
-
-const coloredLogLevel: Record<LogLevel, string> = {
-  [0]: "\x1b[90mVerbose\x1b[0m",
-  [1]: "\x1b[36mDebug\x1b[0m",
-  [2]: "\x1b[96mInfo\x1b[0m",
-  [3]: "\x1b[93mWarning\x1b[0m",
-  [4]: "\x1b[91mError\x1b[0m",
-}
 
 export interface CompilerOptions {
   logger: CompilerLogger;
@@ -45,15 +63,9 @@ export class CompilationContext {
     this.options = options;
   }
 
-  log(level: LogLevel, msg: any, ...args: any[]) {
+  log(level: LogLevel, msg: any) {
     if (level >= this.options.logger.level) {
-      const caller = Error().stack?.split('\n')[2].replace(/\s*at\s/gi, '').replace(/\s+\(.*?\)/gi, "");
-      const datetime = `\x1b[32m${new Date().toISOString()}\x1b[0m`;
-      if (typeof msg === "string") {
-        this.options.logger.log!(`${datetime}:${coloredLogLevel[level]}:${caller}: ${msg}`, args);
-      } else {
-        this.options.logger.log!(`${datetime}:${coloredLogLevel[level]}:${caller}: ${formatWithOptions({ depth: null, colors: true }, msg, args)}`);
-      }
+      this.options.logger.log!(formatLogMessage(level, msg));
     }
   }
 

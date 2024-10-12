@@ -2,7 +2,7 @@ import { question } from "readline-sync";
 import { readFileSync, writeFileSync } from "node:fs";
 
 import evaljs from "./evaljs";
-import { JSCompilerAstVisitorGptVer } from "../compiler/visitors";
+import { JSCompilerAstVisitor } from "../compiler/visitors";
 import { CompilationContext, LogLevel } from "../compiler/CompilationContext";
 import { encodeIdentifier } from "../compiler/utils";
 import { deepeq } from "./deepeq";
@@ -31,14 +31,14 @@ const listFunctions = {
   head: (a: any) => Array.isArray(a) && a.length > 0 ? a[0] : a,
   tail: (a: any) => Array.isArray(a) && a.length > 0 ? a.slice(1) : a,
   elem: (a: any, i: number | string) => a[i],
+  cons: (...args: any[]) => args.reduce((res, a) => Array.isArray(a) ? [...res, ...a] : [...res, a], []),
+  [encodeIdentifier('set!')]: (a: any, i: number | string, v: any) => a[i] = v,
 };
 
 const stdlib = {
   std: {
-    console: {
-      log: console.log,
-      read: () => question(">> "),
-    },
+    console: console as any,
+    process: process as any,
     io: {
       "read-text": (file: string): string => readFileSync(file, { encoding: "utf-8" }),
       "write-text": (file: string, data: string): void => writeFileSync(file, data, { encoding: "utf-8" }),
@@ -49,15 +49,19 @@ const stdlib = {
   },
 };
 
+stdlib.std.console.print = (...a: string[]) => process.stdout.write(a.join(""));
+stdlib.std.console.println = (...a: string[]) => process.stdout.write(a.join("") + "\n");
+stdlib.std.console.read = (q: string | undefined) => question(q ?? ">> ");
+
 const helpers = {
   call: (f: Function, a: any[]): any => f.call(globalScope, a),
   eval: (q: any): any => {
     const quoteAst = { ...q, _type: "list" };
-    const compiler = new JSCompilerAstVisitorGptVer(new CompilationContext("eval", { logger: { level: LogLevel.Error } }));
+    const compiler = new JSCompilerAstVisitor(new CompilationContext("eval", { logger: { level: LogLevel.Error } }));
     const js = compiler.compile(quoteAst);
     return evaljs(js, globalScope);
   },
-  _throw: (a: any) => {
+  throw: (a: any) => {
     throw a;
   },
 };

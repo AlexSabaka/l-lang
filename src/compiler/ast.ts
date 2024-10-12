@@ -71,11 +71,127 @@ export type NodeType =
   | "comment"
   | "control-comment";
 
-
-
+export function isNode<T extends ASTNode>(node?: ASTNode | null): node is T {
+  if (!node) return false;
+  switch (node._type) {
+    case 'variable':
+      return (node as T)._type === 'variable';
+    case 'program':
+      return (node as T)._type === 'program';
+    case 'list':
+      return (node as T)._type === 'list';
+    case 'quote':
+      return (node as T)._type === 'quote';
+    case 'vector':
+      return (node as T)._type === 'vector';
+    case 'map':
+      return (node as T)._type === 'map';
+    case 'function':
+      return (node as T)._type === 'function';
+    case 'function-modifier':
+      return (node as T)._type === 'function-modifier';
+    case 'parameter':
+      return (node as T)._type === 'parameter';
+    case 'parameter-modifier':
+      return (node as T)._type === 'parameter-modifier';
+    case 'function-carrying':
+      return (node as T)._type === 'function-carrying';
+    case 'function-carrying-left':
+      return (node as T)._type === 'function-carrying-left';
+    case 'function-carrying-right':
+      return (node as T)._type === 'function-carrying-right';
+    case 'generic-type':
+      return (node as T)._type === 'generic-type';
+    case 'class':
+      return (node as T)._type === 'class';
+    case 'type-def':
+      return (node as T)._type === 'type-def';
+    case 'interface':
+      return (node as T)._type === 'interface';
+    case 'access-modifier':
+      return (node as T)._type === 'access-modifier';
+    case 'implements':
+      return (node as T)._type === 'implements';
+    case 'indexer':
+      return (node as T)._type === 'indexer';
+    case 'extends':
+      return (node as T)._type === 'extends';
+    case 'constraint-implements':
+      return (node as T)._type === 'constraint-implements';
+    case 'constraint-inherits':
+      return (node as T)._type === 'constraint-inherits';
+    case 'constraint-is':
+      return (node as T)._type === 'constraint-is';
+    case 'constraint-has':
+      return (node as T)._type === 'constraint-has';
+    case 'await':
+      return (node as T)._type === 'await';
+    case 'when':
+      return (node as T)._type === 'when';
+    case 'if':
+      return (node as T)._type === 'if';
+    case 'for':
+      return (node as T)._type === 'for';
+    case 'for-each':
+      return (node as T)._type === 'for-each';
+    case 'try-catch':
+      return (node as T)._type === 'try-catch';
+    case 'assignment':
+      return (node as T)._type === 'assignment';
+    case 'compound-assignment':
+      return (node as T)._type === 'compound-assignment';
+    case 'while':
+      return (node as T)._type === 'while';
+    case 'match':
+      return (node as T)._type === 'match';
+    case 'match-case':
+      return (node as T)._type === 'match-case';
+    case 'any-pattern':
+      return (node as T)._type === 'any-pattern';
+    case 'list-pattern':
+      return (node as T)._type === 'list-pattern';
+    case 'vector-pattern':
+      return (node as T)._type === 'vector-pattern';
+    case 'map-pattern':
+      return (node as T)._type === 'map-pattern';
+    case 'map-pattern-pair':
+      return (node as T)._type === 'map-pattern-pair';
+    case 'identifier-pattern':
+      return (node as T)._type === 'identifier-pattern';
+    case 'constant-pattern':
+      return (node as T)._type === 'constant-pattern';
+    case 'string':
+      return (node as T)._type === 'string';
+    case 'formatted-string':
+      return (node as T)._type === 'formatted-string';
+    case 'format-expression':
+      return (node as T)._type === 'format-expression';
+    case 'octal-number':
+      return (node as T)._type === 'octal-number';
+    case 'binary-number':
+      return (node as T)._type === 'binary-number';
+    case 'hex-number':
+      return (node as T)._type === 'hex-number';
+    case 'integer-number':
+      return (node as T)._type === 'integer-number';
+    case 'float-number':
+      return (node as T)._type === 'float-number';
+    case 'simple-identifier':
+      return (node as T)._type === 'simple-identifier';
+    case 'composite-identifier':
+      return (node as T)._type === 'composite-identifier';
+    case 'comment':
+      return (node as T)._type === 'comment';
+    case 'control-comment':
+      return (node as T)._type === 'control-comment';
+    default:
+      return false;
+  }
+}
 
 export interface Location {
   source: string | undefined;
+  text: string | undefined;
   start:  Position;
   end:    Position;
 }
@@ -186,7 +302,10 @@ export interface ParameterModifierNode extends ASTNode {
 }
 
 // Base Type Node
-export interface TypeNode extends ASTNode {}
+export interface TypeNode extends ASTNode {
+  _type: "type";
+  name: string;
+}
 
 // Type Name Node
 export interface TypeNameNode extends ASTNode {
@@ -244,25 +363,29 @@ export interface KeyDefinitionNode extends ASTNode {
   type: TypeNode;
 }
 
-// Import Node
-export interface ImportNode extends ASTNode {
-  _type: "import";
-  source:   Source;
-  symbols?: SymbolElement[];
-}
-
-// Import Node
+// Export Node
 export interface ExportNode extends ASTNode {
   _type: "export";
   names: IdentifierNode[];
 }
 
-export interface SymbolElement {
-  symbol: TypeNameNode;
-  as:     TypeNameNode | null;
+// Import Node
+export interface ImportNode extends ASTNode {
+  _type: "import";
+  imports: ImportDefinition[];
 }
 
-export interface Source {
+export interface ImportDefinition {
+  source:   ImportSource;
+  symbols?: SymbolAlias[];
+}
+
+export interface SymbolAlias {
+  symbol: TypeNameNode;
+  as?: TypeNameNode;
+}
+
+export interface ImportSource {
   file?:      StringNode;
   namespace?: IdentifierNode;
 }
@@ -274,7 +397,7 @@ export interface ClassNode extends ASTNode {
   name: TypeNameNode;
   generics: GenericTypeNode[];
   access: ModifierNode[];
-  extends: TypeNode | undefined;
+  extends: TypeNode[];
   implements: TypeNode[];
   body: ASTNode[];
 }
@@ -292,11 +415,13 @@ export interface InterfaceNode extends ASTNode {
 // Implements Node
 export interface ImplementsNode extends ASTNode {
   _type: "implements";
+  type: TypeNode;
 };
 
 // Extends Node
 export interface ExtendsNode extends ASTNode {
   _type: "extends";
+  type: TypeNode;
 };
 
 // Interface Generic Type Name Node
@@ -325,14 +450,14 @@ export interface ConstraintIsNode extends ASTNode {
 
 // Constraint Has Node
 export interface ConstraintHasNode extends ASTNode {
-  name: IdentifierNode;
+  member: IdentifierNode;
 }
 
 // Try-Catch Node
 export interface TryCatchNode extends ASTNode {
   _type: "try-catch";
   try: BodyBlock;
-  catch: CatchBlockNode[] | null;
+  catch: CatchBlockNode[];
   finally: BodyBlock | null;
 }
 
@@ -577,13 +702,15 @@ export interface FunctionCarryingNode extends ASTNode {
 // Function Carrying Left Node
 export interface FunctionCarryingLeftNode extends ASTNode {
   _type: "function-carrying-left";
-  function: ASTNode;
+  function: IdentifierNode;
+  memberFunction: boolean;
   arguments: ASTNode[];
 }
 
 // Function Carrying Right Node
 export interface FunctionCarryingRightNode extends ASTNode {
   _type: "function-carrying-right";
-  function: ASTNode;
+  function: IdentifierNode;
+  memberFunction: boolean;
   arguments: ASTNode[];
 }

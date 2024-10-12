@@ -1,5 +1,6 @@
 import fs from "fs";
 import peggy from "peggy";
+import { SourceMapGenerator } from "source-map";
 
 import * as ast from "../ast";
 import { ScopeType } from "../SymbolTable";
@@ -7,8 +8,7 @@ import { ScopeType } from "../SymbolTable";
 import { randomIdentifier, encodeIdentifier } from "../utils";
 import { BaseAstVisitor } from "./BaseAstVisitor";
 import { CompilationContext, LogLevel } from "../CompilationContext";
-
-
+import { ClassBuilder } from "../ClassBuilder";
 
 function findIdentifiersToDefine(node: ast.MatchNode) {
   const predefinedVariables: string[] = [];
@@ -29,7 +29,7 @@ function findIdentifiersToDefine(node: ast.MatchNode) {
     }
   };
   node.cases.every(x => walkPattern(x.pattern));
-  return predefinedVariables;
+  return Array.from(new Set(predefinedVariables));
 }
 
 
@@ -42,7 +42,7 @@ function formatVariable(scope: ScopeType, mut: boolean, name: string, value: str
     [ScopeType.method]: () => `${kw} ${name}${va};`,
     [ScopeType.match]: () => `${name}${va}`,
     [ScopeType.when]: () => `${name}${va}`,
-    [ScopeType.if]: () => `${name}${va}`,
+    [ScopeType.if]: () => `${kw} ${name}${va}`,
     [ScopeType.class]: () => `${name}${va};`,
     [ScopeType.interface]: () => `${kw} ${name}${va};`,
     [ScopeType.variable]: () => `${name}${va}`,
@@ -62,14 +62,14 @@ function formatFunction(scope: ScopeType, async: boolean, name: string, params: 
   const arrowFuncName = !!name ? `const ${name} =` : "";
 
   const format = {
-    [ScopeType.program]: () => `${kw} function ${name ?? ""}(${params}) {\n${body.join(";\n")}\n}`,
+    [ScopeType.program]: () => `${kw}function ${name ?? ""}(${params}) {\n${body.join(";\n")}\n}`,
     [ScopeType.function]: () => `${arrowFuncName} ${kw} (${params}) => {\n${body.join(";\n")}\n}`,
     [ScopeType.method]: () => `${arrowFuncName} ${kw} (${params}) => {\n${body.join(";\n")}\n}`,
     [ScopeType.match]: () => `(${name} = ${kw} (${params}) => {\n${body.join(";\n")}\n})`,
     [ScopeType.when]: () => `(${name} = ${kw} (${params}) => {\n${body.join(";\n")}\n})`,
     [ScopeType.if]: () => `(${name} = ${kw} (${params}) => {\n${body.join(";\n")}\n})`,
-    [ScopeType.class]: () => `${kw} ${name}(${params}) {\n${body.join(";\n")}\n}`,
-    [ScopeType.interface]: () => `${kw} ${name}(${params});`,
+    [ScopeType.class]: () => `${kw}${name}(${params}) {\n${body.join(";\n")}\n}`,
+    [ScopeType.interface]: () => `${kw}${name}(${params});`,
     [ScopeType.variable]: () => `(${name} = ${kw} (${params}) => {\n${body.join(";\n")}\n})`,
   };
 
@@ -82,7 +82,7 @@ function formatFunction(scope: ScopeType, async: boolean, name: string, params: 
   return format[scope]();
 }
 
-export class JSCompilerAstVisitorGptVer extends BaseAstVisitor {
+export class JSCompilerAstVisitor extends BaseAstVisitor {
   scope: ScopeType[] = [ ScopeType.program ];
   functions: string[] = [];
   classes: string[] = [];
@@ -111,16 +111,17 @@ export class JSCompilerAstVisitorGptVer extends BaseAstVisitor {
   }
 
   compile(root: ast.ASTNode) {
-    const compilationStart = new Date();
+
     const js = this.visit(root);
 
-    return (
+    const metadataString = 
       `// Module: ${this.context.mainModule}\n` +
       `// File: ${this.context.dependencyGraph.rootUnit.path}\n` +
-      `// Compiled at: ${compilationStart}\n` +
+      `// Compiled at: ${new Date()}\n`;
+
+    return metadataString +
       `"use strict"\n\n` +
-      `${js}`
-    );
+      `${js}\n\n`;
   }
 
   visitProgram(node: ast.ProgramNode) {
@@ -185,145 +186,32 @@ export class JSCompilerAstVisitorGptVer extends BaseAstVisitor {
       const fn = this.visit(seqItem.function);
       const args = seqItem.arguments.map((a) => this.visit(a));
       if (seqItem._type === "function-carrying-left") {
-        code = `${fn}(${code}${args.length ? "," + args.join(",") : ""})`;
+        if (seqItem.memberFunction) {
+          code = `${code}.${fn}(${args.join(",")})`;
+        } else {
+          code = `${fn}(${code}${args.length ? "," + args.join(",") : ""})`;
+        }
       } else if (seqItem._type === "function-carrying-right") {
-        code = `${fn}(${args.join(",")}${args.length ? "," : ""}${code})`;
+        if (seqItem.memberFunction) {
+          code = `${code}.${fn}(${args.join(",")})`;
+        } else {
+          code = `${fn}(${args.join(",")}${args.length ? "," : ""}${code})`;
+        }
       }
     });
     return code;
   }
 
-  visitFunctionCarryingLeft(node: ast.FunctionCarryingLeftNode) {
-    // This method might not be directly called as it's handled within visitFunctionCarrying
-    return "";
-  }
-
-  visitFunctionCarryingRight(node: ast.FunctionCarryingRightNode) {
-    // This method might not be directly called as it's handled within visitFunctionCarrying
-    return "";
-  }
-
   visitClass(node: ast.ClassNode) {
     this.pushScope(ScopeType.class);
 
-    const name = this.visit(node.name);
-    const accessModifiers = node.access
-      .map((a) => this.visit(a))
-      .join(" ");
-    const extendsClause = node.extends
-      ? ` extends ${this.visit(node.extends)}`
-      : "";
-    const implementsClause =
-      node.implements && node.implements.length > 0
-        ? ` implements ${node.implements
-            .map((i) => this.visit(i))
-            .join(",")}`
-        : "";
+    const classBuilder = new ClassBuilder(node, this.context, this);
+    const result = classBuilder.build();
 
-    // Initialize arrays
-    const ctorVars = [];
-    const classFields = [];
-    const methods = [];
-    const otherBody = [];
-
-    // Process body
-    for (let b of node.body.map((x: any) => x.nodes).flat(2)) {
-      if (b._type === "variable") {
-        const accessModifiers = b.modifiers
-          .filter((m: any) => m._type === "access-modifier")
-          .map((m: any) => m.modifier);
-        const fieldModifiers = b.modifiers
-          .filter((m: any) => m._type === "field-modifier")
-          .map((m: any) => m.modifier);
-        if (fieldModifiers.includes("ctor")) {
-          ctorVars.push({ ...b, accessModifiers, fieldModifiers });
-        } else {
-          classFields.push({ ...b, accessModifiers, fieldModifiers });
-        }
-      } else if (b._type === "function") {
-        methods.push(b);
-      } else {
-        otherBody.push(b);
-      }
-    }
-
-    // Generate constructor
-    let constructorCode = "";
-    if (ctorVars.length > 0) {
-      const params = ctorVars.map((v) => this.visit(v.name)).join(",");
-      const assignments = ctorVars
-        .map((v) => {
-          this.pushScope(ScopeType.variable);
-          let fieldName = this.visit(v.name);
-          const paramName = fieldName;
-          if (v.accessModifiers.includes("private")) {
-            fieldName = `#${fieldName}`;
-          }
-          this.popScope();
-          return `this.${fieldName} = ${paramName};`;
-        })
-        .join("\n");
-      constructorCode = `constructor(${params}) {\n${assignments}\n}`;
-    }
-
-    // Generate code for class fields
-    this.pushScope(ScopeType.variable);
-    const fieldsCode = classFields
-      .map((v) => {
-        let fieldName = this.visit(v.name);
-        const accessModifiers = v.accessModifiers;
-        if (accessModifiers.includes("private")) {
-          fieldName = `#${fieldName}`;
-        }
-        let valueCode = v.value ? ` = ${this.visit(v.value)};` : ";";
-
-        // Handle field modifiers
-        let modifierComments = "";
-        if (v.fieldModifiers.includes("readonly")) {
-          modifierComments += "// readonly\n";
-        }
-        if (v.fieldModifiers.includes("nullable")) {
-          modifierComments += "// nullable\n";
-        }
-
-        return `${modifierComments}${fieldName}${valueCode}`;
-      })
-      .join("\n");
+    this.classes.push(this.visit(node.name));
     this.popScope();
 
-    // Generate code for methods
-    this.pushScope(ScopeType.method);
-    const methodsCode = methods
-      .map((m) => {
-        const name = this.visit(m.name);
-        return `${m.async ? "async " : ""}${name}(${m.params
-          .map((x: any) => this.visit(x))
-          .join(",")}) {\n${m.body
-          .map((x: any) => this.visit(x))
-          .join("\n")}\n}`;
-      })
-      .join("\n");
-    this.popScope();
-
-    // Generate code for other body elements
-    const otherBodyCode = otherBody.map((b) => this.visit(b)).join("\n");
-
-    // Combine all parts
-    const classBodyCode = [
-      fieldsCode,
-      constructorCode,
-      methodsCode,
-      otherBodyCode,
-    ]
-      .filter((s) => s)
-      .join("\n");
-
-    this.classes.push(name);
-    this.popScope();
-
-    return `${
-      accessModifiers ? accessModifiers + " " : ""
-    }class ${name}${extendsClause}${implementsClause} {\n${classBodyCode}\n}`;
+    return result;
   }
 
   visitInterface(node: ast.InterfaceNode) {
@@ -372,8 +260,8 @@ export class JSCompilerAstVisitorGptVer extends BaseAstVisitor {
   }
 
   visitConstraintHas(node: ast.ConstraintHasNode) {
-    const name = this.visit(node.name);
-    return `/* has ${name} */`;
+    const member = this.visit(node.member);
+    return `/* has ${member} */`;
   }
 
   visitMatchCase(node: ast.MatchCaseNode) {
@@ -437,7 +325,7 @@ export class JSCompilerAstVisitorGptVer extends BaseAstVisitor {
   visitVariable(node: ast.VariableNode) {
     this.pushScope(ScopeType.variable);
     const name = this.visit(node.name);
-    const value = this.visit(node.value!);
+    const value = !!node.value ? this.visit(node.value) : undefined;
     this.popScope();
 
     this.variables.push(name);
@@ -461,6 +349,8 @@ export class JSCompilerAstVisitorGptVer extends BaseAstVisitor {
     const params = node.params.map((x) => this.visit(x)).join(",");
     const body = node.body.map((x) => this.visit(x));
 
+    this.popScope();
+
     const result = formatFunction(
       this.currentScope(),
       node.async,
@@ -471,7 +361,6 @@ export class JSCompilerAstVisitorGptVer extends BaseAstVisitor {
     );
 
     this.functions.push(name);
-    this.popScope();
 
     return result;
   }
@@ -508,11 +397,17 @@ export class JSCompilerAstVisitorGptVer extends BaseAstVisitor {
 
     this.popScope();
 
-    return !this.inScope(ScopeType.variable)
+    return !this.inScope(ScopeType.variable, ScopeType.when, ScopeType.match)
       ? `if (${condition}) {\n${thenExpr}\n}${
           !!node.else ? ` else {\n${elseExpr}\n}` : ""
         }`
       : `(${condition}) ? (${thenExpr}) : (${elseExpr})`;
+  }
+
+  visitWhile(node: ast.WhileNode) {
+    const condition = this.visit(node.condition);
+    const body = this.visit(node.then);
+    return `while (${condition}) {\n${body}\n}`;
   }
 
   visitAssignment(node: ast.AssignmentNode) {
@@ -523,30 +418,20 @@ export class JSCompilerAstVisitorGptVer extends BaseAstVisitor {
   }
 
   visitTryCatch(node: ast.TryCatchNode) {
-    const tryBlock = this.visit(node.try.body);
-    // const catchBlock = this.visit()
-    const finallyBlock = !!node.finally ? this.visit(node.finally.body) : "";
+    const tryBlock = `try {\n${this.visit(node.try.body)}\n}`;
 
-    try
-    {
+    const catchVar = randomIdentifier();
+    const catchBlocks = node.catch?.filter(x => !!x.filter)?.map(x => {
+      const catchFilterVar = this.visit(x.filter.name);
+      const catchFilterType = this.visit(x.filter.type);
+      const catchBody = this.visit(x.body);
+      return `if (${catchVar} instanceof ${catchFilterType}) {\n${formatVariable(this.currentScope(), false, catchFilterVar, catchVar, this.context)};\n${catchBody}\n}`;
+    }).join(" else ");
+    const defaultCatchBlock = node.catch?.filter(x => !x.filter).map(x => this.visit(x.body)).at(0) ?? `throw ${catchVar}`;
+    const catchBlock = !!node.catch ? ` catch (${catchVar}) {\n${catchBlocks} ${!!catchBlocks ? "else" : "" } { ${defaultCatchBlock} }\n}` : "";
+    const finallyBlock = !!node.finally ? ` finally {\n${this.visit(node.finally.body)}\n}` : "";
 
-    }
-    catch (e)
-    {
-      if (e instanceof Error) {
-
-      } else if (e instanceof ErrorEvent) {
-
-      } else if (e instanceof EvalError) {
-
-      }
-    }
-    finally
-    {
-
-    }
-
-    return ``;
+    return `${tryBlock}${catchBlock}${finallyBlock}`;
   }
 
   visitMatch(node: ast.MatchNode) {
@@ -568,10 +453,11 @@ export class JSCompilerAstVisitorGptVer extends BaseAstVisitor {
     });
 
     const predefinedVariables = findIdentifiersToDefine(node);
+    const predefinedVariablesCode = predefinedVariables.map(x => `let ${x};`).join("\n");
 
     this.popScope();
 
-    return `(function (${matchVar}) { let ${predefinedVariables.join(",")}; return ${ifExprs.join(" ")} undefined; })(${matchVal})`;
+    return `(function (${matchVar}) { ${predefinedVariablesCode}\n return ${ifExprs.join(" ")} undefined; })(${matchVal})`;
   }
 
   generateCondition(pattern: ast.PatternNode, value: string) {
@@ -671,7 +557,7 @@ export class JSCompilerAstVisitorGptVer extends BaseAstVisitor {
   visitList(node: ast.ListNode) {
     const [fname, ...fargs] = node.nodes;
     const callee = this.visit(fname);
-    const args = fargs.map((x) => this.visit(x));
+    const args = fargs.map((x) => this.visit(x)).filter(x => !!x);
     if (
       fname._type === "simple-identifier" ||
       fname._type === "composite-identifier"
@@ -729,6 +615,7 @@ export class JSCompilerAstVisitorGptVer extends BaseAstVisitor {
   }
 
   visitComment(node: ast.CommentNode) {
-    return "//" + node.comment;
+
+    return `/* ${node.comment} */`;
   }
 };

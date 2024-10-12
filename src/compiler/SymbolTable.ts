@@ -10,6 +10,22 @@ export enum ScopeType {
   match = "match",
   when = "when",
   if = "if",
+
+  // list = "list",
+  // quote = "quote",
+  // vector = "vector",
+  // map = "map",
+  // for = "for",
+  // foreach = "foreach",
+  // while = "while",
+  // try = "try",
+  // catch = "catch",
+  // await = "await",
+  // export = "export",
+  // import = "import",
+  // typedef = "typedef",
+  // pattern = "pattern",
+  // parameter = "parameter",
 }
 
 export interface SymbolEntry {

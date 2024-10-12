@@ -5,7 +5,10 @@
   function makeNode(type, rest) {
     return {
       _type: type,
-      _location: location(),
+      _location: {
+        ...location(),
+        text: text(), // TODO: Replace with AspProvider source text caching
+      },
       ...(rest ?? {}),
     }
   }
@@ -76,16 +79,13 @@ Expression "expression"
   / Identifier 
   / Comment
 
-
-
-
 // Lists
 List "list"
-  = _ "(" _ nodes:Expression* _ ")" _ {
+  = _ "(" _ "list"i _ nodes:Expression* _ ")" _ {
     return makeNode("list", { nodes });
   }
-  / _ "(" _ ")" _ {
-    return makeNode("list", { nodes: [] });
+  / _ "(" _ nodes:Expression* _ ")" _ {
+    return makeNode("list", { nodes });
   }
 
 
@@ -93,8 +93,12 @@ List "list"
 
 // Quotes
 Quote "quote"
-  = _ "'(" _ nodes:Expression* _ ")" _ {
-    const content = text().slice(2, -1);
+  = _ "'" (! '"') _ nodes:Expression _ {
+    const content = text().slice(1).trim();
+    return makeNode("quote", { mode: "default", content, nodes });
+  }
+  / _ "'(" _ nodes:Expression* _ ")" _ {
+    const content = text().slice(2, -1).trim();
     return makeNode("quote", { mode: "default", content, nodes });
   }
   / _ mode:Identifier "'(" _ content:QuoteContent? _ ")" _ {
@@ -172,10 +176,10 @@ SymbolAlias
 
 ImportSource
   = file:RawString {
-    return { source: { file } };
+    return { source: { file }};
   }
   / namespace:Identifier {
-    return { source: { namespace } };
+    return { source: { namespace }};
   }
 
 
@@ -263,9 +267,11 @@ MappedType
   }
 
 FieldsMapping
-  = _ "(" _ mutable:VariableMode __ modifiers:VariableModifier* _ name:(KeySelector / Identifier) _ type:("<-" _ @(TypeSelector / Type))  _ ")" _ {
+  = _ "(" _ mutable:VariableMutableMode __ modifiers:VariableModifier* _ name:(KeySelector / Identifier) _ type:("<-" _ @(TypeSelector / Type))  _ ")" _ {
     // TODO: complete
-    return makeNode("type-mapping", { });
+    return makeNode("type-mapping", {
+      
+    });
   }
 
 KeySelector
@@ -284,11 +290,11 @@ TypeSelector
 
 // Variable definition
 Variable
-  = _ mutable:VariableMode __ modifiers:VariableModifier* _ name:Identifier? _ type:("<-" _ @Type)? _ value:Expression? {
+  = _ mutable:VariableMutableMode __ modifiers:VariableModifier* _ name:Identifier? _ type:("<-" _ @Type)? _ value:Expression? {
     return makeNode("variable", { name, mutable, modifiers, type, value });
   }
 
-VariableMode
+VariableMutableMode
   = "let" { return false; }
   / "mut" { return true; }
 
@@ -310,10 +316,6 @@ Function
     _ "[" _ params:(@FunctionParameter _ ","?)* _ "]" _ ret:("->" _ @Type)? _ body:Expression* _
   {
     const extern = !!modifiers.find(x => x.modifier === "extern");
-    // TODO: Place to the semantic analyzer pass
-    // if (extern && !!body) {
-    //   error("LL0012: Extern function cannot have a body");
-    // }
     return makeNode("function", { name, async: !!async, extern, modifiers, params, ret, body });
   }
 
@@ -339,8 +341,8 @@ ParameterModifier
 // Function carrying
 FunctionCarrying
   = _ id:Identifier _ seq:(
-    _ operator:CarryingOperator _ fn:Expression _ args:(!CarryingOperator @Expression)* _ {
-      return makeNode(operator._type, { function: fn, arguments: args });
+    _ operator:CarryingOperator _ fn:("."? Identifier) _ args:(!CarryingOperator @Expression)* _ {
+      return makeNode(operator._type, { function: fn[1], memberFunction: !!fn[0], arguments: args });
     }
   )+ _ {
     return makeNode("function-carrying", { identifier: id, sequence: seq });
@@ -380,8 +382,9 @@ Class
       return makeNode("generic-type", { ...x, constraints: genericConstraints });
     });
 
-    const impl = ext.filter(x => x._type === "implements").map(x => { return { ...x.type } });
-    return makeNode("class", { name, access, extends: classExtends, implements: impl, generics: genericsWithConstraints, body });
+    const _implements = ext.filter(x => x._type === "implements").map(x => { return { ...x.type } });
+    const _extends = ext.filter(x => x._type === "extends").map(x => { return { ...x.type } });
+    return makeNode("class", { name, access, implements: _implements, extends: _extends, generics: genericsWithConstraints, body });
   }
 
 ClassBodyDefinition
@@ -437,22 +440,11 @@ InterfaceName
 
 Interface
   = _ "definterface" _ access:(@AccessModifier _)* _ name:InterfaceName? _ impl:Implements? _ body:InterfaceBody* {
-    // TODO: Put that also into the first pass
-    // const invalidFuncs = body
-    //   .filter(x => x._type === "function" && !!x.body)
-    //   .map(x => error(`LL0022: Function declaration '${name.name}.${x.name.id}' cannot have a body`));
-    // const invalidVars = body
-    //   .filter(x => x._type === "variable" && !!x.value)
-    //   .map(x => error(`LL0023: Field declaration '${name.name}.${x.name.id}' cannot have a value`));
-
     return makeNode("interface", { ...name, access, implements: impl, body });
   }
 
 InterfaceBody
-  = Import
-  / Variable
-  / Function
-  / Comment
+  = Expression
 
 
 
@@ -554,12 +546,8 @@ IndexerAccess
 
 // Try-Catch-Finally block
 TryCatchFinally
-  = tryBlock:Try catchBlock:Catch* finallyBlock:Finally? {
-    if (!catchBlock && !finallyBlock) {
-      error("LL0003: Try-Catch-Finally statement must have either catch or finally block.");
-    }
-
-    return makeNode("try-catch", { try: tryBlock, catch: catchBlock, finally: finallyBlock });
+  = tryBlock:Try catchBlocks:Catch* finallyBlock:Finally? {
+    return makeNode("try-catch", { try: tryBlock, catch: catchBlocks, finally: finallyBlock });
   }
 
 Try
@@ -599,7 +587,15 @@ If
     return makeNode("if", { condition, then, else: elseThen });
   }
 
+Cond
+  = _ "cond" __ cases:CondCase+ _ {
+    return makeNode("cond", { cases });
+  }
 
+CondCase
+  = _ condition:Expression _ body:Expression _ {
+    return makeNode("cond-case", { condition, body });
+  }
 
 
 // Loop statements
@@ -642,6 +638,7 @@ MatchCase
 
 Pattern
   = AnyPattern
+  / FunctionalPattern
   / ListPattern
   / VectorPattern
   / MapPattern
@@ -650,6 +647,11 @@ Pattern
 
 AnyPattern
   = "_" _ { return makeNode("any-pattern"); }
+
+FunctionalPattern
+  = "(" _ params:Pattern* _ ")" _ "->" _ ret:Pattern _ {
+    return makeNode("functional-pattern", { params, ret });
+  }
 
 ListPattern
   = "(" _ elements:Pattern* _ ")" _ {
@@ -729,7 +731,7 @@ unescaped
 
 // Numbers
 Number "number"
-  = HexNumber / BinNumber / OctNumber / FloatNumber / IntegerNumber
+  = HexNumber / BinNumber / OctNumber / IntegerNumber / FloatNumber
 
 OctNumber
   = _ "0" match:$[0-7]+ _ {
@@ -765,12 +767,12 @@ Identifier
   / SimpleIdentifier
 
 SimpleIdentifier
-  = _ id:Ident  _ {
+  = _ id:Ident {
     return makeNode("simple-identifier", { id });
   }
 
 CompositeIdentifier
-  = _ head:Ident tail:( "." @Ident )+ _ {
+  = _ head:Ident tail:( "." @Ident )+ {
     const id = `${head}.${tail.join(".")}`;
     return makeNode("composite-identifier", { id, parts: [ head, ...tail ] });
   }

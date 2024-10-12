@@ -1,17 +1,22 @@
 import { JS_RESERVED } from "./JS_RESERVED";
 
-export function randomIdentifier() {
-  const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_";
-  const alphanum =
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
+const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_";
+const alphanumeric = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
 
-  let varName = letters[Math.floor(Math.random() * letters.length)]; // First char: letter or '_'
+const usedRandomIdentifiers: string[] = [];
 
-  for (let i = 1; i < 5; i++) {
-    varName += alphanum[Math.floor(Math.random() * alphanum.length)];
+export function randomIdentifier(length: number = 5) {
+  let varName = letters[Math.floor(Math.random() * letters.length)];
+  for (let i = 1; i < length; i++) {
+    varName += alphanumeric[Math.floor(Math.random() * alphanumeric.length)];
   }
 
-  return varName;
+  if (!usedRandomIdentifiers.includes(varName)) {
+    usedRandomIdentifiers.push(varName);
+    return varName;
+  }
+
+  return randomIdentifier(length);
 }
 
 export function encodeIdentifier(id: string) {

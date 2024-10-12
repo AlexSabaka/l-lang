@@ -1,32 +1,41 @@
 import {
-  JSCompilerAstVisitorGptVer,
+  JSCompilerAstVisitor,
+  SyntaxRulesAstVisitor,
   AstVisitorConstructor,
   BuildDependencyGraphAstVisitor,
   SanitizeAstVisitor,
   BuildSymbolTableAstVisitor,
   InferTypesAstVisitor,
   SemanticValidatorAstVisitor,
+  RecastAstVisitor,
 } from "./visitors";
 
-import { CompilationContext, CompilerOptions } from "./CompilationContext";
+import { CompilationContext, CompilerOptions, LogLevel } from "./CompilationContext";
 import { ASTNode } from "./ast";
+import chalk from "chalk";
 
 export default function compile(file: string, options: CompilerOptions) {
   const context = new CompilationContext(file, options);
 
   const ast = context.astProvider.get(file);
 
-  const compiler = new JSCompilerAstVisitorGptVer(context);
+  const syntaxRulesVisitor = new SyntaxRulesAstVisitor(context);
+  syntaxRulesVisitor.visit(ast as ASTNode);
 
-  // context.passes = [
-  //   BuildDependencyGraphAstVisitor,
-  //   SanitizeAstVisitor,
-  //   BuildSymbolTableAstVisitor,
-  //   InferTypesAstVisitor,
-  //   SemanticValidatorAstVisitor,
-  //   JSCompilerAstVisitorGptVer,
-  // ];
-  // context.process();
+  context.log(
+    LogLevel.Info,
+    chalk.red(`${syntaxRulesVisitor.errors} errors`) +
+    ", " +
+    chalk.yellow(`${syntaxRulesVisitor.warnings} warnings`)
+  );
 
-  return compiler.compile(ast as ASTNode);
+  if (syntaxRulesVisitor.errors > 0) {
+    return;
+  }
+
+  const jsCompilerVisitor = new JSCompilerAstVisitor(context);
+  return jsCompilerVisitor.compile(ast as ASTNode);
+
+  // const recastVisitor = new RecastAstVisitor(context);
+  // return recastVisitor.compile(ast as ASTNode);
 }

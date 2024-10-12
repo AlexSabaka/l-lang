@@ -1,4 +1,5 @@
+import * as vm from "node:vm";
+
 export default function evaljs(js, scope) {
-  "use strict";
-  return new Function(`with (this) {\n${js}\n}`).call(scope);
+  return vm.runInNewContext(js, scope);
 }
