@@ -1,55 +1,15 @@
-import chalk from "chalk";
-
 import * as ast from "../ast";
 import { BaseAstVisitor } from "./BaseAstVisitor";
 import { LogLevel } from "../CompilationContext";
-
-function formatMessage(node: ast.ASTNode, code: string, message: string) {
-  const textLength = node._location.text?.length ?? 0;
-  const trimmedStartText = node._location.text?.trimStart() ?? "";
-  const startColumn = node._location.start.column + (textLength - trimmedStartText.length);
-  const startLine = node._location.start.line;
-  const tab = '    ';
-  const lines = trimmedStartText.trimEnd().split('\n')
-    .filter(x => x.trim().length > 0)
-    .map(x => tab + chalk.redBright(x));
-  const exceptLastLine = lines.slice(0, -1).join('\n');
-  const lastLine = lines.at(-1);
-  const totalLineLength = process.stdout.columns;
-  const atSource = `at ${node._location.source}:${startLine}:${startColumn}`;
-  const padding = '.'.repeat(totalLineLength - atSource.length - (lastLine?.length ?? 0));
-
-  return (
-    `${code}: ${message}\n` +
-    `${exceptLastLine}${lines.length > 1 ? '\n' : ''}` +
-    `${lastLine}${chalk.dim.gray(padding)}${atSource}`
-  );
-}
-
-function isFunctionNode(node: ast.ASTNode): node is ast.FunctionNode {
-  return node._type === "function";
-}
-
-function isVariableNode(node: ast.ASTNode): node is ast.VariableNode {
-  return node._type === "variable";
-}
+import { checkRules, Rule, Rules as r } from "../NodeValidationRules";
 
 export class SyntaxRulesAstVisitor extends BaseAstVisitor {
   public errors: number = 0;
   public warnings: number = 0;
 
-  private error(node: ast.ASTNode | string, code?: string | undefined, message?: string | undefined) {
+  private error(message: string) {
     this.errors++;
-    if (typeof node === 'string' && code === undefined && message === undefined) {
-      this.context.log(LogLevel.Error, node);
-    } else {
-      this.context.log(LogLevel.Error, formatMessage(node as ast.ASTNode, code!, message!));
-    }
-  }
-
-  private warning(node: ast.ASTNode, code: string, message: string) {
-    this.warnings++;
-    this.context.log(LogLevel.Warning, formatMessage(node, code, message));
+    this.context.log(LogLevel.Error, message);
   }
 
   visitProgram(node: ast.ProgramNode) {
@@ -61,31 +21,42 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
   }
 
   visitFunction(node: ast.FunctionNode) {
-    if (node.extern && node.body && node.body.length > 0) {
-      this.error(node, "LL0012", "Extern function cannot have a body");
-    }
     // Visit parameters
     node.params.forEach((param) => this.visit(param));
+
     // Visit return type
     if (node.ret) {
       this.visit(node.ret);
     }
+
     // Visit function modifiers
     node.modifiers.forEach((modifier) => this.visit(modifier));
+
+    checkRules(node, [r.externFunctionCannotHaveBody], this.context).forEach((msg) =>
+      this.error(msg)
+    );
+
     // Visit function body
     node.body.forEach((stmt) => this.visit(stmt));
   }
 
   visitFunctionParameter(node: ast.FunctionParameterNode) {
-    if (!node.name) {
-      this.error(node, "LL0008", "Function parameter must have a name.");
-    }
+
+    checkRules(node, [r.functionParameterMustHaveNameRule], this.context).forEach((msg) =>
+      this.error(msg)
+    );
     // Visit parameter type
     if (node.type) {
       this.visit(node.type);
     }
+
+
     // Visit parameter modifiers
-    node.modifiers.forEach((modifier) => this.visit(modifier));
+    node.modifiers
+      .flatMap((modifier) =>
+        checkRules(modifier, [r.functionParameterAllowedModifiersRule], this.context)
+      )
+      .forEach((msg) => this.error(msg));
   }
 
   // visitFunctionModifier(node: ast.FunctionModifierNode) {
@@ -98,76 +69,24 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
   visitInterface(node: ast.InterfaceNode) {
     const body = node.body.flatMap((x) => (x as ast.ListNode)?.nodes ?? [x]);
 
-    [
-      ...body
-        .filter((x) => !ast.isNode<ast.VariableNode>(x)
-                    && !ast.isNode<ast.FunctionNode>(x))
-        .map(
-          (x) =>
-            [
-              x._location.start.offset,
-              formatMessage(
-                x,
-                "LL0015",
-                "Invalid interface member."
-              ),
-            ] as [number, string]
-        ),
-      ...body
-        .filter((x) => ast.isNode<ast.VariableNode>(x) && !!x.value)
-        .map(
-          (x) =>
-            [
-              x._location.start.offset,
-              formatMessage(
-                x,
-                "LL0011",
-                "Interface members cannot have initializers."
-              ),
-            ] as [number, string]
-        ),
-      ...body
-        .filter((x) => ast.isNode<ast.FunctionNode>(x) && x.extern)
-        .map(
-          (x) =>
-            [
-              x._location.start.offset,
-              formatMessage(x, "LL0012", "Interface members cannot be extern."),
-            ] as [number, string]
-        ),
-      ...body
-        .filter((x) => ast.isNode<ast.FunctionNode>(x) && !!x.body && x.body.length > 0)
-        .map(
-          (x) =>
-            [
-              x._location.start.offset,
-              formatMessage(
-                x,
-                "LL0013",
-                "Interface members cannot have body declarations."
-              ),
-            ] as [number, string]
-        ),
-    ]
-    .sort((a, b) => a[0] - b[0])
-    .forEach((x) => this.error(x[1]));
+    body.flatMap((member) =>
+      checkRules(member, [
+        r.invalidInterfaceMembers as Rule<ast.ASTNode>,
+        r.interfaceMembersCannotHaveInitializers as Rule<ast.ASTNode>,
+        r.interfaceMembersCannotBeExtern as Rule<ast.ASTNode>,
+        r.interfaceMembersCannotHaveBodyDeclarations as Rule<ast.ASTNode>,
+      ], this.context)
+    ).forEach((msg) => this.error(msg));
 
     // Visit interface body members
     body.forEach((member) => this.visit(member));
   }
 
   visitTryCatch(node: ast.TryCatchNode) {
-    if (node.catch.length === 0 && !node.finally) {
-      this.error(
-        node,
-        "LL0003",
-        "Try-Catch-Finally statement must have either catch or finally block."
-      );
-    }
-
-    if (node.catch.length > 0 && node.catch.filter((x) => !x.filter).length > 1) {
-      this.error(node, "LL0004", "Only one default catch block is allowed.");
-    }
+    checkRules(node, [
+      r.tryCatchHasEitherCatchOrFinally,
+      r.onlyOneDefaultCatchBlockAllowed,
+    ], this.context).forEach((msg) => this.error(msg));
 
     // Visit try block
     this.visit(node.try.body);
@@ -191,15 +110,10 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
   }
 
   visitVariable(node: ast.VariableNode) {
-    // Variable declaration must have a name
-    if (!node.name) {
-      this.error(node, "LL0005", "Variable declaration must have a name.");
-    }
-
-    // Mutable variable must have an initializer
-    if (node.mutable && !node.value) {
-      this.error(node, "LL0021", "Mutable variable must have an initializer.");
-    }
+    checkRules(node, [
+      r.variableHasNameRule,
+      r.mutableVariableMustHaveInitializerRule,
+    ], this.context).forEach((msg) => this.error(msg));
 
     // Visit variable modifiers
     node.modifiers.forEach((modifier) => this.visit(modifier));
@@ -215,24 +129,9 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
     }
   }
 
-  visitFieldModifier(node: ast.FieldModifierNode) {
-    const validModifiers = ["readonly", "nullable", "ctor"];
-    if (!validModifiers.includes(node.modifier)) {
-      this.error(node, "LL0012", `Invalid field modifier '${node.modifier}'.`);
-    }
-  }
-
-  visitParameterModifier(node: ast.ParameterModifierNode) {
-    const validModifiers = ["in", "out", "ref"];
-    if (!validModifiers.includes(node.modifier)) {
-      this.error(node, "LL0014", `Invalid parameter modifier '${node.modifier}'.`);
-    }
-  }
-
   visitClass(node: ast.ClassNode) {
-    if (!node.name) {
-      this.error(node, "LL0006", "Class declaration must have a name.");
-    }
+    checkRules(node, [r.classMustHaveNameRule], this.context).forEach((msg) => this.error(msg));
+
     // Visit access modifiers
     node.access.forEach((accessModifier) => this.visit(accessModifier));
     // Visit implements and extends
@@ -244,12 +143,12 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
     node.body.forEach((member) => this.visit(member));
   }
 
-  visitAccessModifier(node: ast.AccessModifierNode) {
-    const validModifiers = ["public", "private", "static", "internal"];
-    if (!validModifiers.includes(node.modifier)) {
-      this.error(node, "LL0013", `Invalid access modifier '${node.modifier}'.`);
-    }
-  }
+  // visitAccessModifier(node: ast.AccessModifierNode) {
+  //   const validModifiers = ["public", "private", "static", "internal"];
+  //   if (!validModifiers.includes(node.modifier)) {
+  //     this.error(node, "LL0013", `Invalid access modifier '${node.modifier}'.`);
+  //   }
+  // }
 
   visitImplements(node: ast.ImplementsNode) {
     this.visit(node.type);
@@ -278,29 +177,24 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
   }
 
   visitWhen(node: ast.WhenNode) {
-    this.visit(node.condition);
-    if (node.then.length === 0) {
-      this.error(node, "LL0016", "When statement must have a 'then' clause.");
-    }
-    node.then.forEach((stmt) => this.visit(stmt));
+    checkRules(node, [r.whenMustHaveCondition, r.whenMustHaveThenClause], this.context).forEach((msg) => this.error(msg)); 
+    this.visit(node.condition!);
+    node.then?.forEach((stmt) => this.visit(stmt));
   }
 
   visitIf(node: ast.IfNode) {
-    this.visit(node.condition);
-    if (!node.then) {
-      this.error(node, "LL0017", "If statement must have a 'then' clause.");
-    }
-    this.visit(node.then);
-    if (node.else) {
-      this.visit(node.else);
-    }
+    checkRules(node, [r.ifMustHaveCondition, r.ifMustHaveThenClause], this.context).forEach((msg) => this.error(msg));
+
+    this.visit(node.condition!);
+    this.visit(node.then!);
+    this.visit(node.else!);
   }
 
   visitMatch(node: ast.MatchNode) {
     this.visit(node.expression);
-    if (node.cases.length === 0) {
-      this.error(node, "LL0018", "Match statement must have at least one case.");
-    }
+
+    checkRules(node, [r.matchMustHaveCases], this.context).forEach((msg) => this.error(msg)); 
+
     node.cases.forEach((matchCase) => this.visit(matchCase));
   }
 
@@ -353,34 +247,13 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
   }
 
   visitIdentifier(node: ast.IdentifierNode) {
-    if (!node.id) {
-      this.error(node, "LL0019", "Identifier must have a name.");
-    }
+    checkRules(node, [r.identifierHasNameRule], this.context).forEach((msg) => this.error(msg)); 
   }
 
   visitImport(node: ast.ImportNode) {
-    node.imports.forEach((importDef) => {
-      if (importDef.symbols) {
-        importDef.symbols.forEach((symbol) => {
-          if (!symbol.symbol) {
-            this.error(node, "LL0009", "Import symbol must have a name.");
-          }
-          if (symbol.as) {
-            this.visit(symbol.as);
-          }
-        });
-      }
-      if (!importDef.source) {
-        this.error(node, "LL0010", "Import must have a source.");
-      } else {
-        // Visit import source
-        if (importDef.source.file) {
-          this.visit(importDef.source.file);
-        } else if (importDef.source.namespace) {
-          this.visit(importDef.source.namespace);
-        }
-      }
-    });
+    checkRules(node, [r.importHasSource, r.importHasSymbols], this.context).forEach((msg) =>
+      this.error(msg)
+    );
   }
 
   visitExport(node: ast.ExportNode) {
@@ -390,9 +263,7 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
   }
 
   visitTypeName(node: ast.TypeNameNode) {
-    if (!node.name) {
-      this.error(node, "LL0011", "Type name must have a name.");
-    }
+    // TODO: Implement type name validation
   }
 
   visitUnionType(node: ast.UnionTypeNode) {
@@ -416,37 +287,12 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
     node.constraints?.forEach((constraint) => this.visit(constraint));
   }
 
-  visitConstraintImplements(node: ast.ConstraintImplementsNode) {
-    this.visit(node.type);
-  }
-
-  visitConstraintInherits(node: ast.ConstraintInheritsNode) {
-    this.visit(node.type);
-  }
-
-  visitConstraintIs(node: ast.ConstraintIsNode) {
-    this.visit(node.type);
-  }
-
-  visitConstraintHas(node: ast.ConstraintHasNode) {
-    this.visit(node.member);
-  }
-
   visitFunctionCarrying(node: ast.FunctionCarryingNode) {
     this.visit(node.identifier);
     node.sequence.forEach((seqItem) => {
-      this.visit(seqItem);
+      this.visit(seqItem.function);
+      seqItem.arguments.forEach((arg) => this.visit(arg));
     });
-  }
-
-  visitFunctionCarryingLeft(node: ast.FunctionCarryingLeftNode) {
-    this.visit(node.function);
-    node.arguments.forEach((arg) => this.visit(arg));
-  }
-
-  visitFunctionCarryingRight(node: ast.FunctionCarryingRightNode) {
-    this.visit(node.function);
-    node.arguments.forEach((arg) => this.visit(arg));
   }
 
   visitTypeMapping(node: ast.TypeMappingNode) {
@@ -487,7 +333,9 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
   }
 
   visitNumber(node: ast.NumberNode) {
-    // Nothing to do for numbers
+    checkRules(node, [
+      r.fractionHasNonZeroDenominator as Rule<ast.NumberNode>,
+    ], this.context).forEach((msg) => this.error(msg));
   }
 
   visitComment(node: ast.CommentNode) {
@@ -497,4 +345,4 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
   visitControlComment(node: ast.ControlCommentNode) {
     // NOTE: Implement validation for control comments if needed
   }
-};
+}

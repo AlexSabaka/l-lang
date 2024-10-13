@@ -5,7 +5,7 @@ import { globalScope, evalInScope } from "./lib/std";
 
 import { highlight } from "cli-highlight";
 
-const js = compile("./../examples/test006.lisp", {
+const js = compile("./../examples/test007.lisp", {
   logger: {
     level: LogLevel.Verbose,
     log: console.log,

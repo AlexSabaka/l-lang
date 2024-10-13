@@ -72,7 +72,7 @@ export class CompilationContext {
   process() {
     for (let pass of this.passes) {
       const visitor = new pass(this.mainModule, this);
-      const ast = this.astProvider.get("");
+      const ast = this.astProvider.getAst("");
       const passResult = visitor.visit(ast!);
       this.results.set(pass, passResult);
     }

@@ -17,7 +17,7 @@ import chalk from "chalk";
 export default function compile(file: string, options: CompilerOptions) {
   const context = new CompilationContext(file, options);
 
-  const ast = context.astProvider.get(file);
+  const ast = context.astProvider.getAst(file);
 
   const syntaxRulesVisitor = new SyntaxRulesAstVisitor(context);
   syntaxRulesVisitor.visit(ast as ASTNode);
@@ -32,6 +32,12 @@ export default function compile(file: string, options: CompilerOptions) {
   if (syntaxRulesVisitor.errors > 0) {
     return;
   }
+
+  const buildDependencyGraphVisitor = new BuildDependencyGraphAstVisitor(context);
+  buildDependencyGraphVisitor.visit(ast as ASTNode);
+
+  const buildSymbolTableVisitor = new BuildSymbolTableAstVisitor(context);
+  buildSymbolTableVisitor.visit(ast as ASTNode);
 
   const jsCompilerVisitor = new JSCompilerAstVisitor(context);
   return jsCompilerVisitor.compile(ast as ASTNode);

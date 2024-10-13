@@ -171,27 +171,19 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
     return `{ ${mapping} }`;
   }
 
-  visitFieldModifier(node: ast.FieldModifierNode) {
-    return node.modifier;
-  }
-
-  visitParameterModifier(node: ast.ParameterModifierNode) {
-    return node.modifier;
-  }
-
   visitFunctionCarrying(node: ast.FunctionCarryingNode) {
     const id = this.visit(node.identifier);
     let code = id;
     node.sequence.forEach((seqItem) => {
       const fn = this.visit(seqItem.function);
       const args = seqItem.arguments.map((a) => this.visit(a));
-      if (seqItem._type === "function-carrying-left") {
+      if (seqItem.operator === "carrying-left") {
         if (seqItem.memberFunction) {
           code = `${code}.${fn}(${args.join(",")})`;
         } else {
           code = `${fn}(${code}${args.length ? "," + args.join(",") : ""})`;
         }
-      } else if (seqItem._type === "function-carrying-right") {
+      } else if (seqItem.operator === "carrying-right") {
         if (seqItem.memberFunction) {
           code = `${code}.${fn}(${args.join(",")})`;
         } else {
@@ -232,36 +224,12 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
     return `${accessModifiers} interface ${name}${implementsClause} {\n${body}\n}`;
   }
 
-  visitAccessModifier(node: ast.AccessModifierNode) {
-    return node.modifier;
-  }
-
   visitImplements(node: any) {
     return this.visit(node.type);
   }
 
   visitExtends(node: any) {
     return this.visit(node.type);
-  }
-
-  visitConstraintImplements(node: ast.ConstraintImplementsNode) {
-    const type = this.visit(node.type);
-    return `/* implements ${type} */`;
-  }
-
-  visitConstraintInherits(node: ast.ConstraintInheritsNode) {
-    const type = this.visit(node.type);
-    return `/* inherits ${type} */`;
-  }
-
-  visitConstraintIs(node: ast.ConstraintIsNode) {
-    const type = this.visit(node.type);
-    return `/* is ${type} */`;
-  }
-
-  visitConstraintHas(node: ast.ConstraintHasNode) {
-    const member = this.visit(node.member);
-    return `/* has ${member} */`;
   }
 
   visitMatchCase(node: ast.MatchCaseNode) {
@@ -376,8 +344,8 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
   visitWhen(node: ast.WhenNode) {
     this.pushScope(ScopeType.when);
 
-    const condition = this.visit(node.condition);
-    const whenExprs = node.then.map((x) => this.visit(x));
+    const condition = this.visit(node.condition!);
+    const whenExprs = node.then!.map((x) => this.visit(x));
 
     this.popScope();
 
@@ -391,9 +359,9 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
   visitIf(node: ast.IfNode) {
     this.pushScope(ScopeType.if);
 
-    const condition = this.visit(node.condition);
-    const thenExpr = this.visit(node.then);
-    const elseExpr = !!node.else ? this.visit(node.else) : "undefined";
+    const condition = this.visit(node.condition!);
+    const thenExpr = this.visit(node.then!);
+    const elseExpr = !!node.else ? this.visit(node.else!) : "undefined";
 
     this.popScope();
 
@@ -551,7 +519,14 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
   }
 
   visitNumber(node: ast.NumberNode) {
-    return node.value.toString();
+    switch (node._type) {
+      case "integer-number": return node.value.toString();
+      case "float-number": return node.value.toString();
+      case "fraction-number": return `(${node.numerator}/${node.denominator})`;
+      case "hex-number": return `0x${node.value.toString(16)}`;
+      case "binary-number": return `0b${node.value.toString(2)}`;
+      case "octal-number": return `0o${node.value.toString(8)}`;
+    }
   }
 
   visitList(node: ast.ListNode) {

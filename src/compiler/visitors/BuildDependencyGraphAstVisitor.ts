@@ -26,11 +26,6 @@ export class BuildDependencyGraphAstVisitor extends BaseAstVisitor {
   }
 
   visitImport(node: ast.ImportNode) {
-    this.context.log(LogLevel.Warning, "Warning log message...");
-    this.context.log(LogLevel.Error, "Error log message...");
-    this.context.log(LogLevel.Info, "Info log message...");
-    this.context.log(LogLevel.Debug, "Debug log message...");
-    this.context.log(LogLevel.Verbose, "Verbose log message...");
   }
 
   visitList(node: ast.ListNode): void {

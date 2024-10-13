@@ -18,7 +18,6 @@ export class BaseAstVisitor {
       "type-def": undefined,
       "map-key-type": undefined,
       "function-type": undefined,
-      "function-modifier": undefined,
       "for": undefined,
       "for-each": undefined,
       "while": this.visitWhile.bind(this),
@@ -42,23 +41,16 @@ export class BaseAstVisitor {
       "map-type": this.visitMapType.bind(this),
       "mapped-type": this.visitMappedType.bind(this),
       "type-mapping": this.visitTypeMapping.bind(this),
+      "modifier": this.visitModifier.bind(this),
       "variable": this.visitVariable.bind(this),
-      "field-modifier": this.visitFieldModifier.bind(this),
       "function": this.visitFunction.bind(this),
       "parameter": this.visitFunctionParameter.bind(this),
-      "parameter-modifier": this.visitParameterModifier.bind(this),
-      "function-carrying-left": this.visitFunctionCarryingLeft.bind(this),
-      "function-carrying-right": this.visitFunctionCarryingRight.bind(this),
       "function-carrying": this.visitFunctionCarrying.bind(this),
       "class": this.visitClass.bind(this),
       "interface": this.visitInterface.bind(this),
-      "access-modifier": this.visitAccessModifier.bind(this),
       "implements": this.visitImplements.bind(this),
       "extends": this.visitExtends.bind(this),
-      "constraint-implements": this.visitConstraintImplements.bind(this),
-      "constraint-inherits": this.visitConstraintInherits.bind(this),
-      "constraint-is": this.visitConstraintIs.bind(this),
-      "constraint-has": this.visitConstraintHas.bind(this),
+      "type-constraint": this.visitTypeConstraint.bind(this),
       "await": this.visitAwait.bind(this),
       "when": this.visitWhen.bind(this),
       "if": this.visitIf.bind(this),
@@ -79,6 +71,7 @@ export class BaseAstVisitor {
       "hex-number": this.visitNumber.bind(this),
       "integer-number": this.visitNumber.bind(this),
       "float-number": this.visitNumber.bind(this),
+      "fraction-number": this.visitNumber.bind(this),
       "simple-identifier": this.visitIdentifier.bind(this),
       "composite-identifier": this.visitIdentifier.bind(this),
       "comment": this.visitComment.bind(this),
@@ -160,24 +153,12 @@ export class BaseAstVisitor {
     this.context.log(LogLevel.Info, "Method visitTypeMapping skipped");
   }
 
-  visitFieldModifier(node: ast.FieldModifierNode): any {
-    this.context.log(LogLevel.Info, "Method visitFieldModifier skipped");
-  }
-
-  visitParameterModifier(node: ast.ParameterModifierNode): any {
-    this.context.log(LogLevel.Info, "Method visitParameterModifier skipped");
+  visitModifier(node: ast.ModifierNode): any {
+    this.context.log(LogLevel.Info, "Method visitModifier skipped");
   }
 
   visitFunctionCarrying(node: ast.FunctionCarryingNode): any {
     this.context.log(LogLevel.Info, "Method visitFunctionCarrying skipped");
-  }
-
-  visitFunctionCarryingLeft(node: ast.FunctionCarryingLeftNode): any {
-    this.context.log(LogLevel.Info, "Method visitFunctionCarryingLeft skipped");
-  }
-
-  visitFunctionCarryingRight(node: ast.FunctionCarryingRightNode): any {
-    this.context.log(LogLevel.Info, "Method visitFunctionCarryingRight skipped");
   }
 
   visitClass(node: ast.ClassNode): any {
@@ -188,10 +169,6 @@ export class BaseAstVisitor {
     this.context.log(LogLevel.Info, "Method visitInterface skipped");
   }
 
-  visitAccessModifier(node: ast.AccessModifierNode): any {
-    this.context.log(LogLevel.Info, "Method visitAccessModifier skipped");
-  }
-
   visitImplements(node: ast.ImplementsNode): any {
     this.context.log(LogLevel.Info, "Method visitImplements skipped");
   }
@@ -200,20 +177,8 @@ export class BaseAstVisitor {
     this.context.log(LogLevel.Info, "Method visitExtends skipped");
   }
 
-  visitConstraintImplements(node: ast.ConstraintImplementsNode): any {
-    this.context.log(LogLevel.Info, "Method visitConstraintImplements skipped");
-  }
-
-  visitConstraintInherits(node: ast.ConstraintInheritsNode): any {
-    this.context.log(LogLevel.Info, "Method visitConstraintInherits skipped");
-  }
-
-  visitConstraintIs(node: ast.ConstraintIsNode): any {
-    this.context.log(LogLevel.Info, "Method visitConstraintIs skipped");
-  }
-
-  visitConstraintHas(node: ast.ConstraintHasNode): any {
-    this.context.log(LogLevel.Info, "Method visitConstraintHas skipped");
+  visitTypeConstraint(node: ast.ConstraintNode): any {
+    this.context.log(LogLevel.Info, "Method visitTypeConstraint skipped");
   }
 
   visitMatchCase(node: ast.MatchCaseNode): any {

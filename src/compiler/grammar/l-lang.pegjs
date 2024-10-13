@@ -5,10 +5,7 @@
   function makeNode(type, rest) {
     return {
       _type: type,
-      _location: {
-        ...location(),
-        text: text(), // TODO: Replace with AspProvider source text caching
-      },
+      _location: location(),
       ...(rest ?? {}),
     }
   }
@@ -35,60 +32,59 @@ Program "program"
     return makeNode("program", { program });
   }
 
-// ProgramBody
-//   = Import
-//   / Function
-//   / Variable
-//   / Class
-//   / Interface
-//   / Comment
-
-
 
 Expression "expression"
   = Assignment
 
   / Import
+  / Export
 
+  // Data structures
   / List
   / Map
   / Vector
+  / Matrix
   / Quote
 
+  // Declarations
   / Variable
   / Function
 
+  // Type definitions
   / Interface
   / Typedef
   / Class
 
+  // Keywords
   / Await
+
+  // Control flow
   / When
   / If
+  / Cond
   / For
   / ForEach
   / While
-  / Match
   / TryCatchFinally
+
+  / Match
 
   / FunctionCarrying
 
   / Number
+
   / String
   / IndexerAccess
   / Identifier 
   / Comment
 
+
+
 // Lists
 List "list"
-  = _ "(" _ "list"i _ nodes:Expression* _ ")" _ {
+  = _ "(" _ nodes:Expression* _ ")" _ {
     return makeNode("list", { nodes });
   }
-  / _ "(" _ nodes:Expression* _ ")" _ {
-    return makeNode("list", { nodes });
-  }
-
-
 
 
 // Quotes
@@ -113,16 +109,26 @@ QuotedExpression
   / [^()]+                       // Match any content without parentheses
 
 
-
+// Unquoted expression
+Unquoted
+  = _
 
 // Vectors
 Vector "vector"
-  = _ "[" _ values:Expression* _ "]" _ {
+  = _ "[" _ values:(!"|" @Expression)* _ "]" _ {
     return makeNode("vector", { values });
   }
 
+// Matrices
+Matrix "matrix"
+  = _ "[" _ rows:MatrixRow|1.., "|"| _ "]" _ {
+    return makeNode("matrix", { rows });
+  }
 
-
+MatrixRow
+  = _ values:(!"|" @Expression)|1.., ","?| _ {
+    return values;
+  }
 
 // Maps
 Map "map"
@@ -143,18 +149,41 @@ Key "key"
   = SimpleIdentifier / String
 
 
-
-
 // Export definition
+// 
+// Singleline example:     | S-form
+// export a                | (export a)
+// export a :as b          | (export (a b))
+// 
+// Multiline example:      |
+// export a :as d          | (export (a d)
+//        b :as c          |         (b c)
+//        f e r            |         f e r)
+// 
 Export "export"
-  = _ "export" __ names:Identifier|1.., _ / ","| {
-    return makeNode("export", { names })
+  = _ "export" __ exports:ExportAlias|1.., _ / ","| {
+    return makeNode("export", { exports })
+  }
+
+ExportAlias
+  = symbol:(Identifier / Type) _ as:(":as" __ @Identifier)? _ {
+    return { symbol, as };
   }
 
 
-
-
 // Import definition
+// 
+// Singleline examples:                        | S-form
+// import "file.lisp"                          | (import "file.lisp")
+// import module.namespace                     | (import module.namespace)
+// import { a, b :as c } from "file.lisp"      | (import (a (b c)) 'from "file.lisp")
+// import { a :as b, c } from module.namespace | (import (a b) c 'from module.namespace)
+// 
+// Multiline example:                          |
+// import "file.lisp"                          |
+//        module.namespace                     |
+//        { a b :as c } from "file.lisp"       |
+//        { a :as b c } from module.namespace  |
 Import "import"
   = _ "import" __ imports:ImportDefinition|1.., _ / ","| {
     return makeNode("import", { imports });
@@ -170,7 +199,7 @@ ImportSymbolsDefinition
   }
 
 SymbolAlias
-  = _ symbol:TypeName _ as:("as" __ @TypeName)? _ {
+  = _ symbol:TypeName _ as:(":as" __ @TypeName)? _ {
     return { symbol, as };
   }
 
@@ -181,8 +210,6 @@ ImportSource
   / namespace:Identifier {
     return { source: { namespace }};
   }
-
-
 
 
 // Type definitions
@@ -267,7 +294,7 @@ MappedType
   }
 
 FieldsMapping
-  = _ "(" _ mutable:VariableMutableMode __ modifiers:VariableModifier* _ name:(KeySelector / Identifier) _ type:("<-" _ @(TypeSelector / Type))  _ ")" _ {
+  = _ "(" _ mutable:VariableMutableMode __ modifiers:Modifier* _ name:(KeySelector / Identifier) _ type:("<-" _ @(TypeSelector / Type))  _ ")" _ {
     // TODO: complete
     return makeNode("type-mapping", {
       
@@ -285,12 +312,9 @@ TypeSelector
   }
 
 
-
-
-
 // Variable definition
 Variable
-  = _ mutable:VariableMutableMode __ modifiers:VariableModifier* _ name:Identifier? _ type:("<-" _ @Type)? _ value:Expression? {
+  = _ mutable:VariableMutableMode __ modifiers:Modifier* _ name:Identifier? _ type:("<-" _ @Type)? _ value:Expression? {
     return makeNode("variable", { name, mutable, modifiers, type, value });
   }
 
@@ -298,21 +322,10 @@ VariableMutableMode
   = "let" { return false; }
   / "mut" { return true; }
 
-VariableModifier
-  = AccessModifier / FieldModifier
-
-FieldModifier
-  = _ ":" modifier:("readonly" / "nullable" / "ctor") _ {
-    return makeNode("field-modifier", { modifier });
-  }
-
-
-
-
 
 // Function definition
 Function
-  = _ async:("async" __)? _ "fn" __ modifiers:(@FunctionModifier _)* _ name:Identifier? _
+  = _ async:("async" __)? _ "fn" __ modifiers:(@Modifier _)* _ name:Identifier? _
     _ "[" _ params:(@FunctionParameter _ ","?)* _ "]" _ ret:("->" _ @Type)? _ body:Expression* _
   {
     const extern = !!modifiers.find(x => x.modifier === "extern");
@@ -320,41 +333,24 @@ Function
   }
 
 FunctionParameter
-  = _ name:Identifier _ modifiers:(@ParameterModifier _)* _ type:("<-" _ @Type)? {
+  = _ name:Identifier _ modifiers:(@Modifier _)* _ type:("<-" _ @Type)? {
     return makeNode("parameter", { name, modifiers, type });
   }
-
-FunctionModifier
-  = _ ":" modifier:("extern" / "override" / "extension" / "operator") _ {
-    return makeNode("function-modifier", { modifier });
-  }
-
-ParameterModifier
-  = _ ":" modifier:("in" / "out" / "ref") _ {
-    return makeNode("parameter-modifier", { modifier });
-  }
-
-
-
 
 
 // Function carrying
 FunctionCarrying
   = _ id:Identifier _ seq:(
     _ operator:CarryingOperator _ fn:("."? Identifier) _ args:(!CarryingOperator @Expression)* _ {
-      return makeNode(operator._type, { function: fn[1], memberFunction: !!fn[0], arguments: args });
+      return { operator, function: fn[1], memberFunction: !!fn[0], arguments: args };
     }
   )+ _ {
     return makeNode("function-carrying", { identifier: id, sequence: seq });
   }
 
 CarryingOperator
-  = "|>" { return makeNode("function-carrying-left"); }
-  / "<|" { return makeNode("function-carrying-right"); }
-
-
-
-
+  = "|>" { return "carrying-left"; }
+  / "<|" { return "carrying-right"; }
 
 
 // Class
@@ -372,7 +368,7 @@ ClassName
   }
 
 Class
-  = _ "defclass" __ access:(@AccessModifier _)* _ className:ClassName? _ ext:(Implements / Extends)* constraints:GenericTypeConstraints* _ body:ClassBodyDefinition* {
+  = _ "defclass" __ access:(@Modifier _)* _ className:ClassName? _ ext:(Implements / Extends)* constraints:GenericTypeConstraints* _ body:ClassBodyDefinition* {
     const { name, generics } = className;
     const genericsWithConstraints = (generics ?? []).map(x => {
       const genericConstraints = (constraints ?? [])
@@ -396,19 +392,11 @@ ClassBodyDefinition
   / Comment
 
 
-
-
-
-
 // Typedef
 Typedef
   = _ "deftype" _ name:ClassName {
     return makeNode("type-def", { });
   }
-
-
-
-
 
 
 // Interface
@@ -439,25 +427,12 @@ InterfaceName
   }
 
 Interface
-  = _ "definterface" _ access:(@AccessModifier _)* _ name:InterfaceName? _ impl:Implements? _ body:InterfaceBody* {
+  = _ "definterface" _ access:(@Modifier _)* _ name:InterfaceName? _ impl:Implements? _ body:InterfaceBody* {
     return makeNode("interface", { ...name, access, implements: impl, body });
   }
 
 InterfaceBody
   = Expression
-
-
-
-
-// Access modifiers
-AccessModifier
-  = _ ":" modifier:("public" / "private" / "static" / "internal") _ {
-    return makeNode("access-modifier", { modifier });
-  }
-
-
-
-
 
 
 Implements
@@ -471,15 +446,10 @@ Extends
   }
 
 
-
-
-
 // Generics type constraints
 GenericTypeConstraints
-  = _ where:Where _ clause:(HasConstraint / IsConstraint / InheritsConstraint / ImplementsConstraint) {
-    return {
-      where, clause,
-    }
+  = _ where:Where _ constraints:TypeConstraint* {
+    return makeNode("type-constraint", { where, ...constraints });
   }
 
 Where
@@ -487,30 +457,41 @@ Where
     return name;
   }
 
-
-ImplementsConstraint
-  = _ ":implements" _ type:Type _ {
-    return makeNode("constraint-implements", { type });
+// Constraints
+TypeConstraint
+  = _ ":" constraint:ConstraintType _ value:Identifier _ {
+    return { constraint, value };
   }
 
-InheritsConstraint
-  = _ ":inherits" _ type:Type _ {
-    return makeNode("constraint-inherits", { type });
+ConstraintType
+  = "implements"
+  / "inherits"
+  / "is"
+  / "has"
+
+// Modifiers
+Modifier
+  = _ ":" modifier:ModifierType _ {
+    return makeNode("modifier", { modifier });
   }
 
-IsConstraint
-  = _ ":is" _ type:Type _ {
-    return makeNode("constraint-is", { type });
-  }
-
-// when you want to check if type has a member
-HasConstraint
-  = _ ":has" _ member:Identifier _ {
-    return makeNode("constraint-has", { member });
-  }
-
-
-
+ModifierType
+  = "public"
+  / "private"
+  / "static"
+  / "internal"
+  / "extern"
+  / "override"
+  / "explicit-cast"
+  / "implicit-cast"
+  / "extension"
+  / "operator"
+  / "in"
+  / "out"
+  / "ref"
+  / "readonly"
+  / "nullable"
+  / "ctor"
 
 
 // Await keyword
@@ -518,9 +499,6 @@ Await
   = _ "await" __ expression:Expression _ {
     return makeNode("await", { expression });
   }
-
-
-
 
 
 // Assignment statement
@@ -538,10 +516,6 @@ IndexerAccess
   = id:Identifier _ "[" index:Expression "]" {
     return makeNode("indexer", { id, index })
   }
-
-
-
-
 
 
 // Try-Catch-Finally block
@@ -571,18 +545,16 @@ Finally
   }
 
 
-
-
 // Control flow statements
 When
-  = _ "when" __ (":cond" __)? condition:Expression
+  = _ "when" __ (":cond" __)? condition:Expression?
               _ (":then" __)? then:Expression* {
     return makeNode("when", { condition, then });
   }
 
 If
-  = _ "if" __ (":cond" __)? condition:Expression
-            _ (":then" __)? then:Expression
+  = _ "if" __ (":cond" __)? condition:Expression?
+            _ (":then" __)? then:Expression?
             _ (":else" __)? elseThen:Expression? {
     return makeNode("if", { condition, then, else: elseThen });
   }
@@ -619,10 +591,6 @@ While
                _ (":then" __)? then:Expression {
     return makeNode("while", { condition, then });
   }
-
-
-
-
 
 
 // Pattern matching
@@ -684,9 +652,6 @@ ConstantPattern
   }
 
 
-
-
-
 // Strings
 String
   = RawString / FormattedString
@@ -727,11 +692,9 @@ unescaped
   = [^\0-\x1F\x22\x5C]
 
 
-
-
 // Numbers
 Number "number"
-  = HexNumber / BinNumber / OctNumber / IntegerNumber / FloatNumber
+  = HexNumber / BinNumber / OctNumber / FractionNumber / IntegerNumber / FloatNumber
 
 OctNumber
   = _ "0" match:$[0-7]+ _ {
@@ -748,17 +711,20 @@ HexNumber
     return makeNode("hex-number", { match, value: parseInt(match, 16) });
   }
 
+FractionNumber
+  = _ a:$([+-]? DigitSequence) "/" b:$DigitSequence _ {
+    return makeNode("fraction-number", { numerator: parseInt(a), denominator: parseInt(b) });
+  }
+
 IntegerNumber
-  = _ match:$("-"? ("0" / [1-9][0-9]*)) _ {
+  = _ match:$([+-]? DigitSequence) _ {
     return makeNode("integer-number", { match, value: parseInt(match) });
   }
 
 FloatNumber
-  = _ match:$("-"? ("0" / [1-9][0-9]*) ("." [0-9]+)? ("e" "-"? [0-9]+)?) _ {
+  = _ match:$([+-]? DigitSequence ("." [0-9]+)? ("e" [+-]? [0-9]+)?) _ {
     return makeNode("float-number", { match, value: parseFloat(match) });
   }
-
-
 
 
 // Identifier
@@ -779,8 +745,6 @@ CompositeIdentifier
 
 Ident
   = id:$((NonControl / Control) (NonControl / Control / Digit)*) { return id; }
-
-
 
 
 // Comments
@@ -812,8 +776,6 @@ EOL = [\n\r]
 ANY = [^\n]
 
 
-
-
 // Misc
 Control "control" = [_\-*+\\/^&%$#@!~=|<>\`:?]
 NonControl "non-control" = [^ \t\n\r.,?'"|@:`~;^&*%$#=+!()\[\]/\\-_0-9]
@@ -821,6 +783,7 @@ NonControl "non-control" = [^ \t\n\r.,?'"|@:`~;^&*%$#=+!()\[\]/\\-_0-9]
 Alpha "alphabetical" = [_a-zA-Z]
 
 HexDigit "hex" = [0-9a-fA-F]
+DigitSequence "digit sequence" = [0] / [1-9][0-9]*
 Digit "digit" = [0-9]
 
 __ "whitespace" = [ \t\n\r]+

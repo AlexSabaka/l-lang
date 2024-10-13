@@ -129,11 +129,16 @@ export class RecastAstVisitor extends BaseAstVisitor {
     }
   }
 
-  visitNumber(node: ast.NumberNode): n.Literal {
-    return b.literal(node.value);
+  visitNumber(node: ast.NumberNode): K.ExpressionKind {
+    switch (node._type) {
+      case "fraction-number":
+        return b.binaryExpression('/', b.literal(node.numerator), b.literal(node.denominator));
+      default:
+        return b.literal(node.value.toString());
+    }
   }
 
-  visitString(node: ast.StringNode): n.Literal {
+  visitString(node: ast.StringNode): K.ExpressionKind {
     return b.literal(node.value);
   }
 
@@ -364,23 +369,23 @@ export class RecastAstVisitor extends BaseAstVisitor {
     node: ast.FunctionCarryingNode
   ): n.Expression {
     let code: n.Expression = this.visit(node.identifier) as n.Expression;
-    node.sequence.forEach((seqItem) => {
-      const func = this.visit(seqItem.function) as K.ExpressionKind;
-      const args = seqItem.arguments
-        .map((arg) => this.visit(arg))
-        .filter((arg): arg is K.ExpressionKind | K.SpreadElementKind => arg !== null && n.Expression.check(arg));
-      if (seqItem._type === "function-carrying-left") {
-        code = b.callExpression(func, [code as K.ExpressionKind, ...args]);
-      } else if (seqItem._type === "function-carrying-right") {
-        code = b.callExpression(func, [...args, code as K.ExpressionKind]);
-      }
-    });
+    // node.sequence.forEach((seqItem) => {
+    //   const func = this.visit(seqItem.function) as K.ExpressionKind;
+    //   const args = seqItem.arguments
+    //     .map((arg) => this.visit(arg))
+    //     .filter((arg): arg is K.ExpressionKind | K.SpreadElementKind => arg !== null && n.Expression.check(arg));
+    //   if (seqItem._type === "function-carrying-left") {
+    //     code = b.callExpression(func, [code as K.ExpressionKind, ...args]);
+    //   } else if (seqItem._type === "function-carrying-right") {
+    //     code = b.callExpression(func, [...args, code as K.ExpressionKind]);
+    //   }
+    // });
     return code;
   }
 
   visitIf(node: ast.IfNode): n.IfStatement {
-    const test = this.visit(node.condition) as K.ExpressionKind;
-    const consequentStatements = [this.visit(node.then)]
+    const test = this.visit(node.condition!) as K.ExpressionKind;
+    const consequentStatements = [this.visit(node.then!)]
       .filter((stmt): stmt is K.StatementKind => stmt !== null && n.Statement.check(stmt));
     const consequent = b.blockStatement(consequentStatements);
     const alternateStatements = node.else

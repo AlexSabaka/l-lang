@@ -1,5 +1,11 @@
 // NodeType definitions
 export type NodeType =
+  | AllNodeTypes
+  | CommentType
+  | IdentifierType
+  | NumberType;
+
+export type AllNodeTypes =
   | "program"
   | "list"
   | "quote"
@@ -20,26 +26,18 @@ export type NodeType =
   | "mapped-type"
   | "type-mapping"
   | "variable"
-  | "field-modifier"
+  | "modifier"
   | "function"
-  | "function-modifier"
   | "parameter"
-  | "parameter-modifier"
   | "function-carrying"
-  | "function-carrying-left"
-  | "function-carrying-right"
   | "generic-type"
   | "class"
   | "type-def"
   | "interface"
-  | "access-modifier"
   | "implements"
   | "indexer"
   | "extends"
-  | "constraint-implements"
-  | "constraint-inherits"
-  | "constraint-is"
-  | "constraint-has"
+  | "type-constraint"
   | "await"
   | "when"
   | "if"
@@ -60,138 +58,27 @@ export type NodeType =
   | "constant-pattern"
   | "string"
   | "formatted-string"
-  | "format-expression"
+  | "format-expression";
+
+
+export type CommentType =
+  | "comment"
+  | "control-comment";
+
+export type IdentifierType =
+  | "simple-identifier"
+  | "composite-identifier";
+
+export type NumberType =
   | "octal-number"
   | "binary-number"
   | "hex-number"
   | "integer-number"
   | "float-number"
-  | "simple-identifier"
-  | "composite-identifier"
-  | "comment"
-  | "control-comment";
-
-export function isNode<T extends ASTNode>(node?: ASTNode | null): node is T {
-  if (!node) return false;
-  switch (node._type) {
-    case 'variable':
-      return (node as T)._type === 'variable';
-    case 'program':
-      return (node as T)._type === 'program';
-    case 'list':
-      return (node as T)._type === 'list';
-    case 'quote':
-      return (node as T)._type === 'quote';
-    case 'vector':
-      return (node as T)._type === 'vector';
-    case 'map':
-      return (node as T)._type === 'map';
-    case 'function':
-      return (node as T)._type === 'function';
-    case 'function-modifier':
-      return (node as T)._type === 'function-modifier';
-    case 'parameter':
-      return (node as T)._type === 'parameter';
-    case 'parameter-modifier':
-      return (node as T)._type === 'parameter-modifier';
-    case 'function-carrying':
-      return (node as T)._type === 'function-carrying';
-    case 'function-carrying-left':
-      return (node as T)._type === 'function-carrying-left';
-    case 'function-carrying-right':
-      return (node as T)._type === 'function-carrying-right';
-    case 'generic-type':
-      return (node as T)._type === 'generic-type';
-    case 'class':
-      return (node as T)._type === 'class';
-    case 'type-def':
-      return (node as T)._type === 'type-def';
-    case 'interface':
-      return (node as T)._type === 'interface';
-    case 'access-modifier':
-      return (node as T)._type === 'access-modifier';
-    case 'implements':
-      return (node as T)._type === 'implements';
-    case 'indexer':
-      return (node as T)._type === 'indexer';
-    case 'extends':
-      return (node as T)._type === 'extends';
-    case 'constraint-implements':
-      return (node as T)._type === 'constraint-implements';
-    case 'constraint-inherits':
-      return (node as T)._type === 'constraint-inherits';
-    case 'constraint-is':
-      return (node as T)._type === 'constraint-is';
-    case 'constraint-has':
-      return (node as T)._type === 'constraint-has';
-    case 'await':
-      return (node as T)._type === 'await';
-    case 'when':
-      return (node as T)._type === 'when';
-    case 'if':
-      return (node as T)._type === 'if';
-    case 'for':
-      return (node as T)._type === 'for';
-    case 'for-each':
-      return (node as T)._type === 'for-each';
-    case 'try-catch':
-      return (node as T)._type === 'try-catch';
-    case 'assignment':
-      return (node as T)._type === 'assignment';
-    case 'compound-assignment':
-      return (node as T)._type === 'compound-assignment';
-    case 'while':
-      return (node as T)._type === 'while';
-    case 'match':
-      return (node as T)._type === 'match';
-    case 'match-case':
-      return (node as T)._type === 'match-case';
-    case 'any-pattern':
-      return (node as T)._type === 'any-pattern';
-    case 'list-pattern':
-      return (node as T)._type === 'list-pattern';
-    case 'vector-pattern':
-      return (node as T)._type === 'vector-pattern';
-    case 'map-pattern':
-      return (node as T)._type === 'map-pattern';
-    case 'map-pattern-pair':
-      return (node as T)._type === 'map-pattern-pair';
-    case 'identifier-pattern':
-      return (node as T)._type === 'identifier-pattern';
-    case 'constant-pattern':
-      return (node as T)._type === 'constant-pattern';
-    case 'string':
-      return (node as T)._type === 'string';
-    case 'formatted-string':
-      return (node as T)._type === 'formatted-string';
-    case 'format-expression':
-      return (node as T)._type === 'format-expression';
-    case 'octal-number':
-      return (node as T)._type === 'octal-number';
-    case 'binary-number':
-      return (node as T)._type === 'binary-number';
-    case 'hex-number':
-      return (node as T)._type === 'hex-number';
-    case 'integer-number':
-      return (node as T)._type === 'integer-number';
-    case 'float-number':
-      return (node as T)._type === 'float-number';
-    case 'simple-identifier':
-      return (node as T)._type === 'simple-identifier';
-    case 'composite-identifier':
-      return (node as T)._type === 'composite-identifier';
-    case 'comment':
-      return (node as T)._type === 'comment';
-    case 'control-comment':
-      return (node as T)._type === 'control-comment';
-    default:
-      return false;
-  }
-}
+  | "fraction-number";
 
 export interface Location {
   source: string | undefined;
-  text: string | undefined;
   start:  Position;
   end:    Position;
 }
@@ -208,52 +95,46 @@ export interface BodyBlock {
 }
 
 // Base AST Node class
-export interface ASTNode {
-  readonly _type: NodeType;
+export interface ASTNode<T extends NodeType = NodeType> {
+  readonly _type: T;
   readonly _location: Location;
 }
 
 // Program Node
-export interface ProgramNode extends ASTNode {
-  _type: "program"
+export interface ProgramNode extends ASTNode<"program"> {
   program: ASTNode[];
 }
 
 // List Node
-export interface ListNode extends ASTNode {
-  _type: "list";
+export interface ListNode extends ASTNode<"list"> {
   nodes: ASTNode[];
 }
 
 // Quote Node
-export interface QuoteNode extends ASTNode {
-  _type: "quote";
+export interface QuoteNode extends ASTNode<"quote"> {
   mode: string;
   content: string | null;
   nodes: ASTNode[] | null;
 }
 
 // Vector Node
-export interface VectorNode extends ASTNode {
-  _type: "vector";
+export interface VectorNode extends ASTNode<"vector"> {
   values: ASTNode[];
 }
 
 // Map Node
-export interface MapNode extends ASTNode {
-  _type: "map";
+export interface MapNode extends ASTNode<"map"> {
   values: MapKeyValueNode[];
 }
 
 // Map Key-Value Node
-export interface MapKeyValueNode extends ASTNode {
-  _type: "key-value";
+export interface MapKeyValueNode extends ASTNode<"key-value"> {
   key: IdentifierNode | StringNode;
   value: ASTNode;
 }
 
 // Variable Node
-export interface VariableNode extends ASTNode {
+export interface VariableNode extends ASTNode<"variable"> {
   mutable: boolean;
   name: IdentifierNode;
   modifiers: ModifierNode[];
@@ -262,7 +143,7 @@ export interface VariableNode extends ASTNode {
 }
 
 // Function Node
-export interface FunctionNode extends ASTNode {
+export interface FunctionNode extends ASTNode<"function"> {
   name: IdentifierNode | undefined;
   async: boolean;
   extern: boolean;
@@ -275,103 +156,75 @@ export interface FunctionNode extends ASTNode {
 }
 
 // Function Parameter Node
-export interface FunctionParameterNode extends ASTNode {
+export interface FunctionParameterNode extends ASTNode<"parameter"> {
   name: IdentifierNode;
   modifiers: ModifierNode[];
   type: TypeNode | undefined;
 }
 
-export type ModifierNode = AccessModifierNode | FieldModifierNode | ParameterModifierNode;
-
-// Access Modifier Node
-export interface AccessModifierNode extends ASTNode {
-  _type: "access-modifier";
-  modifier: "public" | "private" | "static" | "internal";
-}
-
-// Field Modifier Node
-export interface FieldModifierNode extends ASTNode {
-  _type: "field-modifier";
-  modifier: "readonly" | "nullable" | "ctor";
-}
-
-// Parameter Modifier Node
-export interface ParameterModifierNode extends ASTNode {
-  _type: "parameter-modifier";
-  modifier: "in" | "out" | "ref";
+// Modifier Node
+export interface ModifierNode extends ASTNode<"modifier"> {
+  modifier: string;
 }
 
 // Base Type Node
-export interface TypeNode extends ASTNode {
-  _type: "type";
+export interface TypeNode extends ASTNode<"type"> {
   name: string;
 }
 
 // Type Name Node
-export interface TypeNameNode extends ASTNode {
-  _type: "type-name";
+export interface TypeNameNode extends ASTNode<"type-name"> {
   name: string;
 }
 
 // Union Type Node
-export interface UnionTypeNode extends ASTNode {
-  _type: "union-type";
+export interface UnionTypeNode extends ASTNode<"union-type"> {
   types: TypeNode[];
 }
 
 // Intersection Type Node
-export interface IntersectionTypeNode extends ASTNode {
-  _type: "intersection-type";
+export interface IntersectionTypeNode extends ASTNode<"intersection-type"> {
   types: TypeNode[];
 }
 
 // Simple Type Node
-export interface SimpleTypeNode extends ASTNode {
-  _type: "simple-type";
+export interface SimpleTypeNode extends ASTNode<"simple-type"> {
   name: TypeNameNode;
 }
 
 // Generic Type Node
-export interface GenericTypeNode extends ASTNode {
-  _type: "generic-type";
+export interface GenericTypeNode extends ASTNode<"generic-type"> {
   name: TypeNameNode;
   generic: TypeNode;
   constraints?: ConstraintNode[];
 }
 
 // Mapped Type Node
-export interface MappedTypeNode extends ASTNode {
-  _type: "mapped-type";
+export interface MappedTypeNode extends ASTNode<"mapped-type"> {
   mapping: ASTNode;
 }
 
 // Type Mapping Node
-export interface TypeMappingNode extends ASTNode {
-  _type: "type-mapping";
-}
+export interface TypeMappingNode extends ASTNode<"type-mapping"> {}
 
 // Map Type Node
-export interface MapTypeNode extends ASTNode {
-  _type: "map-type";
+export interface MapTypeNode extends ASTNode<"map-type"> {
   keys: KeyDefinitionNode[];
 }
 
 // Key Definition Node
-export interface KeyDefinitionNode extends ASTNode {
-  _type: "map-key-type";
+export interface KeyDefinitionNode extends ASTNode<"map-key-type"> {
   key: SimpleIdentifierNode | StringNode;
   type: TypeNode;
 }
 
 // Export Node
-export interface ExportNode extends ASTNode {
-  _type: "export";
+export interface ExportNode extends ASTNode<"export"> {
   names: IdentifierNode[];
 }
 
 // Import Node
-export interface ImportNode extends ASTNode {
-  _type: "import";
+export interface ImportNode extends ASTNode<"import"> {
   imports: ImportDefinition[];
 }
 
@@ -392,8 +245,7 @@ export interface ImportSource {
 
 
 // Class Node
-export interface ClassNode extends ASTNode {
-  _type: "class";
+export interface ClassNode extends ASTNode<"class"> {
   name: TypeNameNode;
   generics: GenericTypeNode[];
   access: ModifierNode[];
@@ -403,54 +255,34 @@ export interface ClassNode extends ASTNode {
 }
 
 // Interface Node
-export interface InterfaceNode extends ASTNode {
-  _type: "interface";
+export interface InterfaceNode extends ASTNode<"interface"> {
   name: TypeNameNode;
   generics: InterfaceGenericTypeNameNode[];
-  access: AccessModifierNode[];
+  access: ModifierNode[];
   implements: TypeNode[];
   body: ASTNode[];
 }
 
 // Implements Node
-export interface ImplementsNode extends ASTNode {
-  _type: "implements";
+export interface ImplementsNode extends ASTNode<"implements"> {
   type: TypeNode;
 };
 
 // Extends Node
-export interface ExtendsNode extends ASTNode {
-  _type: "extends";
+export interface ExtendsNode extends ASTNode<"extends"> {
   type: TypeNode;
 };
 
 // Interface Generic Type Name Node
-export interface InterfaceGenericTypeNameNode extends ASTNode {
+export interface InterfaceGenericTypeNameNode extends ASTNode<"interface"> {
   covariance: "in" | "out" | undefined;
   name: TypeNameNode;
 }
 
-// Constraint Node
-export interface ConstraintNode extends ASTNode {}
-
-// Constraint Implements Node
-export interface ConstraintImplementsNode extends ASTNode {
-  type: TypeNode;
-}
-
-// Constraint Inherits Node
-export interface ConstraintInheritsNode extends ASTNode {
-  type: TypeNode;
-}
-
-// Constraint Is Node
-export interface ConstraintIsNode extends ASTNode {
-  type: TypeNode;
-}
-
-// Constraint Has Node
-export interface ConstraintHasNode extends ASTNode {
-  member: IdentifierNode;
+export interface ConstraintNode extends ASTNode<"type-constraint"> {
+  where: TypeNameNode;
+  constraint: string;
+  value: IdentifierNode;
 }
 
 // Try-Catch Node
@@ -501,15 +333,15 @@ export interface IndexerNode extends ASTNode {
 // When Node
 export interface WhenNode extends ASTNode {
   _type: "when";
-  condition: ASTNode;
-  then: ASTNode[];
+  condition: ASTNode | undefined;
+  then: ASTNode[] | undefined;
 }
 
 // If Node
 export interface IfNode extends ASTNode {
   _type: "if";
-  condition: ASTNode;
-  then: ASTNode;
+  condition: ASTNode | undefined;
+  then: ASTNode | undefined;
   else: ASTNode | undefined;
 }
 
@@ -596,58 +428,56 @@ export interface ConstantPatternNode extends ASTNode {
 }
 
 // Base Number Node
-export type NumberNode = IntegerNumberNode | FloatNumberNode | HexNumberNode | OctalNumberNode | BinaryNumberNode;
+export type NumberNode = IntegerNumberNode | FloatNumberNode | FractionNumberNode | HexNumberNode | OctalNumberNode | BinaryNumberNode;
 
 // Integer Number Node
-export interface IntegerNumberNode extends ASTNode {
-  _type: "integer-number";
+export interface IntegerNumberNode extends ASTNode<"integer-number"> {
   value: number;
   match: string;
 }
 
 // Float Number Node
-export interface FloatNumberNode extends ASTNode {
-  _type: "float-number";
+export interface FloatNumberNode extends ASTNode<"float-number"> {
   value: number;
   match: string;
 }
 
+// Fraction Number Node
+export interface FractionNumberNode extends ASTNode<"fraction-number"> {
+  numerator: number;
+  denominator: number;
+}
+
 // Hex Number Node
-export interface HexNumberNode extends ASTNode {
-  _type: "hex-number";
+export interface HexNumberNode extends ASTNode<"hex-number"> {
   value: number;
   match: string;
 }
 
 // Binary Number Node
-export interface BinaryNumberNode extends ASTNode {
-  _type: "binary-number";
+export interface BinaryNumberNode extends ASTNode<"binary-number"> {
   value: number;
   match: string;
 }
 
 // Octal Number Node
-export interface OctalNumberNode extends ASTNode {
-  _type: "octal-number";
+export interface OctalNumberNode extends ASTNode<"octal-number"> {
   value: number;
   match: string;
 }
 
 // String Node
-export interface StringNode extends ASTNode {
-  _type: "string";
+export interface StringNode extends ASTNode<"string"> {
   value: string;
 }
 
 // Formatted String Node
-export interface FormattedStringNode extends ASTNode {
-  _type: "formatted-string";
+export interface FormattedStringNode extends ASTNode<"formatted-string"> {
   value: (StringNode | FormatExpressionNode)[];
 }
 
 // Format Expression Node
-export interface FormatExpressionNode extends ASTNode {
-  _type: "format-expression";
+export interface FormatExpressionNode extends ASTNode<"format-expression"> {
   expression: ASTNode;
 }
 
@@ -655,21 +485,18 @@ export interface FormatExpressionNode extends ASTNode {
 export type IdentifierNode = SimpleIdentifierNode | CompositeIdentifierNode;
 
 // Simple Identifier Node
-export interface SimpleIdentifierNode extends ASTNode {
-  _type: "simple-identifier";
+export interface SimpleIdentifierNode extends ASTNode<"simple-identifier"> {
   id: string;
 }
 
 // Composite Identifier Node
-export interface CompositeIdentifierNode extends ASTNode {
-  _type: "composite-identifier";
+export interface CompositeIdentifierNode extends ASTNode<"composite-identifier"> {
   parts: string[];
   id: string;
 }
 
 // Comment Node
-export interface CommentNode extends ASTNode {
-  _type: "comment";
+export interface CommentNode extends ASTNode<"comment"> {
   comment: string;
 }
 
@@ -685,32 +512,22 @@ export type ControlCommentCommand =
 
 export type ControlCommentMode = "enable" | "disable";
 
-export interface ControlCommentNode extends ASTNode {
-  _type: "control-comment";
+export interface ControlCommentNode extends ASTNode<"control-comment"> {
   mode: ControlCommentMode;
   command: ControlCommentCommand;
   options: any[];
 }
 
 // Function Carrying Node
-export interface FunctionCarryingNode extends ASTNode {
-  _type: "function-carrying";
+export interface FunctionCarryingNode extends ASTNode<"function-carrying"> {
   identifier: IdentifierNode;
-  sequence: (FunctionCarryingLeftNode | FunctionCarryingRightNode)[];
+  sequence: FunctionCarryingSequence[];
 }
 
-// Function Carrying Left Node
-export interface FunctionCarryingLeftNode extends ASTNode {
-  _type: "function-carrying-left";
+export interface FunctionCarryingSequence {
+  operator: string;
   function: IdentifierNode;
   memberFunction: boolean;
   arguments: ASTNode[];
 }
 
-// Function Carrying Right Node
-export interface FunctionCarryingRightNode extends ASTNode {
-  _type: "function-carrying-right";
-  function: IdentifierNode;
-  memberFunction: boolean;
-  arguments: ASTNode[];
-}
