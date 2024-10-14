@@ -526,7 +526,7 @@ TryCatchFinally
 
 Try
   = "try" _ body:Expression {
-    return { body };
+    return body;
   }
 
 Catch
@@ -541,7 +541,7 @@ CatchFilter
 
 Finally
   = "finally" _ body:Expression {
-    return { body };
+    return body;
   }
 
 

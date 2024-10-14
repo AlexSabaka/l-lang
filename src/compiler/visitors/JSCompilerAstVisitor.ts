@@ -386,7 +386,7 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
   }
 
   visitTryCatch(node: ast.TryCatchNode) {
-    const tryBlock = `try {\n${this.visit(node.try.body)}\n}`;
+    const tryBlock = `try {\n${this.visit(node.try)}\n}`;
 
     const catchVar = randomIdentifier();
     const catchBlocks = node.catch?.filter(x => !!x.filter)?.map(x => {
@@ -397,7 +397,7 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
     }).join(" else ");
     const defaultCatchBlock = node.catch?.filter(x => !x.filter).map(x => this.visit(x.body)).at(0) ?? `throw ${catchVar}`;
     const catchBlock = !!node.catch ? ` catch (${catchVar}) {\n${catchBlocks} ${!!catchBlocks ? "else" : "" } { ${defaultCatchBlock} }\n}` : "";
-    const finallyBlock = !!node.finally ? ` finally {\n${this.visit(node.finally.body)}\n}` : "";
+    const finallyBlock = !!node.finally ? ` finally {\n${this.visit(node.finally)}\n}` : "";
 
     return `${tryBlock}${catchBlock}${finallyBlock}`;
   }

@@ -39,12 +39,19 @@ export class AstProvider {
     return this.cache.get(file)?.ast;
   }
 
-  getSource(location: ast.Location): string {
+  getSource(location: ast.Location, overhead: number = 0): string {
     if (!this.cache.has(location.source!)) {
       this.load(location.source!);
     }
 
     const source = this.cache.get(location.source!)?.source ?? "";
-    return source.slice(location.start.offset, location.end.offset);
+    const start = location.start.offset - overhead;
+    const end = location.end.offset + overhead;
+    const res = source.slice(
+      start < 0 ? 0 : start,
+      end > source.length ? source.length : end
+    );
+
+    return res;
   }
 }

@@ -20,6 +20,8 @@ export class BaseAstVisitor {
       "function-type": undefined,
       "for": undefined,
       "for-each": undefined,
+      "cond": undefined,
+      "cond-case": undefined,
       "while": this.visitWhile.bind(this),
       "indexer": undefined,
       "try-catch": this.visitTryCatch.bind(this),
@@ -29,6 +31,7 @@ export class BaseAstVisitor {
       "list": this.visitList.bind(this),
       "quote": this.visitQuote.bind(this),
       "vector": this.visitVector.bind(this),
+      "matrix": this.visitMatrix.bind(this),
       "map": this.visitMap.bind(this),
       "key-value": this.visitKeyValue.bind(this),
       "import": this.visitImport.bind(this),
@@ -275,6 +278,10 @@ export class BaseAstVisitor {
 
   visitVector(node: ast.VectorNode): any {
     this.context.log(LogLevel.Info, "Method visitVector skipped");
+  }
+
+  visitMatrix(node: ast.MatrixNode): any {
+    this.context.log(LogLevel.Info, "Method visitMatrix skipped");
   }
 
   visitMap(node: ast.MapNode): any {

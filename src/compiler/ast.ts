@@ -10,6 +10,7 @@ export type AllNodeTypes =
   | "list"
   | "quote"
   | "vector"
+  | "matrix"
   | "map"
   | "key-value"
   | "import"
@@ -40,6 +41,8 @@ export type AllNodeTypes =
   | "type-constraint"
   | "await"
   | "when"
+  | "cond"
+  | "cond-case"
   | "if"
   | "for"
   | "for-each"
@@ -89,11 +92,6 @@ export interface Position {
   column: number;
 }
 
-
-export interface BodyBlock {
-  body: ASTNode;
-}
-
 // Base AST Node class
 export interface ASTNode<T extends NodeType = NodeType> {
   readonly _type: T;
@@ -120,6 +118,11 @@ export interface QuoteNode extends ASTNode<"quote"> {
 // Vector Node
 export interface VectorNode extends ASTNode<"vector"> {
   values: ASTNode[];
+}
+
+// Matrix Node
+export interface MatrixNode extends ASTNode<"matrix"> {
+  rows: ASTNode[][];
 }
 
 // Map Node
@@ -286,15 +289,15 @@ export interface ConstraintNode extends ASTNode<"type-constraint"> {
 }
 
 // Try-Catch Node
-export interface TryCatchNode extends ASTNode {
-  _type: "try-catch";
-  try: BodyBlock;
+export interface TryCatchNode extends ASTNode<"try-catch"> {
+  try: ASTNode;
   catch: CatchBlockNode[];
-  finally: BodyBlock | null;
+  finally: ASTNode | null;
 }
 
-export interface CatchBlockNode extends BodyBlock {
+export interface CatchBlockNode {
   filter: CatchFilterNode;
+  body: ASTNode;
 }
 
 export interface CatchFilterNode {
@@ -304,50 +307,53 @@ export interface CatchFilterNode {
 
 
 // Await Node
-export interface AwaitNode extends ASTNode {
-  _type: "await";
+export interface AwaitNode extends ASTNode<"await"> {
   expression: ASTNode;
 }
 
 // Assignment Node
-export interface AssignmentNode extends ASTNode {
-  _type: "assignment";
+export interface AssignmentNode extends ASTNode<"assignment"> {
   assignable: IndexerNode | IdentifierNode | ListNode;
   value: ASTNode;
 }
 
 // Compound Assignment Node
-export interface CompoundAssignmentNode extends ASTNode {
-  _type: "compound-assignment";
+export interface CompoundAssignmentNode extends ASTNode<"compound-assignment"> {
   assignable: IndexerNode | IdentifierNode | ListNode;
   compoundOperator: string;
 }
 
 // Indexer Node
-export interface IndexerNode extends ASTNode {
-  _type: "indexer";
+export interface IndexerNode extends ASTNode<"indexer"> {
   id: IdentifierNode;
   index: ASTNode;
 }
 
 // When Node
-export interface WhenNode extends ASTNode {
-  _type: "when";
+export interface WhenNode extends ASTNode<"when"> {
   condition: ASTNode | undefined;
   then: ASTNode[] | undefined;
 }
 
+// Cond Node
+export interface CondNode extends ASTNode<"cond"> {
+  cases: CondCaseNode[];
+}
+
+// Cond Case Node
+export interface CondCaseNode extends ASTNode {
+  _type: "cond-case";
+}
+
 // If Node
-export interface IfNode extends ASTNode {
-  _type: "if";
+export interface IfNode extends ASTNode<"if"> {
   condition: ASTNode | undefined;
   then: ASTNode | undefined;
   else: ASTNode | undefined;
 }
 
 // For Node
-export interface ForNode extends ASTNode {
-  _type: "for";
+export interface ForNode extends ASTNode<"for"> {
   initial: ASTNode;
   condition: ASTNode;
   step: ASTNode;
@@ -355,75 +361,64 @@ export interface ForNode extends ASTNode {
 }
 
 // For Node
-export interface ForEachNode extends ASTNode {
-  _type: "for-each";
+export interface ForEachNode extends ASTNode<"for-each"> {
   variable: SimpleIdentifierNode;
   collection: ASTNode;
   then: ASTNode;
 }
 
 // While Node
-export interface WhileNode extends ASTNode {
-  _type: "while";
+export interface WhileNode extends ASTNode<"while"> {
   condition: ASTNode;
   then: ASTNode;
 }
 
 // Match Node
-export interface MatchNode extends ASTNode {
-  _type: "match";
+export interface MatchNode extends ASTNode<"match"> {
   expression: ASTNode;
   cases: MatchCaseNode[];
 }
 
 // Match Case Node
-export interface MatchCaseNode extends ASTNode, BodyBlock {
-  _type: "match-case";
+export interface MatchCaseNode extends ASTNode<"match-case"> {
   pattern: PatternNode;
+  body: ASTNode;
 }
 
 // Base Pattern Node
 export type PatternNode = AnyPatternNode | ListPatternNode | VectorPatternNode | MapPatternNode | IdentifierPatternNode | ConstantPatternNode;
 
 // Any Pattern Node
-export interface AnyPatternNode extends ASTNode {
-  _type: "any-pattern";
-}
+export interface AnyPatternNode extends ASTNode<"any-pattern"> {}
 
 // List Pattern Node
-export interface ListPatternNode extends ASTNode {
-  _type: "list-pattern";
+export interface ListPatternNode extends ASTNode<"list-pattern"> {
   elements: PatternNode[];
 }
 
 // Vector Pattern Node
-export interface VectorPatternNode extends ASTNode {
-  _type: "vector-pattern";
+export interface VectorPatternNode extends ASTNode<"vector-pattern"> {
   elements: PatternNode[];
 }
 
 // Map Pattern Node
-export interface MapPatternNode extends ASTNode {
-  _type: "map-pattern";
+export interface MapPatternNode extends ASTNode<"map-pattern"> {
   pairs: MapPatternPairNode[];
 }
 
 // Map Pattern Pair Node
-export interface MapPatternPairNode extends ASTNode {
-  _type: "map-pattern-pair";
+export interface MapPatternPairNode extends ASTNode<"map-pattern-pair"> {
   key: IdentifierNode | StringNode;
   pattern: PatternNode;
 }
 
 // Identifier Pattern Node
-export interface IdentifierPatternNode extends ASTNode {
-  _type: "identifier-pattern";
+export interface IdentifierPatternNode extends ASTNode<"identifier-pattern"> {
   id: IdentifierNode;
 }
 
 // Constant Pattern Node
-export interface ConstantPatternNode extends ASTNode {
-  _type: "constant-pattern";
+export interface ConstantPatternNode extends ASTNode<"constant-pattern"> {
   constant: StringNode | NumberNode;
 }
 

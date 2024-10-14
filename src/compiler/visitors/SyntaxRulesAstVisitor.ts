@@ -1,7 +1,7 @@
 import * as ast from "../ast";
 import { BaseAstVisitor } from "./BaseAstVisitor";
 import { LogLevel } from "../CompilationContext";
-import { checkRules, Rule, Rules as r } from "../NodeValidationRules";
+import { checkRules, Rule, Rules as r } from "../rules";
 
 export class SyntaxRulesAstVisitor extends BaseAstVisitor {
   public errors: number = 0;
@@ -32,7 +32,7 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
     // Visit function modifiers
     node.modifiers.forEach((modifier) => this.visit(modifier));
 
-    checkRules(node, [r.externFunctionCannotHaveBody], this.context).forEach((msg) =>
+    checkRules(node, [r.ExternFunctionCannotHaveBody], this.context).forEach((msg) =>
       this.error(msg)
     );
 
@@ -42,7 +42,7 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
 
   visitFunctionParameter(node: ast.FunctionParameterNode) {
 
-    checkRules(node, [r.functionParameterMustHaveNameRule], this.context).forEach((msg) =>
+    checkRules(node, [r.FunctionParameterMustHaveName], this.context).forEach((msg) =>
       this.error(msg)
     );
     // Visit parameter type
@@ -54,7 +54,7 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
     // Visit parameter modifiers
     node.modifiers
       .flatMap((modifier) =>
-        checkRules(modifier, [r.functionParameterAllowedModifiersRule], this.context)
+        checkRules(modifier, [r.FunctionAllowedParameterModifiers], this.context)
       )
       .forEach((msg) => this.error(msg));
   }
@@ -71,10 +71,10 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
 
     body.flatMap((member) =>
       checkRules(member, [
-        r.invalidInterfaceMembers as Rule<ast.ASTNode>,
-        r.interfaceMembersCannotHaveInitializers as Rule<ast.ASTNode>,
-        r.interfaceMembersCannotBeExtern as Rule<ast.ASTNode>,
-        r.interfaceMembersCannotHaveBodyDeclarations as Rule<ast.ASTNode>,
+        r.InvalidInterfaceMembers as Rule<ast.ASTNode>,
+        r.InterfaceMembersCannotHaveInitializers as Rule<ast.ASTNode>,
+        r.InterfaceMembersCannotBeExtern as Rule<ast.ASTNode>,
+        r.InterfaceMembersCannotHaveBodyDeclarations as Rule<ast.ASTNode>,
       ], this.context)
     ).forEach((msg) => this.error(msg));
 
@@ -84,12 +84,12 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
 
   visitTryCatch(node: ast.TryCatchNode) {
     checkRules(node, [
-      r.tryCatchHasEitherCatchOrFinally,
-      r.onlyOneDefaultCatchBlockAllowed,
+      r.TryCatchHasEitherCatchOrFinally,
+      r.OnlyOneDefaultCatchBlockAllowed,
     ], this.context).forEach((msg) => this.error(msg));
 
     // Visit try block
-    this.visit(node.try.body);
+    this.visit(node.try);
 
     // Visit catch blocks
     node.catch.forEach((catchBlock) => {
@@ -105,14 +105,14 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
 
     // Visit finally block
     if (node.finally) {
-      this.visit(node.finally.body);
+      this.visit(node.finally);
     }
   }
 
   visitVariable(node: ast.VariableNode) {
     checkRules(node, [
-      r.variableHasNameRule,
-      r.mutableVariableMustHaveInitializerRule,
+      r.VariableMustHaveName,
+      r.ConstantVariableMustHaveInitializer,
     ], this.context).forEach((msg) => this.error(msg));
 
     // Visit variable modifiers
@@ -130,7 +130,7 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
   }
 
   visitClass(node: ast.ClassNode) {
-    checkRules(node, [r.classMustHaveNameRule], this.context).forEach((msg) => this.error(msg));
+    checkRules(node, [r.ClassMustHaveName], this.context).forEach((msg) => this.error(msg));
 
     // Visit access modifiers
     node.access.forEach((accessModifier) => this.visit(accessModifier));
@@ -177,13 +177,13 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
   }
 
   visitWhen(node: ast.WhenNode) {
-    checkRules(node, [r.whenMustHaveCondition, r.whenMustHaveThenClause], this.context).forEach((msg) => this.error(msg)); 
+    checkRules(node, [r.WhenMustHaveCondition, r.WhenMustHaveThenClause], this.context).forEach((msg) => this.error(msg)); 
     this.visit(node.condition!);
     node.then?.forEach((stmt) => this.visit(stmt));
   }
 
   visitIf(node: ast.IfNode) {
-    checkRules(node, [r.ifMustHaveCondition, r.ifMustHaveThenClause], this.context).forEach((msg) => this.error(msg));
+    checkRules(node, [r.IfMustHaveCondition, r.IfMustHaveThenClause], this.context).forEach((msg) => this.error(msg));
 
     this.visit(node.condition!);
     this.visit(node.then!);
@@ -193,7 +193,7 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
   visitMatch(node: ast.MatchNode) {
     this.visit(node.expression);
 
-    checkRules(node, [r.matchMustHaveCases], this.context).forEach((msg) => this.error(msg)); 
+    checkRules(node, [r.MatchMustHaveCases], this.context).forEach((msg) => this.error(msg)); 
 
     node.cases.forEach((matchCase) => this.visit(matchCase));
   }
@@ -247,11 +247,11 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
   }
 
   visitIdentifier(node: ast.IdentifierNode) {
-    checkRules(node, [r.identifierHasNameRule], this.context).forEach((msg) => this.error(msg)); 
+    checkRules(node, [r.IdentifierMustHaveName], this.context).forEach((msg) => this.error(msg)); 
   }
 
   visitImport(node: ast.ImportNode) {
-    checkRules(node, [r.importHasSource, r.importHasSymbols], this.context).forEach((msg) =>
+    checkRules(node, [r.ImportMustHaveSource], this.context).forEach((msg) =>
       this.error(msg)
     );
   }
@@ -334,7 +334,7 @@ export class SyntaxRulesAstVisitor extends BaseAstVisitor {
 
   visitNumber(node: ast.NumberNode) {
     checkRules(node, [
-      r.fractionHasNonZeroDenominator as Rule<ast.NumberNode>,
+      r.FractionHasZeroDenominator as Rule<ast.NumberNode>,
     ], this.context).forEach((msg) => this.error(msg));
   }
 
