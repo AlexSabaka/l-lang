@@ -109,7 +109,7 @@ const ExternFunctionCannotHaveBody = createRule<ast.FunctionNode>()
   .addSeverity(RuleSeverity.Error)
   .addCode("LL0013")
   .addMessage("Extern function cannot have a body")
-  .addTest((node) => node.extern && node.body && node.body.length > 0)
+  .addTest((node) => node.extern && !!node.body)
   .build();
 
 const FunctionParameterMustHaveName = createRule<ast.FunctionParameterNode>()

@@ -1,9 +1,5 @@
 // NodeType definitions
-export type NodeType =
-  | AllNodeTypes
-  | CommentType
-  | IdentifierType
-  | NumberType;
+export type NodeType = AllNodeTypes | CommentType | IdentifierType | NumberType;
 
 export type AllNodeTypes =
   | "program"
@@ -47,7 +43,7 @@ export type AllNodeTypes =
   | "for"
   | "for-each"
   | "try-catch"
-  | "assignment"
+  | "simple-assignment"
   | "compound-assignment"
   | "while"
   | "match"
@@ -63,14 +59,9 @@ export type AllNodeTypes =
   | "formatted-string"
   | "format-expression";
 
+export type CommentType = "comment" | "control-comment";
 
-export type CommentType =
-  | "comment"
-  | "control-comment";
-
-export type IdentifierType =
-  | "simple-identifier"
-  | "composite-identifier";
+export type IdentifierType = "simple-identifier" | "composite-identifier";
 
 export type NumberType =
   | "octal-number"
@@ -82,20 +73,44 @@ export type NumberType =
 
 export interface Location {
   source: string | undefined;
-  start:  Position;
-  end:    Position;
+  start: Position;
+  end: Position;
 }
 
 export interface Position {
   offset: number;
-  line:   number;
+  line: number;
   column: number;
+}
+
+export function getNodeIterableKeys(node: ASTNode): (keyof ASTNode)[] {
+  return Object.keys(node).filter(
+    (key) =>
+      key !== "_type" && key !== "_location" && key !== "_parent"
+  ) as (keyof ASTNode)[];
+}
+
+export function isAstNode(node: any): node is ASTNode {
+  return node && typeof node === "object" && "_type" in node;
+}
+
+export function isIterableAstNode(node: any): node is ASTNode[] {
+  return (
+    Array.isArray(node) &&
+    node.length > 0 &&
+    typeof node[0] === "object" &&
+    node[0] !== null &&
+    "_type" in node[0]
+  );
 }
 
 // Base AST Node class
 export interface ASTNode<T extends NodeType = NodeType> {
-  readonly _type: T;
-  readonly _location: Location;
+  [key: string]: any;
+
+  _type: T;
+  _location: Location;
+  _parent: ASTNode | undefined;
 }
 
 // Program Node
@@ -152,10 +167,8 @@ export interface FunctionNode extends ASTNode<"function"> {
   extern: boolean;
   modifiers: ModifierNode[];
   params: FunctionParameterNode[];
-  ret: TypeNode | undefined;
-  body: ASTNode[];
-
-
+  returns: TypeNode | undefined;
+  body: ASTNode | undefined;
 }
 
 // Function Parameter Node
@@ -232,7 +245,7 @@ export interface ImportNode extends ASTNode<"import"> {
 }
 
 export interface ImportDefinition {
-  source:   ImportSource;
+  source: ImportSource;
   symbols?: SymbolAlias[];
 }
 
@@ -242,10 +255,9 @@ export interface SymbolAlias {
 }
 
 export interface ImportSource {
-  file?:      StringNode;
+  file?: StringNode;
   namespace?: IdentifierNode;
 }
-
 
 // Class Node
 export interface ClassNode extends ASTNode<"class"> {
@@ -261,7 +273,7 @@ export interface ClassNode extends ASTNode<"class"> {
 export interface InterfaceNode extends ASTNode<"interface"> {
   name: TypeNameNode;
   generics: InterfaceGenericTypeNameNode[];
-  access: ModifierNode[];
+  modifiers: ModifierNode[];
   implements: TypeNode[];
   body: ASTNode[];
 }
@@ -269,12 +281,12 @@ export interface InterfaceNode extends ASTNode<"interface"> {
 // Implements Node
 export interface ImplementsNode extends ASTNode<"implements"> {
   type: TypeNode;
-};
+}
 
 // Extends Node
 export interface ExtendsNode extends ASTNode<"extends"> {
   type: TypeNode;
-};
+}
 
 // Interface Generic Type Name Node
 export interface InterfaceGenericTypeNameNode extends ASTNode<"interface"> {
@@ -305,14 +317,13 @@ export interface CatchFilterNode {
   type: TypeNameNode;
 }
 
-
 // Await Node
 export interface AwaitNode extends ASTNode<"await"> {
   expression: ASTNode;
 }
 
 // Assignment Node
-export interface AssignmentNode extends ASTNode<"assignment"> {
+export interface SimpleAssignmentNode extends ASTNode<"simple-assignment"> {
   assignable: IndexerNode | IdentifierNode | ListNode;
   value: ASTNode;
 }
@@ -320,7 +331,8 @@ export interface AssignmentNode extends ASTNode<"assignment"> {
 // Compound Assignment Node
 export interface CompoundAssignmentNode extends ASTNode<"compound-assignment"> {
   assignable: IndexerNode | IdentifierNode | ListNode;
-  compoundOperator: string;
+  operator: string;
+  value: ASTNode;
 }
 
 // Indexer Node
@@ -386,7 +398,13 @@ export interface MatchCaseNode extends ASTNode<"match-case"> {
 }
 
 // Base Pattern Node
-export type PatternNode = AnyPatternNode | ListPatternNode | VectorPatternNode | MapPatternNode | IdentifierPatternNode | ConstantPatternNode;
+export type PatternNode =
+  | AnyPatternNode
+  | ListPatternNode
+  | VectorPatternNode
+  | MapPatternNode
+  | IdentifierPatternNode
+  | ConstantPatternNode;
 
 // Any Pattern Node
 export interface AnyPatternNode extends ASTNode<"any-pattern"> {}
@@ -423,7 +441,13 @@ export interface ConstantPatternNode extends ASTNode<"constant-pattern"> {
 }
 
 // Base Number Node
-export type NumberNode = IntegerNumberNode | FloatNumberNode | FractionNumberNode | HexNumberNode | OctalNumberNode | BinaryNumberNode;
+export type NumberNode =
+  | IntegerNumberNode
+  | FloatNumberNode
+  | FractionNumberNode
+  | HexNumberNode
+  | OctalNumberNode
+  | BinaryNumberNode;
 
 // Integer Number Node
 export interface IntegerNumberNode extends ASTNode<"integer-number"> {
@@ -485,7 +509,8 @@ export interface SimpleIdentifierNode extends ASTNode<"simple-identifier"> {
 }
 
 // Composite Identifier Node
-export interface CompositeIdentifierNode extends ASTNode<"composite-identifier"> {
+export interface CompositeIdentifierNode
+  extends ASTNode<"composite-identifier"> {
   parts: string[];
   id: string;
 }
@@ -525,4 +550,3 @@ export interface FunctionCarryingSequence {
   memberFunction: boolean;
   arguments: ASTNode[];
 }
-

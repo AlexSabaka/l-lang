@@ -30,10 +30,12 @@ export enum ScopeType {
 
 export interface SymbolEntry {
   name: IdentifierNode | TypeNameNode | undefined;
-  type: NodeType; // Extract<NodeType, "variable" | "function" | "class" | "interface">;
+  type: NodeType;
   scope: ScopeType;
-  mutability: boolean;
   value: ASTNode | undefined;
+  mutability: boolean | undefined;
+  exportName: IdentifierNode | undefined;
+  visibility: "public" | "private" | "protected" | "internal";
 }
 
 export interface Scope {
@@ -72,6 +74,8 @@ export class SymbolTable {
       type: node._type,
       scope: this.scopes[0].scope,
       mutability: (node as VariableNode)?.mutable ?? false,
+      exportName: undefined,
+      visibility: "public",
       value: node,
     });
   }

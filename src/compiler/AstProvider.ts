@@ -2,10 +2,28 @@ import fs from "node:fs";
 import peggy from "peggy";
 
 import * as ast from "./ast";
+import path from "node:path";
 
 const grammar = fs.readFileSync("./compiler/grammar/l-lang.pegjs", {
   encoding: "utf-8",
 });
+
+function assignParentNodeReferences(
+  node: ast.ASTNode,
+  parent?: ast.ASTNode
+): void {
+  node._parent = parent;
+
+  for (const key of ast.getNodeIterableKeys(node)) {
+    if (ast.isIterableAstNode(node[key])) {
+      node[key].forEach((child: ast.ASTNode) =>
+        assignParentNodeReferences(child, node)
+      );
+    } else if (ast.isAstNode(node[key])) {
+      assignParentNodeReferences(node[key] as ast.ASTNode, node);
+    }
+  }
+}
 
 interface CacheEntry {
   ast: ast.ProgramNode;
@@ -16,35 +34,40 @@ export class AstProvider {
   private cache: Map<string, CacheEntry> = new Map<string, CacheEntry>();
   private parser: peggy.Parser = peggy.generate(grammar);
 
-  load(file: string) {
+  loadFile(file: string, basedir?: string) {
     if (this.cache.has(file)) {
       return;
     }
 
-    const source = fs.readFileSync(file, { encoding: "utf-8" });
+    const filePath = path.resolve(basedir ?? "", file);
+    const source = fs.readFileSync(filePath, { encoding: "utf-8" });
     const ast = this.parser.parse(source, {
       startRule: "Program",
-      grammarSource: file,
+      grammarSource: filePath,
       cache: true,
     });
 
-    this.cache.set(file, { ast, source });
+    assignParentNodeReferences(ast);
+
+    this.cache.set(filePath, { ast, source });
   }
 
-  getAst(file: string): ast.ProgramNode | undefined {
-    if (!this.cache.has(file)) {
-      this.load(file);
+  getAst(file: string, basedir?: string): ast.ProgramNode | undefined {
+    const filePath = path.resolve(basedir ?? "", file);
+    if (!this.cache.has(filePath)) {
+      this.loadFile(file, basedir);
     }
 
-    return this.cache.get(file)?.ast;
+    return this.cache.get(filePath)?.ast;
   }
 
   getSource(location: ast.Location, overhead: number = 0): string {
-    if (!this.cache.has(location.source!)) {
-      this.load(location.source!);
+    const filePath = path.resolve(location.source!);
+    if (!this.cache.has(filePath)) {
+      throw new Error(`File ${filePath} not found in the AST cache`);
     }
 
-    const source = this.cache.get(location.source!)?.source ?? "";
+    const source = this.cache.get(filePath)?.source ?? "";
     const start = location.start.offset - overhead;
     const end = location.end.offset + overhead;
     const res = source.slice(

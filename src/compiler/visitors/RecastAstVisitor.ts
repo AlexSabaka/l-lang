@@ -20,7 +20,7 @@ export class RecastAstVisitor extends BaseAstVisitor {
 
     const metadataString =
       `// Module: ${this.context.mainModule}\n` +
-      `// File: ${this.context.dependencyGraph.rootUnit.path}\n` +
+      `// File: ${this.context.dependencyGraph.rootUnit.name.fullName}\n` +
       `// Compiler version: l-lang-js-v${COMPILER_VERSION}\n` +
       `// Compiled at: ${new Date().toISOString()}\n` +
       `"use strict";\n\n`;
@@ -77,9 +77,7 @@ export class RecastAstVisitor extends BaseAstVisitor {
     const params = node.params.map(
       (param) => this.visit(param) as K.PatternKind
     );
-    const bodyStatements = node.body
-      .map((stmt) => this.visit(stmt))
-      .filter((x): x is K.StatementKind => x !== null && n.Statement.check(x));
+    const bodyStatements = this.visit(node.body!);
     const body = b.blockStatement(bodyStatements);
     const isAsync = node.async;
 

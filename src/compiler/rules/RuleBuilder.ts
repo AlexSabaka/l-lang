@@ -48,6 +48,93 @@ export interface Rule<T extends ast.ASTNode> {
   test: (node: T) => boolean;
 }
 
+
+const tab = "\t    ";
+const minimumPaddingLength = 10;
+const totalTerminalWidth = process.stdout.isTTY ? process.stdout.columns : 80;
+
+function formatMessage(node: ast.ASTNode, rule: Rule<ast.ASTNode>, context: CompilationContext) {
+  const text = context.astProvider.getSource(node._parent?._location ?? node._location);
+  const textLength = text.length;
+  const startColumn =
+    node._location.start.column + (textLength - text.length);
+  const startLine = node._location.start.line;
+  const atSource = `at ${node._location.source}:${startLine}:${startColumn}`;
+  const availableWidth =
+    totalTerminalWidth - atSource.length - minimumPaddingLength - tab.length;
+  const lines = text.trim().split("\n")
+    .filter((x) => x.trim().length > 0)
+    .map(
+      (x) =>
+        tab +
+        chalk.italic(
+          x.length > availableWidth ? x.slice(0, availableWidth - 3) + "..." : x
+        )
+    );
+  const exceptLastLine = lines.slice(0, -1).join("\n");
+  const lastLine = lines.at(-1);
+  const paddingLength =
+    totalTerminalWidth - atSource.length - (lastLine?.length ?? 0);
+  const padding = ".".repeat(
+    paddingLength > 0 ? paddingLength : minimumPaddingLength
+  );
+
+  return (
+    `\n\t${chalk.inverse(`${rule.severity[0].toUpperCase()}${rule.code}`)} ${
+      rule.message
+    }\n` +
+    `${exceptLastLine}${lines.length > 1 ? "\n" : ""}` +
+    `${lastLine}${chalk.dim.gray(padding)}${chalk.dim(atSource)}\n`
+  );
+}
+
+
+export interface RuleValidationMessage {
+  code: string;
+  severity: RuleSeverity;
+  source: string;
+  line: number;
+  get message(): string;
+}
+
+export class RuleValidationResultsCollection {
+  private collection: RuleValidationMessage[] = [];
+
+  public add(node: ast.ASTNode, rule: Rule<ast.ASTNode>, context: CompilationContext): RuleValidationMessage {
+    const message = {
+      code: rule.code,
+      severity: rule.severity,
+      source: node._location.source ?? "<unknown>",
+      line: node._location.start.line,
+      get message() {
+        return formatMessage(node, rule, context);
+      },
+    };
+    this.collection.push(message);
+    return message;
+  }
+
+  public get hasErrors(): boolean {
+    return this.collection.some((x) => x.severity === RuleSeverity.Error);
+  }
+
+  public get errors(): RuleValidationMessage[] {
+    return this.collection.filter((x) => x.severity === RuleSeverity.Error);
+  }
+
+  public get warnings(): RuleValidationMessage[] {
+    return this.collection.filter((x) => x.severity === RuleSeverity.Warning);
+  }
+
+  public get messages(): RuleValidationMessage[] {
+    return this.collection.filter((x) => x.severity === RuleSeverity.Message);
+  }
+
+  public get all(): RuleValidationMessage[] {
+    return this.collection;
+  }
+}
+
 /**
  * Creates a new rule builder.
  * @returns A new rule builder.
@@ -67,28 +154,31 @@ export function checkRules<T extends ast.ASTNode>(
   node: T,
   rules: Rule<T>[],
   context: CompilationContext
-): string[] {
+): RuleValidationMessage[] {
   return rules
     .map((rule) =>
       rule.test(node)
-        ? formatMessage(node, rule as Rule<ast.ASTNode>, context)
+        ? context.results.add(node, rule as Rule<ast.ASTNode>, context)
         : null
     )
-    .filter((x): x is string => x !== null); // Filter out null values cleanly
+    .filter((x) => x !== null); // Filter out null values cleanly
+}
+
+export interface NodeTestFunction<T extends ast.ASTNode> {
+  (node: T): boolean;
 }
 
 export class RuleBuilder<T extends ast.ASTNode> {
   private code: string = "";
   private severity: RuleSeverity = RuleSeverity.None;
   private message: string = "";
-  private test: (node: T) => boolean = (node) => false;
+  private tests: NodeTestFunction<T>[] = [];
   private filterTypes: T["_type"][] = [];
   private invertFilter: boolean = false;
 
   addCode(code: string | number): RuleBuilder<T> {
-    this.code = typeof code === "string"
-      ? code
-      : "LL" + code.toString().padStart(4, "0");
+    this.code =
+      typeof code === "string" ? code : "LL" + code.toString().padStart(4, "0");
     return this;
   }
 
@@ -103,7 +193,7 @@ export class RuleBuilder<T extends ast.ASTNode> {
   }
 
   addTest(test: (node: T) => boolean): RuleBuilder<T> {
-    this.test = test;
+    this.tests.push(test);
     return this;
   }
 
@@ -121,12 +211,16 @@ export class RuleBuilder<T extends ast.ASTNode> {
   build(): Rule<T> {
     return this.makeRule<T>(
       this.invertFilter
-        ? (node) => !this.filterTypes.includes(node._type) && this.test(node)
-        : (node) => this.filterTypes.includes(node._type) && this.test(node)
+        ? this.applyTests((node) => !this.filterTypes.includes(node._type))
+        : this.applyTests((node) => this.filterTypes.includes(node._type))
     );
   }
 
-  private makeRule<T extends ast.ASTNode>(test: (node: T) => boolean): Rule<T> {
+  private applyTests(filter: NodeTestFunction<T>): NodeTestFunction<T> {
+    return (node) => filter(node) && this.tests.every((test) => test(node));
+  }
+
+  private makeRule<T extends ast.ASTNode>(test: NodeTestFunction<T>): Rule<T> {
     return {
       message: this.message,
       code: this.code,
@@ -134,43 +228,4 @@ export class RuleBuilder<T extends ast.ASTNode> {
       test,
     };
   }
-}
-
-const tab = "    ";
-const minimumPaddingLength = 10;
-const totalTerminalWidth = process.stdout.isTTY ? process.stdout.columns : 80;
-
-function formatMessage(
-  node: ast.ASTNode,
-  rule: Rule<ast.ASTNode>,
-  context: CompilationContext
-) {
-  const text = context.astProvider.getSource(node._location);
-  const textLength = text.length;
-  const trimmedStartText = text.trimStart();
-  const startColumn =
-    node._location.start.column + (textLength - trimmedStartText.length);
-  const startLine = node._location.start.line;
-  const atSource = `at ${node._location.source}:${startLine}:${startColumn}`;
-  const availableWidth = totalTerminalWidth - atSource.length - minimumPaddingLength - tab.length;
-  const lines = trimmedStartText
-    .trimEnd()
-    .split("\n")
-    .filter((x) => x.trim().length > 0)
-    .map((x) => tab + chalk.italic(x.length > availableWidth ? x.slice(0, availableWidth - 3) + "..." : x));
-  const exceptLastLine = lines.slice(0, -1).join("\n");
-  const lastLine = lines.at(-1);
-  const paddingLength =
-    totalTerminalWidth - atSource.length - (lastLine?.length ?? 0);
-  const padding = ".".repeat(
-    paddingLength > 0 ? paddingLength : minimumPaddingLength
-  );
-
-  return (
-    `${chalk.inverse(`${rule.severity[0].toUpperCase()}${rule.code}`)} ${
-      rule.message
-    }\n` +
-    `${exceptLastLine}${lines.length > 1 ? "\n" : ""}` +
-    `${lastLine}${chalk.dim.gray(padding)}${chalk.dim(atSource)}\n`
-  );
 }

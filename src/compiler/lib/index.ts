@@ -2,9 +2,9 @@ import { question } from "readline-sync";
 import { readFileSync, writeFileSync } from "node:fs";
 
 import evaljs from "./evaljs";
-import { JSCompilerAstVisitor } from "../compiler/visitors";
-import { CompilationContext, LogLevel } from "../compiler/CompilationContext";
-import { encodeIdentifier } from "../compiler/utils";
+import { JSCompilerAstVisitor } from "../visitors";
+import { CompilationContext, LogLevel } from "../CompilationContext";
+import { encodeIdentifier } from "../utils";
 import { deepeq } from "./deepeq";
 
 

@@ -62,15 +62,15 @@ function formatFunction(scope: ScopeType, async: boolean, name: string, params: 
   const arrowFuncName = !!name ? `const ${name} =` : "";
 
   const format = {
-    [ScopeType.program]: () => `${kw}function ${name ?? ""}(${params}) {\n${body.join(";\n")}\n}`,
-    [ScopeType.function]: () => `${arrowFuncName} ${kw} (${params}) => {\n${body.join(";\n")}\n}`,
-    [ScopeType.method]: () => `${arrowFuncName} ${kw} (${params}) => {\n${body.join(";\n")}\n}`,
-    [ScopeType.match]: () => `(${name} = ${kw} (${params}) => {\n${body.join(";\n")}\n})`,
-    [ScopeType.when]: () => `(${name} = ${kw} (${params}) => {\n${body.join(";\n")}\n})`,
-    [ScopeType.if]: () => `(${name} = ${kw} (${params}) => {\n${body.join(";\n")}\n})`,
-    [ScopeType.class]: () => `${kw}${name}(${params}) {\n${body.join(";\n")}\n}`,
+    [ScopeType.program]: () => `${kw}function ${name ?? ""}(${params}) {\n${body}\n}`,
+    [ScopeType.function]: () => `${arrowFuncName} ${kw} (${params}) => {\n${body}\n}`,
+    [ScopeType.method]: () => `${arrowFuncName} ${kw} (${params}) => {\n${body}\n}`,
+    [ScopeType.match]: () => `(${name} = ${kw} (${params}) => {\n${body}\n})`,
+    [ScopeType.when]: () => `(${name} = ${kw} (${params}) => {\n${body}\n})`,
+    [ScopeType.if]: () => `(${name} = ${kw} (${params}) => {\n${body}\n})`,
+    [ScopeType.class]: () => `${kw}${name}(${params}) {\n${body}\n}`,
     [ScopeType.interface]: () => `${kw}${name}(${params});`,
-    [ScopeType.variable]: () => `(${name} = ${kw} (${params}) => {\n${body.join(";\n")}\n})`,
+    [ScopeType.variable]: () => `(${name} = ${kw} (${params}) => {\n${body}\n})`,
   };
 
   if (!format[scope]) {
@@ -111,12 +111,11 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
   }
 
   compile(root: ast.ASTNode) {
-
     const js = this.visit(root);
 
     const metadataString = 
       `// Module: ${this.context.mainModule}\n` +
-      `// File: ${this.context.dependencyGraph.rootUnit.path}\n` +
+      `// File: ${this.context.dependencyGraph.rootUnit.name.fullName}\n` +
       `// Compiled at: ${new Date()}\n`;
 
     return metadataString +
@@ -127,14 +126,6 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
   visitProgram(node: ast.ProgramNode) {
     // this.context.log(LogLevel.Verbose, node);
     return node.program.map(n => this.visit(n)).join(";\n");
-  }
-
-  visitImport(node: ast.ImportNode) {
-    // TODO: ...
-  }
-
-  visitExport(node: ast.ExportNode) {
-    // TODO: ...
   }
 
   visitTypeName(node: ast.TypeNameNode) {
@@ -210,7 +201,7 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
     this.pushScope(ScopeType.interface);
 
     const name = this.visit(node.name);
-    const accessModifiers = node.access
+    const accessModifiers = node.modifiers
       .map((a) => this.visit(a))
       .join(" ");
     // TODO: Add implements
@@ -315,7 +306,7 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
     const name = node.name && this.visit(node.name);
 
     const params = node.params.map((x) => this.visit(x)).join(",");
-    const body = node.body.map((x) => this.visit(x));
+    const body = this.visit(node.body!);
 
     this.popScope();
 
@@ -378,7 +369,7 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
     return `while (${condition}) {\n${body}\n}`;
   }
 
-  visitAssignment(node: ast.AssignmentNode) {
+  visitAssignment(node: ast.SimpleAssignmentNode) {
     const assignable = this.visit(node.assignable);
     const value = this.visit(node.value);
 
@@ -530,12 +521,12 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
   }
 
   visitList(node: ast.ListNode) {
-    const [fname, ...fargs] = node.nodes;
-    const callee = this.visit(fname);
-    const args = fargs.map((x) => this.visit(x)).filter(x => !!x);
+    const calleeType = node.nodes[0]._type;
+    const nodes = node.nodes.map(x => this.visit(x));
+    const [callee, ...args] = nodes;
     if (
-      fname._type === "simple-identifier" ||
-      fname._type === "composite-identifier"
+      calleeType === "simple-identifier" ||
+      calleeType === "composite-identifier"
     ) {
       if (this.functions.includes(callee)) {
         return `${callee}(${args.join(",")})`;
@@ -554,9 +545,9 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
       }
     } else {
       if (this.inScope(ScopeType.variable)) {
-        return `(${callee}${args.length>0?",":""}${args.join(",")})`;
+        return `(${nodes.filter(x => !!x).join(",")})`;
       }
-      return `${callee}${args.length>0?";\n":""}${args.join(";\n")}`;
+      return `${nodes.filter(x => !!x).join(";\n")}`;
     }
   }
 

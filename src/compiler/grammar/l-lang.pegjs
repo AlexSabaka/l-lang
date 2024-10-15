@@ -34,10 +34,42 @@ Program "program"
 
 
 Expression "expression"
-  = Assignment
+  =
+    Comment
 
+  // Import and export
   / Import
   / Export
+
+  // Declarations
+  / Variable
+  / Function
+
+  // Data types declarations
+  / Interface
+  / TypeDef
+  / Class
+  / Struct
+  / Enum
+
+  // Await operator
+  / Await
+
+  // Control flow expressions
+  / When
+  / If
+  / Cond
+  / For
+  / ForEach
+  / While
+  / TryCatchFinally
+  / FunctionCarrying
+  / Match
+
+  // 
+  / Assignment
+  / Indexer
+  / Spread
 
   // Data structures
   / List
@@ -46,38 +78,12 @@ Expression "expression"
   / Matrix
   / Quote
 
-  // Declarations
-  / Variable
-  / Function
-
-  // Type definitions
-  / Interface
-  / Typedef
-  / Class
-
-  // Keywords
-  / Await
-
-  // Control flow
-  / When
-  / If
-  / Cond
-  / For
-  / ForEach
-  / While
-  / TryCatchFinally
-
-  / Match
-
-  / FunctionCarrying
-
+  // Literals
+  / Identifier
   / Number
-
   / String
-  / IndexerAccess
-  / Identifier 
-  / Comment
-
+  / Boolean
+  / Nil
 
 
 // Lists
@@ -132,7 +138,7 @@ MatrixRow
 
 // Maps
 Map "map"
-  = _ "{" _ values:MapBody|.., _ / ","| _ "}" _ {
+  = _ "{" _ values:MapBody|.., ","?| _ "}" _ {
     return makeNode("map", { values });
   }
 
@@ -141,7 +147,7 @@ MapBody
   / Comment
 
 KeyValue "key-value"
-  = _ ":" _ key:Key _ value:Expression _ {
+  = _ ":" _ key:Key _ value:Expression? _ {
     return makeNode("key-value", { key, value });
   }
 
@@ -161,12 +167,12 @@ Key "key"
 //        f e r            |         f e r)
 // 
 Export "export"
-  = _ "export" __ exports:ExportAlias|1.., _ / ","| {
+  = _ ExportKw __ exports:ExportAlias|1.., ","?| {
     return makeNode("export", { exports })
   }
 
 ExportAlias
-  = symbol:(Identifier / Type) _ as:(":as" __ @Identifier)? _ {
+  = symbol:(Identifier / Type) _ as:(AsModKw __ @Identifier)? _ {
     return { symbol, as };
   }
 
@@ -185,7 +191,7 @@ ExportAlias
 //        { a b :as c } from "file.lisp"       |
 //        { a :as b c } from module.namespace  |
 Import "import"
-  = _ "import" __ imports:ImportDefinition|1.., _ / ","| {
+  = _ ImportKw __ imports:ImportDefinition|1.., ","?| {
     return makeNode("import", { imports });
   }
 
@@ -194,12 +200,12 @@ ImportDefinition
   / ImportSource
 
 ImportSymbolsDefinition
-  = "{" symbols:SymbolAlias|1.., _ / "," | "}" _ "from" __ source:ImportSource {
+  = "{" symbols:SymbolAlias|1.., ","? | "}" _ FromKw __ source:ImportSource {
     return { ...source, symbols };
   }
 
 SymbolAlias
-  = _ symbol:TypeName _ as:(":as" __ @TypeName)? _ {
+  = _ symbol:TypeName _ as:(AsModKw __ @TypeName)? _ {
     return { symbol, as };
   }
 
@@ -256,7 +262,7 @@ BasicTypes
 
 // Function types
 FunctionType
-  = _ "fn" _ "[" params:Type* "]" _ "->" _ ret:Type _ {
+  = _ async:(AsyncKw __)? _ FunctionKw _ "[" params:Type* "]" _ RightArrowKw _ ret:Type _ {
     return makeNode("function-type", { params, ret });
   }
 
@@ -270,21 +276,25 @@ SimpleType
 
 // Generic types
 GenericType
-  = _ name:TypeName "<" generic:Type ">" _ {
-    return makeNode("generic-type", { name, generic });
+  = _ name:TypeName "<" generics:Type|1.., ","?| ">" _ {
+    return makeNode("generic-type", { name, generics });
   }
 
 
 // Map types
 MapType
-  = _ "{" keys:KeyDefinition|.., _ / ","| "}" _ {
+  = _ "{" keys:KeyDefinition|.., ","?| "}" _ {
     return makeNode("map-type", { keys });
   }
 
 KeyDefinition
-  = _ ":" _ key:(Identifier / String) _ "<-" _ type:Type _ {
+  = _ ":" _ key:MapKey _ LeftArrowKw _ type:Type _ {
     return makeNode("map-key-type", { key, type });
   }
+
+MapKey
+  = Identifier
+  / String
 
 
 // Mapped types
@@ -294,7 +304,11 @@ MappedType
   }
 
 FieldsMapping
-  = _ "(" _ mutable:VariableMutableMode __ modifiers:Modifier* _ name:(KeySelector / Identifier) _ type:("<-" _ @(TypeSelector / Type))  _ ")" _ {
+  = _ "("
+    _ mutable:LetMutMode __ modifiers:Modifier*
+    _ name:(KeySelector / Identifier)
+    _ type:(LeftArrowKw _ @(TypeSelector / Type))
+    _ ")" _ {
     // TODO: complete
     return makeNode("type-mapping", {
       
@@ -302,7 +316,7 @@ FieldsMapping
   }
 
 KeySelector
-  = _ "[" _ key:Identifier __ "keyof" __ type:TypeName _ "]" _ {
+  = _ "[" _ key:Identifier __ KeyOfKw __ type:TypeName _ "]" _ {
     return { key, type };
   }
 
@@ -312,28 +326,36 @@ TypeSelector
   }
 
 
+// Modifier
+Modifier
+  = ":" modifier:ModifierKw _ {
+    return makeNode("modifier", { modifier });
+  }
+
 // Variable definition
 Variable
-  = _ mutable:VariableMutableMode __ modifiers:Modifier* _ name:Identifier? _ type:("<-" _ @Type)? _ value:Expression? {
+  = _ mutable:LetMutMode __ modifiers:Modifier* _ name:Identifier? _ type:(LeftArrowKw _ @Type)?
+    _ value:Expression? {
     return makeNode("variable", { name, mutable, modifiers, type, value });
   }
 
-VariableMutableMode
-  = "let" { return false; }
-  / "mut" { return true; }
+LetMutMode
+  = LetKw { return false; }
+  / MutKw { return true; }
 
 
 // Function definition
 Function
-  = _ async:("async" __)? _ "fn" __ modifiers:(@Modifier _)* _ name:Identifier? _
-    _ "[" _ params:(@FunctionParameter _ ","?)* _ "]" _ ret:("->" _ @Type)? _ body:Expression* _
+  = _ async:(AsyncKw __)? _ FunctionKw __ modifiers:(@Modifier _)*
+    _ name:Identifier? _ "[" _ params:FunctionParameter|.. , ","?| _ "]" _ returns:(RightArrowKw _ @Type)?
+    _ body:Expression? _
   {
     const extern = !!modifiers.find(x => x.modifier === "extern");
-    return makeNode("function", { name, async: !!async, extern, modifiers, params, ret, body });
+    return makeNode("function", { name, async: !!async, extern, modifiers, params, returns, body });
   }
 
 FunctionParameter
-  = _ name:Identifier _ modifiers:(@Modifier _)* _ type:("<-" _ @Type)? {
+  = _ name:Identifier _ modifiers:(@Modifier _)* _ type:(LeftArrowKw _ @Type)? {
     return makeNode("parameter", { name, modifiers, type });
   }
 
@@ -368,7 +390,7 @@ ClassName
   }
 
 Class
-  = _ "defclass" __ access:(@Modifier _)* _ className:ClassName? _ ext:(Implements / Extends)* constraints:GenericTypeConstraints* _ body:ClassBodyDefinition* {
+  = _ DefClassKw __ modifiers:(@Modifier _)* _ className:ClassName? _ ext:(Implements / Extends)* constraints:GenericTypeConstraints* _ body:ClassBodyDefinition* {
     const { name, generics } = className;
     const genericsWithConstraints = (generics ?? []).map(x => {
       const genericConstraints = (constraints ?? [])
@@ -380,21 +402,37 @@ Class
 
     const _implements = ext.filter(x => x._type === "implements").map(x => { return { ...x.type } });
     const _extends = ext.filter(x => x._type === "extends").map(x => { return { ...x.type } });
-    return makeNode("class", { name, access, implements: _implements, extends: _extends, generics: genericsWithConstraints, body });
+    return makeNode("class", { name, modifiers, implements: _implements, extends: _extends, generics: genericsWithConstraints, body });
   }
 
 ClassBodyDefinition
-  = Import
-  / Class
-  / Interface
-  / Function
-  / Variable
-  / Comment
+  = Expression
+
+
+// Enum
+Enum
+  = _ DefEnumKw __ modifiers:(@Modifier _)* _ name:Identifier? _ body:EnumBody* {
+    return makeNode("enum", { name, modifiers, body });
+  }
+
+EnumBody
+  = Expression
+
+
+// Struct
+Struct
+  = _ DefStructKw __ modifiers:(@Modifier _)* _ name:Identifier? _ body:StructBody* {
+    return makeNode("struct", { name, modifiers, body });
+  }
+
+StructBody
+  = Expression
 
 
 // Typedef
-Typedef
-  = _ "deftype" _ name:ClassName {
+TypeDef
+  = _ DefTypeKw __ modifiers:(@Modifier _)* _ name:Identifier? _ {
+    // Continue...
     return makeNode("type-def", { });
   }
 
@@ -427,8 +465,8 @@ InterfaceName
   }
 
 Interface
-  = _ "definterface" _ access:(@Modifier _)* _ name:InterfaceName? _ impl:Implements? _ body:InterfaceBody* {
-    return makeNode("interface", { ...name, access, implements: impl, body });
+  = _ DefInterfaceKw _ modifiers:(@Modifier _)* _ name:InterfaceName? _ impl:Implements? _ body:InterfaceBody* {
+    return makeNode("interface", { ...name, modifiers, implements: impl, body });
   }
 
 InterfaceBody
@@ -436,12 +474,12 @@ InterfaceBody
 
 
 Implements
-  = _ ":implements" _ type:TypeName _ {
+  = _ ImplementsModKw _ type:TypeName _ {
     return makeNode("implements", { type });
   }
 
 Extends
-  = _ ":extends" _ type:TypeName _ {
+  = _ ExtendsModKw _ type:TypeName _ {
     return makeNode("extends", { type });
   }
 
@@ -453,89 +491,82 @@ GenericTypeConstraints
   }
 
 Where
-  = _ ":where" _ name:TypeName _ {
+  = _ WhereModKw _ name:TypeName _ {
     return name;
   }
 
 // Constraints
 TypeConstraint
-  = _ ":" constraint:ConstraintType _ value:Identifier _ {
+  = _ ":" constraint:ConstraintKw _ value:Expression _ {
     return { constraint, value };
   }
-
-ConstraintType
-  = "implements"
-  / "inherits"
-  / "is"
-  / "has"
-
-// Modifiers
-Modifier
-  = _ ":" modifier:ModifierType _ {
-    return makeNode("modifier", { modifier });
-  }
-
-ModifierType
-  = "public"
-  / "private"
-  / "static"
-  / "internal"
-  / "extern"
-  / "override"
-  / "explicit-cast"
-  / "implicit-cast"
-  / "extension"
-  / "operator"
-  / "in"
-  / "out"
-  / "ref"
-  / "readonly"
-  / "nullable"
-  / "ctor"
 
 
 // Await keyword
 Await
-  = _ "await" __ expression:Expression _ {
+  = _ AwaitKw __ expression:Expression _ {
     return makeNode("await", { expression });
   }
 
 
+// Spread operator
+Spread
+  = _ SpreadKw expression:Expression _ {
+    return makeNode("spread", { expression });
+  }
+
 // Assignment statement
 Assignment
-  = _ assignable:Assignable _ operator:Control? "=" _ value:Expression _ {
-    return makeNode(!!operator ? "compound-assignment" : "assignment", { assignable, value, compoundOperator: operator ?? undefined });
+  = SimpleAssignment
+  / CompoundAssignment
+
+SimpleAssignment
+  = _ assignable:Assignable _ AssignmentOperatorKw _ value:Expression _ {
+    return makeNode("simple-assignment", { assignable, value });
   }
+
+CompoundAssignment
+  = _ assignable:Assignable _ operator:$CompoundAssignmentOperator _ value:Expression _ {
+    return makeNode("compound-assignment", { assignable, value, operator });
+  }
+
+CompoundAssignmentOperator
+  = Control AssignmentOperatorKw
 
 Assignable
   = List
-  / IndexerAccess
+  / Vector
+  / Map
+  / Matrix
+  / Indexer
   / Identifier
 
-IndexerAccess
-  = id:Identifier _ "[" index:Expression "]" {
-    return makeNode("indexer", { id, index })
+Indexer
+  = id:Identifier indicies:("[" @Expression|1.., ","?| "]")|1..| {
+    return makeNode("indexer", { id, indicies })
   }
 
 
 // Try-Catch-Finally block
 TryCatchFinally
-  = tryBlock:Try catchBlocks:Catch* finallyBlock:Finally? {
+  = tryBlock:Try
+    catchBlocks:Catch*
+    finallyBlock:Finally? {
     return makeNode("try-catch", { try: tryBlock, catch: catchBlocks, finally: finallyBlock });
   }
 
 Try
-  = "try" _ body:Expression {
+  = TryKw _ body:Expression? {
     return body;
   }
 
 Catch
-  = "catch" _ filter:CatchFilter? _ body:Expression {
+  = CatchKw _ filter:CatchFilter? _ body:Expression? {
     return { filter, body };
   }
 
 CatchFilter
-  = name:SimpleIdentifier _ type:(":of" _ @TypeName)? {
+  = name:SimpleIdentifier _ type:(OfModKw _ @TypeName)? {
     return { name, type };
   }
 
@@ -547,60 +578,62 @@ Finally
 
 // Control flow statements
 When
-  = _ "when" __ (":cond" __)? condition:Expression?
-              _ (":then" __)? then:Expression* {
-    return makeNode("when", { condition, then });
+  = _ WhenKw __ cond:((CondModKw __)? @Expression)?
+              _ then:((ThenModKw __)? @Expression)? {
+    return makeNode("when", { condition: cond, then });
   }
 
 If
-  = _ "if" __ (":cond" __)? condition:Expression?
-            _ (":then" __)? then:Expression?
-            _ (":else" __)? elseThen:Expression? {
-    return makeNode("if", { condition, then, else: elseThen });
+  = _ IfKw __ cond:((CondModKw __)? @Expression)?
+            _ then:((ThenModKw __)? @Expression)?
+        _ elseThen:((ElseModKw __)? @Expression)? {
+    return makeNode("if", { condition: cond, then, else: elseThen });
   }
 
 Cond
-  = _ "cond" __ cases:CondCase+ _ {
+  = _ CondKw __ cases:CondCase+ _ {
     return makeNode("cond", { cases });
   }
 
 CondCase
-  = _ condition:Expression _ body:Expression _ {
-    return makeNode("cond-case", { condition, body });
+  = "(" _ cond:((CondModKw __)? @Expression)?
+        _ body:((ThenModKw __)? @Expression)? _ ")" {
+    return makeNode("cond-case", { condition: cond, body });
   }
 
 
 // Loop statements
 For
-  = _ "for" __ (":init" __)? initial:Expression
-             _ (":cond" __)? condition:Expression
-             _ (":step" __)? step:Expression
-             _ (":then" __)? then:Expression {
-    return makeNode("for", { initial, condition, step, then });
+  = _ ForKw __ init:((InitModKw __)? @Expression)?
+             _ cond:((CondModKw __)? @Expression)?
+             _ step:((StepModKw __)? @Expression)?
+             _ then:((ThenModKw __)? @Expression)?
+          _ elseFor:((ElseModKw __)? @Expression)? {
+    return makeNode("for", { initial: init, condition: cond, step, then, else: elseFor });
   }
 
 ForEach
-  = _ "for" __ (":each" __)? variable:SimpleIdentifier
-             _ (":from" __)? collection:Expression
-             _ (":then" __)? then:Expression {
-    return makeNode("for-each", { variable, collection, then });
+  = _ ForKw __ var_:((EachModKw __)? @Identifier)?
+             _ coll:((FromModKw __)? @Expression)?
+             _ then:((ThenModKw __)? @Expression)? {
+    return makeNode("for-each", { variable: var_, collection: coll, then });
   }
 
 While
-  = _ "while" __ (":cond" __)? condition:Expression
-               _ (":then" __)? then:Expression {
-    return makeNode("while", { condition, then });
+  = _ WhileKw __ cond:((CondModKw __)? @Expression)?
+               _ then:((ThenModKw __)? @Expression)? {
+    return makeNode("while", { condition: cond, then });
   }
 
 
 // Pattern matching
 Match
-  = _ "match" __ expression:Expression _ "{" _ cases:MatchCase+ _ "}" _ {
+  = _ MatchKw __ expression:Expression _ "{" _ cases:MatchCase+ _ "}" _ {
     return makeNode("match", { expression, cases });
   }
 
 MatchCase
-  = _ pattern:Pattern _ "=>" _ body:Expression _ {
+  = _ pattern:Pattern _ RightDoubleArrowKw _ body:Expression _ {
     return makeNode("match-case", { pattern, body });
   }
 
@@ -617,7 +650,7 @@ AnyPattern
   = "_" _ { return makeNode("any-pattern"); }
 
 FunctionalPattern
-  = "(" _ params:Pattern* _ ")" _ "->" _ ret:Pattern _ {
+  = "(" _ params:Pattern* _ ")" _ RightArrowKw _ ret:Pattern _ {
     return makeNode("functional-pattern", { params, ret });
   }
 
@@ -692,8 +725,19 @@ unescaped
   = [^\0-\x1F\x22\x5C]
 
 
+// Booleans
+Boolean
+  = _ TrueKw _ { return makeNode("boolean", { value: true }); }
+  / _ FalseKw _ { return makeNode("boolean", { value: false }); }
+
+
+// Nil (null, undefined, nil, none, void, empty)
+Nil
+  = _ kw:NilKw _ { return makeNode("null", { keyword: kw }); }
+
+
 // Numbers
-Number "number"
+Number
   = HexNumber / BinNumber / OctNumber / FractionNumber / IntegerNumber / FloatNumber
 
 OctNumber
@@ -758,7 +802,7 @@ SimpleComment
 
 ControlComment
   = _ ';@' WS* control:(
-      mode:[+-] WS* command:CMD options:(WS+ @ID)+ WS*{
+      mode:[+-] WS* command:ControlCommentCommandKw options:(WS+ @ID)+ WS*{
           return {
             command: command,
             mode: mode === "+" ? "enable" : "disbale",
@@ -769,17 +813,132 @@ ControlComment
     return makeNode("control-comment", { ...control });
   }
 
-CMD = "attr" / "perf" / "lint" / "link" / "warn" / "use" / "def" / "if"
 ID = $[.,?'"|@:`~;^&*%$#=+!()\[\]/\\\\-_0-9a-zA-Z]+
 WS = [ \t]
 EOL = [\n\r]
 ANY = [^\n]
 
 
+// Keywords
+ControlCommentCommandKw
+  = "attr"i { return "compiler-attribute"; }
+  / "perf"i { return "performance-optimization"; }
+  / "lint"i { return "linter-option"; }
+  / "link"i { return "linker-option"; }
+  / "warn"i { return "warning"; }
+  / "def"i { return "define"; }
+  / "if"i { return "conditional"; }
+
+MatchKw = "match"i
+WhileKw = "while"i
+ForKw = "for"i
+CondKw = "cond"i
+IfKw = "if"i
+WhenKw = "when"i
+FinallyKw = "finally"i
+CatchKw = "catch"i
+TryKw = "try"i
+AwaitKw = "await"i
+AsyncKw = "async"i
+DefInterfaceKw = "definterface"i
+DefClassKw = "defclass"i
+DefTypeKw = "deftype"i
+DefEnumKw = "defenum"i
+DefMacroKw = "defmacro"i
+DefStructKw = "defstruct"i
+DefTraitKw = "deftrait"i
+FunctionKw = "fn"i
+LetKw = "let"i
+MutKw = "mut"i
+KeyOfKw = "keyof"i
+ImportKw = "import"i
+ExportKw = "export"i
+FromKw = "from"i
+
+TrueKw
+  = "true"i !NonControl
+  / "#t"i !NonControl
+
+FalseKw
+  = "false"i !NonControl
+  / "#f"i !NonControl
+
+SpreadKw
+  = "..."i
+  / "…"i
+
+ImplementsModKw = ":implements"i
+ExtendsModKw = ":extends"i
+WhereModKw = ":where"i
+
+NilKw
+  = "nil"i
+  / "null"i
+  / "none"i
+  / "void"i
+  / "undefined"i
+  / "nothing"i
+  / "empty"i
+  / "ø"i
+
+ConstraintKw
+  = (
+      "implements"i
+    / "inherits"i
+    / "is"i
+    / "has"i
+  ) {
+    return text().toLowerCase();
+  }
+
+AsModKw = ":as"i
+OfModKw = ":of"i
+
+CondModKw = ":cond"i
+ThenModKw = ":then"i
+ElseModKw = ":else"i
+InitModKw = ":init"i
+StepModKw = ":step"i
+EachModKw = ":each"i
+FromModKw = ":from"i
+
+LeftArrowKw = "<-"i
+RightArrowKw = "->"i
+
+LeftDoubleArrowKw = "<="i
+RightDoubleArrowKw = "=>"i
+
+AssignmentOperatorKw = "="i
+
+ModifierKw
+  = (
+      "public"i
+    / "private"i
+    / "static"i
+    / "internal"i
+    / "extern"i
+    / "override"i
+    / "explicit-cast"i
+    / "implicit-cast"i
+    / "extension"i
+    / "operator"i
+    / "in"i
+    / "out"i
+    / "ref"i
+    / "readonly"i
+    / "nullable"i
+    / "ctor"i
+  ) {
+    return text().toLowerCase();
+  }
+
+
 // Misc
+// NOTE: Under review to get cut coz almost identical
 Control "control" = [_\-*+\\/^&%$#@!~=|<>\`:?]
 NonControl "non-control" = [^ \t\n\r.,?'"|@:`~;^&*%$#=+!()\[\]/\\-_0-9]
 
+// NOTE: Under review to get cut
 Alpha "alphabetical" = [_a-zA-Z]
 
 HexDigit "hex" = [0-9a-fA-F]

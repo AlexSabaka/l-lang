@@ -128,7 +128,7 @@ export class ClassBuilder {
         const name = m.name ? this.visitor.visit(m.name) : "";
         return `${m.async ? "async " : ""}${name}(${m.params
           .map((x: any) => this.visitor.visit(x))
-          .join(",")}) {\n${m.body
+          .join(",")}) {\n${m.body!
           .map((x: any) => this.visitor.visit(x))
           .join("\n")}\n}`;
       })
