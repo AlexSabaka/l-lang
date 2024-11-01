@@ -9,7 +9,7 @@ interface UnitName {
 }
 
 export interface ImportUnit {
-  name: UnitName;
+  location: UnitName;
   dependencies: ImportUnit[];
   symbols: SymbolTable;
 }
@@ -20,7 +20,7 @@ function createImportUnit(fileName: string): ImportUnit {
   const moduleName = shortName.split(".")[0];
   const baseDir = path.dirname(fullName);
   return {
-    name: {
+    location: {
       fullName,
       baseDir,
       moduleName,
@@ -53,7 +53,7 @@ export class DependencyGraph {
   find(fileName: string): ImportUnit | undefined {
     const fullName = path.resolve(fileName);
     const searchImportUnit = (unit: ImportUnit): ImportUnit | undefined => {
-      return unit.name.fullName !== fullName
+      return unit.location.fullName !== fullName
         ? unit.dependencies.find(searchImportUnit)
         : unit;
     };

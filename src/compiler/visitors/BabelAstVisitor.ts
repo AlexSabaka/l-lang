@@ -2,13 +2,14 @@ import fs from "fs";
 import peggy from "peggy";
 import { SourceMapGenerator } from "source-map";
 
+import * as t from "@babel/types";
 import * as ast from "../ast";
 import { ScopeType } from "../SymbolTable";
 
-import { randomIdentifier, encodeIdentifier } from "../utils";
+import { uniqueIdentifier, encodeIdentifier } from "../utils";
 import { BaseAstVisitor } from "./BaseAstVisitor";
-import { CompilationContext, LogLevel } from "../CompilationContext";
-import { ClassBuilder } from "../ClassBuilder";
+import { Context, LogLevel } from "../Context";
+import { ClassBuilder } from "./js/ClassBuilder";
 
 function findIdentifiersToDefine(node: ast.MatchNode) {
   const predefinedVariables: string[] = [];
@@ -33,7 +34,7 @@ function findIdentifiersToDefine(node: ast.MatchNode) {
 }
 
 
-function formatVariable(scope: ScopeType, mut: boolean, name: string, value: string, context: CompilationContext) {
+function formatVariable(scope: ScopeType, mut: boolean, name: string, value: string, context: Context) {
   const kw = mut ? "let" : "const";
   const va = !!value ? ` = ${value}` : "";
   const format = {
@@ -57,7 +58,7 @@ function formatVariable(scope: ScopeType, mut: boolean, name: string, value: str
   return format[scope]();
 }
 
-function formatFunction(scope: ScopeType, async: boolean, name: string, params: string, body: string[], context: CompilationContext) {
+function formatFunction(scope: ScopeType, async: boolean, name: string, params: string, body: string[], context: Context) {
   const kw = async ? "async " : "";
   const arrowFuncName = !!name ? `const ${name} =` : "";
 
@@ -82,7 +83,7 @@ function formatFunction(scope: ScopeType, async: boolean, name: string, params: 
   return format[scope]();
 }
 
-export class JSCompilerAstVisitor extends BaseAstVisitor {
+export class BabelAstVisitor extends BaseAstVisitor {
   scope: ScopeType[] = [ ScopeType.program ];
   functions: string[] = [];
   classes: string[] = [];
@@ -110,71 +111,39 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
     return scope.includes(this.currentScope());
   }
 
-  compile(root: ast.ASTNode) {
-    const js = this.visit(root);
+
+  compile(root: ast.ASTNode): t.Program {
+    const statements = this.visit(root);
 
     const metadataString = 
       `// Module: ${this.context.mainModule}\n` +
-      `// File: ${this.context.dependencyGraph.rootUnit.name.fullName}\n` +
+      `// File: ${this.context.dependencyGraph.rootUnit.location.fullName}\n` +
       `// Compiled at: ${new Date()}\n`;
 
-    return metadataString +
-      `"use strict"\n\n` +
-      `${js}\n\n`;
+    return t.program(statements, [ t.directive(t.directiveLiteral(metadataString)) ], "script", t.interpreterDirective("use strict"));
   }
 
-  visitProgram(node: ast.ProgramNode) {
-    // this.context.log(LogLevel.Verbose, node);
-    return node.program.map(n => this.visit(n)).join(";\n");
+  visitProgram(node: ast.ProgramNode): t.BlockStatement {
+    return t.blockStatement(node.program.map(n => this.visit(n)));
   }
 
-  visitTypeName(node: ast.TypeNameNode) {
-    return node.name;
-  }
-
-  visitUnionType(node: ast.UnionTypeNode) {
-    const types = node.types.map((t) => this.visit(t));
-    return types.join(" | ");
-  }
-
-  visitIntersectionType(node: ast.IntersectionTypeNode) {
-    const types = node.types.map((t) => this.visit(t));
-    return types.join(" & ");
-  }
-
-  visitSimpleType(node: ast.SimpleTypeNode) {
-    return this.visit(node.name);
-  }
-
-  visitGenericType(node: ast.GenericTypeNode) {
-    const name = this.visit(node.name);
-    const generic = this.visit(node.generic);
-    return `${name}<${generic}>`;
-  }
-
-  visitMapType(node: ast.MapTypeNode) {
-    const keys = node.keys.map((k) => this.visit(k)).join(",");
-    return `{ ${keys} }`;
-  }
-
-  visitMappedType(node: ast.MappedTypeNode) {
-    const mapping = this.visit(node.mapping);
-    return `{ ${mapping} }`;
-  }
-
-  visitFunctionCarrying(node: ast.FunctionCarryingNode) {
+  visitFunctionCarrying(node: ast.FunctionCarryingNode): t.Expression {
     const id = this.visit(node.identifier);
     let code = id;
+
     node.sequence.forEach((seqItem) => {
       const fn = this.visit(seqItem.function);
       const args = seqItem.arguments.map((a) => this.visit(a));
+
       if (seqItem.operator === "carrying-left") {
         if (seqItem.memberFunction) {
           code = `${code}.${fn}(${args.join(",")})`;
         } else {
           code = `${fn}(${code}${args.length ? "," + args.join(",") : ""})`;
         }
-      } else if (seqItem.operator === "carrying-right") {
+      }
+
+      else if (seqItem.operator === "carrying-right") {
         if (seqItem.memberFunction) {
           code = `${code}.${fn}(${args.join(",")})`;
         } else {
@@ -182,19 +151,28 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
         }
       }
     });
+
     return code;
   }
 
-  visitClass(node: ast.ClassNode) {
+  visitClass(node: ast.ClassNode): t.ClassDeclaration {
     this.pushScope(ScopeType.class);
 
-    const classBuilder = new ClassBuilder(node, this.context, this);
-    const result = classBuilder.build();
+    const id = this.visit(node.name);
+    const body = this.createClassBody(node);
+    const base = node.extends?.length > 0 ? this.visit(node.extends[0]) : null;
 
-    this.classes.push(this.visit(node.name));
+    this.classes.push(id);
     this.popScope();
 
-    return result;
+    return t.classDeclaration(id, base, body, null);
+  }
+
+  private createClassBody(node: ast.ClassNode): t.ClassBody {
+
+    
+
+    return t.classBody([]);
   }
 
   visitInterface(node: ast.InterfaceNode) {
@@ -213,14 +191,6 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
 
     this.popScope();
     return `${accessModifiers} interface ${name}${implementsClause} {\n${body}\n}`;
-  }
-
-  visitImplements(node: any) {
-    return this.visit(node.type);
-  }
-
-  visitExtends(node: any) {
-    return this.visit(node.type);
   }
 
   visitMatchCase(node: ast.MatchCaseNode) {
@@ -289,13 +259,7 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
 
     this.variables.push(name);
 
-    return formatVariable(
-      this.currentScope(),
-      node.mutable,
-      name,
-      value,
-      this.context!
-    );
+    return t.variableDeclaration(node.mutable ? "let" : "const", [t.variableDeclarator(t.identifier(name), t.stringLiteral(value))]);
   }
 
   visitFunction(node: ast.FunctionNode) {
@@ -305,26 +269,19 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
 
     const name = node.name && this.visit(node.name);
 
-    const params = node.params.map((x) => this.visit(x)).join(",");
-    const body = this.visit(node.body!);
+    const params = node.params.map((x) => this.visit(x));
+    const body = node.body.map((x) => this.visit(x));
 
     this.popScope();
 
-    const result = formatFunction(
-      this.currentScope(),
-      node.async,
-      name,
-      params,
-      body,
-      this.context
-    );
+    const result = t.functionExpression(name, params, t.blockStatement(body));
 
     this.functions.push(name);
 
     return result;
   }
 
-  visitFunctionParameter(node: ast.FunctionParameterNode) {
+  visitFunctionParameter(node: ast.ParameterNode) {
     return this.visit(node.name);
   }
 
@@ -379,7 +336,7 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
   visitTryCatch(node: ast.TryCatchNode) {
     const tryBlock = `try {\n${this.visit(node.try)}\n}`;
 
-    const catchVar = randomIdentifier();
+    const catchVar = uniqueIdentifier();
     const catchBlocks = node.catch?.filter(x => !!x.filter)?.map(x => {
       const catchFilterVar = this.visit(x.filter.name);
       const catchFilterType = this.visit(x.filter.type);
@@ -396,7 +353,7 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
   visitMatch(node: ast.MatchNode) {
     this.pushScope(ScopeType.match);
 
-    const matchVar = randomIdentifier();
+    const matchVar = uniqueIdentifier();
     const matchVal = this.visit(node.expression);
 
     const matchCases = node.cases.map((x) => {
@@ -521,6 +478,10 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
   }
 
   visitList(node: ast.ListNode) {
+    if (node.nodes.length === 0) {
+      return "";
+    }
+
     const calleeType = node.nodes[0]._type;
     const nodes = node.nodes.map(x => this.visit(x));
     const [callee, ...args] = nodes;
@@ -576,7 +537,7 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
     return `{ ${kvs.join(",")} }`;
   }
 
-  visitKeyValue(node: ast.MapKeyValueNode) {
+  visitKeyValue(node: ast.KeyValueNode) {
     return `${this.visit(node.key)}: ${this.visit(node.value)}`;
   }
 

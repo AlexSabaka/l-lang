@@ -7,7 +7,7 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
     checkRules(node, [r.ExternFunctionCannotHaveBody], this.context);
   }
 
-  visitFunctionParameter(node: ast.FunctionParameterNode) {
+  visitFunctionParameter(node: ast.ParameterNode) {
     checkRules(node, [r.FunctionParameterMustHaveName], this.context);
     node.modifiers.forEach((modifier) =>
       checkRules(modifier, [r.FunctionAllowedParameterModifiers], this.context)

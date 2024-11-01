@@ -1,9 +1,10 @@
 import { question } from "readline-sync";
+import { formatWithOptions } from "node:util"
 import { readFileSync, writeFileSync } from "node:fs";
 
 import evaljs from "./evaljs";
 import { JSCompilerAstVisitor } from "../visitors";
-import { CompilationContext, LogLevel } from "../CompilationContext";
+import { Context, LogLevel } from "../Context";
 import { encodeIdentifier } from "../utils";
 import { deepeq } from "./deepeq";
 
@@ -11,6 +12,7 @@ import { deepeq } from "./deepeq";
 const basicOperators = {
   [encodeIdentifier('==')]: deepeq,
   [encodeIdentifier('!=')]: (a: any, b: any): boolean => !deepeq(a, b),
+  [encodeIdentifier('≠')] : (a: any, b: any): boolean => !deepeq(a, b),
 
   [encodeIdentifier('+')]: (...a: number[]) => a.reduce((res, b) => res + b),
   [encodeIdentifier('-')]: (...a: number[]) => a.reduce((res, b) => res - b),
@@ -52,17 +54,21 @@ const stdlib = {
 stdlib.std.console.print = (...a: string[]) => process.stdout.write(a.join(""));
 stdlib.std.console.println = (...a: string[]) => process.stdout.write(a.join("") + "\n");
 stdlib.std.console.read = (q: string | undefined) => question(q ?? ">> ");
+stdlib.std.console.readln = stdlib.std.console.read;
 
 const helpers = {
   call: (f: Function, a: any[]): any => f.call(globalScope, a),
   eval: (q: any): any => {
     const quoteAst = { ...q, _type: "list" };
-    const compiler = new JSCompilerAstVisitor(new CompilationContext("eval", { logger: { level: LogLevel.Error } }));
+    const compiler = new JSCompilerAstVisitor(new Context("eval", { minimumLogLevel: LogLevel.Error }));
     const js = compiler.compile(quoteAst);
-    return evaljs(js, globalScope);
+    return evaljs(js.code, globalScope);
   },
   throw: (a: any) => {
     throw a;
+  },
+  formatObjectToString: (a: any) => {
+    return formatWithOptions({ depth: null, colors: false }, a);
   },
 };
 

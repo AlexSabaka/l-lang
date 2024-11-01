@@ -96,15 +96,13 @@ List "list"
 // Quotes
 Quote "quote"
   = _ "'" (! '"') _ nodes:Expression _ {
-    const content = text().slice(1).trim();
-    return makeNode("quote", { mode: "default", content, nodes });
+    return makeNode("quote", { mode: "default", nodes });
   }
   / _ "'(" _ nodes:Expression* _ ")" _ {
-    const content = text().slice(2, -1).trim();
-    return makeNode("quote", { mode: "default", content, nodes });
+    return makeNode("quote", { mode: "default", nodes });
   }
   / _ mode:Identifier "'(" _ content:QuoteContent? _ ")" _ {
-    return makeNode("quote", { mode: mode.id, content, nodes: null });
+    return makeNode("quote", { mode: mode.id, nodes: null });
   }
 
 QuoteContent
@@ -348,7 +346,7 @@ LetMutMode
 Function
   = _ async:(AsyncKw __)? _ FunctionKw __ modifiers:(@Modifier _)*
     _ name:Identifier? _ "[" _ params:FunctionParameter|.. , ","?| _ "]" _ returns:(RightArrowKw _ @Type)?
-    _ body:Expression? _
+    _ body:Expression* _
   {
     const extern = !!modifiers.find(x => x.modifier === "extern");
     return makeNode("function", { name, async: !!async, extern, modifiers, params, returns, body });
@@ -400,8 +398,8 @@ Class
       return makeNode("generic-type", { ...x, constraints: genericConstraints });
     });
 
-    const _implements = ext.filter(x => x._type === "implements").map(x => { return { ...x.type } });
-    const _extends = ext.filter(x => x._type === "extends").map(x => { return { ...x.type } });
+    const _implements = ext.filter(x => x._type === "implements").map(x => { return x });
+    const _extends = ext.filter(x => x._type === "extends").map(x => { return x });
     return makeNode("class", { name, modifiers, implements: _implements, extends: _extends, generics: genericsWithConstraints, body });
   }
 
@@ -411,7 +409,7 @@ ClassBodyDefinition
 
 // Enum
 Enum
-  = _ DefEnumKw __ modifiers:(@Modifier _)* _ name:Identifier? _ body:EnumBody* {
+  = _ DefEnumKw __ modifiers:(@Modifier _)* _ name:TypeName? _ body:EnumBody* {
     return makeNode("enum", { name, modifiers, body });
   }
 
@@ -421,7 +419,7 @@ EnumBody
 
 // Struct
 Struct
-  = _ DefStructKw __ modifiers:(@Modifier _)* _ name:Identifier? _ body:StructBody* {
+  = _ DefStructKw __ modifiers:(@Modifier _)* _ name:TypeName? _ body:StructBody* {
     return makeNode("struct", { name, modifiers, body });
   }
 
@@ -542,8 +540,8 @@ Assignable
   / Identifier
 
 Indexer
-  = id:Identifier indicies:("[" @Expression|1.., ","?| "]")|1..| {
-    return makeNode("indexer", { id, indicies })
+  = id:Identifier indices:("[" @Expression|1.., ","?| "]")|1..| {
+    return makeNode("indexer", { id, indices })
   }
 
 
@@ -579,7 +577,7 @@ Finally
 // Control flow statements
 When
   = _ WhenKw __ cond:((CondModKw __)? @Expression)?
-              _ then:((ThenModKw __)? @Expression)? {
+              _ then:((ThenModKw __)? @Expression*)? {
     return makeNode("when", { condition: cond, then });
   }
 
@@ -643,6 +641,7 @@ Pattern
   / ListPattern
   / VectorPattern
   / MapPattern
+  / TypePattern
   / IdentifierPattern
   / ConstantPattern
 
@@ -652,6 +651,11 @@ AnyPattern
 FunctionalPattern
   = "(" _ params:Pattern* _ ")" _ RightArrowKw _ ret:Pattern _ {
     return makeNode("functional-pattern", { params, ret });
+  }
+
+TypePattern
+  = id:Identifier IsModKw type:Type {
+    return makeNode("type-pattern", { id, type });
   }
 
 ListPattern
@@ -757,7 +761,7 @@ HexNumber
 
 FractionNumber
   = _ a:$([+-]? DigitSequence) "/" b:$DigitSequence _ {
-    return makeNode("fraction-number", { numerator: parseInt(a), denominator: parseInt(b) });
+    return makeNode("fraction-number", { match: text().trim(), numerator: parseInt(a), denominator: parseInt(b) });
   }
 
 IntegerNumber
@@ -863,9 +867,7 @@ FalseKw
   = "false"i !NonControl
   / "#f"i !NonControl
 
-SpreadKw
-  = "..."i
-  / "…"i
+SpreadKw = "..."i
 
 ImplementsModKw = ":implements"i
 ExtendsModKw = ":extends"i
@@ -875,11 +877,9 @@ NilKw
   = "nil"i
   / "null"i
   / "none"i
+
   / "void"i
   / "undefined"i
-  / "nothing"i
-  / "empty"i
-  / "ø"i
 
 ConstraintKw
   = (
@@ -891,6 +891,7 @@ ConstraintKw
     return text().toLowerCase();
   }
 
+IsModKw = ":is"i
 AsModKw = ":as"i
 OfModKw = ":of"i
 

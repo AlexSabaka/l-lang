@@ -1,4 +1,4 @@
-export * from "./CompilationContext";
+export * from "./Context";
 export * from "./DependencyGraph";
 export * from "./SymbolTable";
 export * from "./AstProvider";

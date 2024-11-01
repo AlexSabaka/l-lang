@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import * as ast from "../ast";
-import { CompilationContext } from "../CompilationContext";
+import { Context } from "../Context";
 
 /**
  * The severity of the rule violation.
@@ -53,7 +53,7 @@ const tab = "\t    ";
 const minimumPaddingLength = 10;
 const totalTerminalWidth = process.stdout.isTTY ? process.stdout.columns : 80;
 
-function formatMessage(node: ast.ASTNode, rule: Rule<ast.ASTNode>, context: CompilationContext) {
+function formatMessage(node: ast.ASTNode, rule: Rule<ast.ASTNode>, context: Context) {
   const text = context.astProvider.getSource(node._parent?._location ?? node._location);
   const textLength = text.length;
   const startColumn =
@@ -100,7 +100,7 @@ export interface RuleValidationMessage {
 export class RuleValidationResultsCollection {
   private collection: RuleValidationMessage[] = [];
 
-  public add(node: ast.ASTNode, rule: Rule<ast.ASTNode>, context: CompilationContext): RuleValidationMessage {
+  public add(node: ast.ASTNode, rule: Rule<ast.ASTNode>, context: Context): RuleValidationMessage {
     const message = {
       code: rule.code,
       severity: rule.severity,
@@ -153,7 +153,7 @@ export function createRule<T extends ast.ASTNode>(): RuleBuilder<T> {
 export function checkRules<T extends ast.ASTNode>(
   node: T,
   rules: Rule<T>[],
-  context: CompilationContext
+  context: Context
 ): RuleValidationMessage[] {
   return rules
     .map((rule) =>

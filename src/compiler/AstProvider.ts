@@ -1,12 +1,12 @@
 import fs from "node:fs";
-import peggy from "peggy";
-
+// import peggy from "peggy";
+import { parse } from "./grammar/l-lang"
 import * as ast from "./ast";
 import path from "node:path";
 
-const grammar = fs.readFileSync("./compiler/grammar/l-lang.pegjs", {
-  encoding: "utf-8",
-});
+// const grammar = fs.readFileSync("./compiler/grammar/l-lang.pegjs", {
+//   encoding: "utf-8",
+// });
 
 function assignParentNodeReferences(
   node: ast.ASTNode,
@@ -32,7 +32,7 @@ interface CacheEntry {
 
 export class AstProvider {
   private cache: Map<string, CacheEntry> = new Map<string, CacheEntry>();
-  private parser: peggy.Parser = peggy.generate(grammar);
+  // private parser: peggy.Parser = peggy.generate(grammar);
 
   loadFile(file: string, basedir?: string) {
     if (this.cache.has(file)) {
@@ -41,7 +41,7 @@ export class AstProvider {
 
     const filePath = path.resolve(basedir ?? "", file);
     const source = fs.readFileSync(filePath, { encoding: "utf-8" });
-    const ast = this.parser.parse(source, {
+    const ast = parse(source, {
       startRule: "Program",
       grammarSource: filePath,
       cache: true,

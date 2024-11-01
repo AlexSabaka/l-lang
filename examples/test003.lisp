@@ -3,7 +3,7 @@
   ;; TODO: Something should be done with functional pattern matching,
   ;; i.e. when matching by criteria match x { mod 3 is 0 => ... }
   (fn fizz-buzz [n <- Number] -> boolean (return
-    js'((n % 3 === 0 && n % 5 === 0) ? "fizz-buzz" : (n % 3 === 0) ? "fizz" : (n % 5 === 0) ? "buzz" : "")
+    js'((n % 3 === 0 && n % 5 === 0) ? "fizz-buzz" : (n % 3 === 0) ? "fizz" : (n % 5 === 0) ? "buzz" : "none")
   ))
 
   (fn ƒ [n <- Number] -> Number (return
@@ -25,7 +25,7 @@
 
   (for-each
     *test-cases*
-    fn [x] (std.console.log (fizz-buzz x))
+    fn [x] (std.console.log '"fizz-buzz[{(x)}] is {(fizz-buzz x)}")
   )
 
 

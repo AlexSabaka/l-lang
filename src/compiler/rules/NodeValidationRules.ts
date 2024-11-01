@@ -23,11 +23,8 @@ const ImportMustHaveSource = createRule<ast.ImportNode>()
   .addCode("LL0003")
   .addMessage("Import must have a source")
   .addTest((node) =>
-    node.imports.some(
-      (x) => !x.source.file && !x.source.namespace
-          || x.source.file?.value === ""
-    )
-  )
+       node.imports.map(x => x.source).filter(ast.isFileImportSource).some(x => !x.file)
+    || node.imports.map(x => x.source).filter(ast.isNamespaceImportSource).some(x => !x.namespace))
   .build();
 
 const ImportHasSymbols = createRule<ast.ImportNode>()
@@ -51,7 +48,9 @@ const ConstantVariableMustHaveInitializer = createRule<ast.VariableNode>()
   .addSeverity(RuleSeverity.Error)
   .addCode("LL0006")
   .addMessage("Constant variable must have an initializer")
-  .addTest((node) => !node.mutable && !node.value)
+  .addTest((node) => !node.mutable)
+  .addTest((node) => !node.value)
+  .addTest((node) => !node.modifiers.find((x) => x.modifier === "ctor"))
   .build();
 
 const TryCatchHasEitherCatchOrFinally = createRule<ast.TryCatchNode>()
@@ -59,7 +58,8 @@ const TryCatchHasEitherCatchOrFinally = createRule<ast.TryCatchNode>()
   .addSeverity(RuleSeverity.Error)
   .addCode("LL0007")
   .addMessage("Try-Catch-Finally statement must have either catch or finally block")
-  .addTest((node) => node.catch.length === 0 && !node.finally)
+  .addTest((node) => node.catch.length === 0)
+  .addTest((node) => !node.finally)
   .build();
 
 const OnlyOneDefaultCatchBlockAllowed = createRule<ast.TryCatchNode>()
@@ -67,9 +67,8 @@ const OnlyOneDefaultCatchBlockAllowed = createRule<ast.TryCatchNode>()
   .addSeverity(RuleSeverity.Error)
   .addCode("LL0008")
   .addMessage("Only one default catch block is allowed")
-  .addTest((node) =>
-    node.catch.length > 0 && node.catch.filter((x) => !x.filter).length > 1
-  )
+  .addTest((node) => node.catch.length > 0)
+  .addTest((node) => node.catch.filter((x) => !x.filter).length > 1)
   .build();
 
 const InvalidInterfaceMembers = createRule<ast.ASTNode>()
@@ -101,7 +100,8 @@ const InterfaceMembersCannotHaveBodyDeclarations = createRule<ast.FunctionNode>(
   .addSeverity(RuleSeverity.Error)
   .addCode("LL0012")
   .addMessage("Interface members cannot have body declarations")
-  .addTest((node) => !!node.body && node.body.length > 0)
+  .addTest((node) => !!node.body)
+  .addTest((node) => node.body.length > 0)
   .build();
 
 const ExternFunctionCannotHaveBody = createRule<ast.FunctionNode>()
@@ -109,10 +109,11 @@ const ExternFunctionCannotHaveBody = createRule<ast.FunctionNode>()
   .addSeverity(RuleSeverity.Error)
   .addCode("LL0013")
   .addMessage("Extern function cannot have a body")
-  .addTest((node) => node.extern && !!node.body)
+  .addTest((node) => node.extern)
+  .addTest((node) => !!node.body)
   .build();
 
-const FunctionParameterMustHaveName = createRule<ast.FunctionParameterNode>()
+const FunctionParameterMustHaveName = createRule<ast.ParameterNode>()
   .addTypeFilter("parameter")
   .addSeverity(RuleSeverity.Error)
   .addCode("LL0014")

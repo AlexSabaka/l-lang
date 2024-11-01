@@ -4,7 +4,7 @@ import { namedTypes as n, builders as b } from "ast-types";
 import * as K from "ast-types/lib/gen/kinds";
 
 import { BaseAstVisitor } from "./BaseAstVisitor";
-import { LogLevel, VERSION as COMPILER_VERSION } from "../CompilationContext";
+import { LogLevel } from "../Context";
 import { ScopeType } from "../SymbolTable";
 
 export class RecastAstVisitor extends BaseAstVisitor {
@@ -20,8 +20,7 @@ export class RecastAstVisitor extends BaseAstVisitor {
 
     const metadataString =
       `// Module: ${this.context.mainModule}\n` +
-      `// File: ${this.context.dependencyGraph.rootUnit.name.fullName}\n` +
-      `// Compiler version: l-lang-js-v${COMPILER_VERSION}\n` +
+      `// File: ${this.context.dependencyGraph.rootUnit.location.fullName}\n` +
       `// Compiled at: ${new Date().toISOString()}\n` +
       `"use strict";\n\n`;
 
@@ -77,7 +76,7 @@ export class RecastAstVisitor extends BaseAstVisitor {
     const params = node.params.map(
       (param) => this.visit(param) as K.PatternKind
     );
-    const bodyStatements = this.visit(node.body!);
+    const bodyStatements = node.body.map((x) => this.visit(x));
     const body = b.blockStatement(bodyStatements);
     const isAsync = node.async;
 
@@ -112,7 +111,7 @@ export class RecastAstVisitor extends BaseAstVisitor {
   }
 
   visitFunctionParameter(
-    node: ast.FunctionParameterNode
+    node: ast.ParameterNode
   ): K.PatternKind {
     return this.visit(node.name) as K.PatternKind;
   }
@@ -170,7 +169,7 @@ export class RecastAstVisitor extends BaseAstVisitor {
     return b.objectExpression(properties);
   }
 
-  visitKeyValue(node: ast.MapKeyValueNode): n.Property | null {
+  visitKeyValue(node: ast.KeyValueNode): n.Property | null {
     const keyNode = this.visit(node.key);
     const valueNode = this.visit(node.value) as K.ExpressionKind;
 

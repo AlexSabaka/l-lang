@@ -2,7 +2,7 @@ export * from "./BaseAstVisitor";
 export * from "./BuildSymbolTableAstVisitor"
 export * from "./BuildDependencyGraphAstVisitor"
 export * from "./InferTypesAstVisitor"
-export * from "./JSCompilerAstVisitor"
+export * from "./js/JSCompilerAstVisitor"
 export * from "./TreeShakeAstVisitor"
 export * from "./SemanticValidatorAstVisitor";
 export * from "./SyntaxRulesAstVisitor";

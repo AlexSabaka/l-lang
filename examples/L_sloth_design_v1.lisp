@@ -1,13 +1,3 @@
-(using [
-        AutoMapper
-        Microsoft.AspNetCore.JsonPatch
-        Microsoft.AspNetCore.Mvc
-        { JsonSerializer } from System.Text.Json
-        { FoodDto } from SampleWebApiAspNetCore.Dtos
-        { Food } from SampleWebApiAspNetCore.Entities
-        { IFoodsRepositroy } from SampleWebApiAspNetCore.Repositories])
-
-
 ;; (using AutoMapper)
 ;; (using Microsoft.AspNetCore.JsonPatch)
 ;; (using Microsoft.AspNetCore.Mvc)
@@ -16,7 +6,10 @@
 ;; (using { Food } from SampleWebApiAspNetCore.Entities)
 ;; (using { IFoodsRepositroy } from SampleWebApiAspNetCore.Repositories)
 
-(namespace SampleWebApiAspNetCore.Controllers.v1)
+(namespace SampleWebApiAspNetCore.Controllers.v1
+
+
+)
 
 ;; :where T :is A            – strict constrait T == A
 ;; :where T :extends A       – constrait on children of A, T can be A or any of child
