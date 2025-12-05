@@ -381,8 +381,8 @@ export class RecastAstVisitor2 extends BaseAstVisitor {
   }
 
   visitFormattedString(node: ast.FormattedStringNode): any {
-    const elements = [];
-    const expressions = [];
+    const elements: any[] = [];
+    const expressions: any[] = [];
 
     node.value.forEach((item, index) => {
       if (item._type === "string") {
@@ -487,7 +487,7 @@ export class RecastAstVisitor2 extends BaseAstVisitor {
 
     // Process catch blocks
     if (node.catch && node.catch.length > 0) {
-      const catchBody = [];
+      const catchBody: any[] = [];
 
       // Type-specific catches
       const typedCatches = node.catch.filter(c => c.filter);
@@ -571,7 +571,7 @@ export class RecastAstVisitor2 extends BaseAstVisitor {
     if (!node) return b.emptyStatement();
     
     if (n.Expression.check(node)) {
-      return b.expressionStatement(node);
+      return b.expressionStatement(node as any);
     }
     return node;
   }
@@ -644,9 +644,9 @@ export class RecastAstVisitor2 extends BaseAstVisitor {
           conditions.push(this.generatePatternCondition(elem, elemValue));
         });
         
-        return conditions.reduce((acc, cond) => 
+        return (conditions as any[]).reduce((acc: any, cond: any) => 
           b.logicalExpression("&&", acc, cond)
-        );
+        ) as any;
         
       case "map-pattern":
         const mapPattern = pattern as ast.MapPatternNode;
@@ -678,9 +678,9 @@ export class RecastAstVisitor2 extends BaseAstVisitor {
           );
         });
         
-        return mapConditions.reduce((acc, cond) => 
+        return (mapConditions as any[]).reduce((acc: any, cond: any) => 
           b.logicalExpression("&&", acc, cond)
-        );
+        ) as any;
         
       default:
         return b.literal(false);
@@ -776,8 +776,26 @@ export class RecastAstVisitor2 extends BaseAstVisitor {
   visitExtends(node: ast.ExtendsNode): any { return null; }
   visitTypeConstraint(node: ast.TypeConstraintNode): any { return null; }
   visitCompoundAssignment(node: ast.CompoundAssignmentNode): any {
+    const operatorMap: Record<string, "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "**=" | "<<=" | ">>=" | ">>>=" | "|=" | "^=" | "&=" | "||=" | "&&=" | "??="> = {
+      "+=": "+=",
+      "-=": "-=",
+      "*=": "*=",
+      "/=": "/=",
+      "%=": "%=",
+      "**=": "**=",
+      "<<=": "<<=",
+      ">>=": ">>=",
+      ">>>=": ">>>=",
+      "|=": "|=",
+      "^=": "^=",
+      "&=": "&=",
+      "||=": "||=",
+      "&&=": "&&=",
+      "??=": "??=",
+    };
+    const operator = operatorMap[node.operator] ?? "=";
     return b.assignmentExpression(
-      node.operator + "=",
+      operator,
       this.visit(node.assignable),
       this.visit(node.value)
     );
