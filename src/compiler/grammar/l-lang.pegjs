@@ -79,11 +79,11 @@ Expression "expression"
   / Quote
 
   // Literals
-  / Identifier
+  / Nil
+  / Boolean
   / Number
   / String
-  / Boolean
-  / Nil
+  / Identifier
 
 
 // Lists
@@ -654,7 +654,7 @@ FunctionalPattern
   }
 
 TypePattern
-  = id:Identifier IsModKw type:Type {
+  = id:Identifier OfModKw type:Type {
     return makeNode("type-pattern", { id, type });
   }
 
@@ -742,35 +742,48 @@ Nil
 
 // Numbers
 Number
-  = HexNumber / BinNumber / OctNumber / FractionNumber / IntegerNumber / FloatNumber
+  = _ @HexNumber _       // 0x1234ABCD
+  / _ @BinNumber _       // 0b01011001
+  / _ @OctNumber _       // 0o75632711
+  / _ @ComplexNumber _   // 12.1+2i
+  / _ @FractionNumber _  // 3/4
+  / _ @FloatNumber _     // 123.456
+  / _ @IntegerNumber _   // 123
 
 OctNumber
-  = _ "0" match:$[0-7]+ _ {
+  = "0" match:$[0-7]+ {
     return makeNode("octal-number", { match, value: parseInt(match, 8) });
   }
 
 BinNumber
-  = _ "0b" match:$[0-1]+ _ {
+  = "0b" match:$[0-1]+ {
     return makeNode("binary-number", { match, value: parseInt(match, 2) });
   }
 
 HexNumber
-  = _ "0x" match:$(HexDigit+) _ {
+  = "0x" match:$(HexDigit+) {
     return makeNode("hex-number", { match, value: parseInt(match, 16) });
   }
 
+ComplexNumber
+  = r:(FloatNumber _ [+-])? _ i:FloatNumber [ij]i {
+    const real = !!r ? r[0].value : 0;
+    const imaginary = i.value * (!!r && r[2] === "-" ? -1 : 1);
+    return makeNode("complex-number", { match: text().trim(), real, imaginary });
+  }
+
 FractionNumber
-  = _ a:$([+-]? DigitSequence) "/" b:$DigitSequence _ {
+  = a:$([+-]? DigitSequence) "/" b:$DigitSequence {
     return makeNode("fraction-number", { match: text().trim(), numerator: parseInt(a), denominator: parseInt(b) });
   }
 
 IntegerNumber
-  = _ match:$([+-]? DigitSequence) _ {
+  = match:$([+-]? DigitSequence) {
     return makeNode("integer-number", { match, value: parseInt(match) });
   }
 
 FloatNumber
-  = _ match:$([+-]? DigitSequence ("." [0-9]+)? ("e" [+-]? [0-9]+)?) _ {
+  = match:$([+-]? DigitSequence ("." [0-9]+)? ("e" [+-]? [0-9]+)?) {
     return makeNode("float-number", { match, value: parseFloat(match) });
   }
 

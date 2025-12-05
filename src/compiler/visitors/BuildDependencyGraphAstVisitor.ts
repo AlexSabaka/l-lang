@@ -4,11 +4,6 @@ import { BaseAstTreeWalker } from "./BaseAstTreeWalker";
 
 export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
 
-  visitExport(node: ast.ExportNode) {
-    const currentUnit = this.context.dependencyGraph.find(node._location.source ?? "");
-    
-  }
-
   visitImport(node: ast.ImportNode) {
     node.imports.forEach((i) => this.processImport(i, node._location.source ?? ""));
   }
@@ -24,7 +19,7 @@ export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
   private processFileImport(file: string, currentFile: string) {
     const currentUnit = this.context.dependencyGraph.find(currentFile);
     this.context.process(file, currentUnit?.location.baseDir);
-    this.context.dependencyGraph.add(file, currentFile);
+    this.context.dependencyGraph.add(file, currentFile, this.context);
   }
 
   private processNamespaceImport(ns: string, currentFile: string) {

@@ -1,7 +1,36 @@
 import * as ast from "../../ast";
+
+import { globalScope } from "../../lib";
+
 import { Context, LogLevel } from "../../Context";
 import { ScopeType } from "../../SymbolTable";
 import { SourceNode } from "source-map";
+
+export function isStandardLibReference(id: string): boolean {
+  const parts = id.split('.');
+  let obj = globalScope as any;
+  for (let p of parts) {
+    if (p in obj) {
+      obj = obj[p];
+    } else {
+      return false;
+    }
+  }
+  return !!obj;
+}
+
+export function getStandardLibReferenceSource(id: string): string {
+  const parts = id.split('.');
+  let obj = globalScope as any;
+  for (let p of parts) {
+    if (p in obj) {
+      obj = obj[p];
+    } else {
+      return "";
+    }
+  }
+  return obj.toString();
+}
 
 export function joinArray(array: any[], value: any): any[] {
   return array.flatMap((x) => [x, value]).slice(0, -1);

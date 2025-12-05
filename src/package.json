@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "ts-node index.ts",
-    "dev": "nodemon --watch . --exec ts-node -- index.ts run ./../examples/test002.lisp",
+    "dev": "nodemon --watch . --exec ts-node -- index.ts -L Debug run ./../examples/test008.lisp",
     "build": "tsc",
     "test": "./node_modules/.bin/jest"
   },
@@ -28,7 +28,6 @@
     "cli-highlight": "^2.1.11",
     "commander": "^12.1.0",
     "highlight.js": "^11.10.0",
-    "llvm-bindings": "^0.4.2",
     "peggy": "^4.0.3",
     "pretty-format": "^29.7.0",
     "readline-sync": "^1.4.10",

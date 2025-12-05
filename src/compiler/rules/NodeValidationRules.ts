@@ -185,6 +185,18 @@ const IdentifierMustHaveName = createRule<ast.IdentifierNode>()
   .addTest((node) => !node.id)
   .build();
 
+const OnlyOneVisibilityModifierAllowed = createRule<ast.VariableNode | ast.FunctionNode | ast.ClassNode | ast.InterfaceNode>()
+  .addTypeFilter("class", "function", "interface", "variable")
+  .addSeverity(RuleSeverity.Error)
+  .addCode("LL0022")
+  .addMessage("Only one visibility modifier is allowed: public | private | protected | internal")
+  .addTest((node) =>
+    1 < node.modifiers.filter(
+      x => x.modifier === "public" ||
+      x.modifier === "private" ||
+      x.modifier === "protected" ||
+      x.modifier === "internal").length)
+  .build();
 
 export const Rules = {
   IdentifierHasName,
@@ -195,6 +207,7 @@ export const Rules = {
   ConstantVariableMustHaveInitializer,
   TryCatchHasEitherCatchOrFinally,
   OnlyOneDefaultCatchBlockAllowed,
+  OnlyOneVisibilityModifierAllowed,
   InvalidInterfaceMembers,
   InterfaceMembersCannotHaveInitializers,
   InterfaceMembersCannotBeExtern,

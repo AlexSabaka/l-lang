@@ -135,3 +135,4 @@ dist
 # Misc
 .tmp/
 examples/*.js*
+examples/*/*.js*

@@ -2,10 +2,11 @@ import chalk from "chalk";
 import path from "node:path";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
+import * as astring from "astring";
 
 import { RuleSeverity } from "./rules";
 
-import { JSCompilerAstVisitor } from "./visitors";
+import { JSCompilerAstVisitor, JSTransformerAstVisitor } from "./visitors";
 
 import * as lib from "./lib";
 
@@ -14,6 +15,7 @@ import highlight from "cli-highlight";
 import { CompilerOptions, Context, LogLevel } from "./Context";
 import { checkBracketsBalance, getCaller } from "./utils";
 import { Command } from "commander";
+import { getCompilerOptions } from "./cli";
 
 const { stdin, stdout } = process;
 
@@ -27,24 +29,19 @@ function printMessages(context: Context) {
     [RuleSeverity.None]: LogLevel.Info,
   };
 
-  let errors = 0,
-    warnings = 0,
-    messages = 0;
-  all.forEach((error) => {
-    context.log(logLevel[error.severity], error.message);
-
-    errors += error.severity === RuleSeverity.Error ? 1 : 0;
-    warnings += error.severity === RuleSeverity.Warning ? 1 : 0;
-    messages += error.severity === RuleSeverity.Message ? 1 : 0;
-  });
+  const { errors, warnings, messages } =
+    all.reduce((p, c) => {
+      context.log(logLevel[c.severity], c.message, getCaller(6));
+      return {
+        errors: p.errors + (c.severity === RuleSeverity.Error ? 1 : 0),
+        warnings: p.warnings + (c.severity === RuleSeverity.Warning ? 1 : 0),
+        messages: p.messages + (c.severity === RuleSeverity.Message ? 1 : 0),
+      };
+    }, { errors: 0, warnings: 0, messages: 0 });
 
   context.log(
     LogLevel.Info,
-    chalk.red(`${errors} errors`) +
-      ", " +
-      chalk.yellow(`${warnings} warnings`) +
-      ", " +
-      chalk.blueBright(`${messages} messages`),
+    `${chalk.red(`${errors} errors`)}, ${chalk.yellow(`${warnings} warnings`)}, ${chalk.blueBright(`${messages} messages`)}`,
     getCaller(3)
   );
 
@@ -79,18 +76,33 @@ export function parse(file: string, command: Command) {
   }
 }
 
-function compileJS(file: string, options: CompilerOptions) {
+function compileJS(file: string, options: CompilerOptions, useTransformer: boolean = false) {
   const context = new Context(file, options);
   context.process(file);
   const { errors } = printMessages(context);
   if (errors > 0) {
     return;
   }
-  const jsCompilerVisitor = new JSCompilerAstVisitor(context);
-  const js = jsCompilerVisitor.compile(
-    context.astProvider.getAst(file) as ASTNode
-  );
-  return js;
+
+  if (useTransformer) {
+    // Use new ESTree-based transformer
+    const transformer = new JSTransformerAstVisitor(context);
+    const astProgram = transformer.compile(context.astProvider.getAst(file) as ASTNode);
+    const code = astring.generate(astProgram);
+    
+    // Return in compatible format
+    return {
+      code,
+      map: { toString: () => "" } // TODO: Integrate proper source maps from astring
+    };
+  } else {
+    // Use legacy string-based compiler
+    const jsCompilerVisitor = new JSCompilerAstVisitor(context);
+    const js = jsCompilerVisitor.compile(
+      context.astProvider.getAst(file) as ASTNode
+    );
+    return js;
+  }
 }
 
 export function compile(file: string, command: Command) {
@@ -141,9 +153,9 @@ export function repl(command: Command) {
   stdin.resume();
   stdout.write("> ");
 
-  const checkCode = (data: Buffer, ...codes: number[]) => Array.from(data).every((v, i) => codes[i] === v);
+  const checkCode = (data: Buffer, codes: number[]) => Array.from(data).every((v, i) => codes[i] === v);
   const when = (keydata: number[], action: () => void): (data: Buffer) => void => {
-    return (data) => checkCode(data, ...keydata) && action();
+    return (data) => checkCode(data, keydata) && action();
   };
   const whenString = (action: (data: string) => void): (data: Buffer) => void => {
     return (data) => data.every((v) => v > 32 && v < 126) && action(data.toString());
@@ -197,41 +209,4 @@ export function repl(command: Command) {
     input = "";
     stdout.write("> ");
   }));
-}
-
-export interface CLICompilerOptions {
-  output?: string;
-  watch?: boolean;
-  debug?: boolean;
-  silent?: boolean;
-  verbose?: boolean;
-  version?: boolean;
-  logLevel?: LogLevel;
-  logFile?: string;
-}
-
-export function createFileLogger(file: string) {
-  const stream = fs.createWriteStream(file, { flags: "a" });
-  return (...data: any[]) => stream.write(`${data.join(" ")}\n`);
-}
-
-export function getCompilerOptions(
-  command: Command,
-  input?: string,
-  ext?: string
-): CompilerOptions {
-  const opts = command.opts() as CLICompilerOptions;
-  const logLevel =
-    opts.logLevel ?? opts.verbose
-      ? LogLevel.Verbose
-      : opts.debug
-      ? LogLevel.Debug
-      : opts.silent
-      ? LogLevel.Error
-      : LogLevel.Warning;
-  return {
-    minimumLogLevel: logLevel,
-    logger: opts.logFile ? createFileLogger(opts.logFile) : console.log,
-    outputFile: opts.output ?? input?.replace(/\.\w+$/, ext ?? ".js"),
-  };
 }

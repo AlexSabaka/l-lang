@@ -1,4 +1,4 @@
-import { ASTNode, ClassNode, FunctionNode, IdentifierNode, InterfaceNode, NodeType, TypeNameNode, VariableNode } from "./ast";
+import * as ast from "./ast";
 
 export enum ScopeType {
   program = "program",
@@ -28,64 +28,173 @@ export enum ScopeType {
   // parameter = "parameter",
 }
 
+export function isNodeScope(type: any): type is ScopeType {
+  return [ "program", "class", "interface", "function", "variable", "method", "match", "when", "if" ].includes(type);
+}
+
+export type SymbolVisibility = "public" | "private" | "protected" | "internal";
+
+export function isVisibilityModifier(modifier: ast.ModifierNode["modifier"]): modifier is SymbolVisibility {
+  return [ "public", "private", "protected", "internal" ].includes(modifier);
+}
+
 export interface SymbolEntry {
-  name: IdentifierNode | TypeNameNode | undefined;
-  type: NodeType;
-  scope: ScopeType;
-  value: ASTNode | undefined;
-  mutability: boolean | undefined;
-  exportName: IdentifierNode | undefined;
-  visibility: "public" | "private" | "protected" | "internal";
+  name: ast.IdentifierNode | ast.TypeNameNode;
+  type: ast.NodeType;
+  scope: Scope;
+  value: ast.ASTNode;
+  mutability: boolean;
+  exportName: ast.IdentifierNode | ast.TypeNameNode | undefined;
+  visibility: SymbolVisibility;
 }
 
 export interface Scope {
-  scope: ScopeType;
+  node: ast.ASTNode;
+  type: ast.ASTNode["_type"];
   table: Map<string, SymbolEntry>;
+  scopes: Scope[];
+  parent: Scope | undefined;
 }
 
 export class SymbolTable {
   private scopes: Scope[] = [];
 
-  get currentScope(): ScopeType {
-    if (!this.scopes[0]) {
-      throw new Error(`No current scope to define symbol: ${name}`);
+  constructor(root: Scope | undefined) {
+    if (root) {
+      this.scopes.push(root);
     }
-
-    return this.scopes[0].scope;
   }
 
-  enterScope(scope: ScopeType) {
-    this.scopes.unshift({ scope, table: new Map<string, SymbolEntry>() });
+  resolveSymbol(name: ast.IdentifierNode | ast.TypeNameNode): SymbolEntry | undefined {
+    for (let s of this.scopes) {
+      const symbol = this.findSymbolRecursively(name.name ?? name.id, s);
+      if (symbol) {
+        return symbol;
+      }
+    }
+  }
+
+  join(other: SymbolTable): SymbolTable {
+    this.scopes = [...this.scopes, ...other.scopes];
+    return this;
+  }
+
+  private findSymbolRecursively(name: string, scope: Scope | undefined) {
+    let current: Scope | undefined = scope;
+    let symbol: SymbolEntry | undefined = undefined;
+    while (symbol === undefined && current !== undefined) {
+      symbol = current.table.get(name);
+      current = current.parent;
+    }
+    return symbol;
+  }
+}
+
+export class SymbolTableBuilder {
+  private root: Scope | undefined;
+  private active: Scope | undefined;
+
+  build(): SymbolTable {
+    return new SymbolTable(this.root);
+  }
+
+  enterScope(node: ast.ASTNode) {
+    const nodeType = node._type as any;
+    if (!isNodeScope(nodeType)) {
+      return;
+    }
+
+    const scopeType = nodeType as ScopeType;
+    if (this.root === undefined) {
+      if (scopeType != ScopeType.program) {
+        throw new Error("Something fishy going on with scopes.");
+      }
+
+      this.root = {
+        type: scopeType,
+        node: node,
+        table: new Map<string, SymbolEntry>(),
+        scopes: [],
+        parent: undefined,
+      };
+    }
+
+    if (this.active === undefined) {
+      this.active = this.root;
+    }
+
+    if (this.active.node === node) {
+      return;
+    }
+
+    const newScope = {
+      type: node._type,
+      node: node,
+      table: new Map<string, SymbolEntry>(),
+      scopes: [],
+      parent: this.active,
+    };
+
+    this.active.scopes.push(newScope);
+
+    this.active = newScope;
   }
 
   exitScope() {
-    return this.scopes.shift();
-  }
-
-  defineSymbol(node: VariableNode | FunctionNode | ClassNode | InterfaceNode) {
-    if (!this.scopes[0]) {
-      throw new Error(`No current scope to define symbol: ${name}`);
+    if (this.root === undefined) {
+      throw new Error("No root scope. Cannot exit.");
     }
 
-    const entryKey = (node.name as any)?.id || (node.name as any)?.name; 
+    if (this.active === undefined) {
+      throw new Error("No active scope. Cannot exit.");
+    }
 
-    this.scopes[0].table.set(entryKey, {
+    if (this.active.parent === undefined) {
+      throw new Error("Already at the root scope. Cannot exit.");
+    }
+
+    this.active = this.active.parent;
+  }
+
+  defineSymbol(node: ast.VariableNode | ast.FunctionNode | ast.ClassNode | ast.InterfaceNode) {
+    if (this.root === undefined) {
+      throw new Error("No root scope. Cannot define symbol.");
+    }
+
+    if (this.active === undefined) {
+      throw new Error("No active scope. Cannot define symbol.");
+    }
+
+    this.active.table.set(node.name?.id ?? node.name?.name, {
       name: node.name,
       type: node._type,
-      scope: this.scopes[0].scope,
-      mutability: (node as VariableNode)?.mutable ?? false,
-      exportName: undefined,
-      visibility: "public",
+      scope: this.active,
       value: node,
+      mutability: node.mutable ?? false,
+      exportName: undefined,
+      visibility: node.modifiers.filter(x => isVisibilityModifier(x.modifier)).at(0)?.modifier as SymbolVisibility,
     });
   }
 
-  resolveSymbol(name: string): SymbolEntry | undefined {
-    for (const scope of this.scopes) {
-      if (scope.table.has(name)) {
-        return scope.table.get(name);
-      }
+  resolveSymbol(name: ast.IdentifierNode | ast.TypeNameNode): SymbolEntry | undefined {
+    if (this.root === undefined) {
+      throw new Error("No root scope. Cannot resolve symbol.");
     }
-    return undefined;
+
+    if (this.active === undefined) {
+      throw new Error("No active scope. Cannot resolve symbol.");
+    }
+
+    return this.findSymbolRecursively(name.name ?? name.id, this.active);
+  }
+
+  private findSymbolRecursively(name: string, scope: Scope) {
+    let current: Scope | undefined = scope;
+    let symbol: SymbolEntry | undefined = undefined;
+    while (symbol === undefined && current !== undefined) {
+      symbol = current.table.get(name);
+      current = current.parent;
+    }
+    return symbol;
   }
 }

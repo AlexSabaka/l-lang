@@ -1,7 +1,5 @@
 (
-  ; brainfuck interpreter example
-  (let progs "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++.+++++++++++++++++++++++++++++.+++++++..+++.-------------------------------------------------------------------------------.+++++++++++++++++++++++++++++++++++++++++++++++++++++++.++++++++++++++++++++++++.+++.------.--------.-------------------------------------------------------------------.-----------------------.") ;; Hello World! without loops
-  (let proga (progs.split ""))
+
   (mut pointer 0)
   (let memory (Array 512))
   (memory.fill 0)
@@ -10,7 +8,7 @@
 
   (fn find-matching-bracket [prog pos direction]
       ( (mut depth 1)
-        (std.console.log "Finding matching bracket at {pos} with direction {direction}")
+        (std.console.log '"Finding matching bracket at {(pos)} with direction {(direction)}")
         (while (!= depth 0) (
           (pos := (+ pos direction))
           (match (elem prog pos) {
@@ -20,10 +18,7 @@
             "]" => (if (== direction 1)
                        (depth := (- depth 1))
                        (depth := (+ depth 1)))
-          }))
-          )
-
-
+          })))
         (return pos)
     ))
   
@@ -51,7 +46,8 @@
         (run (tail prog) (+ pos 1)))))
 
 
-
-  (run proga 0)
+  (let progbs "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++>+++++++++++++++++++++++++++++[.>+<-]>.")
+  (let progb (progbs.split ""))
+  (run progb 0)
   (dump-memory)
   (std.console.log "\nDone"))

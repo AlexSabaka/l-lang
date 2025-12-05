@@ -19,7 +19,7 @@
 
     (let ∆ 0)
 
-    (let … (Yeller "I AM A DOG!!!"))
+    (let … (LouderYeller "I AM A DOG!!!"))
     (std.console.log …)
     (….yell 10)
 

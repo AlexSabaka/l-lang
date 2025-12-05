@@ -17,9 +17,35 @@
 
 ;; definterface – interfaces definitions (duh...)
 ;; defclass – class definition (duh x2...)
+
 ;; deftype – types/classes/interfaces compositions, unios, intersections, etc, etc
-;; defstruct – for .NET compatibility
-;; defrectord – for .NET compatibility
+
+;; defstruct – 
+;; defrectord – 
+
+(defmodifier memoized []
+    (let lookup-table {})
+    (return fn [fn ...args] (
+        (let args-hash (args.reduce (fn [x a] (+ a x)) args.length))
+        (if (lookup-table.includes args-hash)
+            (return lookup-table[args-hash])
+            (
+                (let result (fn ...args))
+                (lookup-table[args-hash] := result)
+                (return result)
+            )
+        )
+    ))
+)
+
+(fn :memoized fib [n <- Number] -> Number (return
+    (match n {
+        0 => 1
+        1 => 1
+        _ => (+ (fib (- n 1))
+                (fib (- n 2)))
+    })
+))
 
 (definterface :internal IRepository<TEntity> :where TEntity :is class new()
     (async fn GetAll [query-params] -> IQueryable<TEntity>)
@@ -32,7 +58,7 @@
 (definterface :internal IBorschRepository :implements IFoodsRepository<Borsch>)
 
 ;; Almost the same as C# does
-(deftype IInterface<TA,TB>
+(definterface IInterface<TA,TB>
     :extends IA IB IC ID
     :where TA :extends A
     :where TB :implements IB

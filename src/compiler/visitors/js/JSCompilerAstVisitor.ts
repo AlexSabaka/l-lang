@@ -1,5 +1,3 @@
-import fs from "fs";
-import peggy from "peggy";
 import * as ast from "../../ast";
 
 import { ScopeType } from "../../SymbolTable";
@@ -9,7 +7,7 @@ import { BaseAstVisitor } from "../BaseAstVisitor";
 import { LogLevel } from "../../Context";
 import { ClassBuilder } from "./ClassBuilder";
 import { SourceNode } from "source-map";
-import { createSourceNode, joinArray, formatVariable, formatFunction } from "./helpers";
+import { createSourceNode, joinArray, formatVariable, formatFunction, isStandardLibReference, getStandardLibReferenceSource } from "./helpers";
 import path from "path";
 
 
@@ -18,7 +16,9 @@ function findIdentifiersToDefine(node: ast.MatchNode) {
   const walkPattern = (p: ast.PatternNode): boolean => {
     switch (p._type) {
       case "identifier-pattern":
-        return !!predefinedVariables.push(p.id.id);
+        const id = encodeIdentifier(p.id.id);
+        return !isStandardLibReference(id)
+            && !!predefinedVariables.push(id);
   
       case "map-pattern":
         return (p as unknown as ast.MapPatternNode).pairs.every(x => walkPattern(x.pattern));
@@ -36,11 +36,15 @@ function findIdentifiersToDefine(node: ast.MatchNode) {
 }
 
 export class JSCompilerAstVisitor extends BaseAstVisitor {
+
   scope: ScopeType[] = [ ScopeType.program ];
   functions: string[] = [];
   classes: string[] = [];
   variables: string[] = [];
+
+
   identifiers: Record<string, string> = {};
+  inlineStandardSymbols: string[] = [];
 
   pushScope(nextScope: ScopeType) {
     this.context.log(LogLevel.Debug, `Scope pushed ${this.currentScope()} -> ${nextScope}`);
@@ -63,13 +67,25 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
     return scope.includes(this.currentScope());
   }
 
+  inlineStandardLibrary(): string {
+    const map = {} as any;
+    this.inlineStandardSymbols
+      .map(x => [x, getStandardLibReferenceSource(x)] as const)
+      ;
+
+    return "";
+  }
+
   compile(root: ast.ASTNode) {
+    const rootSourceNode = this.visit(root);
+    const standardLibrary = createSourceNode(root, this.inlineStandardLibrary());
     return createSourceNode(root,
         `// Module: ${this.context.mainModule}\n` +
         `// File: ${this.context.dependencyGraph.rootUnit.location.fullName}\n` +
         `// Compiled at: ${new Date()}\n`,
         `"use strict"\n\n`,
-        this.visit(root),
+        standardLibrary,
+        rootSourceNode,
         `\n\n//# sourceMappingURL=${path.basename(root._location.source!, '.lisp')}.js.map`)
       .toStringWithSourceMap();
   }
@@ -202,10 +218,14 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
 
   visitIdentifier(node: ast.IdentifierNode) {
     if (this.identifiers[node.id] !== undefined) {
-      return this.identifiers[node.id];
+      return createSourceNode(node, this.identifiers[node.id]);
     }
     const id = encodeIdentifier(node.id);
     this.identifiers[node.id] = id;
+
+    if (isStandardLibReference(id)) {
+      this.inlineStandardSymbols.push(id);
+    }
 
     return createSourceNode(node, id);
   }
@@ -276,7 +296,7 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
 
     const result = this.inScope(ScopeType.variable)
       ? [`(`, condition, `) ? (`, ...joinArray(whenExprs, ','), `) : undefined`]
-      : [`if (`, condition, `) {\n`, ...joinArray(whenExprs, ';'), `\n}`];
+      : [`if (`, condition, `) {`, ...joinArray(whenExprs, ';'), `}`];
 
     return createSourceNode(node, ...result);
   }
@@ -303,6 +323,13 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
     return createSourceNode(node, `while (`, condition, `) {`, body, `}`);
   }
 
+  visitIndexer(node: ast.IndexerNode) {
+    const id = this.visit(node.id);
+    const indices = node.indices.flatMap(x => [ '[', ...x.map(y => this.visit(y)), ']' ]);
+
+    return createSourceNode(node, id, ...indices);
+  }
+
   visitSimpleAssignment(node: ast.SimpleAssignmentNode) {
     const assignable = this.visit(node.assignable);
     const value = this.visit(node.value);
@@ -315,7 +342,7 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
     const operator = node.operator;
     const value = this.visit(node.value);
 
-    return createSourceNode(node, assignable, ` = `, value);
+    return createSourceNode(node, assignable, ` = `, value, `/* Compound assignment '${node.operator}=' */`);
   }
 
   visitBoolean(node: ast.BooleanNode) {
@@ -359,7 +386,7 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
 
     const predefinedVariables = findIdentifiersToDefine(node);
     const predefinedVarsCode = predefinedVariables.length > 0
-      ? `let ${joinArray(predefinedVariables, ',')};`
+      ? `let ${predefinedVariables.join(',')};`
       : '';
 
     this.popScope();
@@ -367,34 +394,62 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
     return createSourceNode(node, `(function (`, matchVar, `) { `, predefinedVarsCode, 'return ', ...joinArray(ifExprs, ' : '), ' : undefined;', '})(', matchVal, `)`);
   }
 
-  generateCondition(pattern: ast.PatternNode, value: string) {
+  generateCondition(pattern: ast.PatternNode, matchVar: string) {
     switch (pattern._type) {
       case "any-pattern":
         return createSourceNode(pattern, `true`);
       case "identifier-pattern":
-        return createSourceNode(pattern, `(`, this.visit(pattern.id), '=', value, `,true)`);
+        return createSourceNode(pattern, `(`, this.visit(pattern.id), '=', matchVar, `,true)`);
       case "constant-pattern":
-        return createSourceNode(pattern, value, ' === ', this.visit(pattern.constant));
+        return createSourceNode(pattern, matchVar, ' === ', this.visit(pattern.constant));
       case "list-pattern":
-        return createSourceNode(pattern, ...this.generateListPatternCondition(pattern, value));
+        return createSourceNode(pattern, ...this.generateListPatternCondition(pattern, matchVar));
       case "vector-pattern":
-        return createSourceNode(pattern, ...this.generateVectorPatternCondition(pattern, value));
+        return createSourceNode(pattern, ...this.generateVectorPatternCondition(pattern, matchVar));
       case "map-pattern":
-        return createSourceNode(pattern, this.generateMapPatternCondition(pattern, value));
+        return createSourceNode(pattern, this.generateMapPatternCondition(pattern, matchVar));
+      case "type-pattern":
+        return createSourceNode(pattern, "/* type matching not supported yet */");
+      case "functional-pattern":
+        return createSourceNode(pattern, "/* functional matching not supported yet */");
       default:
         return createSourceNode(pattern, `/* pattern matching for ${pattern} not implemented */`);
     }
   }
 
-  generateListPatternCondition(pattern: ast.ListPatternNode, value: string) {
+  generateElementCondition(pattern: ast.PatternNode, matchVar: string) {
+    switch (pattern._type) {
+      case "any-pattern":
+        return createSourceNode(pattern, matchVar); // Lets hope for the JS truthly values
+        // return createSourceNode(pattern, 'true'); // Always true, no condition needed
+      case "identifier-pattern":
+        return createSourceNode(pattern, `(`, this.visit(pattern.id), ' = ', matchVar, ',true)');
+      case "constant-pattern":
+        return createSourceNode(pattern, matchVar, ' === ', this.visit(pattern.constant));
+      case "list-pattern":
+        return createSourceNode(pattern, ...this.generateListPatternCondition(pattern, matchVar));
+      case "vector-pattern":
+        return createSourceNode(pattern, ...this.generateVectorPatternCondition(pattern, matchVar));
+      case "map-pattern":
+        return createSourceNode(pattern, this.generateMapPatternCondition(pattern, matchVar));
+      case "type-pattern":
+        return createSourceNode(pattern, "/* type matching not supported yet */");
+      case "functional-pattern":
+        return createSourceNode(pattern, "/* functional matching not supported yet */");
+      default:
+        return createSourceNode(pattern, `/* pattern matching for ${pattern} not implemented */`);
+    }
+  }
+
+  generateListPatternCondition(pattern: ast.ListPatternNode, matchVar: string) {
     const conditions = [];
     const elements = pattern.elements;
 
-    conditions.push(`Array.isArray(${value})`);
-    conditions.push(`${value}.length === ${elements.length}`);
+    conditions.push(`Array.isArray(${matchVar})`);
+    conditions.push(`${matchVar}.length === ${elements.length}`);
 
     elements.forEach((elem, idx) => {
-      const elemValue = `${value}[${idx}]`;
+      const elemValue = `${matchVar}[${idx}]`;
       const condition = this.generateElementCondition(elem, elemValue);
       if (condition) {
         conditions.push(condition);
@@ -404,20 +459,33 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
     return joinArray(conditions, " && ");
   }
 
-  generateVectorPatternCondition(pattern: ast.VectorPatternNode, value: string) {
-    // Vectors are similar to lists in this context
-    return this.generateListPatternCondition(pattern as unknown as ast.ListPatternNode, value);
+  generateVectorPatternCondition(pattern: ast.VectorPatternNode, matchVar: string) {
+    const conditions = [];
+    const elements = pattern.elements;
+
+    conditions.push(`Array.isArray(${matchVar})`);
+    conditions.push(`${matchVar}.length === ${elements.length}`);
+
+    elements.forEach((elem, idx) => {
+      const elemValue = `${matchVar}[${idx}]`;
+      const condition = this.generateElementCondition(elem, elemValue);
+      if (condition) {
+        conditions.push(condition);
+      }
+    });
+
+    return joinArray(conditions, " && ");
   }
 
-  generateMapPatternCondition(pattern: ast.MapPatternNode, value: string) {
+  generateMapPatternCondition(pattern: ast.MapPatternNode, matchVar: string) {
     const conditions = [];
-    conditions.push(`typeof ${value} === 'object' && ${value} !==null`);
+    conditions.push(`typeof ${matchVar} === 'object' && ${matchVar} !== null`);
 
     pattern.pairs.forEach((pair) => {
       const key = this.visit(pair.key);
       const elemPattern = pair.pattern;
-      const elemValue = `${value}[${key}]`;
-      conditions.push(`'${key}' in ${value}`);
+      const elemValue = `${matchVar}[${key}]`;
+      conditions.push(`'${key}' in ${matchVar}`);
       const condition = this.generateElementCondition(elemPattern, elemValue);
       if (condition) {
         conditions.push(condition);
@@ -425,37 +493,6 @@ export class JSCompilerAstVisitor extends BaseAstVisitor {
     });
 
     return conditions.join("&&");
-  }
-
-  generateElementCondition(pattern: ast.PatternNode, value: string) {
-    switch (pattern._type) {
-      case "any-pattern":
-        return createSourceNode(pattern, 'true'); // Always true, no condition needed
-      case "identifier-pattern":
-        return createSourceNode(pattern, `(`, this.visit(pattern.id), ' = ', value, ',true)');
-      case "constant-pattern":
-        return createSourceNode(pattern, value, ' === ', this.visit(pattern.constant));
-      case "list-pattern":
-        return createSourceNode(pattern, ...this.generateListPatternCondition(pattern, value));
-      case "vector-pattern":
-        return createSourceNode(pattern, ...this.generateVectorPatternCondition(pattern, value));
-      case "map-pattern":
-        return createSourceNode(pattern, this.generateMapPatternCondition(pattern, value));
-      default:
-        return createSourceNode(pattern, `/* pattern matching for ${pattern} not implemented */`);
-    }
-  }
-
-  visitAnyPattern(node: ast.AnyPatternNode) {
-    return createSourceNode(node, "_");
-  }
-
-  visitIdentifierPattern(node: ast.IdentifierPatternNode) {
-    return createSourceNode(node, this.visit(node.id));
-  }
-
-  visitConstantPattern(node: ast.ConstantPatternNode) {
-    return createSourceNode(node, this.visit(node.constant));
   }
 
   visitIntegerNumber(node: ast.IntegerNumberNode) {

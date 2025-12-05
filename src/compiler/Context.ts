@@ -7,6 +7,7 @@ import {
   BuildSymbolTableAstVisitor,
   SyntaxRulesAstVisitor,
   JSCompilerAstVisitor,
+  JSTransformerAstVisitor,
   AstVisitorConstructor,
   TreeShakeAstVisitor,
   InferTypesAstVisitor,
@@ -65,7 +66,7 @@ export class Context {
   public options: CompilerOptions;
   public dependencyGraph: DependencyGraph;
   public astProvider: AstProvider = new AstProvider();
-  public symbolTable: SymbolTable = new SymbolTable();
+  public symbolTable: SymbolTable = new SymbolTable(undefined);
   public performanceMetrics: PerformanceMetrics =
     new PerformanceMetrics();
   public results: RuleValidationResultsCollection =
@@ -98,9 +99,11 @@ export class Context {
 
     const buildDependencyGraphVisitor = new BuildDependencyGraphAstVisitor(this);
     buildDependencyGraphVisitor.visit(ast as ASTNode);
+    // this.dependencyGraph = buildDependencyGraphVisitor
 
     const buildSymbolTableVisitor = new BuildSymbolTableAstVisitor(this);
     buildSymbolTableVisitor.visit(ast as ASTNode);
+    this.symbolTable.join(buildSymbolTableVisitor.buildSymbolTable());
 
     return this;
   }

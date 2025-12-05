@@ -79,6 +79,7 @@ export class BaseAstVisitor {
         "binary-number": this.visitBinaryNumber.bind(this),
         "hex-number": this.visitHexNumber.bind(this),
         "fraction-number": this.visitFractionNumber.bind(this),
+        "complex-number": this.visitComplexNumber.bind(this),
         "integer-number": this.visitIntegerNumber.bind(this),
         "float-number": this.visitFloatNumber.bind(this),
         "simple-identifier": this.visitSimpleIdentifier.bind(this),
@@ -89,12 +90,12 @@ export class BaseAstVisitor {
 
     if (node === undefined) {
       this.context.log(LogLevel.Error, "Cannot process undefined node.");
-      return defaultVisitor ? defaultVisitor() : undefined;
+      return undefined;
     }
 
     if (node?._type === undefined) {
       this.context.log(LogLevel.Error, "Cannot process node without type.");
-      return defaultVisitor ? defaultVisitor() : undefined;
+      return undefined;
     }
 
     const nodeVisitor = astVisitors[node._type];
@@ -366,6 +367,10 @@ export class BaseAstVisitor {
 
   visitHexNumber(node: ast.HexNumberNode): any {
     this.context.log(LogLevel.Verbose, "Method visitHexNumber skipped");
+  }
+
+  visitComplexNumber(node: ast.ComplexNumberNode): any {
+    this.context.log(LogLevel.Verbose, "Method visitComplexNumber skipped");
   }
 
   visitFractionNumber(node: ast.FractionNumberNode): any {

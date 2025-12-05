@@ -1,3 +1,5 @@
+import { createHash, hash } from "crypto";
+
 export interface Location {
   source: string | undefined;
   start: Position;
@@ -38,6 +40,10 @@ export function isNamespaceImportSource(source: FileImportSource | NamespaceImpo
   return Object.keys(source).includes("namespace");
 }
 
+export function getNodeHash(node: ASTNode): string {
+  const nodeLocation = `${node._type}_${node._location.start.offset}_${node._location.end.offset}_${node._location.source}`;
+  return hash('sha1', nodeLocation, "hex");
+}
 
 export type NodeType =
   | "program"
@@ -101,9 +107,10 @@ export type NodeType =
   | "format-expression"
   | "boolean"
   | "null"
+  | "hex-number"
   | "octal-number"
   | "binary-number"
-  | "hex-number"
+  | "complex-number"
   | "fraction-number"
   | "integer-number"
   | "float-number"
@@ -157,8 +164,8 @@ export interface ExportNode extends ASTNode<"export"> {
 }
 
 export interface ImportExportAlias {
-  symbol: IdentifierNode | TypeNode;
-  as: IdentifierNode;
+  symbol: IdentifierNode | TypeNameNode;
+  as: IdentifierNode | undefined;
 }
 
 export interface ImportNode extends ASTNode<"import"> {
@@ -498,6 +505,7 @@ export type NumberNode =
   | FractionNumberNode
   | IntegerNumberNode
   | FloatNumberNode
+  | ComplexNumberNode
   ;
 
 export interface OctalNumberNode extends ASTNode<"octal-number"> {
@@ -513,6 +521,12 @@ export interface BinaryNumberNode extends ASTNode<"binary-number"> {
 export interface HexNumberNode extends ASTNode<"hex-number"> {
   match: string;
   value: number;
+}
+
+export interface ComplexNumberNode extends ASTNode<"complex-number"> {
+  match: string;
+  real: number;
+  imaginary: number;
 }
 
 export interface FractionNumberNode extends ASTNode<"fraction-number"> {
