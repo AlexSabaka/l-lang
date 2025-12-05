@@ -3,10 +3,11 @@ import { formatWithOptions } from "node:util"
 import { readFileSync, writeFileSync } from "node:fs";
 
 import evaljs from "./evaljs";
-import { JSCompilerAstVisitor } from "../visitors";
+import { JSTransformerAstVisitor } from "../visitors";
 import { Context, LogLevel } from "../Context";
 import { encodeIdentifier } from "../utils";
 import { deepStrictEqual, notDeepStrictEqual } from "./deepeq";
+import * as astring from "astring";
 
 const basicOperators = {
   [encodeIdentifier('set!')]: (array: any[], index: number, value: any): any => {
@@ -62,9 +63,11 @@ const helpers = {
   call: (f: Function, a: any[]): any => f.call(globalScope, a),
   eval: (q: any): any => {
     const quoteAst = { ...q, _type: "list" };
-    const compiler = new JSCompilerAstVisitor(new Context("eval", { minimumLogLevel: LogLevel.Error }));
-    const js = compiler.compile(quoteAst);
-    return evaljs(js.code, globalScope);
+    const context = new Context("eval", { minimumLogLevel: LogLevel.Error });
+    const transformer = new JSTransformerAstVisitor(context);
+    const astProgram = transformer.compile(quoteAst);
+    const code = astring.generate(astProgram);
+    return evaljs(code, globalScope);
   },
   throw: (a: any) => {
     throw a;

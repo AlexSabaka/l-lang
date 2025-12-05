@@ -20,6 +20,7 @@ import { encodeIdentifier, uniqueIdentifier } from "../utils";
 export class JSTransformerAstVisitor extends BaseAstVisitor {
   private scopes: string[][] = [[]]; // Track variable scopes for hoisting
   private currentScopeIndex: number = 0;
+  private inProgramContext: boolean = false; // Track if we're processing program-level statements
 
   constructor(context: Context) {
     super(context);
@@ -40,9 +41,50 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // ============================================================================
 
   visitProgram(node: ast.ProgramNode): estree.Program {
-    const body = node.program.map(stmt => this.visit(stmt)).filter((node): node is estree.Statement => {
-      return node !== null && (node as any).type !== undefined;
-    });
+    this.inProgramContext = true;
+    
+    let programItems = node.program;
+    
+    // Special case: if the entire program is wrapped in a single list (common in Lisp),
+    // unwrap it so we get the actual top-level statements
+    if (programItems.length === 1 && programItems[0]._type === "list") {
+      const listNode = programItems[0] as ast.ListNode;
+      programItems = listNode.nodes;
+    }
+    
+    const body: estree.Statement[] = [];
+    
+    for (const stmt of programItems) {
+      const visited = this.visit(stmt);
+      
+      // Handle flattened statement arrays
+      if (Array.isArray(visited)) {
+        for (const v of visited) {
+          if (v && (v as any).type) {
+            body.push(v as estree.Statement);
+          }
+        }
+        continue;
+      }
+      
+      // Convert expressions to expression statements
+      if (visited && (visited as any).type) {
+        const type = (visited as any).type;
+        if (type.endsWith("Declaration") || type.endsWith("Statement")) {
+          body.push(visited as estree.Statement);
+        } else if (type === "CallExpression" || type === "AssignmentExpression") {
+          body.push({
+            type: "ExpressionStatement",
+            expression: visited as estree.Expression
+          });
+        } else if (type === "ExpressionStatement") {
+          body.push(visited as estree.ExpressionStatement);
+        }
+      }
+    }
+    
+    this.inProgramContext = false;
+    
     return {
       type: "Program",
       body,
@@ -200,15 +242,89 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // COLLECTIONS
   // ============================================================================
 
-  visitList(node: ast.ListNode): estree.ArrayExpression {
-    const elements = node.nodes.map(elem => {
-      const visited = this.visit(elem);
-      return visited as estree.Expression | null;
+  visitList(node: ast.ListNode): estree.Expression | estree.Statement | estree.Statement[] {
+    if (node.nodes.length === 0) {
+      return {
+        type: "ArrayExpression",
+        elements: []
+      };
+    }
+
+    const firstNode = node.nodes[0];
+    const firstNodeType = firstNode._type;
+    
+    // If the first node is a statement-like keyword, treat the whole list as a statement sequence
+    if (this.isStatementLike(firstNode)) {
+      // This is a sequence of statements
+      const statements: estree.Statement[] = [];
+      for (const item of node.nodes) {
+        const visited = this.visit(item);
+        if (!visited) continue;
+        
+        if (Array.isArray(visited)) {
+          statements.push(...(visited.filter((v): v is estree.Statement => v !== null)));
+        } else if ((visited as any).type?.endsWith("Statement") || (visited as any).type?.endsWith("Declaration")) {
+          statements.push(visited as estree.Statement);
+        } else if ((visited as any).type === "CallExpression" || (visited as any).type === "AssignmentExpression") {
+          statements.push({
+            type: "ExpressionStatement",
+            expression: visited as estree.Expression
+          });
+        }
+      }
+      return statements.length === 1 ? statements[0] : statements;
+    }
+    
+    // Check if this is a function call
+    if (firstNodeType === "simple-identifier" || firstNodeType === "composite-identifier") {
+      const visitedNodes = node.nodes.map(n => this.visit(n));
+      const [callee, ...args] = visitedNodes;
+      const calleeIdent = callee as estree.Identifier | estree.MemberExpression;
+      
+      const callExpr: estree.CallExpression = {
+        type: "CallExpression",
+        callee: calleeIdent,
+        arguments: args.filter((a): a is estree.Expression => {
+          return a !== null && !Array.isArray(a) && ("type" in (a as any));
+        }),
+        optional: false
+      };
+      
+      return callExpr;
+    }
+    
+    // Otherwise, it's an array literal
+    const visitedNodes = node.nodes.map(n => this.visit(n));
+    const elements = visitedNodes.filter((v): v is estree.Expression => {
+      return v !== null && !Array.isArray(v) && ("type" in (v as any));
     });
+    
     return {
       type: "ArrayExpression",
       elements
     };
+  }
+
+  /**
+   * Check if a node represents a statement-like operation
+   */
+  private isStatementLike(node: ast.ASTNode): boolean {
+    const statementTypes = [
+      "function",
+      "variable",
+      "if",
+      "while",
+      "for",
+      "foreach",
+      "match",
+      "when",
+      "try-catch",
+      "class",
+      "interface",
+      "simple-assignment",
+      "compound-assignment"
+    ];
+    return statementTypes.includes(node._type);
   }
 
   visitVector(node: ast.VectorNode): estree.ArrayExpression {
@@ -417,7 +533,39 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     const id = node.name ? this.visit(node.name) as estree.Identifier : null;
     const params = node.params.map(param => this.visit(param) as estree.Pattern);
     
-    const bodyStatements = node.body.map(stmt => this.visit(stmt) as estree.Statement);
+    // Convert body nodes to statements
+    const bodyStatements: estree.Statement[] = [];
+    for (const bodyItem of node.body) {
+      const visited = this.visit(bodyItem);
+      if (!visited) continue;
+      
+      // Handle statement arrays (flattened statement lists)
+      if (Array.isArray(visited)) {
+        bodyStatements.push(...(visited.filter((v): v is estree.Statement => v !== null)));
+      }
+      // Handle different node types
+      else if ((visited as any).type === "BlockStatement") {
+        bodyStatements.push(visited as estree.BlockStatement);
+      } else if ((visited as any).type?.endsWith("Declaration") || (visited as any).type?.endsWith("Statement")) {
+        bodyStatements.push(visited as estree.Statement);
+      } else if ((visited as any).type === "ExpressionStatement") {
+        bodyStatements.push(visited as estree.ExpressionStatement);
+      } else if ("type" in (visited as any) && ((visited as any).type === "CallExpression" || (visited as any).type === "AssignmentExpression")) {
+        // Wrap expressions in ExpressionStatement
+        bodyStatements.push({
+          type: "ExpressionStatement",
+          expression: visited as estree.Expression
+        });
+      } else if ((visited as any).type === "ArrayExpression") {
+        // If it's an array expression, it's likely an inline list of statements
+        // This shouldn't happen in well-formed code, but wrap it for safety
+        bodyStatements.push({
+          type: "ExpressionStatement",
+          expression: visited as estree.ArrayExpression
+        });
+      }
+    }
+    
     const body: estree.BlockStatement = {
       type: "BlockStatement",
       body: bodyStatements
@@ -714,21 +862,38 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     const quasis: estree.TemplateElement[] = [];
     const expressions: estree.Expression[] = [];
     
-    // Process parts - alternate between string and expression
-    let i = 0;
-    for (const part of node.parts) {
-      if (typeof part === "string") {
+    // Process value array - mix of StringNodes and FormatExpressionNodes
+    for (let i = 0; i < node.value.length; i++) {
+      const part = node.value[i];
+      
+      if (part._type === "string") {
+        const stringNode = part as ast.StringNode;
         quasis.push({
           type: "TemplateElement",
-          value: { raw: part, cooked: part },
-          tail: i === node.parts.length - 1
+          value: { raw: stringNode.value, cooked: stringNode.value },
+          tail: i === node.value.length - 1 && expressions.length === quasis.length
         });
-      } else {
-        // It's a format expression node
-        const exprNode = this.visit(part as ast.ASTNode) as estree.Expression;
+      } else if (part._type === "format-expression") {
+        const exprNode = this.visit(part) as estree.Expression;
         expressions.push(exprNode);
+        // Add empty quasi for template literal structure
+        if (quasis.length === expressions.length - 1) {
+          quasis.push({
+            type: "TemplateElement",
+            value: { raw: "", cooked: "" },
+            tail: i === node.value.length - 1
+          });
+        }
       }
-      i++;
+    }
+    
+    // Ensure we have proper quasi/expression pairing
+    if (quasis.length === expressions.length) {
+      quasis.push({
+        type: "TemplateElement",
+        value: { raw: "", cooked: "" },
+        tail: true
+      });
     }
     
     return {

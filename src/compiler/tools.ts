@@ -76,7 +76,7 @@ export function parse(file: string, command: Command) {
   }
 }
 
-function compileJS(file: string, options: CompilerOptions, useTransformer: boolean = false) {
+function compileJS(file: string, options: CompilerOptions, useLegacy: boolean = false) {
   const context = new Context(file, options);
   context.process(file);
   const { errors } = printMessages(context);
@@ -84,8 +84,15 @@ function compileJS(file: string, options: CompilerOptions, useTransformer: boole
     return;
   }
 
-  if (useTransformer) {
-    // Use new ESTree-based transformer
+  if (useLegacy) {
+    // Use legacy string-based compiler (fallback for compatibility)
+    const jsCompilerVisitor = new JSCompilerAstVisitor(context);
+    const js = jsCompilerVisitor.compile(
+      context.astProvider.getAst(file) as ASTNode
+    );
+    return js;
+  } else {
+    // Use new ESTree-based transformer (default)
     const transformer = new JSTransformerAstVisitor(context);
     const astProgram = transformer.compile(context.astProvider.getAst(file) as ASTNode);
     const code = astring.generate(astProgram);
@@ -95,13 +102,6 @@ function compileJS(file: string, options: CompilerOptions, useTransformer: boole
       code,
       map: { toString: () => "" } // TODO: Integrate proper source maps from astring
     };
-  } else {
-    // Use legacy string-based compiler
-    const jsCompilerVisitor = new JSCompilerAstVisitor(context);
-    const js = jsCompilerVisitor.compile(
-      context.astProvider.getAst(file) as ASTNode
-    );
-    return js;
   }
 }
 
