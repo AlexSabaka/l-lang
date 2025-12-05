@@ -76,7 +76,7 @@ export function parse(file: string, command: Command) {
   }
 }
 
-function compileJS(file: string, options: CompilerOptions, useLegacy: boolean = false) {
+function compileJS(file: string, options: CompilerOptions, useLegacy: boolean = true) {
   const context = new Context(file, options);
   context.process(file);
   const { errors } = printMessages(context);
