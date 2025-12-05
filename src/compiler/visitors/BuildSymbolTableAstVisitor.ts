@@ -3,11 +3,68 @@ import { LogLevel } from "../Context";
 import { ScopeType, SymbolTable, SymbolTableBuilder } from "../SymbolTable";
 import { BaseAstTreeWalker } from "./BaseAstTreeWalker";
 
-export class BuildSymbolTableAstVisitor extends BaseAstTreeWalker {
-  private symbolTableBuilder: SymbolTableBuilder = new SymbolTableBuilder();
+/**
+ * BuildSymbolTableAstVisitor - Two-Pass Implementation
+ * 
+ * Pass 1 (ScanPass): Walks the AST and records all top-level definitions
+ *   - Records Class names, Function names, Variable names
+ *   - Does NOT enter function bodies or class bodies
+ *   - Allows forward references: functions can call functions defined later
+ * 
+ * Pass 2 (ResolvePass): Walks the AST again to validate symbol usage
+ *   - Enters function and class bodies
+ *   - Validates that all used identifiers exist in the symbol table
+ *   - Tracks symbol usage for later optimization passes
+ */
 
-  buildSymbolTable(): SymbolTable {
-    return this.symbolTableBuilder.build();
+class ScanPassVisitor extends BaseAstTreeWalker {
+  private symbolTableBuilder: SymbolTableBuilder;
+
+  constructor(context: any) {
+    super(context);
+    this.symbolTableBuilder = new SymbolTableBuilder();
+  }
+
+  getBuilder(): SymbolTableBuilder {
+    return this.symbolTableBuilder;
+  }
+
+  visitProgram(node: ast.ProgramNode) {
+    this.symbolTableBuilder.enterScope(node);
+    // Only scan top-level definitions, don't recurse into bodies
+    for (const item of node.program) {
+      if (item._type === "function" || item._type === "class" || item._type === "interface" || item._type === "variable") {
+        this.symbolTableBuilder.defineSymbol(item as any);
+      }
+    }
+  }
+
+  visitFunction(node: ast.FunctionNode) {
+    // ScanPass: Don't visit function body yet
+    // This is handled in ResolvePass
+  }
+
+  visitClass(node: ast.ClassNode) {
+    // ScanPass: Don't visit class body yet
+    // This is handled in ResolvePass
+  }
+
+  visitInterface(node: ast.InterfaceNode) {
+    // ScanPass: Don't visit interface body yet
+    // This is handled in ResolvePass
+  }
+}
+
+class ResolvePassVisitor extends BaseAstTreeWalker {
+  private symbolTableBuilder: SymbolTableBuilder;
+
+  constructor(context: any, builder: SymbolTableBuilder) {
+    super(context);
+    this.symbolTableBuilder = builder;
+  }
+
+  getBuilder(): SymbolTableBuilder {
+    return this.symbolTableBuilder;
   }
 
   visitProgram(node: ast.ProgramNode) {
@@ -17,31 +74,45 @@ export class BuildSymbolTableAstVisitor extends BaseAstTreeWalker {
   }
 
   visitVariable(node: ast.VariableNode) {
-    this.symbolTableBuilder.defineSymbol(node);
-    [ ...node.modifiers, node.name, node.type, node.value ].map(x => this.visitIfNotNull(x));
+    // Variable already defined in ScanPass, now resolve its value
+    if (node.value) {
+      super.visit(node.value);
+    }
   }
 
   visitFunction(node: ast.FunctionNode) {
-    this.symbolTableBuilder.defineSymbol(node);
-    [ ...node.modifiers, node.name, ...node.params, node.returns, ...node.body ].map(x => this.visitIfNotNull(x));
+    // Function already defined in ScanPass, now enter its scope and resolve body
+    this.symbolTableBuilder.enterScope(node);
+    [...node.params, ...node.body].map(x => this.visitIfNotNull(x));
+    this.symbolTableBuilder.exitScope();
   }
 
   visitClass(node: ast.ClassNode) {
-    this.symbolTableBuilder.defineSymbol(node);
-    [ ...node.modifiers, node.name, ...node.body ].map(x => this.visitIfNotNull(x));
+    // Class already defined in ScanPass, now enter its scope and resolve body
+    this.symbolTableBuilder.enterScope(node);
+    // Scan class members first (similar to program scan)
+    for (const member of node.body) {
+      if (member._type === "function" || member._type === "variable") {
+        this.symbolTableBuilder.defineSymbol(member as any);
+      }
+    }
+    // Then resolve them
+    node.body.map(x => this.visitIfNotNull(x));
+    this.symbolTableBuilder.exitScope();
   }
 
   visitInterface(node: ast.InterfaceNode) {
-    this.symbolTableBuilder.defineSymbol(node);
-    [ ...node.modifiers, node.name, ...node.body ].map(x => this.visitIfNotNull(x));
+    this.symbolTableBuilder.enterScope(node);
+    node.body.map(x => this.visitIfNotNull(x));
+    this.symbolTableBuilder.exitScope();
   }
 
   visitExport(node: ast.ExportNode) {
     node.exports.forEach(x => {
       const symbol = this.symbolTableBuilder.resolveSymbol(x.symbol);
       if (symbol === undefined) {
-        this.context.log(LogLevel.Error, "dafadf");
-        throw new Error("asfsagda");
+        this.context.log(LogLevel.Error, `Cannot export undefined symbol: ${x.symbol.name ?? x.symbol.id}`);
+        throw new Error(`Export error: symbol not found`);
       }
       symbol.exportName = x.as ?? x.symbol;
     });
@@ -49,5 +120,34 @@ export class BuildSymbolTableAstVisitor extends BaseAstTreeWalker {
 
   private visitIfNotNull(node: ast.ASTNode | null | undefined): any {
     return node !== undefined && node !== null ? super.visit(node) : undefined;
+  }
+}
+
+export class BuildSymbolTableAstVisitor extends BaseAstTreeWalker {
+  private symbolTableBuilder: SymbolTableBuilder = new SymbolTableBuilder();
+
+  buildSymbolTable(): SymbolTable {
+    return this.symbolTableBuilder.build();
+  }
+
+  visit(node: ast.ASTNode, defaultVisitor?: (node?: ast.ASTNode) => any): any {
+    // This should not be called directly
+    throw new Error("BuildSymbolTableAstVisitor should use scanAndResolve() method");
+  }
+
+  /**
+   * Two-pass compilation:
+   * 1. Scan: Record all top-level definitions
+   * 2. Resolve: Validate usage and enter function/class bodies
+   */
+  scanAndResolve(ast: ast.ASTNode): void {
+    // Pass 1: Scan for definitions
+    const scanVisitor = new ScanPassVisitor(this.context);
+    scanVisitor.visit(ast);
+    this.symbolTableBuilder = scanVisitor.getBuilder();
+
+    // Pass 2: Resolve usage
+    const resolveVisitor = new ResolvePassVisitor(this.context, this.symbolTableBuilder);
+    resolveVisitor.visit(ast);
   }
 };

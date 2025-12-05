@@ -102,7 +102,7 @@ export class Context {
     // this.dependencyGraph = buildDependencyGraphVisitor
 
     const buildSymbolTableVisitor = new BuildSymbolTableAstVisitor(this);
-    buildSymbolTableVisitor.visit(ast as ASTNode);
+    buildSymbolTableVisitor.scanAndResolve(ast as ASTNode);
     this.symbolTable.join(buildSymbolTableVisitor.buildSymbolTable());
 
     return this;

@@ -58,6 +58,8 @@ export interface Scope {
 
 export class SymbolTable {
   private scopes: Scope[] = [];
+  private symbolCache: Map<string, SymbolEntry> = new Map();
+  private cacheValid: boolean = true;
 
   constructor(root: Scope | undefined) {
     if (root) {
@@ -66,9 +68,18 @@ export class SymbolTable {
   }
 
   resolveSymbol(name: ast.IdentifierNode | ast.TypeNameNode): SymbolEntry | undefined {
+    const symbolName = name.name ?? name.id;
+    
+    // Check cache first for O(1) lookup
+    if (this.cacheValid && this.symbolCache.has(symbolName)) {
+      return this.symbolCache.get(symbolName);
+    }
+
     for (let s of this.scopes) {
-      const symbol = this.findSymbolRecursively(name.name ?? name.id, s);
+      const symbol = this.findSymbolRecursively(symbolName, s);
       if (symbol) {
+        // Cache the result
+        this.symbolCache.set(symbolName, symbol);
         return symbol;
       }
     }
@@ -76,6 +87,9 @@ export class SymbolTable {
 
   join(other: SymbolTable): SymbolTable {
     this.scopes = [...this.scopes, ...other.scopes];
+    // Invalidate cache after joining symbol tables
+    this.cacheValid = false;
+    this.symbolCache.clear();
     return this;
   }
 
