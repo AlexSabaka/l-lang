@@ -93,6 +93,38 @@ export class SymbolTable {
     return this;
   }
 
+  /**
+   * Join symbol tables while avoiding duplication of re-exported symbols
+   * Returns count of new symbols added
+   */
+  joinWithoutDuplication(other: SymbolTable): number {
+    let addedCount = 0;
+    
+    for (const scope of other.scopes) {
+      // Check if scope already exists
+      const existingScope = this.scopes.find(s => s.node === scope.node);
+      
+      if (existingScope) {
+        // Merge symbol tables, skipping duplicates
+        for (const [key, symbol] of scope.table.entries()) {
+          if (!existingScope.table.has(key)) {
+            existingScope.table.set(key, symbol);
+            addedCount++;
+          }
+        }
+      } else {
+        // New scope, add it
+        this.scopes.push(scope);
+        addedCount += scope.table.size;
+      }
+    }
+
+    // Invalidate cache after joining
+    this.cacheValid = false;
+    this.symbolCache.clear();
+    return addedCount;
+  }
+
   private findSymbolRecursively(name: string, scope: Scope | undefined) {
     let current: Scope | undefined = scope;
     let symbol: SymbolEntry | undefined = undefined;

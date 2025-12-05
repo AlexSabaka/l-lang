@@ -71,11 +71,39 @@ export class Context {
     new PerformanceMetrics();
   public results: RuleValidationResultsCollection =
     new RuleValidationResultsCollection();
+  
+  // Module cache: prevents loading the same module multiple times
+  // Map<AbsolutePath, ModuleData>
+  private moduleCache: Map<string, { ast: ASTNode; symbols: SymbolTable }> = new Map();
 
   constructor(file: string, options: CompilerOptions) {
     this.dependencyGraph = new DependencyGraph(file);
     this.mainModule = path.basename(file, ".lisp");
     this.options = options;
+  }
+
+  /**
+   * Get or load a module
+   * Returns cached version if already loaded
+   */
+  getModule(filePath: string): { ast: ASTNode; symbols: SymbolTable } | undefined {
+    const fullPath = path.resolve(filePath);
+    return this.moduleCache.get(fullPath);
+  }
+
+  /**
+   * Cache a loaded module
+   */
+  cacheModule(filePath: string, ast: ASTNode, symbols: SymbolTable): void {
+    const fullPath = path.resolve(filePath);
+    this.moduleCache.set(fullPath, { ast, symbols });
+  }
+
+  /**
+   * Get cache hit count (for optimization metrics)
+   */
+  getModuleCacheSize(): number {
+    return this.moduleCache.size;
   }
 
   log(level: LogLevel, msg: any, caller?: string) {
