@@ -15,7 +15,7 @@ export interface ImportUnit {
   symbols: SymbolTable;
 }
 
-function createImportUnit(fileName: string, context?: Context): ImportUnit {
+function createImportUnit(fileName: string): ImportUnit {
   const fullName = path.resolve(fileName);
   const shortName = path.basename(fileName);
   const moduleName = shortName.split(".")[0];
@@ -28,7 +28,10 @@ function createImportUnit(fileName: string, context?: Context): ImportUnit {
       shortName,
     },
     dependencies: [],
-    symbols: context?.symbolTable ?? new SymbolTable(undefined),
+    // Each import unit should have its own symbol table. The
+    // dependency graph will consult the Context module cache for
+    // processed module symbols when available.
+    symbols: new SymbolTable(undefined),
   };
 }
 
@@ -64,14 +67,31 @@ export class DependencyGraph {
     const resolvedFile = path.join(path.dirname(fullParentName), file);
     const fullName = path.resolve(resolvedFile);
 
-    // Check module cache first
+    // First, check whether the Context already has the module cached
+    // (Context keeps parsed AST + symbol table for processed modules).
+    const cached = context.getModule(fullName);
+
+    // Check dependency-graph cache next
     let importUnit = this.moduleCache.get(fullName);
-    
+
     if (!importUnit) {
-      // Module not yet loaded, create it
-      importUnit = createImportUnit(fullName, context);
-      // Add to cache
+      // Create a new import unit placeholder
+      importUnit = createImportUnit(fullName);
+      // If the Context has already processed this module, attach its
+      // symbol table to the import unit so consumers see the final
+      // module symbols.
+      if (cached) {
+        importUnit.symbols = cached.symbols;
+      }
+
+      // Add to dependency-graph cache
       this.moduleCache.set(fullName, importUnit);
+    } else {
+      // If an import unit exists but Context has processed the module
+      // since then, prefer the Context symbol table (keeps single source).
+      if (cached) {
+        importUnit.symbols = cached.symbols;
+      }
     }
 
     // Add to parent's dependencies (if not already present)

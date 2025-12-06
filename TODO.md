@@ -30,16 +30,16 @@ Important: **Commit often**
     - [ ] **Split into two passes:**
         - [ ] `ScanPass`: Walk the tree. Record Class names, Function names, Variable names. **Do not** enter function bodies.
         - [ ] `ResolvePass`: Walk the tree. Enter bodies. Validate that used identifiers exist in the table created by `ScanPass`.
-- [ ] **Fix `SymbolTable.ts` Performance**
-    - [ ] Refactor `resolveSymbol` to avoid iterating through `this.scopes` array linearly.
-    - [ ] Implement a lookup cache: `Map<string, SymbolEntry>` for O(1) access.
+- [x] **Fix `SymbolTable.ts` Performance**
+    - [x] Refactor `resolveSymbol` to avoid iterating through `this.scopes` array linearly.
+    - [x] Implement a lookup cache: `Map<string, SymbolEntry>` for O(1) access.
 
 ## 🕸️ Priority 2: The Dependency Web (Modules)
 *Context: Our dependency graph is a tree, but it should be a flat cache to avoid loading modules twice.*
 
-- [ ] **Refactor `DependencyGraph.ts`**
-    - [ ] Create a `ModuleCache` (Map<AbsolutePath, ImportUnit>) in `Context`.
-    - [ ] Update `find` or `add` to check `ModuleCache` before creating a new `ImportUnit`.
+- [x] **Refactor `DependencyGraph.ts`**
+    - [x] Create a `ModuleCache` (Map<AbsolutePath, ImportUnit>) in `Context`.
+    - [x] Update `find` or `add` to check `ModuleCache` before creating a new `ImportUnit`.
     - [ ] Ensure `SymbolTable.join` handles re-exports correctly without duplicating symbols.
 
 ## 🎨 Priority 3: Grammar & Syntax Polish

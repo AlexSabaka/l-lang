@@ -1,7 +1,7 @@
 import * as ast from "../ast";
 import { BaseAstVisitor } from "./BaseAstVisitor";
 import { Context, LogLevel } from "../Context";
-import { ScopeType } from "../SymbolTable";
+import { ScopeType, SymbolEntry } from "../SymbolTable";
 import { SourceNode } from "source-map";
 import { 
   createSourceNode, 
@@ -9,7 +9,7 @@ import {
   formatVariable, 
   formatFunction, 
   isStandardLibReference, 
-} from "./helpers";
+} from "../utils/helpers";
 import { uniqueIdentifier } from "../utils/uniqueIdentifier";
 import { encodeIdentifier } from "../utils/encodeIdentifier";
 import path from "path";
@@ -187,6 +187,12 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
   private identifiers: Record<string, string> = {};
   private inlineStandardSymbols: string[] = [];
+  // Symbols that were inlined from imported modules
+  private inlinedSymbols: Record<string, string> = {};
+  // Definitions (SourceNode or string parts) keyed by unique name
+  private inlinedDefinitions: Record<string, (SourceNode | string)[]> = {};
+  // Source file for the AST root currently being compiled
+  private rootSource?: string;
 
   constructor(context: Context) {
     super(context);
@@ -247,6 +253,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   public compile(root: ast.ASTNode) {
+    // Remember the root source so we can detect imports vs local symbols
+    this.rootSource = root && root._location && root._location.source ? root._location.source : undefined;
     const rootSourceNode = this.visit(root);
     
     const header = [
@@ -259,7 +267,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     const sourceName = root && root._location && root._location.source ? root._location.source : 'bundle.lisp';
     const sourceMapUrl = `\n\n//# sourceMappingURL=${path.basename(sourceName, '.lisp')}.js.map`;
 
-    const wrappedBody = createSourceNode(root, '(function() {', '\n', rootSourceNode, '\n', '})()');
+    // Prepend any inlined definitions collected during traversal
+    console.log('inlinedDefinitions keys:', Object.keys(this.inlinedDefinitions));
+    const defs = Object.values(this.inlinedDefinitions).flat();
+    const wrappedBody = createSourceNode(root, '(function() {', '\n', ...defs, '\n', rootSourceNode, '\n', '})()');
 
     return createSourceNode(root,
       ...header,
@@ -542,7 +553,25 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // =========================================================================
 
   visitIdentifier(node: ast.IdentifierNode) {
+    // If we've already mapped this identifier to a string, use it
     if (this.identifiers[node.id]) return createSourceNode(node, this.identifiers[node.id]);
+
+    // Resolve symbol in the symbol table (if available) to check whether
+    // it originates from another module. If so, inline its definition
+    // into this module under a unique name.
+    try {
+      const resolved = this.context?.symbolTable?.resolveSymbol?.(node as any);
+      // debug: log resolution
+      console.log('visitIdentifier resolve', node.id, resolved ? (resolved.value && (resolved.value as any)._location && (resolved.value as any)._location.source) : undefined);
+      if (resolved && resolved.value && resolved.value._location && this.rootSource && resolved.value._location.source !== this.rootSource) {
+        const uniq = this.ensureSymbolInlined(resolved);
+        this.identifiers[node.id] = uniq;
+        return createSourceNode(node, uniq);
+      }
+    } catch (e) {
+      // If anything goes wrong resolving, fall back to normal encoding
+    }
+
     const id = encodeIdentifier(node.id);
     this.identifiers[node.id] = id;
     if (isStandardLibReference(id)) this.inlineStandardSymbols.push(id);
@@ -666,5 +695,70 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       ["_location", "_parent"].includes(key) ? undefined : val
     );
     return createSourceNode(node, serialized);
+  }
+
+  // Clone a node (structural clone) so we can safely modify names
+  private cloneNode<T extends ast.ASTNode>(n: T): T {
+    const cache = new Set<any>();
+    return JSON.parse(JSON.stringify(n, (key, value) => {
+      if (typeof value === 'object' && value !== null) {
+        if (cache.has(value)) {
+          // Circular reference found, discard key
+          return;
+        }
+        // Store value in our collection
+        cache.add(value);
+      }
+      return value;
+    })) as T;
+  }
+
+  // Ensure an external symbol is inlined into the current module. Returns
+  // the unique identifier name that refers to the inlined symbol.
+  private ensureSymbolInlined(symbol: SymbolEntry): string {
+    console.log('ensureSymbolInlined for', (symbol.name as any).id ?? (symbol.name as any).name, 'type=', symbol.type);
+    const src = (symbol.value && (symbol.value as any)._location && (symbol.value as any)._location.source) || "";
+    const symName = (symbol.name as any).id ?? (symbol.name as any).name ?? String(Math.random());
+    const key = `${src}::${symName}`;
+
+    if (this.inlinedSymbols[key]) return this.inlinedSymbols[key];
+
+    try {
+      const uniq = encodeIdentifier(symName) + "_inlined_" + uniqueIdentifier();
+      this.inlinedSymbols[key] = uniq;
+
+      // Build a top-level definition for the symbol depending on its type
+      let defParts: (SourceNode | string)[] = [];
+
+      if (symbol.type === "function") {
+        const fn = this.cloneNode(symbol.value as ast.FunctionNode) as ast.FunctionNode;
+        // replace name
+        fn.name = fn.name ? { ...fn.name, id: uniq } as any : { _type: "simple-identifier", id: uniq } as any;
+        // Visiting the cloned function will inline any nested references as needed
+        defParts = [ this.visit(fn) ];
+      } else if (symbol.type === "class") {
+        const cls = this.cloneNode(symbol.value as ast.ClassNode) as ast.ClassNode;
+        cls.name = cls.name ? { ...cls.name, name: uniq } as any : { _type: "identifier", name: uniq } as any;
+        defParts = [ this.visit(cls) ];
+      } else if (symbol.type === "variable") {
+        const v = this.cloneNode(symbol.value as ast.VariableNode) as ast.VariableNode;
+        // create const uniq = <value>
+        const valueNode = v.value ? this.visit(v.value) : "undefined";
+        defParts = [ createSourceNode(v, "const ", uniq, " = ", valueNode, ";") ];
+      } else {
+        // fallback: try to visit the value node and assign to uniq
+        const val = (symbol.value as any) ? this.visit(symbol.value as any) : "undefined";
+        defParts = [ createSourceNode(symbol.value as any, "const ", uniq, " = ", val, ";") ];
+      }
+
+      this.inlinedDefinitions[uniq] = defParts;
+      console.log('inlinedDefinitions added', uniq);
+      return uniq;
+    } catch (ex) {
+      console.error('ensureSymbolInlined error for', symName, ex);
+      // Fallback: return a safe encoded name (no inlining)
+      const fallback = encodeIdentifier(symName);
+      return fallback;
+    }
   }
 }

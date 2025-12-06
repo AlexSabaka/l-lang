@@ -111,8 +111,33 @@ export class Context {
   }
 
   process(file: string, basedir?: string) {
+    const fullPath = path.resolve(basedir ?? "", file);
+
+    // If module already processed and cached, reuse its symbol table
+    const cached = this.getModule(fullPath);
+    if (cached) {
+      // Merge cached symbols into the global symbol table without duplication
+      this.symbolTable.joinWithoutDuplication(cached.symbols);
+      return this;
+    }
+
     const ast = this.astProvider.getAst(file, basedir);
-    return this.processAst(ast as ASTNode);
+    const result = this.processAst(ast as ASTNode);
+
+    // After processing, cache the module (AST + symbols) so subsequent
+    // imports reuse the same symbol table and avoid re-processing.
+    if (ast) {
+      // BuildSymbolTable was run inside processAst and the build result
+      // has been joined into this.symbolTable. We need a per-module
+      // symbol table to store in the cache — create a fresh builder by
+      // scanning the AST and building its symbol table separately.
+      const buildSymbolTableVisitor = new BuildSymbolTableAstVisitor(this);
+      buildSymbolTableVisitor.scanAndResolve(ast as ASTNode);
+      const moduleSymbols = buildSymbolTableVisitor.buildSymbolTable();
+      this.cacheModule(fullPath, ast as ASTNode, moduleSymbols);
+    }
+
+    return result;
   }
 
   private processAst(ast: ASTNode) {

@@ -32,10 +32,22 @@ class ScanPassVisitor extends BaseAstTreeWalker {
   visitProgram(node: ast.ProgramNode) {
     this.symbolTableBuilder.enterScope(node);
     // Only scan top-level definitions, don't recurse into bodies
-    for (const item of node.program) {
+    const scanItem = (item: ast.ASTNode) => {
+      if (!item) return;
+      // Some source files wrap top-level forms in a `list` node; unwrap it
+      if (item._type === "list") {
+        const nodes = (item as any).nodes || [];
+        for (const n of nodes) scanItem(n);
+        return;
+      }
+
       if (item._type === "function" || item._type === "class" || item._type === "interface" || item._type === "variable") {
         this.symbolTableBuilder.defineSymbol(item as any);
       }
+    };
+
+    for (const item of node.program) {
+      scanItem(item as any);
     }
   }
 

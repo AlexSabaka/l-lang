@@ -75,6 +75,27 @@ export class SymbolTable {
       return this.symbolCache.get(symbolName);
     }
 
+    // If cache is not valid, build it now from the scopes.
+    if (!this.cacheValid) {
+      this.symbolCache.clear();
+      for (const s of this.scopes) {
+        let current: Scope | undefined = s;
+        while (current !== undefined) {
+          for (const [k, sym] of current.table.entries()) {
+            if (!this.symbolCache.has(k)) {
+              this.symbolCache.set(k, sym);
+            }
+          }
+          current = current.parent;
+        }
+      }
+      this.cacheValid = true;
+      return this.symbolCache.get(symbolName);
+    }
+
+    // Cache is marked valid but symbol not found in cache — fall back to
+    // the original recursive search to preserve resolution semantics
+    // when incremental updates may not have populated the cache yet.
     for (let s of this.scopes) {
       const symbol = this.findSymbolRecursively(symbolName, s);
       if (symbol) {
@@ -83,6 +104,7 @@ export class SymbolTable {
         return symbol;
       }
     }
+    return undefined;
   }
 
   join(other: SymbolTable): SymbolTable {

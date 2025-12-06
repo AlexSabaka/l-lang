@@ -3,7 +3,7 @@ import { Context } from "../../../Context";
 import { ScopeType } from "../../../SymbolTable";
 import { JSCompilerAstVisitor } from "./JSCompilerAstVisitor";
 import { SourceNode } from "source-map";
-import { createSourceNode, joinArray } from "../../helpers";
+import { createSourceNode, joinArray } from "../../../utils/helpers";
 
 export class ClassBuilder {
   private name: SourceNode;

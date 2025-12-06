@@ -7,7 +7,7 @@ import { BaseAstVisitor } from "../../BaseAstVisitor";
 import { LogLevel } from "../../../Context";
 import { ClassBuilder } from "./ClassBuilder";
 import { SourceNode } from "source-map";
-import { createSourceNode, joinArray, formatVariable, formatFunction, isStandardLibReference, getStandardLibReferenceSource } from "../../helpers";
+import { createSourceNode, joinArray, formatVariable, formatFunction, isStandardLibReference, getStandardLibReferenceSource } from "../../../utils/helpers";
 import path from "path";
 
 
