@@ -1,18 +1,22 @@
 (
-  (fn create-vector [] (
-    (let x (* 2.0 (+ 1.0 2.0)))
-    (let y (/ 32.0 (- 10.0 6.0))
-    (return [x y])
-  )))
+    ;; 1. Immutable assignment
+    (let pi 3.14159)
+    
+    ;; 2. Mutable assignment
+    (mut counter 0)
+    (counter := (+ counter 1))
+    
+    ;; 3. Math & String Interpolation
+    (let radius 10)
+    (let area (* pi (* radius radius)))
+    
+    (std.console.log '"Circle Area: {(area)}")
+    (std.console.log '"Counter should be 1: {(counter)}")
 
-  (fn vector-len [vec] (return
-    (std.math.sqrt
-      (+ (* (head vec) (head vec))
-         (* (tail vec) (tail vec))))
-  ))
-
-  (let v (call create-vector))
-  (let l (vector-len v))
-
-  (std.console.println '"Length of the vector {(v)} is {(l)}")
+    ;; 4. Nested expressions
+    (let complex-calc 
+        (/ (std.math.log 100)
+           (std.math.sqrt 16))) ;; returns 0.5 * ln(100) approx 1.15
+           
+    (std.console.log complex-calc)
 )

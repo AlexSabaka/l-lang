@@ -76,7 +76,7 @@ export function parse(file: string, command: Command) {
   }
 }
 
-function compileJS(file: string, options: CompilerOptions, useLegacy: boolean = true) {
+function compileJS(file: string, options: CompilerOptions, useLegacy: boolean = false) {
   const context = new Context(file, options);
   context.process(file);
   const { errors } = printMessages(context);
@@ -95,7 +95,18 @@ function compileJS(file: string, options: CompilerOptions, useLegacy: boolean = 
     // Use new ESTree-based transformer (default)
     const transformer = new JSTransformerAstVisitor(context);
     const astProgram = transformer.compile(context.astProvider.getAst(file) as ASTNode);
-    const code = astring.generate(astProgram);
+    let code: string;
+    try {
+      code = astring.generate(astProgram);
+    } catch (e) {
+      console.error("Error generating code with astring — dumping AST program for debugging:");
+      try {
+        console.error(JSON.stringify(astProgram, (k, v) => (k === '_location' || k === '_parent' ? undefined : v), 2));
+      } catch (e2) {
+        console.error("Failed to stringify AST program", e2);
+      }
+      throw e;
+    }
     
     // Return in compatible format
     return {
@@ -107,7 +118,7 @@ function compileJS(file: string, options: CompilerOptions, useLegacy: boolean = 
 
 export function compile(file: string, command: Command) {
   const options = getCompilerOptions(command, file, ".js");
-  const js = compileJS(file, options);
+  const js = compileJS(file, options, command.opts().useLegacy);
   if (js && options.outputFile) {
     fs.writeFileSync(options.outputFile, js.code);
     fs.writeFileSync(options.outputFile + ".map", js.map.toString());
@@ -118,10 +129,10 @@ export function evalFile(
   file: string,
   command: Command) {
   const options = getCompilerOptions(command, file);
-  const js = compileJS(file, options);
+  const js = compileJS(file, options, command.opts().useLegacy);
 
   if (js) {
-    if (options.minimumLogLevel < LogLevel.Debug) {
+    if (options.minimumLogLevel <= LogLevel.Debug) {
       console.log(chalk.underline.dim(" ".repeat(stdout.columns)));
       console.log(highlight(js.code, { language: "javascript" }));
       console.log(chalk.underline.dim(" ".repeat(stdout.columns)));
@@ -135,7 +146,7 @@ export function evalSource(source: string, options: CompilerOptions) {
   const file = path.resolve(tmpdir(), `tmp-llang-${Date.now()}.lisp`);
   fs.writeFileSync(file, source);
 
-  const js = compileJS(file, options);
+  const js = compileJS(file, options, false);
 
   if (js) {
     lib.evalInScope(js.code, lib.globalScope);

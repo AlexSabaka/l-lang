@@ -108,6 +108,9 @@ class ResolvePassVisitor extends BaseAstTreeWalker {
   }
 
   visitExport(node: ast.ExportNode) {
+    console.log("Resolving node:", node);
+    console.log("export 0:", node.exports[0]);
+    console.log("Symbol table:", this.symbolTableBuilder);
     node.exports.forEach(x => {
       const symbol = this.symbolTableBuilder.resolveSymbol(x.symbol);
       if (symbol === undefined) {

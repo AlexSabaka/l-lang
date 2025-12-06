@@ -25,14 +25,14 @@ export function getCompilerOptions(
   ext?: string
 ): CompilerOptions {
   const opts = command.opts() as CLICompilerOptions;
-  const logLevel =
-    opts.logLevel ?? opts.verbose
-      ? LogLevel.Verbose
-      : opts.debug
-      ? LogLevel.Debug
-      : opts.silent
-      ? LogLevel.Error
-      : LogLevel.Warning;
+  const logLevel = LogLevel.Debug;
+    // opts.logLevel ?? opts.verbose
+    //   ? LogLevel.Verbose
+    //   : opts.debug
+    //   ? LogLevel.Debug
+    //   : opts.silent
+    //   ? LogLevel.Error
+    // : LogLevel.Warning;
   return {
     minimumLogLevel: logLevel,
     logger: opts.logFile ? createFileLogger(opts.logFile) : console.log,

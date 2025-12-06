@@ -46,24 +46,49 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     let programItems = node.program;
     
     // Special case: if the entire program is wrapped in a single list (common in Lisp),
-    // unwrap it so we get the actual top-level statements
+    // unwrap it ONLY if it contains actual statements (all items are statement-like, ignoring comments)
     if (programItems.length === 1 && programItems[0]._type === "list") {
       const listNode = programItems[0] as ast.ListNode;
-      programItems = listNode.nodes;
+      
+      // Filter out comments to get actual content nodes
+      const nonCommentNodes = listNode.nodes.filter(n => n._type !== "comment");
+      
+      // Check if ALL non-comment items are statement-like
+      // If so, unwrap and process as individual statements
+      // If not, keep as a list and process as a potential function call
+      const allStatementLike = nonCommentNodes.length === 0 || 
+        nonCommentNodes.every(node => this.isStatementLike(node));
+      
+      if (allStatementLike) {
+        programItems = listNode.nodes;
+      }
+      // Otherwise keep programItems as the single list, which will be processed as an expression
     }
     
     const body: estree.Statement[] = [];
     
-    for (const stmt of programItems) {
+    for (let idx = 0; idx < programItems.length; idx++) {
+      const stmt = programItems[idx];
+      
+      // Skip comments - they don't generate code
+      if (stmt._type === "comment") {
+        continue;
+      }
+      
       const visited = this.visit(stmt);
       
       // Handle flattened statement arrays
       if (Array.isArray(visited)) {
         for (const v of visited) {
-          if (v && (v as any).type) {
+          if (v && (v as any).type && (v as any).type !== "ArrayExpression") {
             body.push(v as estree.Statement);
           }
         }
+        continue;
+      }
+      
+      // Skip ArrayExpressions - they shouldn't be in program body
+      if (visited && (visited as any).type === "ArrayExpression") {
         continue;
       }
       
@@ -72,7 +97,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         const type = (visited as any).type;
         if (type.endsWith("Declaration") || type.endsWith("Statement")) {
           body.push(visited as estree.Statement);
-        } else if (type === "CallExpression" || type === "AssignmentExpression") {
+        } else if (type === "CallExpression" || type === "AssignmentExpression" || type === "FunctionExpression") {
           body.push({
             type: "ExpressionStatement",
             expression: visited as estree.Expression
@@ -250,14 +275,54 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       };
     }
 
-    const firstNode = node.nodes[0];
+    // Skip leading comments to find the first real node
+    let firstNodeIdx = 0;
+    while (firstNodeIdx < node.nodes.length && node.nodes[firstNodeIdx]._type === "comment") {
+      firstNodeIdx++;
+    }
+    
+    // If all nodes are comments, return empty array
+    if (firstNodeIdx >= node.nodes.length) {
+      return [];
+    }
+    
+    const firstNode = node.nodes[firstNodeIdx];
     const firstNodeType = firstNode._type;
     
-    // If the first node is a statement-like keyword, treat the whole list as a statement sequence
+    // Check if the first item is statement-like
+    // If so, treat the entire list as a statement sequence
     if (this.isStatementLike(firstNode)) {
-      // This is a sequence of statements
+      // Special case: if the list is a single statement-keyword call
+      if (node.nodes.length > 0 && firstNode._type === "simple-identifier") {
+        const firstId = (firstNode as ast.SimpleIdentifierNode).id;
+        
+        // Handle return statement
+        if (firstId === "return") {
+          const arg = node.nodes.length > firstNodeIdx + 1 ? (this.visit(node.nodes[firstNodeIdx + 1]) as estree.Expression) : null;
+          return {
+            type: "ReturnStatement",
+            argument: arg
+          };
+        }
+        
+        // Handle throw statement
+        if (firstId === "throw") {
+          const arg = node.nodes.length > firstNodeIdx + 1 ? (this.visit(node.nodes[firstNodeIdx + 1]) as estree.Expression) : { type: "Literal", value: null, raw: "null" } as estree.Expression;
+          return {
+            type: "ThrowStatement",
+            argument: arg
+          };
+        }
+      }
+      
+      // General case: sequence of statements
       const statements: estree.Statement[] = [];
       for (const item of node.nodes) {
+        // Skip comments
+        if (item._type === "comment") {
+          continue;
+        }
+        
         const visited = this.visit(item);
         if (!visited) continue;
         
@@ -265,11 +330,26 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           statements.push(...(visited.filter((v): v is estree.Statement => v !== null)));
         } else if ((visited as any).type?.endsWith("Statement") || (visited as any).type?.endsWith("Declaration")) {
           statements.push(visited as estree.Statement);
+        } else if ((visited as any).type === "FunctionExpression") {
+          // Convert function expressions to expression statements
+          statements.push({
+            type: "ExpressionStatement",
+            expression: visited as estree.Expression
+          });
         } else if ((visited as any).type === "CallExpression" || (visited as any).type === "AssignmentExpression") {
           statements.push({
             type: "ExpressionStatement",
             expression: visited as estree.Expression
           });
+        } else if ((visited as any).type === "Identifier") {
+          // Handle standalone statement keyword identifiers
+          const id = (item as ast.SimpleIdentifierNode).id;
+          if (id === "return") {
+            statements.push({
+              type: "ReturnStatement",
+              argument: null
+            });
+          }
         }
       }
       return statements.length === 1 ? statements[0] : statements;
@@ -277,16 +357,20 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     
     // Check if this is a function call
     if (firstNodeType === "simple-identifier" || firstNodeType === "composite-identifier") {
-      const visitedNodes = node.nodes.map(n => this.visit(n));
+      const visitedNodes = node.nodes.map((n) => {
+        return this.visit(n);
+      });
       const [callee, ...args] = visitedNodes;
       const calleeIdent = callee as estree.Identifier | estree.MemberExpression;
+      
+      const filteredArgs = args.filter((a): a is estree.Expression => {
+        return a !== null && !Array.isArray(a) && ("type" in (a as any));
+      });
       
       const callExpr: estree.CallExpression = {
         type: "CallExpression",
         callee: calleeIdent,
-        arguments: args.filter((a): a is estree.Expression => {
-          return a !== null && !Array.isArray(a) && ("type" in (a as any));
-        }),
+        arguments: filteredArgs,
         optional: false
       };
       
@@ -309,6 +393,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * Check if a node represents a statement-like operation
    */
   private isStatementLike(node: ast.ASTNode): boolean {
+    // Check if node is directly a statement type
     const statementTypes = [
       "function",
       "variable",
@@ -318,13 +403,47 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       "foreach",
       "match",
       "when",
+      "cond",
       "try-catch",
       "class",
       "interface",
       "simple-assignment",
-      "compound-assignment"
+      "compound-assignment",
+      "return"
     ];
-    return statementTypes.includes(node._type);
+    
+    if (statementTypes.includes(node._type)) {
+      return true;
+    }
+    
+    // Check if it's an identifier that represents a statement keyword
+    if (node._type === "simple-identifier") {
+      const id = (node as ast.SimpleIdentifierNode).id;
+      const statementKeywords = ["let", "var", "class", "if", "when", "cond", "while", "for", "foreach", "match", "return", "try", "throw"];
+      return statementKeywords.includes(id);
+    }
+    
+    // Check if it's a list that starts with a statement or statement keyword
+    if (node._type === "list") {
+      const listNode = node as ast.ListNode;
+      if (listNode.nodes.length > 0) {
+        const firstItem = listNode.nodes[0];
+        
+        // Check if first item is a statement node type
+        if (statementTypes.includes(firstItem._type)) {
+          return true;
+        }
+        
+        // Check if first item is an identifier that's a statement keyword
+        if (firstItem._type === "simple-identifier") {
+          const id = (firstItem as ast.SimpleIdentifierNode).id;
+          const statementKeywords = ["let", "var", "class", "if", "when", "cond", "while", "for", "foreach", "match", "return", "try", "throw", "defclass"];
+          return statementKeywords.includes(id);
+        }
+      }
+    }
+    
+    return false;
   }
 
   visitVector(node: ast.VectorNode): estree.ArrayExpression {
@@ -341,7 +460,12 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       if (item._type === "key-value") {
         const kvNode = item as ast.KeyValueNode;
         const keyNode = this.visit(kvNode.key) as estree.Expression;
-        const valueNode = this.visit(kvNode.value) as estree.Expression;
+        let valueNode = this.visit(kvNode.value) as estree.Expression | estree.Statement;
+        
+        // If valueNode is an ExpressionStatement, unwrap it to get the expression
+        if ((valueNode as any).type === "ExpressionStatement") {
+          valueNode = (valueNode as estree.ExpressionStatement).expression;
+        }
         
         const computed = keyNode.type !== "Identifier" && keyNode.type !== "Literal";
         
@@ -349,7 +473,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           type: "Property" as const,
           kind: "init" as const,
           key: keyNode,
-          value: valueNode,
+          value: valueNode as estree.Expression,
           computed,
           shorthand: false
         } as estree.Property;
@@ -452,42 +576,136 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    */
   visitMatch(node: ast.MatchNode): estree.Statement | estree.Expression {
     const discriminant = this.visit(node.expr) as estree.Expression;
-    
-    const cases = node.cases.map(matchCase => {
-      const pattern = matchCase.pattern;
-      
-      // For now, handle simple constant patterns
-      let test: estree.Expression | null = null;
-      if (pattern._type === "constant-pattern") {
-        test = this.visit((pattern as ast.ConstantPatternNode).constant) as estree.Expression;
-      } else {
-        // For complex patterns, we'll generate a test function
-        // This is a simplified approach - full pattern matching is more complex
-        this.context.log(LogLevel.Warning, `Complex pattern matching not yet fully implemented for ${pattern._type}`);
-        test = { type: "Literal", value: true, raw: "true" } as estree.Literal;
-      }
-      
-      const consequent = [
-        this.visit(matchCase.body) as estree.Statement
-      ];
-      
-      return {
-        type: "SwitchCase" as const,
-        test,
-        consequent
-      };
-    });
-    
+
+    // Build a nested conditional expression (ternary operator)
+    let conditional: estree.Expression = { type: "Identifier", name: "undefined" }; // Default value if no case matches
+
+    for (let i = node.cases.length - 1; i >= 0; i--) {
+        const matchCase = node.cases[i];
+        const pattern = matchCase.pattern;
+        let test: estree.Expression;
+
+        if (pattern._type === "constant-pattern") {
+            test = {
+                type: "BinaryExpression",
+                operator: "===",
+                left: discriminant,
+                right: this.visit((pattern as ast.ConstantPatternNode).constant) as estree.Expression
+            };
+        } else if (pattern._type === "any-pattern") {
+            test = { type: "Literal", value: true, raw: "true" };
+        } else {
+            this.context.log(LogLevel.Warning, `Complex pattern matching not yet fully implemented for ${pattern._type}`);
+            test = { type: "Literal", value: true, raw: "true" };
+        }
+
+        let consequent = this.visit(matchCase.body) as estree.Expression | estree.Statement | null;
+        
+        // Handle case where body visits to a statement, array, or null
+        if (!consequent) {
+          consequent = { type: "Identifier", name: "undefined" };
+        } else if (Array.isArray(consequent)) {
+          // If it's an array of statements, wrap in IIFE
+          consequent = {
+            type: "CallExpression",
+            callee: {
+              type: "ArrowFunctionExpression",
+              params: [],
+              body: {
+                type: "BlockStatement",
+                body: consequent as estree.Statement[]
+              },
+              expression: false
+            },
+            arguments: [],
+            optional: false
+          };
+        } else if ((consequent as any).type && (consequent as any).type.endsWith("Statement") && (consequent as any).type !== "ExpressionStatement") {
+          // If it's a non-expression statement, wrap in IIFE that returns undefined
+          consequent = {
+            type: "CallExpression",
+            callee: {
+              type: "ArrowFunctionExpression",
+              params: [],
+              body: {
+                type: "BlockStatement",
+                body: [consequent as estree.Statement]
+              },
+              expression: false
+            },
+            arguments: [],
+            optional: false
+          };
+        } else if ((consequent as any).type === "ExpressionStatement") {
+          // Unwrap ExpressionStatement to get the expression
+          consequent = (consequent as estree.ExpressionStatement).expression;
+        }
+
+        // Ensure consequent is always an expression
+        let consequentExpr: estree.Expression;
+        if (!consequent || (consequent as any).type === "undefined") {
+          consequentExpr = { type: "Identifier", name: "undefined" };
+        } else if (typeof consequent === "object" && "type" in consequent && (consequent as any).type.endsWith("Expression")) {
+          consequentExpr = consequent as estree.Expression;
+        } else {
+          // Shouldn't happen, but fallback to undefined
+          consequentExpr = { type: "Identifier", name: "undefined" };
+        }
+
+        conditional = {
+            type: "ConditionalExpression",
+            test,
+            consequent: consequentExpr,
+            alternate: conditional
+        };
+    }
+
+    // Wrap in an IIFE to ensure it's treated as an expression
     return {
-      type: "SwitchStatement",
-      discriminant,
-      cases
+        type: "CallExpression",
+        callee: {
+            type: "ArrowFunctionExpression",
+            params: [],
+            body: {
+                type: "BlockStatement",
+                body: [{
+                    type: "ReturnStatement",
+                    argument: conditional
+                }]
+            },
+            expression: false
+        },
+        arguments: [],
+        optional: false
     };
   }
 
   visitWhen(node: ast.WhenNode): estree.IfStatement {
     const test = this.visit(node.condition!) as estree.Expression;
-    const bodyStmts = node.then.map(stmt => this.visit(stmt) as estree.Statement).filter((s): s is estree.Statement => s !== null);
+    const bodyStmts: estree.Statement[] = [];
+    
+    for (const stmt of node.then) {
+      const visited = this.visit(stmt);
+      if (!visited) continue;
+      
+      // Handle return as a special case
+      if (stmt._type === "simple-identifier" && (stmt as ast.SimpleIdentifierNode).id === "return") {
+        bodyStmts.push({
+          type: "ReturnStatement",
+          argument: null
+        });
+      } else if ((visited as any).type?.endsWith("Statement") || (visited as any).type?.endsWith("Declaration")) {
+        bodyStmts.push(visited as estree.Statement);
+      } else if ((visited as any).type === "CallExpression" || (visited as any).type === "AssignmentExpression") {
+        bodyStmts.push({
+          type: "ExpressionStatement",
+          expression: visited as estree.Expression
+        });
+      } else if ((visited as any).type === "ExpressionStatement") {
+        bodyStmts.push(visited as estree.ExpressionStatement);
+      }
+    }
+    
     const consequent: estree.Statement = bodyStmts.length === 1 ? 
       bodyStmts[0] : 
       { type: "BlockStatement", body: bodyStmts };
@@ -535,13 +753,24 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     
     // Convert body nodes to statements
     const bodyStatements: estree.Statement[] = [];
+    
     for (const bodyItem of node.body) {
       const visited = this.visit(bodyItem);
       if (!visited) continue;
       
       // Handle statement arrays (flattened statement lists)
       if (Array.isArray(visited)) {
-        bodyStatements.push(...(visited.filter((v): v is estree.Statement => v !== null)));
+        for (const item of visited) {
+          if (!item) continue;
+          if ((item as any).type && ((item as any).type?.endsWith("Declaration") || (item as any).type?.endsWith("Statement"))) {
+            bodyStatements.push(item as estree.Statement);
+          } else if ((item as any).type === "CallExpression" || (item as any).type === "AssignmentExpression") {
+            bodyStatements.push({
+              type: "ExpressionStatement",
+              expression: item as estree.Expression
+            });
+          }
+        }
       }
       // Handle different node types
       else if ((visited as any).type === "BlockStatement") {
@@ -556,14 +785,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           type: "ExpressionStatement",
           expression: visited as estree.Expression
         });
-      } else if ((visited as any).type === "ArrayExpression") {
-        // If it's an array expression, it's likely an inline list of statements
-        // This shouldn't happen in well-formed code, but wrap it for safety
-        bodyStatements.push({
-          type: "ExpressionStatement",
-          expression: visited as estree.ArrayExpression
-        });
       }
+      // Skip ArrayExpressions - they shouldn't be function body statements
     }
     
     const body: estree.BlockStatement = {
@@ -662,22 +885,62 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // ============================================================================
 
   visitClass(node: ast.ClassNode): estree.ClassDeclaration {
-    const id = this.visit(node.name) as estree.Identifier;
+    const id = node.name ? (this.visit(node.name) as estree.Identifier) : ({ type: "Identifier", name: "AnonymousClass" } as estree.Identifier);
     const superClass = node.extends && node.extends.length > 0 ? this.visit(node.extends[0].type) as estree.Expression : null;
     
     const body: estree.ClassBody = {
       type: "ClassBody",
-      body: node.body.map(member => {
-        if (member._type === "function") {
-          const fn = member as ast.FunctionNode;
+      body: node.body.flatMap(member => {
+        // Unwrap lists that wrap single members (common in Lisp)
+        const actualMember = (member._type === "list") ? (member as ast.ListNode).nodes[0] : member;
+        
+        if (actualMember._type === "function") {
+          const fn = actualMember as ast.FunctionNode;
           const key = this.visit(fn.name!) as estree.Identifier;
           const params = fn.params.map(p => this.visit(p) as estree.Pattern);
+          
+          // Convert body nodes to statements (similar to visitFunction)
+          const bodyStatements: estree.Statement[] = [];
+          for (const bodyItem of fn.body) {
+            const visited = this.visit(bodyItem);
+            if (!visited) continue;
+            
+            // Handle statement arrays (flattened statement lists)
+            if (Array.isArray(visited)) {
+              for (const item of visited) {
+                if (!item) continue;
+                if ((item as any).type && ((item as any).type?.endsWith("Declaration") || (item as any).type?.endsWith("Statement"))) {
+                  bodyStatements.push(item as estree.Statement);
+                } else if ((item as any).type === "CallExpression" || (item as any).type === "AssignmentExpression") {
+                  bodyStatements.push({
+                    type: "ExpressionStatement",
+                    expression: item as estree.Expression
+                  });
+                }
+              }
+            }
+            // Handle different node types
+            else if ((visited as any).type === "BlockStatement") {
+              bodyStatements.push(visited as estree.BlockStatement);
+            } else if ((visited as any).type?.endsWith("Declaration") || (visited as any).type?.endsWith("Statement")) {
+              bodyStatements.push(visited as estree.Statement);
+            } else if ((visited as any).type === "ExpressionStatement") {
+              bodyStatements.push(visited as estree.ExpressionStatement);
+            } else if ("type" in (visited as any) && ((visited as any).type === "CallExpression" || (visited as any).type === "AssignmentExpression")) {
+              // Wrap expressions in ExpressionStatement
+              bodyStatements.push({
+                type: "ExpressionStatement",
+                expression: visited as estree.Expression
+              });
+            }
+          }
+          
           const fnBody: estree.BlockStatement = {
             type: "BlockStatement",
-            body: fn.body.map(stmt => this.visit(stmt) as estree.Statement)
+            body: bodyStatements
           };
           
-          return {
+          return [{
             type: "MethodDefinition",
             key,
             value: {
@@ -691,21 +954,21 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
             kind: fn.name?.id === "constructor" ? "constructor" : "method",
             computed: false,
             static: false
-          } as estree.MethodDefinition;
-        } else if (member._type === "variable") {
-          const varNode = member as ast.VariableNode;
+          } as estree.MethodDefinition];
+        } else if (actualMember._type === "variable") {
+          const varNode = actualMember as ast.VariableNode;
           const key = this.visit(varNode.name) as estree.Identifier;
           
-          return {
+          return [{
             type: "PropertyDefinition",
             key,
             value: varNode.value ? this.visit(varNode.value) as estree.Expression : null,
             computed: false,
             static: false
-          } as any; // PropertyDefinition not in estree yet
+          } as any];  // PropertyDefinition not in estree yet
         }
-        return null;
-      }).filter((m): m is estree.MethodDefinition => m !== null && m.type === "MethodDefinition")
+        return [];
+      })
     };
     
     return {
@@ -904,6 +1167,13 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   visitFormatExpression(node: ast.FormatExpressionNode): estree.Expression {
+    const expression = node.expression;
+    if (expression._type === 'list') {
+      const listNode = expression as ast.ListNode;
+      if (listNode.nodes.length === 1 && listNode.nodes[0]._type === 'simple-identifier') {
+        return this.visit(listNode.nodes[0]) as estree.Expression;
+      }
+    }
     return this.visit(node.expression) as estree.Expression;
   }
 
