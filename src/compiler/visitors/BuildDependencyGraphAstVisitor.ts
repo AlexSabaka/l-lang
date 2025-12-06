@@ -1,6 +1,7 @@
 import * as ast from "../ast";
 import { LogLevel } from "../Context";
 import { BaseAstTreeWalker } from "./BaseAstTreeWalker";
+import path from "node:path";
 
 export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
 
@@ -18,8 +19,9 @@ export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
 
   private processFileImport(file: string, currentFile: string) {
     const currentUnit = this.context.dependencyGraph.find(currentFile);
-    this.context.process(file, currentUnit?.location.baseDir);
-    this.context.dependencyGraph.add(file, currentFile, this.context);
+    const resolvedFile = path.resolve(path.dirname(currentFile), file);
+    this.context.process(resolvedFile);
+    this.context.dependencyGraph.add(resolvedFile, currentFile, this.context);
   }
 
   private processNamespaceImport(ns: string, currentFile: string) {

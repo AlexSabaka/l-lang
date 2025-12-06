@@ -1,0 +1,27 @@
+(
+    ;; 1. Standard Function
+    (fn add [a b] (return (+ a b)))
+
+    ;; 2. Recursive Function (Factorial)
+    (fn factorial [n] (
+        (if (<= n 1)
+            (return 1)
+            (return (* n (factorial (- n 1)))))
+    ))
+
+    ;; 3. When Statement (One-liner logic)
+    (fn check-status [code] (
+        (return (when (== code 200) :then "OK"))
+    ))
+
+    ;; 4. While Loop
+    (mut i 5)
+    (std.console.log "Countdown:")
+    (while (> i 0) (
+        (std.console.log i)
+        (i := (- i 1))
+    ))
+
+    (std.console.log '"Factorial of 5: {(factorial 5)}")
+    (std.console.log '"Status 200 is: {(check-status 200)}")
+)

@@ -1,6 +1,7 @@
 export * from "./BaseAstVisitor";
 export * from "./BuildSymbolTableAstVisitor"
 export * from "./BuildDependencyGraphAstVisitor"
+export * from "./InlineImportsAstVisitor"
 export * from "./InferTypesAstVisitor"
 export * from "./JSTransformerAstVisitor"
 export * from "./TreeShakeAstVisitor"

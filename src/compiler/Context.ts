@@ -110,8 +110,8 @@ export class Context {
     }
   }
 
-  process(file: string, basedir?: string) {
-    const fullPath = path.resolve(basedir ?? "", file);
+  process(file: string) {
+    const fullPath = path.resolve(file);
 
     // If module already processed and cached, reuse its symbol table
     const cached = this.getModule(fullPath);
@@ -121,7 +121,7 @@ export class Context {
       return this;
     }
 
-    const ast = this.astProvider.getAst(file, basedir);
+    const ast = this.astProvider.getAst(fullPath);
     const result = this.processAst(ast as ASTNode);
 
     // After processing, cache the module (AST + symbols) so subsequent

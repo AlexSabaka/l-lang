@@ -268,9 +268,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     const sourceMapUrl = `\n\n//# sourceMappingURL=${path.basename(sourceName, '.lisp')}.js.map`;
 
     // Prepend any inlined definitions collected during traversal
-    console.log('inlinedDefinitions keys:', Object.keys(this.inlinedDefinitions));
+    // console.log('inlinedDefinitions keys:', Object.keys(this.inlinedDefinitions));
     const defs = Object.values(this.inlinedDefinitions).flat();
-    const wrappedBody = createSourceNode(root, '(function() {', '\n', ...defs, '\n', rootSourceNode, '\n', '})()');
+    const defsWithSeparators = defs.length > 0 ? joinArray(defs, ';\n') : [];
+    const wrappedBody = createSourceNode(root, '(function() {', '\n', ...defsWithSeparators, defs.length > 0 ? ';\n' : '', rootSourceNode, '\n', '})()');
 
     return createSourceNode(root,
       ...header,
@@ -562,7 +563,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     try {
       const resolved = this.context?.symbolTable?.resolveSymbol?.(node as any);
       // debug: log resolution
-      console.log('visitIdentifier resolve', node.id, resolved ? (resolved.value && (resolved.value as any)._location && (resolved.value as any)._location.source) : undefined);
+      // console.log('visitIdentifier resolve', node.id, resolved ? (resolved.value && (resolved.value as any)._location && (resolved.value as any)._location.source) : undefined);
       if (resolved && resolved.value && resolved.value._location && this.rootSource && resolved.value._location.source !== this.rootSource) {
         const uniq = this.ensureSymbolInlined(resolved);
         this.identifiers[node.id] = uniq;
@@ -716,7 +717,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // Ensure an external symbol is inlined into the current module. Returns
   // the unique identifier name that refers to the inlined symbol.
   private ensureSymbolInlined(symbol: SymbolEntry): string {
-    console.log('ensureSymbolInlined for', (symbol.name as any).id ?? (symbol.name as any).name, 'type=', symbol.type);
+    // console.log('ensureSymbolInlined for', (symbol.name as any).id ?? (symbol.name as any).name, 'type=', symbol.type);
     const src = (symbol.value && (symbol.value as any)._location && (symbol.value as any)._location.source) || "";
     const symName = (symbol.name as any).id ?? (symbol.name as any).name ?? String(Math.random());
     const key = `${src}::${symName}`;
@@ -752,7 +753,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       }
 
       this.inlinedDefinitions[uniq] = defParts;
-      console.log('inlinedDefinitions added', uniq);
+      // console.log('inlinedDefinitions added', uniq);
       return uniq;
     } catch (ex) {
       console.error('ensureSymbolInlined error for', symName, ex);

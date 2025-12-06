@@ -23,13 +23,7 @@ export function isAstNode(node: any): node is ASTNode {
 }
 
 export function isIterableAstNode(node: any): node is ASTNode[] {
-  return (
-    Array.isArray(node) &&
-    node.length > 0 &&
-    typeof node[0] === "object" &&
-    node[0] !== null &&
-    "_type" in node[0]
-  );
+  return Array.isArray(node); 
 }
 
 export function isFileImportSource(source: FileImportSource | NamespaceImportSource): source is FileImportSource {

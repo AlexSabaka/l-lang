@@ -57,11 +57,13 @@ export class DependencyGraph {
 
   add(file: string, parentFile: string, context: Context) {
     const fullParentName = path.resolve(parentFile);
-    const parentUnit = this.find(fullParentName);
+    let parentUnit = this.find(fullParentName);
+    
+    // If parent doesn't exist in the graph yet, create it
+    // This happens when a file is being processed and its imports are being recorded
     if (!parentUnit) {
-      throw new Error(
-        `File ${file} tried to be loaded from ${parentFile} but parent file not found in dependency graph`
-      );
+      parentUnit = createImportUnit(fullParentName);
+      this.moduleCache.set(fullParentName, parentUnit);
     }
 
     const resolvedFile = path.join(path.dirname(fullParentName), file);

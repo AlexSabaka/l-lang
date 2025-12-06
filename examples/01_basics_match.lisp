@@ -1,5 +1,17 @@
 (
-    (match (Number (std.console.readln "Age?\n>> "))
+    (let x 3)
+    (let y 
+        (match x {
+            1 => ("1 1 1 1")
+            2 => ("2 2 2 2")
+            3 => ("3 3 3 3")
+            4 => ("4 4 4 4")
+            _ => ('"{(x)} LOL {(x)}")
+            }))
+    (std.console.log y)
+
+
+    (match (Number (std.math.random 0 100))
         {
             (||(= _ 0)
                (< _ -0)) => (std.console.log "unborn")

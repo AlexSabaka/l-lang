@@ -6,7 +6,7 @@ import * as astring from "astring";
 
 import { RuleSeverity } from "./rules";
 
-import { JSTransformerAstVisitor } from "./visitors";
+import { JSTransformerAstVisitor, InlineImportsAstVisitor } from "./visitors";
 import { JSCompilerAstVisitor } from "./visitors/legacy/js/JSCompilerAstVisitor";
 
 import * as lib from "./lib";
@@ -85,17 +85,20 @@ function compileJS(file: string, options: CompilerOptions, useLegacy: boolean = 
     return;
   }
 
+  // Inline imported definitions into the AST
+  let ast = context.astProvider.getAst(file) as ASTNode;
+  const inlineImportsVisitor = new InlineImportsAstVisitor(context);
+  ast = inlineImportsVisitor.visitProgram(ast as any) as ASTNode;
+
   if (useLegacy) {
     // Use legacy string-based compiler (fallback for compatibility)
     const jsCompilerVisitor = new JSCompilerAstVisitor(context);
-    const js = jsCompilerVisitor.compile(
-      context.astProvider.getAst(file) as ASTNode
-    );
+    const js = jsCompilerVisitor.compile(ast);
     return js;
   } else {
     // Use new ESTree-based transformer (default)
     const transformer = new JSTransformerAstVisitor(context);
-    const code = transformer.compile(context.astProvider.getAst(file) as ASTNode);    // Return in compatible format
+    const code = transformer.compile(ast);    // Return in compatible format
     return {
       code: code.code,
       map: code.map,
