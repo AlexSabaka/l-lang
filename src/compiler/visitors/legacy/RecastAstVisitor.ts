@@ -1,11 +1,11 @@
 import * as recast from "recast";
-import * as ast from "../ast";
+import * as ast from "../../ast";
 import { namedTypes as n, builders as b } from "ast-types";
 import * as K from "ast-types/lib/gen/kinds";
 
-import { BaseAstVisitor } from "./BaseAstVisitor";
-import { LogLevel } from "../Context";
-import { ScopeType } from "../SymbolTable";
+import { BaseAstVisitor } from "./../BaseAstVisitor";
+import { LogLevel } from "../../Context";
+import { ScopeType } from "../../SymbolTable";
 
 export class RecastAstVisitor extends BaseAstVisitor {
   scope: ScopeType[] = [ScopeType.program];

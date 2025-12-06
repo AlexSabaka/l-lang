@@ -1,9 +1,9 @@
-import * as ast from "../../ast";
+import * as ast from "../ast";
 
-import { globalScope } from "../../lib";
+import { globalScope } from "../lib";
 
-import { Context, LogLevel } from "../../Context";
-import { ScopeType } from "../../SymbolTable";
+import { Context, LogLevel } from "../Context";
+import { ScopeType } from "../SymbolTable";
 import { SourceNode } from "source-map";
 
 export function isStandardLibReference(id: string): boolean {
@@ -40,10 +40,13 @@ export function createSourceNode(
   node: ast.ASTNode,
   ...chunks: (string | SourceNode)[]
 ): SourceNode {
+  const line = node && node._location && node._location.start ? node._location.start.line : 1;
+  const column = node && node._location && node._location.start ? node._location.start.column - 1 : 0;
+  const source = node && node._location && node._location.source ? node._location.source : null;
   return new SourceNode(
-    node._location.start.line,
-    node._location.start.column - 1,
-    node._location.source!,
+    line,
+    column,
+    source,
     chunks.filter((x) => !!x)
   );
 }

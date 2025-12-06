@@ -6,7 +6,8 @@ import * as astring from "astring";
 
 import { RuleSeverity } from "./rules";
 
-import { JSCompilerAstVisitor, JSTransformerAstVisitor } from "./visitors";
+import { JSTransformerAstVisitor } from "./visitors";
+import { JSCompilerAstVisitor } from "./visitors/legacy/js/JSCompilerAstVisitor";
 
 import * as lib from "./lib";
 
@@ -94,24 +95,10 @@ function compileJS(file: string, options: CompilerOptions, useLegacy: boolean = 
   } else {
     // Use new ESTree-based transformer (default)
     const transformer = new JSTransformerAstVisitor(context);
-    const astProgram = transformer.compile(context.astProvider.getAst(file) as ASTNode);
-    let code: string;
-    try {
-      code = astring.generate(astProgram);
-    } catch (e) {
-      console.error("Error generating code with astring — dumping AST program for debugging:");
-      try {
-        console.error(JSON.stringify(astProgram, (k, v) => (k === '_location' || k === '_parent' ? undefined : v), 2));
-      } catch (e2) {
-        console.error("Failed to stringify AST program", e2);
-      }
-      throw e;
-    }
-    
-    // Return in compatible format
+    const code = transformer.compile(context.astProvider.getAst(file) as ASTNode);    // Return in compatible format
     return {
-      code,
-      map: { toString: () => "" } // TODO: Integrate proper source maps from astring
+      code: code.code,
+      map: code.map,
     };
   }
 }

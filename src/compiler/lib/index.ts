@@ -65,9 +65,8 @@ const helpers = {
     const quoteAst = { ...q, _type: "list" };
     const context = new Context("eval", { minimumLogLevel: LogLevel.Error });
     const transformer = new JSTransformerAstVisitor(context);
-    const astProgram = transformer.compile(quoteAst);
-    const code = astring.generate(astProgram);
-    return evaljs(code, globalScope);
+    const code = transformer.compile(quoteAst);
+    return evaljs(code.code, globalScope);
   },
   throw: (a: any) => {
     throw a;

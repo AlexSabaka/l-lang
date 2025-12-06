@@ -7,21 +7,21 @@ Important: **Commit often**
 ## 🚨 Priority 0: The "No Strings Attached" Refactor (Codegen)
 *Context: We are currently concatenating strings to generate JS. This is fragile and hard to debug.*
 
-- [ ] **Install Dependencies**
-    - [ ] `npm install estree` (Types for JS AST)
-    - [ ] `npm install astring` (Or `escodegen` - for printing ESTree to string)
-- [ ] **Create `JSTransformer` Visitor**
-    - [ ] Create new visitor `JSTransformerAstVisitor.ts`.
-    - [ ] Change return type of `visit` methods from `string` to `ESTree.Node`.
-- [ ] **Port Basic Nodes**
-    - [ ] Port `visitNumber`, `visitString`, `visitBoolean` to return ESTree Literals.
-    - [ ] Port `visitIdentifier` to return ESTree Identifiers.
-- [ ] **Port Control Flow**
-    - [ ] Port `visitIf`, `visitWhile` to return `IfStatement`, `WhileStatement`.
-    - [ ] **Crucial:** Ensure `visitMatch` logic generates a cleaner IIFE or Switch statement structure using AST nodes.
-- [ ] **Switch Compiler Pipeline**
-    - [ ] Update `Context.ts` to use `astring.generate(ast)` instead of the old string joiner.
-    - [ ] Verify source maps still work (most generators handle this automatically).
+- [x] **Install Dependencies**
+    - [x] `npm install estree` (Types for JS AST)
+    - [x] `npm install astring` (Or `escodegen` - for printing ESTree to string)
+- [x] **Create `JSTransformer` Visitor**
+    - [x] Create new visitor `JSTransformerAstVisitor.ts`.
+    - [x] Change return type of `visit` methods from `string` to `ESTree.Node`.
+- [x] **Port Basic Nodes**
+    - [x] Port `visitNumber`, `visitString`, `visitBoolean` to return ESTree Literals.
+    - [x] Port `visitIdentifier` to return ESTree Identifiers.
+- [x] **Port Control Flow**
+    - [x] Port `visitIf`, `visitWhile` to return `IfStatement`, `WhileStatement`.
+    - [x] **Crucial:** Ensure `visitMatch` logic generates a cleaner IIFE or Switch statement structure using AST nodes.
+- [x] **Switch Compiler Pipeline**
+    - [x] Update `Context.ts` to use `astring.generate(ast)` instead of the old string joiner.
+    - [x] Verify source maps still work (most generators handle this automatically).
 
 ## 🔮 Priority 1: The "Psychic" Symbol Table (Scoping)
 *Context: We can't see functions defined later in the file. We need to look twice.*

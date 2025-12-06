@@ -1,9 +1,9 @@
 import * as recast from "recast";
-import * as ast from "../ast";
-import { BaseAstVisitor } from ".";
-import { Context, LogLevel } from "../Context";
-import { ScopeType } from "../SymbolTable";
-import { encodeIdentifier, uniqueIdentifier } from "../utils";
+import * as ast from "../../ast";
+import { BaseAstVisitor } from "..";
+import { Context, LogLevel } from "../../Context";
+import { ScopeType } from "../../SymbolTable";
+import { encodeIdentifier, uniqueIdentifier } from "../../utils";
 import path from "path";
 
 const b = recast.types.builders;

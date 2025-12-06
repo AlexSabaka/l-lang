@@ -3,12 +3,12 @@ import peggy from "peggy";
 import { SourceMapGenerator } from "source-map";
 
 import * as t from "@babel/types";
-import * as ast from "../ast";
-import { ScopeType } from "../SymbolTable";
+import * as ast from "../../ast";
+import { ScopeType } from "../../SymbolTable";
 
-import { uniqueIdentifier, encodeIdentifier } from "../utils";
-import { BaseAstVisitor } from "./BaseAstVisitor";
-import { Context, LogLevel } from "../Context";
+import { uniqueIdentifier, encodeIdentifier } from "../../utils";
+import { BaseAstVisitor } from "./../BaseAstVisitor";
+import { Context, LogLevel } from "../../Context";
 import { ClassBuilder } from "./js/ClassBuilder";
 
 function findIdentifiersToDefine(node: ast.MatchNode) {

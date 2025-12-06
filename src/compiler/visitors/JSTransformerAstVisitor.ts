@@ -1,1199 +1,670 @@
-import * as estree from "estree";
 import * as ast from "../ast";
 import { BaseAstVisitor } from "./BaseAstVisitor";
 import { Context, LogLevel } from "../Context";
-import { encodeIdentifier, uniqueIdentifier } from "../utils";
+import { ScopeType } from "../SymbolTable";
+import { SourceNode } from "source-map";
+import { 
+  createSourceNode, 
+  joinArray, 
+  formatVariable, 
+  formatFunction, 
+  isStandardLibReference, 
+} from "./helpers";
+import { uniqueIdentifier } from "../utils/uniqueIdentifier";
+import { encodeIdentifier } from "../utils/encodeIdentifier";
+import path from "path";
 
 /**
- * JSTransformerAstVisitor
- * 
- * Transforms l-lang AST nodes into ESTree (ECMAScript) AST nodes.
- * This visitor returns structured AST nodes instead of concatenated strings,
- * allowing for better code generation and source map handling via astring.
- * 
- * Benefits over string concatenation:
- * - No fragile string joining logic
- * - Proper source maps via astring
- * - Easier to debug and reason about transformations
- * - Can be validated and processed by other tools
+ * Helper to extract variable names declared within a pattern match
  */
+function findIdentifiersToDefine(node: ast.MatchNode): string[] {
+  const predefinedVariables: string[] = [];
+  const walkPattern = (p: ast.PatternNode): boolean => {
+    switch (p._type) {
+      case "identifier-pattern":
+        const id = encodeIdentifier(p.id.id);
+        if (!isStandardLibReference(id)) {
+          predefinedVariables.push(id);
+        }
+        return true;
+      case "map-pattern":
+        return (p as ast.MapPatternNode).pairs.every(x => walkPattern(x.pattern));
+      case "list-pattern":
+      case "vector-pattern":
+        return (p as ast.ListPatternNode).elements.every(x => walkPattern(x));
+      default:
+        return true;
+    }
+  };
+  node.cases.every(x => walkPattern(x.pattern));
+  return Array.from(new Set(predefinedVariables));
+}
+
+export class ClassBuilder {
+  private name: SourceNode;
+  private node: ast.ClassNode;
+  
+  private accessModifiers: (SourceNode | string)[] = [];
+  private extendsClause: (SourceNode | string)[] = [];
+  private implementsClause: (SourceNode | string)[] = [];
+  private ctorVars: ast.VariableNode[] = [];
+  private classFields: ast.VariableNode[] = [];
+  private methods: ast.FunctionNode[] = [];
+  private otherBody: ast.ASTNode[] = [];
+
+  private context: Context;
+  private visitor: JSTransformerAstVisitor;
+
+  constructor(
+    node: ast.ClassNode,
+    context: Context,
+    visitor: JSTransformerAstVisitor
+  ) {
+    this.context = context;
+    this.visitor = visitor;
+    this.node = node;
+    this.name = createSourceNode(node.name, node.name.name);
+
+    this.processExtends(node);
+    this.processImplements(node);
+    this.processBody(node.body);
+  }
+
+  private processExtends(node: ast.ClassNode): void {
+    if (node.extends && node.extends.length > 0) {
+      const parentClass = node.extends[0]; 
+      this.extendsClause = [
+        ` extends `,
+        createSourceNode(parentClass, parentClass.type.name)
+      ];
+    }
+  }
+
+  private processImplements(node: ast.ClassNode): void {
+    if (node.implements && node.implements.length > 0) {
+      this.implementsClause = [
+        ` /* implements `,
+        ...joinArray(node.implements.map((x) => this.visitor.visit(x)), ", "),
+        ` */`
+      ];
+    }
+  }
+
+  private processBody(body: any[]): void {
+    const nodes = body.map((x: any) => x.nodes ? x.nodes : [x]).flat(2);
+
+    for (let b of nodes) {
+      if (b._type === "variable") {
+        this.processVariable(b);
+      } else if (b._type === "function") {
+        this.methods.push(b);
+      } else {
+        this.otherBody.push(b);
+      }
+    }
+  }
+
+  private processVariable(variable: ast.VariableNode): void {
+    const fieldModifiers = variable.modifiers.map((m) => m.modifier);
+    if (fieldModifiers.includes("ctor")) {
+      this.ctorVars.push(variable);
+    } else {
+      this.classFields.push(variable);
+    }
+  }
+
+  private buildConstructor(): (SourceNode | string)[] {
+    if (this.ctorVars.length === 0) return [];
+
+    const ctorParams = this.ctorVars.map((v) => this.visitor.visit(v.name));
+    const assignments = this.ctorVars.map((v) => {
+      const fieldName = this.visitor.visit(v.name);
+      const isPrivate = v.modifiers.some((x) => x.modifier === "private");
+      const targetField = isPrivate ? ["#", fieldName] : [fieldName];
+      return createSourceNode(v, "this.", ...targetField, " = ", fieldName);
+    });
+
+    const superCall = (this.node.extends && this.node.extends.length > 0) 
+      ? ["super(); // Implicit super call\n"] 
+      : [];
+
+    return [
+      `constructor(`, ...joinArray(ctorParams, ", "), `) {`,
+      ...superCall,
+      ...joinArray(assignments, ";"),
+      `}`
+    ];
+  }
+
+  private buildFields(): (SourceNode | string)[] {
+    return this.classFields.flatMap((v) => {
+      const result: (SourceNode | string)[] = [];
+      const isPrivate = v.modifiers.some((x) => x.modifier === "private");
+
+      if (isPrivate) result.push('#');
+      result.push(this.visitor.visit(v.name));
+
+      if (v.value) {
+        result.push(' = ');
+        result.push(this.visitor.visit(v.value));
+      }
+      result.push(';');
+      return result;
+    });
+  }
+
+  private buildMethods(): (SourceNode | string)[] {
+    // Methods in JS classes must look like `name(args) {}` not `const name = ...`
+    // We rely on the visitor knowing it's in a Class Scope to formatting correctly
+    return this.methods.map(m => this.visitor.visit(m));
+  }
+
+  private buildOtherBody(): (SourceNode | string)[] {
+    return this.otherBody.map((b) => this.visitor.visit(b));
+  }
+
+  public build(): SourceNode {
+    return createSourceNode(this.node,
+      ...this.accessModifiers,
+      'class ', this.name,
+      ...this.extendsClause,
+      ...this.implementsClause,
+      ' {\n',
+      ...this.buildFields(), '\n',
+      ...this.buildConstructor(), '\n',
+      ...this.buildMethods(), '\n',
+      ...this.buildOtherBody(), '\n}'
+    );
+  }
+}
+
 export class JSTransformerAstVisitor extends BaseAstVisitor {
-  private scopes: string[][] = [[]]; // Track variable scopes for hoisting
-  private currentScopeIndex: number = 0;
-  private inProgramContext: boolean = false; // Track if we're processing program-level statements
+  private scope: ScopeType[] = [ScopeType.program];
+  
+  public functions: string[] = [];
+  public classes: string[] = [];
+  public variables: string[] = [];
+
+  private identifiers: Record<string, string> = {};
+  private inlineStandardSymbols: string[] = [];
 
   constructor(context: Context) {
     super(context);
   }
 
-  /**
-   * Main compilation entry point
-   */
-  compile(root: ast.ASTNode): estree.Program {
-    if (root._type !== "program") {
-      throw new Error(`Expected program node, got ${root._type}`);
-    }
-    return this.visitProgram(root as ast.ProgramNode);
+  // =========================================================================
+  // Scope Helpers
+  // =========================================================================
+
+  private pushScope(nextScope: ScopeType) {
+    this.scope.unshift(nextScope);
   }
 
-  // ============================================================================
-  // PROGRAM & STRUCTURE
-  // ============================================================================
-
-  visitProgram(node: ast.ProgramNode): estree.Program {
-    this.inProgramContext = true;
-    
-    let programItems = node.program;
-    
-    // Special case: if the entire program is wrapped in a single list (common in Lisp),
-    // unwrap it ONLY if it contains actual statements (all items are statement-like, ignoring comments)
-    if (programItems.length === 1 && programItems[0]._type === "list") {
-      const listNode = programItems[0] as ast.ListNode;
-      
-      // Filter out comments to get actual content nodes
-      const nonCommentNodes = listNode.nodes.filter(n => n._type !== "comment");
-      
-      // Check if ALL non-comment items are statement-like
-      // If so, unwrap and process as individual statements
-      // If not, keep as a list and process as a potential function call
-      const allStatementLike = nonCommentNodes.length === 0 || 
-        nonCommentNodes.every(node => this.isStatementLike(node));
-      
-      if (allStatementLike) {
-        programItems = listNode.nodes;
-      }
-      // Otherwise keep programItems as the single list, which will be processed as an expression
-    }
-    
-    const body: estree.Statement[] = [];
-    
-    for (let idx = 0; idx < programItems.length; idx++) {
-      const stmt = programItems[idx];
-      
-      // Skip comments - they don't generate code
-      if (stmt._type === "comment") {
-        continue;
-      }
-      
-      const visited = this.visit(stmt);
-      
-      // Handle flattened statement arrays
-      if (Array.isArray(visited)) {
-        for (const v of visited) {
-          if (v && (v as any).type && (v as any).type !== "ArrayExpression") {
-            body.push(v as estree.Statement);
-          }
-        }
-        continue;
-      }
-      
-      // Skip ArrayExpressions - they shouldn't be in program body
-      if (visited && (visited as any).type === "ArrayExpression") {
-        continue;
-      }
-      
-      // Convert expressions to expression statements
-      if (visited && (visited as any).type) {
-        const type = (visited as any).type;
-        if (type.endsWith("Declaration") || type.endsWith("Statement")) {
-          body.push(visited as estree.Statement);
-        } else if (type === "CallExpression" || type === "AssignmentExpression" || type === "FunctionExpression") {
-          body.push({
-            type: "ExpressionStatement",
-            expression: visited as estree.Expression
-          });
-        } else if (type === "ExpressionStatement") {
-          body.push(visited as estree.ExpressionStatement);
-        }
-      }
-    }
-    
-    this.inProgramContext = false;
-    
-    return {
-      type: "Program",
-      body,
-      sourceType: "module"
-    };
+  private popScope() {
+    return this.scope.shift();
   }
 
-  // ============================================================================
-  // LITERALS & PRIMITIVES
-  // ============================================================================
-
-  visitString(node: ast.StringNode): estree.Literal {
-    return {
-      type: "Literal",
-      value: node.value,
-      raw: `"${node.value.replace(/"/g, '\\"')}"`
-    };
+  private currentScope(): ScopeType {
+    return this.scope.at(0)!;
   }
 
-  visitIntegerNumber(node: ast.IntegerNumberNode): estree.Literal {
-    return {
-      type: "Literal",
-      value: node.value,
-      raw: String(node.value)
-    };
-  }
-
-  visitFloatNumber(node: ast.FloatNumberNode): estree.Literal {
-    return {
-      type: "Literal",
-      value: node.value,
-      raw: String(node.value)
-    };
-  }
-
-  visitHexNumber(node: ast.HexNumberNode): estree.Literal {
-    return {
-      type: "Literal",
-      value: node.value,
-      raw: node.match
-    };
-  }
-
-  visitOctalNumber(node: ast.OctalNumberNode): estree.Literal {
-    return {
-      type: "Literal",
-      value: node.value,
-      raw: node.match
-    };
-  }
-
-  visitBinaryNumber(node: ast.BinaryNumberNode): estree.Literal {
-    return {
-      type: "Literal",
-      value: node.value,
-      raw: node.match
-    };
-  }
-
-  visitComplexNumber(node: ast.ComplexNumberNode): estree.CallExpression {
-    // Complex numbers: represent as Complex(real, imaginary)
-    return {
-      type: "CallExpression",
-      callee: {
-        type: "Identifier",
-        name: "Complex"
-      },
-      arguments: [
-        {
-          type: "Literal",
-          value: node.real,
-          raw: String(node.real)
-        },
-        {
-          type: "Literal",
-          value: node.imaginary,
-          raw: String(node.imaginary)
-        }
-      ],
-      optional: false
-    };
-  }
-
-  visitFractionNumber(node: ast.FractionNumberNode): estree.CallExpression {
-    // Fractions: represent as Fraction(numerator, denominator)
-    return {
-      type: "CallExpression",
-      callee: {
-        type: "Identifier",
-        name: "Fraction"
-      },
-      arguments: [
-        {
-          type: "Literal",
-          value: node.numerator,
-          raw: String(node.numerator)
-        },
-        {
-          type: "Literal",
-          value: node.denominator,
-          raw: String(node.denominator)
-        }
-      ],
-      optional: false
-    };
-  }
-
-  visitBoolean(node: ast.BooleanNode): estree.Literal {
-    return {
-      type: "Literal",
-      value: node.value,
-      raw: node.value ? "true" : "false"
-    };
-  }
-
-  visitNull(node: ast.NullNode): estree.Literal {
-    return {
-      type: "Literal",
-      value: null,
-      raw: "null"
-    };
-  }
-
-  visitSimpleIdentifier(node: ast.SimpleIdentifierNode): estree.Identifier {
-    return {
-      type: "Identifier",
-      name: encodeIdentifier(node.id)
-    };
-  }
-
-  visitCompositeIdentifier(node: ast.CompositeIdentifierNode): estree.MemberExpression {
-    // Composite identifiers like a.b.c become MemberExpressions
-    let object: estree.Expression = {
-      type: "Identifier",
-      name: encodeIdentifier(node.parts[0])
-    };
-
-    for (let i = 1; i < node.parts.length; i++) {
-      object = {
-        type: "MemberExpression",
-        object,
-        property: {
-          type: "Identifier",
-          name: node.parts[i]
-        },
-        computed: false,
-        optional: false
-      };
-    }
-
-    return object as estree.MemberExpression;
-  }
-
-  // ============================================================================
-  // COLLECTIONS
-  // ============================================================================
-
-  visitList(node: ast.ListNode): estree.Expression | estree.Statement | estree.Statement[] {
-    if (node.nodes.length === 0) {
-      return {
-        type: "ArrayExpression",
-        elements: []
-      };
-    }
-
-    // Skip leading comments to find the first real node
-    let firstNodeIdx = 0;
-    while (firstNodeIdx < node.nodes.length && node.nodes[firstNodeIdx]._type === "comment") {
-      firstNodeIdx++;
-    }
-    
-    // If all nodes are comments, return empty array
-    if (firstNodeIdx >= node.nodes.length) {
-      return [];
-    }
-    
-    const firstNode = node.nodes[firstNodeIdx];
-    const firstNodeType = firstNode._type;
-    
-    // Check if the first item is statement-like
-    // If so, treat the entire list as a statement sequence
-    if (this.isStatementLike(firstNode)) {
-      // Special case: if the list is a single statement-keyword call
-      if (node.nodes.length > 0 && firstNode._type === "simple-identifier") {
-        const firstId = (firstNode as ast.SimpleIdentifierNode).id;
-        
-        // Handle return statement
-        if (firstId === "return") {
-          const arg = node.nodes.length > firstNodeIdx + 1 ? (this.visit(node.nodes[firstNodeIdx + 1]) as estree.Expression) : null;
-          return {
-            type: "ReturnStatement",
-            argument: arg
-          };
-        }
-        
-        // Handle throw statement
-        if (firstId === "throw") {
-          const arg = node.nodes.length > firstNodeIdx + 1 ? (this.visit(node.nodes[firstNodeIdx + 1]) as estree.Expression) : { type: "Literal", value: null, raw: "null" } as estree.Expression;
-          return {
-            type: "ThrowStatement",
-            argument: arg
-          };
-        }
-      }
-      
-      // General case: sequence of statements
-      const statements: estree.Statement[] = [];
-      for (const item of node.nodes) {
-        // Skip comments
-        if (item._type === "comment") {
-          continue;
-        }
-        
-        const visited = this.visit(item);
-        if (!visited) continue;
-        
-        if (Array.isArray(visited)) {
-          statements.push(...(visited.filter((v): v is estree.Statement => v !== null)));
-        } else if ((visited as any).type?.endsWith("Statement") || (visited as any).type?.endsWith("Declaration")) {
-          statements.push(visited as estree.Statement);
-        } else if ((visited as any).type === "FunctionExpression") {
-          // Convert function expressions to expression statements
-          statements.push({
-            type: "ExpressionStatement",
-            expression: visited as estree.Expression
-          });
-        } else if ((visited as any).type === "CallExpression" || (visited as any).type === "AssignmentExpression") {
-          statements.push({
-            type: "ExpressionStatement",
-            expression: visited as estree.Expression
-          });
-        } else if ((visited as any).type === "Identifier") {
-          // Handle standalone statement keyword identifiers
-          const id = (item as ast.SimpleIdentifierNode).id;
-          if (id === "return") {
-            statements.push({
-              type: "ReturnStatement",
-              argument: null
-            });
-          }
-        }
-      }
-      return statements.length === 1 ? statements[0] : statements;
-    }
-    
-    // Check if this is a function call
-    if (firstNodeType === "simple-identifier" || firstNodeType === "composite-identifier") {
-      const visitedNodes = node.nodes.map((n) => {
-        return this.visit(n);
-      });
-      const [callee, ...args] = visitedNodes;
-      const calleeIdent = callee as estree.Identifier | estree.MemberExpression;
-      
-      const filteredArgs = args.filter((a): a is estree.Expression => {
-        return a !== null && !Array.isArray(a) && ("type" in (a as any));
-      });
-      
-      const callExpr: estree.CallExpression = {
-        type: "CallExpression",
-        callee: calleeIdent,
-        arguments: filteredArgs,
-        optional: false
-      };
-      
-      return callExpr;
-    }
-    
-    // Otherwise, it's an array literal
-    const visitedNodes = node.nodes.map(n => this.visit(n));
-    const elements = visitedNodes.filter((v): v is estree.Expression => {
-      return v !== null && !Array.isArray(v) && ("type" in (v as any));
-    });
-    
-    return {
-      type: "ArrayExpression",
-      elements
-    };
+  private inScope(...scopes: ScopeType[]) {
+    return scopes.includes(this.currentScope());
   }
 
   /**
-   * Check if a node represents a statement-like operation
+   * Determines if the current location requires an Expression (value) 
+   * or accepts a Statement (void/action).
+   * 
+   * Expression contexts: variable assignments, and nested expressions.
+   * Statement contexts: function bodies, if bodies at statement level, etc.
    */
-  private isStatementLike(node: ast.ASTNode): boolean {
-    // Check if node is directly a statement type
-    const statementTypes = [
-      "function",
-      "variable",
-      "if",
-      "while",
-      "for",
-      "foreach",
-      "match",
-      "when",
-      "cond",
-      "try-catch",
-      "class",
-      "interface",
-      "simple-assignment",
-      "compound-assignment",
-      "return"
+  private isExpressionContext(): boolean {
+    // Treat these parent scopes as expression contexts so nested
+    // constructs (like `if` inside a `match` arm or `when` value)
+    // emit expression-style code (ternaries / comma-exprs) instead
+    // of statement-style `if { ... }` blocks.
+    return this.scope.some(
+      (s) => s === ScopeType.variable || s === ScopeType.match
+    );
+  }
+
+  private runInScope<T>(scope: ScopeType, action: () => T): T {
+    this.pushScope(scope);
+    try {
+      return action();
+    } finally {
+      this.popScope();
+    }
+  }
+
+  // =========================================================================
+  // Core
+  // =========================================================================
+
+  private inlineStandardLibrary(): string {
+    return ""; 
+  }
+
+  public compile(root: ast.ASTNode) {
+    const rootSourceNode = this.visit(root);
+    
+    const header = [
+      `// Module: ${this.context.mainModule}\n`,
+      `// Compiled at: ${new Date().toISOString()}\n`,
+      `"use strict";\n\n`
     ];
-    
-    if (statementTypes.includes(node._type)) {
-      return true;
-    }
-    
-    // Check if it's an identifier that represents a statement keyword
-    if (node._type === "simple-identifier") {
-      const id = (node as ast.SimpleIdentifierNode).id;
-      const statementKeywords = ["let", "var", "class", "if", "when", "cond", "while", "for", "foreach", "match", "return", "try", "throw"];
-      return statementKeywords.includes(id);
-    }
-    
-    // Check if it's a list that starts with a statement or statement keyword
-    if (node._type === "list") {
-      const listNode = node as ast.ListNode;
-      if (listNode.nodes.length > 0) {
-        const firstItem = listNode.nodes[0];
-        
-        // Check if first item is a statement node type
-        if (statementTypes.includes(firstItem._type)) {
-          return true;
-        }
-        
-        // Check if first item is an identifier that's a statement keyword
-        if (firstItem._type === "simple-identifier") {
-          const id = (firstItem as ast.SimpleIdentifierNode).id;
-          const statementKeywords = ["let", "var", "class", "if", "when", "cond", "while", "for", "foreach", "match", "return", "try", "throw", "defclass"];
-          return statementKeywords.includes(id);
-        }
-      }
-    }
-    
-    return false;
+
+    const standardLibrary = createSourceNode(root, this.inlineStandardLibrary());
+    const sourceName = root && root._location && root._location.source ? root._location.source : 'bundle.lisp';
+    const sourceMapUrl = `\n\n//# sourceMappingURL=${path.basename(sourceName, '.lisp')}.js.map`;
+
+    const wrappedBody = createSourceNode(root, '(function() {', '\n', rootSourceNode, '\n', '})()');
+
+    return createSourceNode(root,
+      ...header,
+      standardLibrary,
+      wrappedBody,
+      sourceMapUrl
+    ).toStringWithSourceMap();
   }
 
-  visitVector(node: ast.VectorNode): estree.ArrayExpression {
-    const elements = node.values.map(elem => this.visit(elem) as estree.Expression | null);
-    return {
-      type: "ArrayExpression",
-      elements
-    };
+  visitProgram(node: ast.ProgramNode) {
+    // Top level program is a list of statements, joined by semicolons
+    // Prefix with an empty statement to avoid accidental string-call when
+    // the first statement is an expression starting with `(`.
+    return createSourceNode(node, 
+      ";\n",
+      ...joinArray(node.program.map(n => this.visit(n)), ';\n')
+    );
   }
 
-  visitMap(node: ast.MapNode): estree.ObjectExpression {
-    // MapNode.values contains KeyValueNode items
-    const properties: estree.Property[] = node.values.map((item: ast.ASTNode) => {
-      if (item._type === "key-value") {
-        const kvNode = item as ast.KeyValueNode;
-        const keyNode = this.visit(kvNode.key) as estree.Expression;
-        let valueNode = this.visit(kvNode.value) as estree.Expression | estree.Statement;
-        
-        // If valueNode is an ExpressionStatement, unwrap it to get the expression
-        if ((valueNode as any).type === "ExpressionStatement") {
-          valueNode = (valueNode as estree.ExpressionStatement).expression;
-        }
-        
-        const computed = keyNode.type !== "Identifier" && keyNode.type !== "Literal";
-        
-        return {
-          type: "Property" as const,
-          kind: "init" as const,
-          key: keyNode,
-          value: valueNode as estree.Expression,
-          computed,
-          shorthand: false
-        } as estree.Property;
-      }
-      return undefined as any;
-    }).filter((p): p is estree.Property => p !== undefined);
-    
-    return {
-      type: "ObjectExpression",
-      properties
-    };
+  // =========================================================================
+  // Classes
+  // =========================================================================
+
+  visitClass(node: ast.ClassNode) {
+    return this.runInScope(ScopeType.class, () => {
+      const classBuilder = new ClassBuilder(node, this.context, this);
+      const result = classBuilder.build();
+      this.classes.push(node.name.name);
+      return result;
+    });
   }
 
-  // ============================================================================
-  // VARIABLES & DECLARATIONS
-  // ============================================================================
-
-  visitVariable(node: ast.VariableNode): estree.VariableDeclaration {
-    const id = this.visit(node.name) as estree.Identifier;
-    const init = node.value ? this.visit(node.value) as estree.Expression : null;
-    const kind = node.mutable ? "let" : "const";
-    
-    return {
-      type: "VariableDeclaration",
-      declarations: [{
-        type: "VariableDeclarator",
-        id,
-        init
-      }],
-      kind
-    };
+  visitInterface(node: ast.InterfaceNode) {
+    return this.runInScope(ScopeType.interface, () => {
+      const name = this.visit(node.name);
+      return createSourceNode(node, `/* interface ${name} (erased) */`);
+    });
   }
 
-  // ============================================================================
-  // CONTROL FLOW
-  // ============================================================================
+  // =========================================================================
+  // Functions & Variables
+  // =========================================================================
 
-  visitIf(node: ast.IfNode): estree.IfStatement {
-    const test = this.visit(node.condition) as estree.Expression;
-    const thenNode = this.visit(node.then);
-    const consequent: estree.Statement = thenNode && thenNode.type ? 
-      (thenNode as estree.Statement) : 
-      { type: "BlockStatement", body: [] };
-    const elseNode = node.else ? this.visit(node.else) : null;
-    const alternate: estree.Statement | null = elseNode && elseNode.type ? 
-      (elseNode as estree.Statement) : 
-      null;
-    
-    return {
-      type: "IfStatement",
-      test,
-      consequent,
-      alternate
-    };
-  }
+  visitFunction(node: ast.FunctionNode) {
+    const nextScope = this.inScope(ScopeType.class) 
+      ? ScopeType.method 
+      : ScopeType.function;
 
-  visitWhile(node: ast.WhileNode): estree.WhileStatement {
-    const test = this.visit(node.condition) as estree.Expression;
-    const body = this.visit(node.then) as estree.Statement;
-    
-    return {
-      type: "WhileStatement",
-      test,
-      body
-    };
-  }
-
-  visitFor(node: ast.ForNode): estree.ForStatement {
-    const init = node.init ? this.visit(node.init) as estree.VariableDeclaration | estree.Expression : null;
-    const test = node.condition ? this.visit(node.condition) as estree.Expression : null;
-    const update = node.update ? this.visit(node.update) as estree.Expression : null;
-    const body = this.visit(node.body) as estree.Statement;
-    
-    return {
-      type: "ForStatement",
-      init,
-      test,
-      update,
-      body
-    };
-  }
-
-  visitForEach(node: ast.ForEachNode): estree.ForOfStatement {
-    const left = this.visit(node.variable) as estree.VariableDeclaration;
-    const right = this.visit(node.sequence) as estree.Expression;
-    const body = this.visit(node.body) as estree.Statement;
-    
-    return {
-      type: "ForOfStatement",
-      left,
-      right,
-      body,
-      await: false
-    };
-  }
-
-  /**
-   * Converts match expressions to a switch statement or IIFE
-   * Pattern matching is complex, so we generate a clean switch structure
-   */
-  visitMatch(node: ast.MatchNode): estree.Statement | estree.Expression {
-    const discriminant = this.visit(node.expr) as estree.Expression;
-
-    // Build a nested conditional expression (ternary operator)
-    let conditional: estree.Expression = { type: "Identifier", name: "undefined" }; // Default value if no case matches
-
-    for (let i = node.cases.length - 1; i >= 0; i--) {
-        const matchCase = node.cases[i];
-        const pattern = matchCase.pattern;
-        let test: estree.Expression;
-
-        if (pattern._type === "constant-pattern") {
-            test = {
-                type: "BinaryExpression",
-                operator: "===",
-                left: discriminant,
-                right: this.visit((pattern as ast.ConstantPatternNode).constant) as estree.Expression
-            };
-        } else if (pattern._type === "any-pattern") {
-            test = { type: "Literal", value: true, raw: "true" };
-        } else {
-            this.context.log(LogLevel.Warning, `Complex pattern matching not yet fully implemented for ${pattern._type}`);
-            test = { type: "Literal", value: true, raw: "true" };
-        }
-
-        let consequent = this.visit(matchCase.body) as estree.Expression | estree.Statement | null;
-        
-        // Handle case where body visits to a statement, array, or null
-        if (!consequent) {
-          consequent = { type: "Identifier", name: "undefined" };
-        } else if (Array.isArray(consequent)) {
-          // If it's an array of statements, wrap in IIFE
-          consequent = {
-            type: "CallExpression",
-            callee: {
-              type: "ArrowFunctionExpression",
-              params: [],
-              body: {
-                type: "BlockStatement",
-                body: consequent as estree.Statement[]
-              },
-              expression: false
-            },
-            arguments: [],
-            optional: false
-          };
-        } else if ((consequent as any).type && (consequent as any).type.endsWith("Statement") && (consequent as any).type !== "ExpressionStatement") {
-          // If it's a non-expression statement, wrap in IIFE that returns undefined
-          consequent = {
-            type: "CallExpression",
-            callee: {
-              type: "ArrowFunctionExpression",
-              params: [],
-              body: {
-                type: "BlockStatement",
-                body: [consequent as estree.Statement]
-              },
-              expression: false
-            },
-            arguments: [],
-            optional: false
-          };
-        } else if ((consequent as any).type === "ExpressionStatement") {
-          // Unwrap ExpressionStatement to get the expression
-          consequent = (consequent as estree.ExpressionStatement).expression;
-        }
-
-        // Ensure consequent is always an expression
-        let consequentExpr: estree.Expression;
-        if (!consequent || (consequent as any).type === "undefined") {
-          consequentExpr = { type: "Identifier", name: "undefined" };
-        } else if (typeof consequent === "object" && "type" in consequent && (consequent as any).type.endsWith("Expression")) {
-          consequentExpr = consequent as estree.Expression;
-        } else {
-          // Shouldn't happen, but fallback to undefined
-          consequentExpr = { type: "Identifier", name: "undefined" };
-        }
-
-        conditional = {
-            type: "ConditionalExpression",
-            test,
-            consequent: consequentExpr,
-            alternate: conditional
-        };
-    }
-
-    // Wrap in an IIFE to ensure it's treated as an expression
-    return {
-        type: "CallExpression",
-        callee: {
-            type: "ArrowFunctionExpression",
-            params: [],
-            body: {
-                type: "BlockStatement",
-                body: [{
-                    type: "ReturnStatement",
-                    argument: conditional
-                }]
-            },
-            expression: false
-        },
-        arguments: [],
-        optional: false
-    };
-  }
-
-  visitWhen(node: ast.WhenNode): estree.IfStatement {
-    const test = this.visit(node.condition!) as estree.Expression;
-    const bodyStmts: estree.Statement[] = [];
-    
-    for (const stmt of node.then) {
-      const visited = this.visit(stmt);
-      if (!visited) continue;
+    return this.runInScope(nextScope, () => {
+      const name = node.name && this.visit(node.name);
+      const params = node.params.map((x) => this.visit(x));
       
-      // Handle return as a special case
-      if (stmt._type === "simple-identifier" && (stmt as ast.SimpleIdentifierNode).id === "return") {
-        bodyStmts.push({
-          type: "ReturnStatement",
-          argument: null
-        });
-      } else if ((visited as any).type?.endsWith("Statement") || (visited as any).type?.endsWith("Declaration")) {
-        bodyStmts.push(visited as estree.Statement);
-      } else if ((visited as any).type === "CallExpression" || (visited as any).type === "AssignmentExpression") {
-        bodyStmts.push({
-          type: "ExpressionStatement",
-          expression: visited as estree.Expression
-        });
-      } else if ((visited as any).type === "ExpressionStatement") {
-        bodyStmts.push(visited as estree.ExpressionStatement);
-      }
-    }
-    
-    const consequent: estree.Statement = bodyStmts.length === 1 ? 
-      bodyStmts[0] : 
-      { type: "BlockStatement", body: bodyStmts };
-    
-    return {
-      type: "IfStatement",
-      test,
-      consequent,
-      alternate: null
-    };
-  }
+      // Function Body Processing
+      const bodyNodes = node.body.map((x) => this.visit(x));
+      let body: (SourceNode | string)[];
 
-  visitCond(node: ast.CondNode): estree.IfStatement | estree.ExpressionStatement {
-    // Reduce cond to if-else chain
-    let result: estree.IfStatement | null = null;
-    let current = result;
-    
-    for (let i = node.cases.length - 1; i >= 0; i--) {
-      const caseNode = node.cases[i];
-      const test = this.visit(caseNode.condition) as estree.Expression;
-      const consequent = this.visit(caseNode.body) as estree.Statement;
-      
-      const ifStmt: estree.IfStatement = {
-        type: "IfStatement",
-        test,
-        consequent,
-        alternate: current
-      };
-      result = ifStmt;
-    }
-    
-    return result || {
-      type: "ExpressionStatement",
-      expression: { type: "Literal", value: null, raw: "null" } as estree.Literal
-    };
-  }
-
-  // ============================================================================
-  // FUNCTIONS
-  // ============================================================================
-
-  visitFunction(node: ast.FunctionNode): estree.FunctionDeclaration | estree.FunctionExpression {
-    const id = node.name ? this.visit(node.name) as estree.Identifier : null;
-    const params = node.params.map(param => this.visit(param) as estree.Pattern);
-    
-    // Convert body nodes to statements
-    const bodyStatements: estree.Statement[] = [];
-    
-    for (const bodyItem of node.body) {
-      const visited = this.visit(bodyItem);
-      if (!visited) continue;
-      
-      // Handle statement arrays (flattened statement lists)
-      if (Array.isArray(visited)) {
-        for (const item of visited) {
-          if (!item) continue;
-          if ((item as any).type && ((item as any).type?.endsWith("Declaration") || (item as any).type?.endsWith("Statement"))) {
-            bodyStatements.push(item as estree.Statement);
-          } else if ((item as any).type === "CallExpression" || (item as any).type === "AssignmentExpression") {
-            bodyStatements.push({
-              type: "ExpressionStatement",
-              expression: item as estree.Expression
-            });
-          }
-        }
-      }
-      // Handle different node types
-      else if ((visited as any).type === "BlockStatement") {
-        bodyStatements.push(visited as estree.BlockStatement);
-      } else if ((visited as any).type?.endsWith("Declaration") || (visited as any).type?.endsWith("Statement")) {
-        bodyStatements.push(visited as estree.Statement);
-      } else if ((visited as any).type === "ExpressionStatement") {
-        bodyStatements.push(visited as estree.ExpressionStatement);
-      } else if ("type" in (visited as any) && ((visited as any).type === "CallExpression" || (visited as any).type === "AssignmentExpression")) {
-        // Wrap expressions in ExpressionStatement
-        bodyStatements.push({
-          type: "ExpressionStatement",
-          expression: visited as estree.Expression
-        });
-      }
-      // Skip ArrayExpressions - they shouldn't be function body statements
-    }
-    
-    const body: estree.BlockStatement = {
-      type: "BlockStatement",
-      body: bodyStatements
-    };
-    
-    if (id) {
-      return {
-        type: "FunctionDeclaration",
-        id,
-        params,
-        body,
-        async: node.async || false,
-        generator: false
-      };
-    } else {
-      return {
-        type: "FunctionExpression",
-        id: null,
-        params,
-        body,
-        async: node.async || false,
-        generator: false
-      };
-    }
-  }
-
-  visitParameter(node: ast.ParameterNode): estree.Identifier {
-    return {
-      type: "Identifier",
-      name: encodeIdentifier(node.name.id)
-    };
-  }
-
-  // ============================================================================
-  // ASSIGNMENTS & OPERATIONS
-  // ============================================================================
-
-  visitSimpleAssignment(node: ast.SimpleAssignmentNode): estree.AssignmentExpression {
-    const left = this.visit(node.assignable) as estree.Pattern;
-    const right = this.visit(node.value) as estree.Expression;
-    
-    return {
-      type: "AssignmentExpression",
-      operator: "=",
-      left: left as estree.AssignmentExpression["left"],
-      right
-    };
-  }
-
-  visitCompoundAssignment(node: ast.CompoundAssignmentNode): estree.AssignmentExpression {
-    const left = this.visit(node.assignable) as estree.Pattern;
-    const right = this.visit(node.value) as estree.Expression;
-    
-    // Map l-lang operators to JS operators
-    const operatorMap: Record<string, string> = {
-      "+=": "+=",
-      "-=": "-=",
-      "*=": "*=",
-      "/=": "/=",
-      "%=": "%=",
-      "|=": "|=",
-      "&=": "&=",
-      "^=": "^=",
-      "<<=": "<<=",
-      ">>=": ">>=",
-      ">>>=": ">>>="
-    };
-    
-    const operator = operatorMap[node.operator] || "+=";
-    
-    return {
-      type: "AssignmentExpression",
-      operator: operator as estree.AssignmentExpression["operator"],
-      left: left as estree.AssignmentExpression["left"],
-      right
-    };
-  }
-
-  visitIndexer(node: ast.IndexerNode): estree.MemberExpression {
-    const object = this.visit(node.object) as estree.Expression;
-    const index = this.visit(node.index) as estree.Expression;
-    
-    return {
-      type: "MemberExpression",
-      object,
-      property: index,
-      computed: true,
-      optional: false
-    };
-  }
-
-  // ============================================================================
-  // CLASSES & INTERFACES
-  // ============================================================================
-
-  visitClass(node: ast.ClassNode): estree.ClassDeclaration {
-    const id = node.name ? (this.visit(node.name) as estree.Identifier) : ({ type: "Identifier", name: "AnonymousClass" } as estree.Identifier);
-    const superClass = node.extends && node.extends.length > 0 ? this.visit(node.extends[0].type) as estree.Expression : null;
-    
-    const body: estree.ClassBody = {
-      type: "ClassBody",
-      body: node.body.flatMap(member => {
-        // Unwrap lists that wrap single members (common in Lisp)
-        const actualMember = (member._type === "list") ? (member as ast.ListNode).nodes[0] : member;
-        
-        if (actualMember._type === "function") {
-          const fn = actualMember as ast.FunctionNode;
-          const key = this.visit(fn.name!) as estree.Identifier;
-          const params = fn.params.map(p => this.visit(p) as estree.Pattern);
-          
-          // Convert body nodes to statements (similar to visitFunction)
-          const bodyStatements: estree.Statement[] = [];
-          for (const bodyItem of fn.body) {
-            const visited = this.visit(bodyItem);
-            if (!visited) continue;
-            
-            // Handle statement arrays (flattened statement lists)
-            if (Array.isArray(visited)) {
-              for (const item of visited) {
-                if (!item) continue;
-                if ((item as any).type && ((item as any).type?.endsWith("Declaration") || (item as any).type?.endsWith("Statement"))) {
-                  bodyStatements.push(item as estree.Statement);
-                } else if ((item as any).type === "CallExpression" || (item as any).type === "AssignmentExpression") {
-                  bodyStatements.push({
-                    type: "ExpressionStatement",
-                    expression: item as estree.Expression
-                  });
-                }
-              }
-            }
-            // Handle different node types
-            else if ((visited as any).type === "BlockStatement") {
-              bodyStatements.push(visited as estree.BlockStatement);
-            } else if ((visited as any).type?.endsWith("Declaration") || (visited as any).type?.endsWith("Statement")) {
-              bodyStatements.push(visited as estree.Statement);
-            } else if ((visited as any).type === "ExpressionStatement") {
-              bodyStatements.push(visited as estree.ExpressionStatement);
-            } else if ("type" in (visited as any) && ((visited as any).type === "CallExpression" || (visited as any).type === "AssignmentExpression")) {
-              // Wrap expressions in ExpressionStatement
-              bodyStatements.push({
-                type: "ExpressionStatement",
-                expression: visited as estree.Expression
-              });
-            }
-          }
-          
-          const fnBody: estree.BlockStatement = {
-            type: "BlockStatement",
-            body: bodyStatements
-          };
-          
-          return [{
-            type: "MethodDefinition",
-            key,
-            value: {
-              type: "FunctionExpression",
-              id: null,
-              params,
-              body: fnBody,
-              async: fn.async || false,
-              generator: false
-            },
-            kind: fn.name?.id === "constructor" ? "constructor" : "method",
-            computed: false,
-            static: false
-          } as estree.MethodDefinition];
-        } else if (actualMember._type === "variable") {
-          const varNode = actualMember as ast.VariableNode;
-          const key = this.visit(varNode.name) as estree.Identifier;
-          
-          return [{
-            type: "PropertyDefinition",
-            key,
-            value: varNode.value ? this.visit(varNode.value) as estree.Expression : null,
-            computed: false,
-            static: false
-          } as any];  // PropertyDefinition not in estree yet
-        }
-        return [];
-      })
-    };
-    
-    return {
-      type: "ClassDeclaration",
-      id,
-      superClass,
-      body
-    };
-  }
-
-  // ============================================================================
-  // ERROR HANDLING
-  // ============================================================================
-
-  visitTryCatch(node: ast.TryCatchNode): estree.TryStatement {
-    const tryStmt = this.visit(node.try);
-    const tryBlock: estree.BlockStatement = tryStmt && tryStmt.type === "BlockStatement" ?
-      (tryStmt as estree.BlockStatement) :
-      { type: "BlockStatement", body: tryStmt ? [tryStmt as estree.Statement] : [] };
-    
-    let handler: estree.CatchClause | null = null;
-    if (node.catch && node.catch.length > 0) {
-      const filter = node.catch[0];
-      const param = this.visit(filter.filter.name) as estree.Identifier;
-      const bodyStmt = this.visit(filter.body);
-      const catchBlock: estree.BlockStatement = bodyStmt && bodyStmt.type === "BlockStatement" ?
-        (bodyStmt as estree.BlockStatement) :
-        { type: "BlockStatement", body: bodyStmt ? [bodyStmt as estree.Statement] : [] };
-      
-      handler = {
-        type: "CatchClause",
-        param,
-        body: catchBlock
-      };
-    }
-    
-    const finallyStmt = node.finally ? this.visit(node.finally) : null;
-    const finalizer: estree.BlockStatement | null = finallyStmt && finallyStmt.type === "BlockStatement" ?
-      (finallyStmt as estree.BlockStatement) :
-      (finallyStmt ? { type: "BlockStatement", body: [finallyStmt as estree.Statement] } : null);
-    
-    return {
-      type: "TryStatement",
-      block: tryBlock,
-      handler,
-      finalizer
-    };
-  }
-
-  // ============================================================================
-  // MISCELLANEOUS
-  // ============================================================================
-
-  visitAwait(node: ast.AwaitNode): estree.AwaitExpression {
-    const argument = this.visit(node.expression) as estree.Expression;
-    return {
-      type: "AwaitExpression",
-      argument
-    };
-  }
-
-  visitSpread(node: ast.SpreadNode): estree.SpreadElement {
-    const argument = this.visit(node.expression) as estree.Expression;
-    return {
-      type: "SpreadElement",
-      argument
-    };
-  }
-
-  visitQuote(node: ast.QuoteNode): estree.Literal {
-    // Quotes are typically compile-time only, represent as string for now
-    return {
-      type: "Literal",
-      value: node.mode,
-      raw: `"${node.mode}"`
-    };
-  }
-
-  visitKeyValue(node: ast.KeyValueNode): estree.Property {
-    const keyNode = this.visit(node.key) as estree.Expression;
-    const valueNode = this.visit(node.value) as estree.Expression;
-    
-    const computed = keyNode.type !== "Identifier" && keyNode.type !== "Literal";
-    
-    return {
-      type: "Property",
-      kind: "init",
-      key: keyNode,
-      value: valueNode,
-      computed,
-      shorthand: false,
-      method: false
-    };
-  }
-
-  visitComment(node: ast.CommentNode): null {
-    // Comments are typically stripped in AST, return null
-    return null;
-  }
-
-  visitControlComment(node: ast.ControlCommentNode): null {
-    // Control comments are compiler directives, not code
-    return null;
-  }
-
-  visitFunctionCarrying(node: ast.FunctionCarryingNode): estree.CallExpression | estree.MemberExpression {
-    let result: estree.Expression = this.visit(node.identifier) as estree.Identifier;
-    
-    for (const apply of node.sequence) {
-      const fn = this.visit(apply.function) as estree.Identifier;
-      const args = apply.arguments.map(arg => this.visit(arg) as estree.Expression);
-      
-      if (apply.memberFunction) {
-        // Member function call: result.fn(args)
-        result = {
-          type: "CallExpression",
-          callee: {
-            type: "MemberExpression",
-            object: result,
-            property: fn,
-            computed: false,
-            optional: false
-          },
-          arguments: args,
-          optional: false
-        };
+      if (bodyNodes.length === 0) {
+        body = [];
       } else {
-        // Regular function call
-        if (apply.operator === "carrying-left") {
-          // fn(result, ...args)
-          result = {
-            type: "CallExpression",
-            callee: fn,
-            arguments: [result, ...args],
-            optional: false
-          };
-        } else {
-          // fn(...args, result)
-          result = {
-            type: "CallExpression",
-            callee: fn,
-            arguments: [...args, result],
-            optional: false
-          };
-        }
+        body = joinArray(bodyNodes, ";");
       }
-    }
-    
-    return result as any;
-  }
 
-  visitFormattedString(node: ast.FormattedStringNode): estree.TemplateLiteral {
-    // Convert formatted string to template literal
-    const quasis: estree.TemplateElement[] = [];
-    const expressions: estree.Expression[] = [];
-    
-    // Process value array - mix of StringNodes and FormatExpressionNodes
-    for (let i = 0; i < node.value.length; i++) {
-      const part = node.value[i];
+      // Determine the appropriate function format based on parent scope (before we pushed nextScope)
+      const parentScope = this.scope[1]; // scope[0] is the nextScope we just pushed
       
-      if (part._type === "string") {
-        const stringNode = part as ast.StringNode;
-        quasis.push({
-          type: "TemplateElement",
-          value: { raw: stringNode.value, cooked: stringNode.value },
-          tail: i === node.value.length - 1 && expressions.length === quasis.length
-        });
-      } else if (part._type === "format-expression") {
-        const exprNode = this.visit(part) as estree.Expression;
-        expressions.push(exprNode);
-        // Add empty quasi for template literal structure
-        if (quasis.length === expressions.length - 1) {
-          quasis.push({
-            type: "TemplateElement",
-            value: { raw: "", cooked: "" },
-            tail: i === node.value.length - 1
-          });
+      if (this.currentScope() === ScopeType.method) {
+        // Method: name(params) { body }
+        return createSourceNode(node,
+            node.async ? "async " : "",
+            name, "(", ...joinArray(params, ","), ") {",
+            ...body,
+            "}"
+        );
+      } else if (parentScope === ScopeType.program) {
+        // Top-level function: function name(params) { body }
+        return createSourceNode(node,
+            node.async ? "async " : "",
+            "function ", name, "(", ...joinArray(params, ","), ") {",
+            ...body,
+            "}"
+        );
+      } else {
+        // Nested function: const name = (params) => { body }
+        const kw = node.async ? "async " : "";
+        const arrow = [kw, "(", ...joinArray(params, ","), ") => {", ...body, "}"];
+        
+        if (name) {
+            this.functions.push(name.toString());
+            return createSourceNode(node, "const ", name, " = ", ...arrow);
+        } else {
+            return createSourceNode(node, ...arrow);
         }
       }
-    }
-    
-    // Ensure we have proper quasi/expression pairing
-    if (quasis.length === expressions.length) {
-      quasis.push({
-        type: "TemplateElement",
-        value: { raw: "", cooked: "" },
-        tail: true
-      });
-    }
-    
-    return {
-      type: "TemplateLiteral",
-      quasis,
-      expressions
-    };
+    });
   }
 
-  visitFormatExpression(node: ast.FormatExpressionNode): estree.Expression {
-    const expression = node.expression;
-    if (expression._type === 'list') {
-      const listNode = expression as ast.ListNode;
-      if (listNode.nodes.length === 1 && listNode.nodes[0]._type === 'simple-identifier') {
-        return this.visit(listNode.nodes[0]) as estree.Expression;
+  visitVariable(node: ast.VariableNode) {
+    this.pushScope(ScopeType.variable);
+    const name = this.visit(node.name);
+    const value = node.value ? this.visit(node.value) : undefined;
+    this.popScope();
+
+    this.variables.push(name.toString());
+
+    return createSourceNode(node,
+      formatVariable(
+        this.currentScope(),
+        node,
+        node.mutable,
+        name,
+        value,
+        this.context
+      ));
+  }
+
+  visitParameter(node: ast.ParameterNode) {
+    return this.visit(node.name);
+  }
+
+  // =========================================================================
+  // Control Flow
+  // =========================================================================
+
+  visitIf(node: ast.IfNode) {
+    return this.runInScope(ScopeType.if, () => {
+      const condition = this.visit(node.condition!);
+      const thenExpr = this.visit(node.then!);
+      const elseExpr = node.else ? this.visit(node.else) : undefined;
+
+      // If we are in an expression context (assignment, args), use Ternary
+      if (this.isExpressionContext()) {
+         return createSourceNode(node, 
+            "(", condition, ") ? (", thenExpr, ") : (", elseExpr || "undefined", ")"
+         );
       }
-    }
-    return this.visit(node.expression) as estree.Expression;
+
+      // Statement context
+      const elseBlock = elseExpr ? [" else { ", elseExpr, " }"] : [];
+      return createSourceNode(node, 
+        "if (", condition, ") { ", thenExpr, " }", ...elseBlock
+      );
+    });
   }
 
-  // ============================================================================
-  // DEFAULT VISITOR (Fallback)
-  // ============================================================================
+  visitWhen(node: ast.WhenNode) {
+    return this.runInScope(ScopeType.when, () => {
+      const condition = this.visit(node.condition!);
+      const whenExprs = node.then!.map((x) => this.visit(x));
+      const body = joinArray(whenExprs, ";");
 
-  visit(node: ast.ASTNode | null | undefined): estree.Node | null {
-    if (!node) {
-      return null;
-    }
+      if (this.isExpressionContext()) {
+        // (cond) ? (exprs) : undefined
+        // Note: JS comma operator (a, b) returns b.
+        return createSourceNode(node, 
+            "(", condition, ") ? (", ...joinArray(whenExprs, ","), ") : undefined"
+        );
+      }
 
-    const methodName = `visit${node._type.split("-").map(word => word.charAt(0).toUpperCase() + word.slice(1)).join("")}`;
-    const method = (this as any)[methodName];
+      return createSourceNode(node, "if (", condition, ") { ", ...body, " }");
+    });
+  }
+
+  visitWhile(node: ast.WhileNode) {
+    const condition = this.visit(node.condition);
+    const body = this.visit(node.then);
+    return createSourceNode(node, `while (`, condition, `) {`, body, `}`);
+  }
+
+  visitTryCatch(node: ast.TryCatchNode) {
+    const tryBlock = [ `try {`, this.visit(node.try), `}` ];
+    const catchVar = uniqueIdentifier(); 
     
-    if (typeof method === "function") {
-      return method.call(this, node);
+    const catchBlocks = node.catch?.filter(x => !!x.filter)?.map(x => {
+      const catchFilterVar = this.visit(x.filter.name);
+      const catchFilterType = this.visit(x.filter.type);
+      const catchBody = this.visit(x.body);
+      
+      // We need to declare the filtered var: const err = catchVar;
+      return [
+        `if (`, catchVar, ` instanceof `, catchFilterType, `) {`,
+        `const `, catchFilterVar, ` = `, catchVar, `;`, 
+        catchBody, 
+        `}`
+      ];
+    });
+
+    const defaultCatchNode = node.catch?.find(x => !x.filter);
+    const defaultCatchBlock = defaultCatchNode 
+      ? this.visit(defaultCatchNode.body) 
+      : [`throw `, catchVar, `;`];
+
+    const joinedCatchBody = catchBlocks && catchBlocks.length > 0
+        ? [...joinArray(catchBlocks, ' else '), ' else { ', defaultCatchBlock, ' }']
+        : defaultCatchBlock;
+
+    const catchBlock = node.catch 
+      ? [` catch (`, catchVar, `) {`, ...joinedCatchBody, `}`] 
+      : [];
+      
+    const finallyBlock = node.finally 
+      ? [` finally {`, this.visit(node.finally), `}`] 
+      : [];
+
+    return createSourceNode(node, ...tryBlock, ...catchBlock, ...finallyBlock);
+  }
+
+  // =========================================================================
+  // Pattern Matching
+  // =========================================================================
+
+  visitMatch(node: ast.MatchNode) {
+    return this.runInScope(ScopeType.match, () => {
+      const matchVar = uniqueIdentifier();
+      const matchVal = this.visit(node.expression);
+
+      const matchCases = node.cases.map((x) => ({
+        p: x.pattern,
+        b: this.visit(x.body),
+      }));
+
+      const ifExprs = matchCases.map((x) => {
+        const condition = this.generateCondition(x.p, matchVar);
+        return createSourceNode(x.p, '(', condition, ')', '?', '(', x.b, ')');
+      });
+
+      const predefinedVariables = findIdentifiersToDefine(node);
+      const predefinedVarsCode = predefinedVariables.length > 0
+        ? `let ${predefinedVariables.join(',')};`
+        : '';
+
+      return createSourceNode(node, 
+        `((`, matchVar, `) => { `, 
+        predefinedVarsCode, 
+        'return ', ...joinArray(ifExprs, ' : '), ' : undefined;', 
+        '})(', matchVal, `)`
+      );
+    });
+  }
+
+  private generateCondition(pattern: ast.PatternNode, matchVar: string): SourceNode {
+    switch (pattern._type) {
+      case "any-pattern": return createSourceNode(pattern, `true`);
+      case "identifier-pattern": 
+        return createSourceNode(pattern, `(`, this.visit(pattern.id), '=', matchVar, `, true)`);
+      case "constant-pattern":
+        return createSourceNode(pattern, matchVar, ' === ', this.visit(pattern.constant));
+      case "list-pattern":
+      case "vector-pattern":
+        return this.generateArrayPatternCondition(pattern as ast.ListPatternNode, matchVar);
+      case "map-pattern":
+        return this.generateMapPatternCondition(pattern as ast.MapPatternNode, matchVar);
+      default:
+        return createSourceNode(pattern, `false`);
+    }
+  }
+
+  private generateArrayPatternCondition(pattern: ast.ListPatternNode | ast.VectorPatternNode, matchVar: string): SourceNode {
+    const conditions: (string | SourceNode)[] = [];
+    conditions.push(`Array.isArray(${matchVar})`);
+    conditions.push(`${matchVar}.length === ${pattern.elements.length}`);
+    pattern.elements.forEach((elem, idx) => {
+      conditions.push(this.generateCondition(elem, `${matchVar}[${idx}]`));
+    });
+    return createSourceNode(pattern, ...joinArray(conditions, " && "));
+  }
+
+  private generateMapPatternCondition(pattern: ast.MapPatternNode, matchVar: string): SourceNode {
+    const conditions: (string | SourceNode)[] = [];
+    conditions.push(`(typeof ${matchVar} === 'object' && ${matchVar} !== null)`);
+    pattern.pairs.forEach((pair) => {
+      const keyRaw = pair.key._type === 'string' ? pair.key.value : null;
+      if (keyRaw) conditions.push(`'${keyRaw}' in ${matchVar}`);
+      conditions.push(this.generateCondition(pair.pattern, `${matchVar}[${this.visit(pair.key)}]`));
+    });
+    return createSourceNode(pattern, ...joinArray(conditions, " && "));
+  }
+
+  // =========================================================================
+  // Identifiers / Literals
+  // =========================================================================
+
+  visitIdentifier(node: ast.IdentifierNode) {
+    if (this.identifiers[node.id]) return createSourceNode(node, this.identifiers[node.id]);
+    const id = encodeIdentifier(node.id);
+    this.identifiers[node.id] = id;
+    if (isStandardLibReference(id)) this.inlineStandardSymbols.push(id);
+    return createSourceNode(node, id);
+  }
+
+  visitSimpleIdentifier(node: ast.SimpleIdentifierNode) { return this.visitIdentifier(node); }
+  visitCompositeIdentifier(node: ast.CompositeIdentifierNode) { return this.visitIdentifier(node); }
+
+  visitString(node: ast.StringNode) { return createSourceNode(node, `"`, node.value, `"`); }
+  visitBoolean(node: ast.BooleanNode) { return createSourceNode(node, node.value.toString()); }
+  visitIntegerNumber(node: ast.IntegerNumberNode) { return createSourceNode(node, node.value.toString()); }
+  visitFloatNumber(node: ast.FloatNumberNode) { return createSourceNode(node, node.value.toString()); }
+
+  visitFormattedString(node: ast.FormattedStringNode) {
+    const value = node.value.map((x) =>
+      x._type === "string" ? x.value : this.visit(x)
+    );
+    return createSourceNode(node, "`", ...value, "`");
+  }
+
+  visitFormatExpression(node: ast.FormatExpressionNode) {
+    return createSourceNode(node, "${formatObjectToString(", this.visit(node.expression), ")}");
+  }
+
+  // =========================================================================
+  // Lists (The Core Logic)
+  // =========================================================================
+
+  visitList(node: ast.ListNode) {
+    const nodes = Array.isArray(node.nodes) ? node.nodes : [node.nodes];
+    if (nodes.length === 0) return createSourceNode(node, "null");
+
+    const [head, ...rest] = nodes;
+    
+    // Check if head is an identifier (Function Call? Class Instantiation?)
+    const isHeadIdentifier = head._type === "simple-identifier" || head._type === "composite-identifier";
+
+    if (isHeadIdentifier) {
+        // Special case: single-element list with just an identifier is a grouping, not a call
+        if (rest.length === 0) {
+            return this.visit(head);
+        }
+
+        const callee = this.visit(head);
+        const args = rest.map(x => this.visit(x));
+        const calleeStr = callee.toString();
+
+        if (this.classes.includes(calleeStr)) {
+            return createSourceNode(node, 'new ', callee, '(', ...joinArray(args, ","), ')');
+        }
+
+        // It is a function call
+        return createSourceNode(node, callee, '(', ...joinArray(args, ","), ')');
     }
 
-    this.context.log(LogLevel.Warning, `No visitor method for node type: ${node._type}`);
-    return null;
+    // Implicit Block / Sequence
+    // Example: ( (let x 1) (print x) )
+    // Head is NOT an identifier (e.g., it is a let-statement or another list)
+    
+    const statements = nodes.map(x => this.visit(x));
+
+    if (this.isExpressionContext()) {
+        // We are inside an expression (e.g., argument list), but we have a block of statements.
+        // Wrap in IIFE: (() => { stmt; stmt; return last; })()
+        const last = statements[statements.length - 1];
+        const body = statements.slice(0, -1).map(s => [s, ';']);
+        
+        return createSourceNode(node, 
+            "(() => { ", ...body.flat(), " return ", last, "; })()"
+        );
+    } else {
+        // Just a block of statements
+        return createSourceNode(node, ...joinArray(statements, ";"));
+    }
+  }
+
+  // =========================================================================
+  // Misc
+  // =========================================================================
+
+  visitVector(node: ast.VectorNode) {
+    return createSourceNode(node, '[', ...joinArray(node.values.map(x => this.visit(x)), ","), ']');
+  }
+
+  visitMap(node: ast.MapNode) {
+    return createSourceNode(node, '{', ...joinArray(node.values.map(x => this.visit(x)), ","), '}');
+  }
+
+  visitKeyValue(node: ast.KeyValueNode) {
+    return createSourceNode(node, this.visit(node.key), ': ', this.visit(node.value));
+  }
+
+  visitSimpleAssignment(node: ast.SimpleAssignmentNode) {
+    return createSourceNode(node, this.visit(node.assignable), ` = `, this.visit(node.value));
+  }
+
+  visitCompoundAssignment(node: ast.CompoundAssignmentNode) {
+    const assignable = this.visit(node.assignable);
+    const value = this.visit(node.value);
+    return createSourceNode(node, assignable, ` = `, value, `/* Compound assignment '${node.operator}=' */`);
+  }
+
+  visitIndexer(node: ast.IndexerNode) {
+    const id = this.visit(node.id);
+    const indices = node.indices.flatMap(x => [ '[', ...x.map(y => this.visit(y)), ']' ]);
+    return createSourceNode(node, id, ...indices);
+  }
+
+  visitAwait(node: ast.AwaitNode) {
+    return createSourceNode(node, `await `, this.visit(node.expression));
+  }
+  
+  visitControlComment(node: ast.ControlCommentNode) { return createSourceNode(node, ""); }
+  visitComment(node: ast.CommentNode) { return createSourceNode(node, `// ${node.comment}\n`); }
+  
+  // Handling serialization of quotes for macros/AST access at runtime
+  visitQuote(node: ast.QuoteNode) {
+    if (node.mode !== "default") return createSourceNode(node, "null");
+    const serialized = JSON.stringify(node, (key, val) => 
+      ["_location", "_parent"].includes(key) ? undefined : val
+    );
+    return createSourceNode(node, serialized);
   }
 }

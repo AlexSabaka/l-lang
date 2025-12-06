@@ -6,13 +6,11 @@ import {
   BuildDependencyGraphAstVisitor,
   BuildSymbolTableAstVisitor,
   SyntaxRulesAstVisitor,
-  JSCompilerAstVisitor,
   JSTransformerAstVisitor,
   AstVisitorConstructor,
   TreeShakeAstVisitor,
   InferTypesAstVisitor,
   SemanticValidatorAstVisitor,
-  RecastAstVisitor,
 } from "./visitors";
 
 import { ASTNode } from "./ast";
@@ -127,7 +125,6 @@ export class Context {
 
     const buildDependencyGraphVisitor = new BuildDependencyGraphAstVisitor(this);
     buildDependencyGraphVisitor.visit(ast as ASTNode);
-    // this.dependencyGraph = buildDependencyGraphVisitor
 
     const buildSymbolTableVisitor = new BuildSymbolTableAstVisitor(this);
     buildSymbolTableVisitor.scanAndResolve(ast as ASTNode);
