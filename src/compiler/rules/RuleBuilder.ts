@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import * as ast from "../ast";
+import * as ast from "../frontend/ast";
 import { Context } from "../Context";
 
 /**

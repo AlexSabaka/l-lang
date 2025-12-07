@@ -1,7 +1,7 @@
-import * as ast from "../ast";
-import { BaseAstVisitor } from "./BaseAstVisitor";
-import { Context, LogLevel } from "../Context";
-import { ScopeType, SymbolEntry } from "../SymbolTable";
+import * as ast from "../../frontend/ast";
+import { BaseAstVisitor } from "../../BaseAstVisitor";
+import { Context, LogLevel } from "../../Context";
+import { ScopeType, SymbolEntry } from "../../analysis/SymbolTable";
 import { SourceNode } from "source-map";
 import { 
   createSourceNode, 
@@ -9,9 +9,9 @@ import {
   formatVariable, 
   formatFunction, 
   isStandardLibReference, 
-} from "../utils/helpers";
-import { uniqueIdentifier } from "../utils/uniqueIdentifier";
-import { encodeIdentifier } from "../utils/encodeIdentifier";
+} from "../../utils/helpers";
+import { uniqueIdentifier } from "../../utils/uniqueIdentifier";
+import { encodeIdentifier } from "../../utils/encodeIdentifier";
 import path from "path";
 
 /**

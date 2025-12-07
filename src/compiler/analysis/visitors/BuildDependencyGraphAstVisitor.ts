@@ -1,6 +1,6 @@
-import * as ast from "../ast";
-import { LogLevel } from "../Context";
-import { BaseAstTreeWalker } from "./BaseAstTreeWalker";
+import * as ast from "../../frontend/ast";
+import { LogLevel } from "../../Context";
+import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import path from "node:path";
 
 export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {

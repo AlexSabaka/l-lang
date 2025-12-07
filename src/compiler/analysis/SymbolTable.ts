@@ -1,4 +1,4 @@
-import * as ast from "./ast";
+import * as ast from "../frontend/ast";
 
 export enum ScopeType {
   program = "program",

@@ -1,6 +1,6 @@
 import path from "path";
 import { SymbolTable } from "./SymbolTable";
-import { Context } from "./Context";
+import { Context } from "../Context";
 
 interface UnitName {
   fullName: string;

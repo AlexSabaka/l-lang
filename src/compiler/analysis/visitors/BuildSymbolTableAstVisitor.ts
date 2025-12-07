@@ -1,7 +1,7 @@
-import * as ast from "../ast";
-import { LogLevel } from "../Context";
+import * as ast from "../../frontend/ast";
+import { LogLevel } from "../../Context";
 import { ScopeType, SymbolTable, SymbolTableBuilder } from "../SymbolTable";
-import { BaseAstTreeWalker } from "./BaseAstTreeWalker";
+import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 
 /**
  * BuildSymbolTableAstVisitor - Two-Pass Implementation

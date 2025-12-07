@@ -1,5 +1,5 @@
-import * as ast from "../ast";
-import { Context, LogLevel } from "../Context";
+import * as ast from "./frontend/ast";
+import { Context, LogLevel } from "./Context";
 
 export interface AstVisitorConstructor {
   new (moduleName: string, context: Context): BaseAstVisitor;

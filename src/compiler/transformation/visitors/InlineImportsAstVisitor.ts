@@ -1,6 +1,6 @@
-import * as ast from "../ast";
-import { Context } from "../Context";
-import { BaseAstVisitor } from "./BaseAstVisitor";
+import * as ast from "../../frontend/ast";
+import { Context } from "../../Context";
+import { BaseAstVisitor } from "../../BaseAstVisitor";
 import path from "node:path";
 
 /**

@@ -1,5 +1,5 @@
-import * as ast from "../ast";
-import { BaseAstTreeWalker } from "./BaseAstTreeWalker";
+import * as ast from "../../frontend/ast";
+import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 
 export class TreeShakeAstVisitor extends BaseAstTreeWalker {
   visit(node: ast.ASTNode, defaultVisitor?: (node?: ast.ASTNode) => any): ast.ASTNode {

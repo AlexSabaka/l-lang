@@ -3,7 +3,7 @@ import { formatWithOptions } from "node:util"
 import { readFileSync, writeFileSync } from "node:fs";
 
 import evaljs from "./evaljs";
-import { JSTransformerAstVisitor } from "../visitors";
+import { JSTransformerAstVisitor } from "../codegen/visitors/JSTransformerAstVisitor";
 import { Context, LogLevel } from "../Context";
 import { encodeIdentifier } from "../utils";
 import { deepStrictEqual, notDeepStrictEqual } from "./deepeq";

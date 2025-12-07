@@ -6,11 +6,11 @@ import * as astring from "astring";
 
 import { RuleSeverity } from "./rules";
 
-import { JSTransformerAstVisitor, InlineImportsAstVisitor } from "./visitors";
+import { JSTransformerAstVisitor, InlineImportsAstVisitor } from "./index";
 
 import * as lib from "./lib/std";
 
-import { ASTNode } from "./ast";
+import { ASTNode } from "./frontend/ast";
 import highlight from "cli-highlight";
 import { CompilerOptions, Context, LogLevel } from "./Context";
 import { checkBracketsBalance, getCaller } from "./utils";

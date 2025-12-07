@@ -1,6 +1,6 @@
-import * as ast from "../ast";
-import { BaseAstTreeWalker } from "./BaseAstTreeWalker";
-import { checkRules, Rule, Rules as r } from "../rules";
+import * as ast from "../../frontend/ast";
+import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
+import { checkRules, Rule, Rules as r } from "../../rules";
 
 export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
   visitFunction(node: ast.FunctionNode) {

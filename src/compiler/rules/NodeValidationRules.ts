@@ -1,4 +1,4 @@
-import * as ast from "../ast";
+import * as ast from "../frontend/ast";
 import { createRule, RuleSeverity } from "./RuleBuilder";
 
 const IdentifierHasName = createRule<ast.IdentifierNode>()

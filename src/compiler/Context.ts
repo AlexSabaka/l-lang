@@ -11,12 +11,12 @@ import {
   TreeShakeAstVisitor,
   InferTypesAstVisitor,
   SemanticValidatorAstVisitor,
-} from "./visitors";
+} from "./index";
 
-import { ASTNode } from "./ast";
-import { SymbolTable } from "./SymbolTable";
-import { AstProvider } from "./AstProvider";
-import { DependencyGraph } from "./DependencyGraph";
+import { ASTNode } from "./frontend/ast";
+import { SymbolTable } from "./analysis/SymbolTable";
+import { AstProvider } from "./frontend/AstProvider";
+import { DependencyGraph } from "./analysis/DependencyGraph";
 import { formatLogMessage } from "./utils";
 
 export const VERSION = "0.0.1";
