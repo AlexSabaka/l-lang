@@ -28,6 +28,10 @@ export class DesugarAstVisitor extends BaseAstVisitor {
 
   /**
    * Recursively desugar a node by visiting it and transforming its structure.
+   * Only handles:
+   * 1. Pipeline transformation in lists
+   * 2. Implicit return injection in function bodies
+   * Does NOT recursively desugar nested children - those are handled during codegen.
    */
   private desugarNode(node: ast.ASTNode): ast.ASTNode {
     // Handle different node types
@@ -35,10 +39,9 @@ export class DesugarAstVisitor extends BaseAstVisitor {
       return this.desugarList(node as ast.ListNode);
     } else if (node._type === 'function') {
       return this.desugarFunction(node as ast.FunctionNode);
-    } else {
-      // For other nodes with potential children, recursively desugar
-      return this.visitNodeWithChildren(node);
     }
+    // Return other nodes unchanged - don't recursively desugar
+    return node;
   }
 
   /**
@@ -48,20 +51,18 @@ export class DesugarAstVisitor extends BaseAstVisitor {
     // First, check if this is a pipeline list
     const pipelineResult = this.transformPipelineList(node.nodes);
     if (pipelineResult !== null) {
-      // This was a pipeline - return the transformed result (which is already desugared)
+      // This was a pipeline - return the transformed result
       return pipelineResult;
     }
 
-    // Not a pipeline - desugar children normally
-    const desugaredNodes = node.nodes.map((n) => this.desugarNode(n));
-    return {
-      ...node,
-      nodes: desugaredNodes,
-    };
+    // Not a pipeline - return unchanged
+    // Children will be desugared when they're processed separately
+    return node;
   }
 
   /**
    * Desugar a function node - inject implicit returns.
+   * Desugars the function body only.
    */
   private desugarFunction(node: ast.FunctionNode): ast.FunctionNode {
     // Transform body: inject implicit returns
@@ -77,21 +78,8 @@ export class DesugarAstVisitor extends BaseAstVisitor {
    * Visit a node that may have children and desugar them.
    */
   private visitNodeWithChildren(node: any): ast.ASTNode {
-    // Generic handler for nodes with children - recursively desugar
-    const transformed: any = { ...node };
-    
-    // Recursively transform known child properties
-    if (transformed.nodes && Array.isArray(transformed.nodes)) {
-      transformed.nodes = transformed.nodes.map((n: ast.ASTNode) => this.desugarNode(n));
-    }
-    if (transformed.program && Array.isArray(transformed.program)) {
-      transformed.program = transformed.program.map((n: ast.ASTNode) => this.desugarNode(n));
-    }
-    if (transformed.body && Array.isArray(transformed.body)) {
-      transformed.body = transformed.body.map((n: ast.ASTNode) => this.desugarNode(n));
-    }
-    
-    return transformed;
+    // This is no longer used in the simplified desugaring approach
+    return node;
   }
 
   /**
@@ -225,39 +213,32 @@ export class DesugarAstVisitor extends BaseAstVisitor {
 
   /**
    * Transform function body to inject implicit returns.
-   * Wraps the last expression in an explicit (return ...) node,
-   * unless it's already a return, control statement, or variable declaration.
+   * ONLY wraps the last expression if it's not already a control structure or explicit return.
+   * Does NOT recursively wrap child expressions within control structures.
    */
   private transformFunctionBody(body: ast.ASTNode[]): ast.ASTNode[] {
     if (body.length === 0) return body;
 
-    // Transform all nodes in the body
-    const transformed = body.map((node, index) => {
-      // Check if this is the last node
-      if (index === body.length - 1) {
-        // Apply implicit return logic
-        return this.maybeWrapInReturn(node);
-      }
-      // For other nodes, recursively desugar them
-      return this.desugarNode(node);
-    });
+    // Desugar all nodes (pipelines, etc.)
+    const desugaredBody = body.map((node) => this.desugarNode(node));
 
-    return transformed;
+    // Apply implicit return ONLY to the last node if appropriate
+    const lastIndex = desugaredBody.length - 1;
+    const lastNode = desugaredBody[lastIndex];
+
+    // Check if we should wrap the last node in a return
+    if (this.shouldWrapInReturn(lastNode)) {
+      desugaredBody[lastIndex] = this.wrapInReturn(lastNode);
+    }
+
+    return desugaredBody;
   }
 
   /**
-   * Wrap a node in an explicit return, unless it should be excluded.
-   * Returns are represented as (return value) lists.
+   * Check if a node should be wrapped in an implicit return.
    */
-  private maybeWrapInReturn(node: ast.ASTNode): ast.ASTNode {
-    // Exclude conditions:
-    // 1. Already a return statement (list starting with 'return')
-    // 2. Control statements (if, while, try-catch, for, for-each)
-    // 3. Variable declarations
-    // 4. Function definitions
-    // 5. Class definitions
-    // 6. Import/Export statements
-
+  private shouldWrapInReturn(node: ast.ASTNode): boolean {
+    // Never wrap control structures or explicit definitions
     const excludedTypes: Set<ast.NodeType> = new Set([
       'if',
       'while',
@@ -272,7 +253,11 @@ export class DesugarAstVisitor extends BaseAstVisitor {
       'export'
     ]);
 
-    // Check if it's a return statement (list with head = 'return')
+    if (excludedTypes.has(node._type)) {
+      return false;
+    }
+
+    // Check if it's already a return statement
     if (node._type === 'list') {
       const listNode = node as ast.ListNode;
       const nodes = Array.isArray(listNode.nodes) ? listNode.nodes : [listNode.nodes];
@@ -282,18 +267,20 @@ export class DesugarAstVisitor extends BaseAstVisitor {
           head._type === 'simple-identifier' &&
           (head as ast.SimpleIdentifierNode).id === 'return'
         ) {
-          // Already a return, don't wrap again
-          return node;
+          return false; // Already a return
         }
       }
     }
 
-    if (excludedTypes.has(node._type)) {
-      return node;
-    }
+    return true;
+  }
 
-    // Wrap in return: (return node)
-    const returnNode: ast.ListNode = {
+  /**
+   * Wrap a node in an explicit return.
+   * Returns are represented as (return value) lists.
+   */
+  private wrapInReturn(node: ast.ASTNode): ast.ListNode {
+    return {
       _type: 'list',
       _location: node._location,
       _parent: node._parent,
@@ -307,7 +294,5 @@ export class DesugarAstVisitor extends BaseAstVisitor {
         node
       ]
     };
-
-    return returnNode;
   }
 }
