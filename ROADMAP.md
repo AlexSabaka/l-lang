@@ -54,13 +54,37 @@ Refining the grammar and implementing critical OOP features needed for real-worl
     
 *   **Objective D:** Implement a lightweight Runtime Shim (Pattern matching logic, Type checks) to keep generated code clean. ⏳
 
+## 🏗️ Phase 2.5: Compiler Architecture Refactor (v0.3.5)
+**Theme:** "Separate concerns, simplify generation."
+**STATUS: NOT STARTED** 🚧
+
+Moving from "analysis + codegen" to "analysis + desugaring + codegen". This makes the codebase more modular and prepares us for IR-based compilation.
+
+*   **Objective A:** Introduce Desugaring Pass. ⏳
+    - Separate transformation logic (pipelines, implicit returns, list unrolling) from code generation.
+    - Create `DesugarAstVisitor` to normalize the AST before JS generation.
+    - Benefit: `JSTransformer` becomes pure codegen, easier to retarget (LLVM, Wasm, etc.).
+    
+*   **Objective B:** Reorganize `src/compiler` by phase. ⏳
+    - Group files into `frontend/`, `analysis/`, `transformation/`, `codegen/`, `runtime/`.
+    - Reduce cognitive load; each phase has a clear responsibility.
+    
+*   **Objective C:** Extract Runtime Helpers. ⏳
+    - Move pattern matching logic (currently inline in `visitMatch`) to `runtime/match.ts`.
+    - Generate runtime shim at compile-time; prepend to output.
+    - Benefit: Generated code is cleaner; complex patterns don't bloat the output.
+    
+*   **Objective D:** Standardize `ClassBuilder`. ⏳
+    - Extract from `JSTransformer`; make it return ESTree nodes.
+    - Add unit tests for inheritance edge cases.
+
 ## 🧠 Phase 3: The Brain Transplant (v0.4.0)
 **Theme:** "Prepare for the metal."
 Moving away from direct AST-to-JS compilation towards a distinct Intermediate Representation (IR). This is the pre-requisite for LLVM.
 
 *   **Objective A:** Define `High-Level IR` (HIR) - A typed, desugared tree.
 *   **Objective B:** Implement `Lowering` pass (AST -> HIR).
-*   **Objective C:** Refactor JS Codegen to consume HIR instead of AST.
+*   **Objective C:** Refactor JS Codegen to consume HIR instead of AST (replacing desugaring pass).
 
 ## 🚀 Phase 4: The Speed of Light (v1.0.0)
 **Theme:** "The Sloth becomes a Cheetah."
