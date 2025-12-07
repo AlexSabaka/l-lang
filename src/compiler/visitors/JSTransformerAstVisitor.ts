@@ -39,6 +39,21 @@ function findIdentifiersToDefine(node: ast.MatchNode): string[] {
   node.cases.every(x => walkPattern(x.pattern));
   return Array.from(new Set(predefinedVariables));
 }
+/**
+ * Helper to extract ctor variable names from ANY class node
+ * (Used for both the current class and looking up the parent class)
+ */
+function getCtorParamsFromClassNode(node: ast.ClassNode): string[] {
+  // L-lang AST bodies can be nested arrays of lists/statements, flatten them 2 levels deep
+  // to find the actual VariableNodes.
+  const bodyNodes = node.body.map((x: any) => x.nodes ? x.nodes : [x]).flat(2);
+
+  return bodyNodes
+    .filter((n: any) => n._type === "variable")
+    .map((n: ast.VariableNode) => n)
+    .filter((v) => v.modifiers.some((m) => m.modifier === "ctor"))
+    .map((v) => (v.name as any).id ?? (v.name as any).name);
+}
 
 export class ClassBuilder {
   private name: SourceNode;
@@ -47,8 +62,10 @@ export class ClassBuilder {
   private accessModifiers: (SourceNode | string)[] = [];
   private extendsClause: (SourceNode | string)[] = [];
   private implementsClause: (SourceNode | string)[] = [];
+  
   private ctorVars: ast.VariableNode[] = [];
   private classFields: ast.VariableNode[] = [];
+  
   private methods: ast.FunctionNode[] = [];
   private otherBody: ast.ASTNode[] = [];
 
@@ -114,9 +131,64 @@ export class ClassBuilder {
   }
 
   private buildConstructor(): (SourceNode | string)[] {
-    if (this.ctorVars.length === 0) return [];
+    // 1. Resolve Parent Class Logic
+    let parentClassName: string | null = null;
+    let parentArgs: string[] = [];
 
-    const ctorParams = this.ctorVars.map((v) => this.visitor.visit(v.name));
+    if (this.node.extends && this.node.extends.length > 0) {
+        // The AST structure for extends is usually [TypeNode] -> type -> name (Identifier)
+        const parentTypeNode = this.node.extends[0];
+        parentClassName = parentTypeNode.type.name;
+        
+        // --- THE FIX: USE SYMBOL TABLE ---
+        // We look up the symbol for the parent class.
+        // Since BuildSymbolTable ran before this, the symbol should exist.
+        const parentSymbol = this.context.symbolTable.resolveSymbol(parentTypeNode.type);
+
+        if (parentSymbol && parentSymbol.value && parentSymbol.value._type === 'class') {
+             // We have the AST node for the parent class!
+             // We can now see what its :ctor variables are.
+             parentArgs = getCtorParamsFromClassNode(parentSymbol.value as ast.ClassNode);
+        } else {
+             // Fallback: If we extend a native JS class or external lib we haven't parsed,
+             // we assume 0 arguments for super() to be safe, or we could warn.
+             // context.log(LogLevel.Warning, `Could not resolve parent class ${parentClassName}`);
+        }
+    }
+
+    // 2. Identify Local Constructor Variables
+    const localCtorArgNames = this.ctorVars.map(v => 
+        (v.name as any).id ?? (v.name as any).name
+    );
+
+    // 3. Calculate Final Constructor Parameters & Super Arguments
+    const finalConstructorParams: string[] = [];
+    const superCallArgs: string[] = [];
+
+    // A. Handle Parent Requirements (Pass-through)
+    for (const pArg of parentArgs) {
+        if (localCtorArgNames.includes(pArg)) {
+            // Shadowing: We have the value locally, pass it to super
+            superCallArgs.push(pArg);
+        } else {
+            // Missing: We need to ask for it in our constructor, then pass it to super
+            finalConstructorParams.push(pArg);
+            superCallArgs.push(pArg);
+        }
+    }
+
+    // B. Handle Local Requirements
+    for (const localArg of localCtorArgNames) {
+        // Add all local :ctor vars to the signature
+        finalConstructorParams.push(localArg);
+    }
+
+    // --- Code Generation ---
+
+    const paramNodes = finalConstructorParams.map(p => 
+        createSourceNode(this.node, p) 
+    );
+
     const assignments = this.ctorVars.map((v) => {
       const fieldName = this.visitor.visit(v.name);
       const isPrivate = v.modifiers.some((x) => x.modifier === "private");
@@ -124,12 +196,17 @@ export class ClassBuilder {
       return createSourceNode(v, "this.", ...targetField, " = ", fieldName);
     });
 
-    const superCall = (this.node.extends && this.node.extends.length > 0) 
-      ? ["super(); // Implicit super call\n"] 
+    const superCall = parentClassName 
+      ? ["super(", ...joinArray(superCallArgs, ", "), "); // Implicit super call\n"] 
       : [];
 
+    // If implicit constructor is empty (no extends, no ctor vars), skip generating it
+    if (finalConstructorParams.length === 0 && !parentClassName && assignments.length === 0) {
+        return [];
+    }
+
     return [
-      `constructor(`, ...joinArray(ctorParams, ", "), `) {`,
+      `constructor(`, ...joinArray(paramNodes, ", "), `) {`,
       ...superCall,
       ...joinArray(assignments, ";"),
       `}`
@@ -154,8 +231,6 @@ export class ClassBuilder {
   }
 
   private buildMethods(): (SourceNode | string)[] {
-    // Methods in JS classes must look like `name(args) {}` not `const name = ...`
-    // We rely on the visitor knowing it's in a Class Scope to formatting correctly
     return this.methods.map(m => this.visitor.visit(m));
   }
 
@@ -177,7 +252,6 @@ export class ClassBuilder {
     );
   }
 }
-
 export class JSTransformerAstVisitor extends BaseAstVisitor {
   private scope: ScopeType[] = [ScopeType.program];
   
@@ -296,11 +370,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // =========================================================================
 
   visitClass(node: ast.ClassNode) {
+    this.classes.push(node.name.name);
+
     return this.runInScope(ScopeType.class, () => {
       const classBuilder = new ClassBuilder(node, this.context, this);
-      const result = classBuilder.build();
-      this.classes.push(node.name.name);
-      return result;
+      return classBuilder.build();
     });
   }
 
@@ -315,6 +389,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // Functions & Variables
   // =========================================================================
 
+
   visitFunction(node: ast.FunctionNode) {
     const nextScope = this.inScope(ScopeType.class) 
       ? ScopeType.method 
@@ -322,10 +397,43 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     return this.runInScope(nextScope, () => {
       const name = node.name && this.visit(node.name);
+      if (name) {
+          this.functions.push(name.toString());
+      }
+
       const params = node.params.map((x) => this.visit(x));
       
       // Function Body Processing
-      const bodyNodes = node.body.map((x) => this.visit(x));
+      const bodyNodes = node.body.map((x, index) => {
+        const visited = this.visit(x);
+        
+        // Implicit Return Logic
+        if (index === node.body.length - 1) {
+            
+            // 1. Convert to string to check what we actually generated
+            const visitedCode = visited.toString().trim();
+
+            // 2. Check strict exclusions
+            // - If it's already a return statement (Explicit return)
+            // - If it starts with 'if', 'while', 'try', 'for' (Statements that can't be returned)
+            // - If it's a variable declaration (const/let)
+            
+            const isAlreadyReturn = visitedCode.startsWith("return");
+            const isControlStatement = visitedCode.startsWith("if") || 
+                                       visitedCode.startsWith("while") ||
+                                       visitedCode.startsWith("try") ||
+                                       visitedCode.startsWith("for");
+            const isVariable = x._type === 'variable';
+
+            if (!isAlreadyReturn && !isControlStatement && !isVariable) {
+                return createSourceNode(x, "return ", visited);
+            }
+        }
+        
+        return visited;
+      });
+
+      // ... rest of the existing logic (joining body, wrapping in function/method/arrow) ...
       let body: (SourceNode | string)[];
 
       if (bodyNodes.length === 0) {
@@ -334,11 +442,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         body = joinArray(bodyNodes, ";");
       }
 
-      // Determine the appropriate function format based on parent scope (before we pushed nextScope)
-      const parentScope = this.scope[1]; // scope[0] is the nextScope we just pushed
+      // ... (keep the existing function signature generation logic) ...
+      const parentScope = this.scope[1]; 
       
       if (this.currentScope() === ScopeType.method) {
-        // Method: name(params) { body }
         return createSourceNode(node,
             node.async ? "async " : "",
             name, "(", ...joinArray(params, ","), ") {",
@@ -346,7 +453,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
             "}"
         );
       } else if (parentScope === ScopeType.program) {
-        // Top-level function: function name(params) { body }
         return createSourceNode(node,
             node.async ? "async " : "",
             "function ", name, "(", ...joinArray(params, ","), ") {",
@@ -354,7 +460,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
             "}"
         );
       } else {
-        // Nested function: const name = (params) => { body }
         const kw = node.async ? "async " : "";
         const arrow = [kw, "(", ...joinArray(params, ","), ") => {", ...body, "}"];
         
@@ -366,6 +471,195 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         }
       }
     });
+  }
+
+  private transformPipelineList(nodes: ast.ASTNode[]) {
+    if (nodes.length < 3) return null; 
+
+    // 1. Detect Direction
+    // We check the first operator to decide flow.
+    // [A, <|, B] -> Backward
+    // [A, |>, B] -> Forward
+    const firstOpNode = nodes[1];
+    let isBackward = false;
+    
+    if (firstOpNode._type === 'simple-identifier') {
+        const id = (firstOpNode as ast.SimpleIdentifierNode).id;
+        if (id === '<|') isBackward = true;
+        else if (id !== '|>') return null; // Not a pipeline
+    } else {
+        return null; // Not a pipeline
+    }
+
+    // 2. Normalize to Forward Pipeline List: [Seed, |>, Step1, |>, Step2...]
+    let processingNodes: ast.ASTNode[] = [];
+
+    if (isBackward) {
+        // Reverse the flow!
+        // Original: [FuncA, <|, FuncB, <|, Seed]
+        // Target:   [Seed, |>, FuncB, |>, FuncA]
+        
+        // Seed is the last element
+        const seed = nodes[nodes.length - 1];
+        processingNodes.push(seed);
+
+        // Iterate backwards, skipping the operators (assuming they are all consistent)
+        // i points to the Function/Step
+        for (let i = nodes.length - 2; i >= 0; i -= 2) {
+             const func = nodes[i-1];
+             // We inject the forward operator
+             processingNodes.push({ _type: 'simple-identifier', id: '|>' } as any); 
+             processingNodes.push(func);
+        }
+    } else {
+        // Already forward, just use as is
+        processingNodes = nodes;
+    }
+
+    // 3. Build the Sequence
+    const seed = processingNodes[0];
+    const sequence: any[] = [];
+    
+    // Iterate in pairs: [ |>, Func ]
+    for (let i = 1; i < processingNodes.length; i += 2) {
+      // const opNode = processingNodes[i]; // We know it's |> now
+      const funcNode = processingNodes[i+1];
+
+      if (!funcNode) return null;
+
+      let functionNode: ast.ASTNode;
+      let args: ast.ASTNode[] = [];
+      let member = false;
+
+      // Extract Function and Arguments
+      if (funcNode._type === 'list') {
+          // Case: (add 10)
+          const listNodes = (funcNode as ast.ListNode).nodes;
+          if (listNodes.length > 0) {
+              functionNode = listNodes[0];
+              args = listNodes.slice(1);
+              
+              // Member check: (.toString 16)
+              if (functionNode._type === 'simple-identifier' && (functionNode as any).id.startsWith('.')) {
+                  member = true;
+                  const rawId = (functionNode as any).id.substring(1);
+                  functionNode = { ...functionNode, id: rawId } as any;
+              }
+          } else {
+              return null; // Empty list
+          }
+      } 
+      else if (funcNode._type === 'simple-identifier' || funcNode._type === 'composite-identifier') {
+          // Case: square
+          functionNode = funcNode;
+          
+          // Member check: .length
+          if (funcNode._type === 'simple-identifier' && (funcNode as any).id.startsWith('.')) {
+              member = true;
+              const rawId = (funcNode as any).id.substring(1);
+              functionNode = { ...funcNode, id: rawId } as any;
+          }
+      } else {
+          // Case: Literal/Expression (e.g. 5, "hello", etc.)
+          // This allows things like: 5 |> add (where RHS is identifier)
+          // OR in reversed backward pipe: square <| 5 -> 5 |> square
+          // Here 'square' calls '5'? No.
+          // In normalized list: [5, |>, add]. funcNode is 'add'.
+          // If we had: square <| 5. Normalized: [5, |>, square]. funcNode is 'square'.
+          // This handles generic nodes gracefully.
+          functionNode = funcNode;
+      }
+
+      sequence.push({
+          operator: 'carrying-left', // Always forward now
+          function: functionNode,
+          memberFunction: member,
+          arguments: args
+      });
+    }
+
+    // 4. Create Synthetic AST Node
+    const syntheticNode: ast.FunctionCarryingNode = {
+        _type: 'function-carrying',
+        _location: seed._location,
+        _parent: undefined,
+        identifier: seed as any, 
+        sequence: sequence
+    };
+
+    return this.visitFunctionCarrying(syntheticNode);
+  }
+
+  visitFunctionCarrying(node: ast.FunctionCarryingNode) {
+    // 1. Flatten Right-Associative Nesting (Fix for Greedy Grammar)
+    // We create a new flat sequence list by unrolling any nested pipelines found in arguments.
+    const flatSequence: any[] = [];
+    
+    // We start with the identifier from the top node
+    let current = this.visit(node.identifier);
+
+    // Helper to recursively extract steps from a nested chain
+    const collectSteps = (sequence: any[]) => {
+      for (const seq of sequence) {
+        // Check if the FIRST argument is actually a nested FunctionCarryingNode (The greedy parse artifact)
+        if (seq.arguments.length > 0 && 
+            seq.arguments[0]._type === 'function-carrying') {
+              
+          const nestedNode = seq.arguments[0] as ast.FunctionCarryingNode;
+          
+          // 1. The identifier of the nested node becomes the REAL argument for this step
+          //    Original: .apply (evt1 |> ...)
+          //    Fixed:    .apply evt1
+          const realArg = nestedNode.identifier;
+          
+          // 2. Push the fixed step to our flat list
+          flatSequence.push({
+            ...seq,
+            arguments: [realArg, ...seq.arguments.slice(1)]
+          });
+
+          // 3. Recursively collect the steps from the nested node
+          collectSteps(nestedNode.sequence);
+          
+        } else {
+          // No nesting, just add the step
+          flatSequence.push(seq);
+        }
+      }
+    };
+
+    // Initial collection
+    collectSteps(node.sequence);
+
+    // 2. Iterate the now-linear pipeline
+    for (const seq of flatSequence) {
+      // Use the function identifier as the source map anchor
+      const anchorNode = seq.function; 
+      const fn = this.visit(anchorNode);
+      const args = seq.arguments.map((a: ast.ASTNode) => this.visit(a));
+
+      if (seq.operator === "carrying-left") {
+        // Operator |> (Pipe Forward)
+        if (seq.memberFunction) {
+          // Logic: x |> .method a b  --> x.method(a, b)
+          current = createSourceNode(anchorNode, current, '.', fn, '(', ...joinArray(args, ','), ')');
+        } else {
+          // Logic: x |> func a b     --> func(x, a, b)
+          current = createSourceNode(anchorNode, fn, '(', ...joinArray([current, ...args], ','), ')');
+        }
+      } else {
+        // Operator <| (Pipe Backward)
+        if (seq.memberFunction) {
+          // Logic: .method a b <| x  --> x.method(a, b)
+          current = createSourceNode(anchorNode, current, '.', fn, '(', ...joinArray(args, ','), ')');
+        } else {
+          // Logic: func a b <| x     --> func(a, b, x)
+          current = createSourceNode(anchorNode, fn, '(', ...joinArray([...args, current], ','), ')');
+        }
+      }
+    }
+
+    return current;
   }
 
   visitVariable(node: ast.VariableNode) {
@@ -422,15 +716,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       const whenExprs = node.then!.map((x) => this.visit(x));
       const body = joinArray(whenExprs, ";");
 
-      if (this.isExpressionContext()) {
-        // (cond) ? (exprs) : undefined
-        // Note: JS comma operator (a, b) returns b.
-        return createSourceNode(node, 
-            "(", condition, ") ? (", ...joinArray(whenExprs, ","), ") : undefined"
-        );
-      }
-
-      return createSourceNode(node, "if (", condition, ") { ", ...body, " }");
+      // Always use expression form - `when` is inherently an expression construct
+      // (condition) ? (expr1, expr2, ...) : undefined
+      return createSourceNode(node, 
+          "(", condition, ") ? (", ...joinArray(whenExprs, ","), ") : undefined"
+      );
     });
   }
 
@@ -540,12 +830,31 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
   private generateMapPatternCondition(pattern: ast.MapPatternNode, matchVar: string): SourceNode {
     const conditions: (string | SourceNode)[] = [];
+    
+    // 1. Basic object check
     conditions.push(`(typeof ${matchVar} === 'object' && ${matchVar} !== null)`);
+
     pattern.pairs.forEach((pair) => {
-      const keyRaw = pair.key._type === 'string' ? pair.key.value : null;
-      if (keyRaw) conditions.push(`'${keyRaw}' in ${matchVar}`);
-      conditions.push(this.generateCondition(pair.pattern, `${matchVar}[${this.visit(pair.key)}]`));
+      let keyAccess: string | SourceNode;
+
+      // 2. Determine Key Accessor
+      // In L-lang maps: { :key val } -> Key is SimpleIdentifier "key"
+      // We must treat it as a string literal property name, not a variable.
+      if (pair.key._type === 'simple-identifier') {
+          keyAccess = `"${(pair.key as ast.SimpleIdentifierNode).id}"`;
+      } else if (pair.key._type === 'string') {
+          keyAccess = `"${(pair.key as ast.StringNode).value}"`;
+      } else {
+          // Dynamic/Computed key (rare in patterns but possible)
+          keyAccess = this.visit(pair.key);
+      }
+      
+      const memberAccess = `${matchVar}[${keyAccess}]`;
+      
+      // 3. Generate condition for the value at that key
+      conditions.push(this.generateCondition(pair.pattern, memberAccess));
     });
+
     return createSourceNode(pattern, ...joinArray(conditions, " && "));
   }
 
@@ -602,42 +911,84 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // Lists (The Core Logic)
   // =========================================================================
 
-  visitList(node: ast.ListNode) {
+visitList(node: ast.ListNode) {
     const nodes = Array.isArray(node.nodes) ? node.nodes : [node.nodes];
     if (nodes.length === 0) return createSourceNode(node, "null");
 
+    // --- FIX: Detect Infix Pipelines ---
+    // Scan for |> or <| symbols
+    const hasPipelineOp = nodes.some(n => 
+        n._type === 'simple-identifier' && ['|>', '<|'].includes((n as any).id)
+    );
+
+    if (hasPipelineOp) {
+        // Attempt to transform. If valid pipeline, return result.
+        const result = this.transformPipelineList(nodes);
+        if (result) return result;
+        // If malformed, fall through to normal processing
+    }
+    // -----------------------------------
+
     const [head, ...rest] = nodes;
-    
-    // Check if head is an identifier (Function Call? Class Instantiation?)
     const isHeadIdentifier = head._type === "simple-identifier" || head._type === "composite-identifier";
 
     if (isHeadIdentifier) {
-        // Special case: single-element list with just an identifier is a grouping, not a call
-        if (rest.length === 0) {
-            return this.visit(head);
+        const headId = (head as any).id;
+
+        if (head._type === 'simple-identifier' && headId === 'new' && rest.length > 0) {
+            const className = this.visit(rest[0]);
+            const args = rest.slice(1).map(x => this.visit(x));
+            return createSourceNode(node, 'new ', className, '(', ...joinArray(args, ","), ')');
+        }
+
+        if (head._type === "simple-identifier" && headId === "return") {
+            if (rest.length === 0) {
+                return createSourceNode(node, "return");
+            }
+            const returnValue = this.runInScope(ScopeType.variable, () => this.visit(rest[0]));
+            return createSourceNode(node, "return ", returnValue);
         }
 
         const callee = this.visit(head);
         const args = rest.map(x => this.visit(x));
         const calleeStr = callee.toString();
 
+        // 1. Class Instantiation (Implicit 'new')
+        // Now that visitClass registers early, this works for recursive calls too.
         if (this.classes.includes(calleeStr)) {
             return createSourceNode(node, 'new ', callee, '(', ...joinArray(args, ","), ')');
         }
 
-        // It is a function call
-        return createSourceNode(node, callee, '(', ...joinArray(args, ","), ')');
+        // 2. Resolve implicit Method Calls vs Property Access
+        // We need to determine if we should add "()" or not.
+        
+        // Extract the effective name to check against known functions.
+        // For "myFunc", it's "myFunc". For "dog.speak", it's "speak".
+        let memberName = calleeStr;
+        if (head._type === "composite-identifier") {
+           const parts = calleeStr.split('.'); 
+           memberName = parts[parts.length - 1];
+        }
+
+        const isKnownFunction = this.functions.includes(calleeStr) || this.functions.includes(memberName);
+
+        // If it has arguments, it's definitely a call.
+        // If it's a known function (even with 0 args), it's a call.
+        if (args.length > 0 || isKnownFunction) {
+           return createSourceNode(node, callee, '(', ...joinArray(args, ","), ')'); 
+        }
+
+        // 3. Fallback: 0 args and NOT a known function -> Property/Variable Access
+        // This fixes the (this.name) -> this.name() bug.
+        return createSourceNode(node, callee);
     }
 
     // Implicit Block / Sequence
-    // Example: ( (let x 1) (print x) )
-    // Head is NOT an identifier (e.g., it is a let-statement or another list)
+    // ... rest of the existing function
     
     const statements = nodes.map(x => this.visit(x));
 
     if (this.isExpressionContext()) {
-        // We are inside an expression (e.g., argument list), but we have a block of statements.
-        // Wrap in IIFE: (() => { stmt; stmt; return last; })()
         const last = statements[statements.length - 1];
         const body = statements.slice(0, -1).map(s => [s, ';']);
         
@@ -645,7 +996,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
             "(() => { ", ...body.flat(), " return ", last, "; })()"
         );
     } else {
-        // Just a block of statements
         return createSourceNode(node, ...joinArray(statements, ";"));
     }
   }

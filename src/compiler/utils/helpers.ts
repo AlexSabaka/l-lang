@@ -1,6 +1,6 @@
 import * as ast from "../ast";
 
-import { globalScope } from "../lib";
+import { globalScope } from "../lib/std";
 
 import { Context, LogLevel } from "../Context";
 import { ScopeType } from "../SymbolTable";

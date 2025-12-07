@@ -44,18 +44,44 @@ Important: **Commit often**
     - [x] Update `find` or `add` to check `ModuleCache` before creating a new `ImportUnit`.
     - [x] Ensure `SymbolTable.join` handles re-exports correctly without duplicating symbols.
 
-## 🎨 Priority 3: Grammar & Syntax Polish
+## ✅ Priority 3: Grammar & Syntax Polish
 *Context: The syntax needs to be consistent with Lisp philosophy.*
+**STATUS: COMPLETE** ✨
 
 - [x] **Refactor Attributes**
     - [x] Update `l-lang.pegjs` grammar.
     - [x] Change `[Attr] (defclass ...)` to `(defclass :attributes [Attr] ...)` or `(defclass (meta [Attr]) ...)`.
-    - [x] Update `JSCompilerAstVisitor` (or the new Transformer) to handle the new node structure.
+    - [x] Update `JSTransformerAstVisitor` to handle the new node structure.
 - [x] **Kill the Escape Hatch**
     - [x] Remove `js'()` raw injection support from the grammar (force yourself to use the language features!).
-    - [ ] Ensure `std` lib covers the missing functionality (e.g., `Math`, `Console`).
+    - [x] Ensure `std` lib covers the missing functionality (e.g., `Math`, `Console`).
+- [x] **Clean up Legacy Code**
+    - [x] Remove `JSCompilerAstVisitor` (string-based compiler) - no longer needed
+    - [x] Remove legacy visitors: `BabelAstVisitor`, `RecastAstVisitor`, `ConvertAstToJsVisitor`
+    - [x] Remove legacy extension grammar files: `infix.pegjs`, `js.pegjs`
+    - [x] Reorganize examples into semantic folders (`01-basics/`, `02-errors/`, `04-data-types/`, `05-oop/`, `06-import/`, `07-async/`, `10-algorithms/`, `99-p5js/`)
 
-## 🛠️ Priority 4: Tooling & DX
+## 🚧 Priority 4: OOP & Inheritance (Class Improvements)
+*Context: Classes need proper inheritance support with constructor parameter passing.*
+**STATUS: IN PROGRESS** 🚧
+
+- [x] **Implement Proper Class Inheritance**
+    - [x] Resolve parent class via symbol table lookup
+    - [x] Extract `:ctor` parameters from parent class definition
+    - [x] Generate proper `super()` calls with parent arguments
+    - [x] Handle parameter shadowing (local vs inherited parameters)
+    - [x] Flatten nested body arrays in class definitions
+- [x] **Implicit Return in Functions**
+    - [x] Add implicit `return` for last expression in function bodies
+    - [x] Exclude control statements (`if`, `while`, `for`, `try`)
+    - [x] Exclude explicit return statements and variable declarations
+    - [x] Preserve statement context detection
+- [ ] **Complete OOP Feature Set**
+    - [ ] Interface implementation checks
+    - [ ] Abstract class support
+    - [ ] Static methods and properties
+
+## 🛠️ Priority 5: Tooling & DX
 *Context: Making the developer experience nice.*
 
 - [ ] **Expand `RuleBuilder`**

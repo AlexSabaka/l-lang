@@ -7,9 +7,8 @@ import * as astring from "astring";
 import { RuleSeverity } from "./rules";
 
 import { JSTransformerAstVisitor, InlineImportsAstVisitor } from "./visitors";
-import { JSCompilerAstVisitor } from "./visitors/legacy/js/JSCompilerAstVisitor";
 
-import * as lib from "./lib";
+import * as lib from "./lib/std";
 
 import { ASTNode } from "./ast";
 import highlight from "cli-highlight";
@@ -77,7 +76,7 @@ export function parse(file: string, command: Command) {
   }
 }
 
-function compileJS(file: string, options: CompilerOptions, useLegacy: boolean = false) {
+export function compileJS(file: string, options: CompilerOptions) {
   const context = new Context(file, options);
   context.process(file);
   const { errors } = printMessages(context);
@@ -90,25 +89,18 @@ function compileJS(file: string, options: CompilerOptions, useLegacy: boolean = 
   const inlineImportsVisitor = new InlineImportsAstVisitor(context);
   ast = inlineImportsVisitor.visitProgram(ast as any) as ASTNode;
 
-  if (useLegacy) {
-    // Use legacy string-based compiler (fallback for compatibility)
-    const jsCompilerVisitor = new JSCompilerAstVisitor(context);
-    const js = jsCompilerVisitor.compile(ast);
-    return js;
-  } else {
-    // Use new ESTree-based transformer (default)
-    const transformer = new JSTransformerAstVisitor(context);
-    const code = transformer.compile(ast);    // Return in compatible format
-    return {
-      code: code.code,
-      map: code.map,
-    };
-  }
+  // Use new ESTree-based transformer (default)
+  const transformer = new JSTransformerAstVisitor(context);
+  const code = transformer.compile(ast);    // Return in compatible format
+  return {
+    code: code.code,
+    map: code.map,
+  };
 }
 
 export function compile(file: string, command: Command) {
   const options = getCompilerOptions(command, file, ".js");
-  const js = compileJS(file, options, command.opts().useLegacy);
+  const js = compileJS(file, options);
   if (js && options.outputFile) {
     fs.writeFileSync(options.outputFile, js.code);
     fs.writeFileSync(options.outputFile + ".map", js.map.toString());
@@ -119,7 +111,7 @@ export function evalFile(
   file: string,
   command: Command) {
   const options = getCompilerOptions(command, file);
-  const js = compileJS(file, options, command.opts().useLegacy);
+  const js = compileJS(file, options);
 
   if (js) {
     if (options.minimumLogLevel <= LogLevel.Debug) {
@@ -136,7 +128,7 @@ export function evalSource(source: string, options: CompilerOptions) {
   const file = path.resolve(tmpdir(), `tmp-llang-${Date.now()}.lisp`);
   fs.writeFileSync(file, source);
 
-  const js = compileJS(file, options, false);
+  const js = compileJS(file, options);
 
   if (js) {
     lib.evalInScope(js.code, lib.globalScope);

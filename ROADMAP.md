@@ -31,16 +31,28 @@ Focused on technical debt, specifically in code generation and symbol resolution
 
 ## 🎨 Phase 2: Syntax Harmonization & Standard Lib (v0.3.0)
 **Theme:** "Make it feel like Lisp, work like C#."
-Refining the grammar to be consistent and implementing the core runtime needed to make the language actually usable.
+**STATUS: IN PROGRESS** 🚧
 
-*   **Objective A:** Refactor Attributes/Decorators to be homoiconic (inside the S-expression). 🚧
+Refining the grammar and implementing critical OOP features needed for real-world usage.
+
+*   **Objective A:** Refactor Attributes/Decorators to be homoiconic (inside the S-expression). ✅
     - Grammar updated to support `:attributes` style syntax
     - JSTransformerAstVisitor updated to handle new node structure
-    - Still refining for full consistency
+    - Full consistency achieved
     
-*   **Objective B:** Clean up the PEG.js grammar for performance. ⏳
+*   **Objective B:** Implement proper OOP with Class Inheritance. ✅ (NEW - Priority 4)
+    - Parent class resolution via symbol table lookup
+    - Constructor parameter passing with `super(args)`
+    - Parameter shadowing support (local vs inherited)
+    - Implicit return statements in functions
+    - All legacy code cleaned up (removed string-based compiler)
     
-*   **Objective C:** Implement a lightweight Runtime Shim (Pattern matching logic, Type checks) to keep generated code clean. ⏳
+*   **Objective C:** Clean up the PEG.js grammar for performance. 🚧
+    - Removed legacy extension files (`infix.pegjs`, `js.pegjs`)
+    - Grammar consolidated in `l-lang.pegjs`
+    - Reorganized examples into semantic folders
+    
+*   **Objective D:** Implement a lightweight Runtime Shim (Pattern matching logic, Type checks) to keep generated code clean. ⏳
 
 ## 🧠 Phase 3: The Brain Transplant (v0.4.0)
 **Theme:** "Prepare for the metal."
