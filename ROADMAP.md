@@ -4,21 +4,43 @@
 
 This document outlines the high-level milestones for the `l-lang` compiler. The goal is to transition from a "Proof of Concept" transpiler to a robust, type-safe compiler with a proper Intermediate Representation (IR) capable of targeting LLVM.
 
-## 🏁 Phase 1: Stabilization & Architecture Fixes (v0.2.0)
+## ✅ Phase 1: Stabilization & Architecture Fixes (v0.2.0)
 **Theme:** "Stop the bleeding."
-Currently, the compiler works but is brittle. This phase focuses on technical debt, specifically in code generation and symbol resolution. We are not adding new language features here.
+**STATUS: COMPLETE** ✨
 
-*   **Objective A:** Replace string-concatenation codegen with structured AST generation (ESTree).
-*   **Objective B:** Implement proper lexical scoping and forward references (Two-Pass Compilation).
-*   **Objective C:** Fix circular dependency handling in the module system.
+Focused on technical debt, specifically in code generation and symbol resolution. No new language features added—only foundational improvements.
+
+*   **Objective A:** Replace string-concatenation codegen with structured AST generation (ESTree). ✅
+    - Replaced `JSCompilerAstVisitor` string concatenation with `JSTransformerAstVisitor` using ESTree nodes
+    - Integrated `astring` for clean ES5+ code generation
+    - Fixed: formatted strings, function scoping, expression context, compound assignments
+    - All examples now generate proper JavaScript AST instead of string concatenation
+    
+*   **Objective B:** Implement proper lexical scoping and forward references (Two-Pass Compilation). ✅
+    - Refactored `BuildSymbolTableAstVisitor` into `ScanPass` and `ResolvePass`
+    - Implemented O(1) symbol lookup with lazy cache rebuild in `SymbolTable.resolveSymbol()`
+    - Forward references now work correctly; functions can be called before definition
+    
+*   **Objective C:** Fix circular dependency handling in the module system. ✅
+    - Created `ModuleCache` in `Context` for flat, single-pass module processing
+    - Refactored `DependencyGraph` from tree-based to cache-based architecture
+    - Prevents duplicate module loading with Map<AbsolutePath, ImportUnit>
+    - Implemented `InlineImportsAstVisitor` for proper symbol inlining
+    - Path resolution fixed (removed double-concatenation bug)
+    - All imported symbols now inline correctly in compiled output
 
 ## 🎨 Phase 2: Syntax Harmonization & Standard Lib (v0.3.0)
 **Theme:** "Make it feel like Lisp, work like C#."
 Refining the grammar to be consistent and implementing the core runtime needed to make the language actually usable.
 
-*   **Objective A:** Refactor Attributes/Decorators to be homoiconic (inside the S-expression).
-*   **Objective B:** Clean up the PEG.js grammar for performance.
-*   **Objective C:** Implement a lightweight Runtime Shim (Pattern matching logic, Type checks) to keep generated code clean.
+*   **Objective A:** Refactor Attributes/Decorators to be homoiconic (inside the S-expression). 🚧
+    - Grammar updated to support `:attributes` style syntax
+    - JSTransformerAstVisitor updated to handle new node structure
+    - Still refining for full consistency
+    
+*   **Objective B:** Clean up the PEG.js grammar for performance. ⏳
+    
+*   **Objective C:** Implement a lightweight Runtime Shim (Pattern matching logic, Type checks) to keep generated code clean. ⏳
 
 ## 🧠 Phase 3: The Brain Transplant (v0.4.0)
 **Theme:** "Prepare for the metal."
