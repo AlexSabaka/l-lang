@@ -1,5 +1,5 @@
 import * as ast from "../../frontend/ast";
-import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
+import { BaseAstVisitor } from "../../BaseAstVisitor";
 
 /**
  * DesugarAstVisitor - Transform complex syntax into simpler forms
@@ -12,44 +12,90 @@ import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
  * These transformations simplify the code generation phase, allowing JSTransformer
  * to focus purely on mapping desugared AST to JavaScript.
  */
-export class DesugarAstVisitor extends BaseAstTreeWalker {
+export class DesugarAstVisitor extends BaseAstVisitor {
   /**
-   * Visit a list and check if it's a pipeline.
-   * If so, transform it to nested function calls.
-   * Otherwise, continue normal traversal.
+   * Visit the program node and desugar all its contents.
    */
-  visitList(node: ast.ListNode) {
+  visitProgram(node: ast.ProgramNode): ast.ProgramNode {
+    // Transform each item in the program
+    const transformedProgram = node.program.map((item) => this.desugarNode(item));
+    
+    return {
+      ...node,
+      program: transformedProgram,
+    };
+  }
+
+  /**
+   * Recursively desugar a node by visiting it and transforming its structure.
+   */
+  private desugarNode(node: ast.ASTNode): ast.ASTNode {
+    // Handle different node types
+    if (node._type === 'list') {
+      return this.desugarList(node as ast.ListNode);
+    } else if (node._type === 'function') {
+      return this.desugarFunction(node as ast.FunctionNode);
+    } else {
+      // For other nodes with potential children, recursively desugar
+      return this.visitNodeWithChildren(node);
+    }
+  }
+
+  /**
+   * Desugar a list node - check if it's a pipeline and transform.
+   */
+  private desugarList(node: ast.ListNode): ast.ASTNode {
     // First, check if this is a pipeline list
     const pipelineResult = this.transformPipelineList(node.nodes);
     if (pipelineResult !== null) {
-      // This was a pipeline - return the transformed result
+      // This was a pipeline - return the transformed result (which is already desugared)
       return pipelineResult;
     }
 
-    // Not a pipeline - visit normally
-    return super.visitList(node);
+    // Not a pipeline - desugar children normally
+    const desugaredNodes = node.nodes.map((n) => this.desugarNode(n));
+    return {
+      ...node,
+      nodes: desugaredNodes,
+    };
   }
 
   /**
-   * Visit a function and inject implicit returns.
-   * Also visit all children normally.
+   * Desugar a function node - inject implicit returns.
    */
-  visitFunction(node: ast.FunctionNode) {
+  private desugarFunction(node: ast.FunctionNode): ast.FunctionNode {
     // Transform body: inject implicit returns
     const transformedBody = this.transformFunctionBody(node.body);
     
-    // Create new function node with transformed body
-    const transformedNode = {
+    return {
       ...node,
-      body: transformedBody
+      body: transformedBody,
     };
-
-    // Continue normal visitor traversal on the transformed node
-    return super.visitFunction(transformedNode);
   }
 
   /**
-   * Private helper: Transform a pipeline list into nested function calls.
+   * Visit a node that may have children and desugar them.
+   */
+  private visitNodeWithChildren(node: any): ast.ASTNode {
+    // Generic handler for nodes with children - recursively desugar
+    const transformed: any = { ...node };
+    
+    // Recursively transform known child properties
+    if (transformed.nodes && Array.isArray(transformed.nodes)) {
+      transformed.nodes = transformed.nodes.map((n: ast.ASTNode) => this.desugarNode(n));
+    }
+    if (transformed.program && Array.isArray(transformed.program)) {
+      transformed.program = transformed.program.map((n: ast.ASTNode) => this.desugarNode(n));
+    }
+    if (transformed.body && Array.isArray(transformed.body)) {
+      transformed.body = transformed.body.map((n: ast.ASTNode) => this.desugarNode(n));
+    }
+    
+    return transformed;
+  }
+
+  /**
+   * Transform a pipeline list into nested function calls.
    * Returns the transformed node, or null if not a pipeline.
    */
   private transformPipelineList(nodes: ast.ASTNode[]): ast.ASTNode | null {
@@ -178,7 +224,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
   }
 
   /**
-   * Private helper: Transform function body to inject implicit returns.
+   * Transform function body to inject implicit returns.
    * Wraps the last expression in an explicit (return ...) node,
    * unless it's already a return, control statement, or variable declaration.
    */
@@ -192,14 +238,15 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
         // Apply implicit return logic
         return this.maybeWrapInReturn(node);
       }
-      return node;
+      // For other nodes, recursively desugar them
+      return this.desugarNode(node);
     });
 
     return transformed;
   }
 
   /**
-   * Private helper: Wrap a node in an explicit return, unless it should be excluded.
+   * Wrap a node in an explicit return, unless it should be excluded.
    * Returns are represented as (return value) lists.
    */
   private maybeWrapInReturn(node: ast.ASTNode): ast.ASTNode {
@@ -262,31 +309,5 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     };
 
     return returnNode;
-  }
-
-  /**
-   * Visit and continue traversal.
-   */
-  visit(node: ast.ASTNode, defaultVisitor?: (node?: ast.ASTNode) => any): any {
-    if (!node) return node;
-
-    // First apply desugaring logic
-    let result: any;
-
-    if (node._type === 'list') {
-      result = this.visitList(node as ast.ListNode);
-    } else if (node._type === 'function') {
-      result = this.visitFunction(node as ast.FunctionNode);
-    } else {
-      // Default visitor behavior
-      result = super.visit(node, defaultVisitor);
-    }
-
-    // If the result is a node, continue walking it
-    if (result && typeof result === 'object' && '_type' in result) {
-      return super.visit(result);
-    }
-
-    return result;
   }
 }

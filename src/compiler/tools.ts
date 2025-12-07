@@ -16,6 +16,8 @@ import { CompilerOptions, Context, LogLevel } from "./Context";
 import { checkBracketsBalance, getCaller } from "./utils";
 import { Command } from "commander";
 import { getCompilerOptions } from "./cli";
+import { DesugarAstVisitor } from "./transformation/visitors/DesugarAstVisitor";
+import { getRuntimeShim } from "./runtime";
 
 const { stdin, stdout } = process;
 
@@ -89,12 +91,22 @@ export function compileJS(file: string, options: CompilerOptions) {
   const inlineImportsVisitor = new InlineImportsAstVisitor(context);
   ast = inlineImportsVisitor.visitProgram(ast as any) as ASTNode;
 
+  // NEW: Desugaring Pass
+  // Transform pipelines, inject implicit returns, unroll matrices
+  const desugarVisitor = new DesugarAstVisitor(context);
+  ast = desugarVisitor.visitProgram(ast as any) as ASTNode;
+
   // Use new ESTree-based transformer (default)
   const transformer = new JSTransformerAstVisitor(context);
-  const code = transformer.compile(ast);    // Return in compatible format
+  const result = transformer.compile(ast);    // Return in compatible format
+  
+  // NEW: Prepend runtime shim
+  const runtimeShim = getRuntimeShim();
+  const codeWithRuntime = runtimeShim + '\n' + result.code;
+
   return {
-    code: code.code,
-    map: code.map,
+    code: codeWithRuntime,
+    map: result.map,
   };
 }
 
