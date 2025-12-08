@@ -1,6 +1,6 @@
 import * as ast from "../frontend/ast";
 import { Context, LogLevel } from "../Context";
-import { createSourceNode, joinArray } from "../utils/helpers";
+import { createSourceNode, joinArray } from "../helpers/utils/helpers";
 import { SourceNode } from "source-map";
 
 /**

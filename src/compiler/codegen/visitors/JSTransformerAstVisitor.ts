@@ -9,9 +9,9 @@ import {
   formatVariable, 
   formatFunction, 
   isStandardLibReference, 
-} from "../../utils/helpers";
-import { uniqueIdentifier } from "../../utils/uniqueIdentifier";
-import { encodeIdentifier } from "../../utils/encodeIdentifier";
+} from "../../helpers/utils/helpers";
+import { uniqueIdentifier } from "../../helpers/utils/uniqueIdentifier";
+import { encodeIdentifier } from "../../helpers/utils/encodeIdentifier";
 import { ClassBuilder } from "../ClassBuilder";
 import path from "path";
 

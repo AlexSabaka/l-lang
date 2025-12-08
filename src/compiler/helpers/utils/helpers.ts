@@ -1,9 +1,9 @@
-import * as ast from "../frontend/ast";
+import * as ast from "../../frontend/ast";
 
-import { globalScope } from "../lib/std";
+import { globalScope } from "../runtime/stdlib";
 
-import { Context, LogLevel } from "../Context";
-import { ScopeType } from "../analysis/SymbolTable";
+import { Context, LogLevel } from "../../Context";
+import { ScopeType } from "../../analysis/SymbolTable";
 import { SourceNode } from "source-map";
 
 export function isStandardLibReference(id: string): boolean {

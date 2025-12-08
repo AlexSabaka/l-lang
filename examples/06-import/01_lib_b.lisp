@@ -1,5 +1,5 @@
 (
-    (import "06_lib_c.lisp")
+    (import "01_lib_c.lisp")
 
     (let secret-number-b 96)
 

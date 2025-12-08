@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { LogLevel } from "../Context";
+import { LogLevel } from "../../Context";
 import { formatWithOptions } from "node:util";
 import { getCaller } from "./getCaller";
 
@@ -22,4 +22,3 @@ export function formatLogMessage(level: LogLevel, msg: any, caller?: string) {
           `${LogLevel[level].padEnd(7)} from ${caller ?? getCaller(4)}`
         )}: ${formatWithOptions({ depth: null, colors: true }, msg)}`;
   }
-  

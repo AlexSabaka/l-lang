@@ -1,18 +1,16 @@
 import { VERSION as COMPILER_VERSION } from "./compiler";
 import { compileJS } from "./compiler/tools";
-import * as lib from "./compiler/lib/std";
+import * as lib from "./compiler/helpers/runtime/stdlib";
 
 document.onload = () => {
   // Scan document for l-lang scripts and evaluate them
   console.log(`l-lang Compiler Version: ${COMPILER_VERSION}`);
 
   // Combine global scope with window for browser environment
-  // @ts-expect-error
-  lib.globalScope = { ...window, ...lib.globalScope };
-  // @ts-expect-error
-  lib.globalScope.window = window;
-  // @ts-expect-error
-  lib.globalScope.document = document;
+  const globalScopeObj = lib.globalScope as any;
+  Object.assign(globalScopeObj, window);
+  globalScopeObj.window = window;
+  globalScopeObj.document = document;
 
   const scripts = document.querySelectorAll(
     'script[type="text/lisp"], script[type="application/lisp"]'

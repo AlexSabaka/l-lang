@@ -1,3 +1,5 @@
+import { globalScope } from "./stdlib";
+
 /**
  * Runtime Shim Generator
  * Generates JavaScript helper functions for pattern matching and type checking
@@ -6,7 +8,9 @@
 
 /**
  * Get the runtime shim as a JavaScript string
- * This includes helper functions for pattern matching and type checking
+ * This includes:
+ * - Helper functions for pattern matching and type checking
+ * - Standard library references (imported dynamically at runtime)
  */
 export function getRuntimeShim(): string {
   return `

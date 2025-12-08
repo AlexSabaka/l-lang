@@ -17,7 +17,7 @@ import { ASTNode } from "./frontend/ast";
 import { SymbolTable } from "./analysis/SymbolTable";
 import { AstProvider } from "./frontend/AstProvider";
 import { DependencyGraph } from "./analysis/DependencyGraph";
-import { formatLogMessage } from "./utils";
+import { formatLogMessage } from "./helpers/utils";
 
 export const VERSION = "0.0.1";
 

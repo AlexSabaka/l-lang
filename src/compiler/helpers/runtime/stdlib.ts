@@ -3,9 +3,9 @@ import { formatWithOptions } from "node:util"
 import { readFileSync, writeFileSync } from "node:fs";
 
 import evaljs from "./evaljs";
-import { JSTransformerAstVisitor } from "../codegen/visitors/JSTransformerAstVisitor";
-import { Context, LogLevel } from "../Context";
-import { encodeIdentifier } from "../utils";
+import { JSTransformerAstVisitor } from "../../codegen/visitors/JSTransformerAstVisitor";
+import { Context, LogLevel } from "../../Context";
+import { encodeIdentifier } from "../utils/encodeIdentifier";
 import { deepStrictEqual, notDeepStrictEqual } from "./deepeq";
 import * as astring from "astring";
 

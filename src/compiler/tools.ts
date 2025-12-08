@@ -8,16 +8,16 @@ import { RuleSeverity } from "./rules";
 
 import { JSTransformerAstVisitor, InlineImportsAstVisitor } from "./index";
 
-import * as lib from "./lib/std";
+import * as lib from "./helpers/runtime/stdlib";
 
 import { ASTNode } from "./frontend/ast";
 import highlight from "cli-highlight";
 import { CompilerOptions, Context, LogLevel } from "./Context";
-import { checkBracketsBalance, getCaller } from "./utils";
+import { checkBracketsBalance, getCaller } from "./helpers/utils";
 import { Command } from "commander";
 import { getCompilerOptions } from "./cli";
 import { DesugarAstVisitor } from "./transformation/visitors/DesugarAstVisitor";
-import { getRuntimeShim } from "./runtime";
+import { getRuntimeShim } from "./helpers/runtime";
 
 const { stdin, stdout } = process;
 

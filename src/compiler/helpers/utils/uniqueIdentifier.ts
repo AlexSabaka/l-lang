@@ -1,4 +1,3 @@
-
 const identifiersInUse = new Map<string, number>();
 
 export function uniqueIdentifier(identifierPrefix: string = "tmp_id"): string {

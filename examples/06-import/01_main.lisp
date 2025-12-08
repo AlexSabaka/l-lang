@@ -1,7 +1,7 @@
 (
-    (import "06_lib_a.lisp")
-    (import "06_lib_b.lisp")
-    (import "06_lib_c.lisp")
+    (import "01_lib_a.lisp")
+    (import "01_lib_b.lisp")
+    (import "01_lib_c.lisp")
 
     (log ":info" '"The secret A is {(secret-number-a)}")
     (log ":info" '"The secret B is {(secret-number-b)}")
