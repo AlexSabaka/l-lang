@@ -1,15 +1,15 @@
 (
     ;; 1. Enum Definition
     (defenum HttpMethod 
-        GET 
-        POST 
-        PUT 
-        DELETE)
+        :GET 
+        :POST 
+        :PUT 
+        :DELETE)
 
     ;; 2. Struct Definition (Value type semantics)
     (defstruct Point
-        (let :public x 0)
-        (let :public y 0))
+        (let :public :ctor x 0)
+        (let :public :ctor y 0))
 
     (fn handle-request [method] (
         (match method {

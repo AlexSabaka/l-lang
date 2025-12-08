@@ -1,12 +1,12 @@
 (
-    ;; (import "./p5-bindings.lisp")
+    (import "./p5-bindings.lisp")
 
     (defclass Player 
-        (let :ctor x y)
-        (let position (create-vector x y))
-        (let speed 0)
-        (let direction 0)
-        (let rotation-speed 0)
+        (let :public :ctor x y)
+        (let :public position (create-vector x y))
+        (let :public speed 0)
+        (let :public direction 0)
+        (let :public rotation-speed 0)
 
         (fn update [] 
             (let step-x (* this.speed (cos this.direction)))
@@ -31,7 +31,7 @@
     (let CELL_SIZE 40)
 
     (mut player)
-    (mut maze-cells[
+    (mut maze-cells [
         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
@@ -42,14 +42,14 @@
         [1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1],
         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-        ])
+    ])
     (mut startPos (create-vector 2.5 2.5))
 
     (fn setup []
         (create-canvas WIDTH HEIGHT)
         (no-stroke)
         
-        (set! player (Player startPos.x startPos.y)))
+        (player := (Player startPos.x startPos.y)))
 
     (fn draw [] 
         (background 220)
