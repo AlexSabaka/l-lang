@@ -13,6 +13,7 @@ import { uniqueIdentifier } from "../../helpers/utils/uniqueIdentifier";
 import { encodeIdentifier } from "../../helpers/utils/encodeIdentifier";
 import { ClassBuilder } from "../ClassBuilder";
 import path from "path";
+import { RuntimeProvider } from "../../helpers";
 
 /**
  * Helper to extract variable names declared within a pattern match
@@ -38,21 +39,6 @@ function findIdentifiersToDefine(node: ast.MatchNode): string[] {
   };
   node.cases.every(x => walkPattern(x.pattern));
   return Array.from(new Set(predefinedVariables));
-}
-/**
- * Helper to extract ctor variable names from ANY class node
- * (Used for both the current class and looking up the parent class)
- */
-function getCtorParamsFromClassNode(node: ast.ClassNode): string[] {
-  // L-lang AST bodies can be nested arrays of lists/statements, flatten them 2 levels deep
-  // to find the actual VariableNodes.
-  const bodyNodes = node.body.map((x: any) => x.nodes ? x.nodes : [x]).flat(2);
-
-  return bodyNodes
-    .filter((n: any) => n._type === "variable")
-    .map((n: ast.VariableNode) => n)
-    .filter((v) => v.modifiers.some((m) => m.modifier === "ctor"))
-    .map((v) => (v.name as any).id ?? (v.name as any).name);
 }
 
 export class JSTransformerAstVisitor extends BaseAstVisitor {
@@ -533,6 +519,23 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return createSourceNode(node, `while (`, condition, `) {`, body, `}`);
   }
 
+  visitFor(node: ast.ForNode) {
+    const init = this.visit(node.initial);
+    const cond = this.visit(node.condition);
+    const step = this.visit(node.step);
+    const then = this.visit(node.then);
+    const elseFor = this.visit(node.else);
+    return createSourceNode(node, `{`, init, `; for ( /* empty */ ; `, cond, `; `, step, `) {`, then, `}; `, elseFor, `};`);
+  }
+
+  visitForEach(node: ast.ForEachNode) {
+    const variable = this.visit(node.variable);
+    const collection = this.visit(node.collection);
+    const then = this.visit(node.then);
+    const elseFor = this.visit(node.else);
+    return createSourceNode(node, `{ let `, variable, `; for (`, variable, ` of `, collection, `) {`, then, `};`, elseFor, `}`);
+  }
+
   visitTryCatch(node: ast.TryCatchNode) {
     const tryBlock = [ `try {`, this.visit(node.try), `}` ];
     const catchVar = uniqueIdentifier("tmp_catch_id"); 
@@ -714,7 +717,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // Lists (The Core Logic)
   // =========================================================================
 
-visitList(node: ast.ListNode) {
+  visitList(node: ast.ListNode) {
     const nodes = Array.isArray(node.nodes) ? node.nodes : [node.nodes];
     if (nodes.length === 0) return createSourceNode(node, "null");
 
@@ -826,7 +829,7 @@ visitList(node: ast.ListNode) {
   visitCompoundAssignment(node: ast.CompoundAssignmentNode) {
     const assignable = this.visit(node.assignable);
     const value = this.visit(node.value);
-    return createSourceNode(node, assignable, ` = `, value, `/* Compound assignment '${node.operator}=' */`);
+    return createSourceNode(node, assignable, ` = `, value, `/* Compound assignment '${node.operator}' */`);
   }
 
   visitIndexer(node: ast.IndexerNode) {

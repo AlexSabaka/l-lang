@@ -13,7 +13,7 @@
     "test": "./node_modules/.bin/jest"
   },
   "author": "Alex Sabaka",
-  "license": "GPL-2.0-only",
+  "license": "MIT",
   "nodemonConfig": {
     "ext": "*.ts,*.js,*.json,*.pegjs,*.lisp",
     "ignore": [

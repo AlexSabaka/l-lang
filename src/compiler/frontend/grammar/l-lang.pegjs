@@ -60,7 +60,6 @@ Expression "expression"
   / If
   / Cond
   / For
-  / ForEach
   / While
   / TryCatchFinally
   / FunctionCarrying
@@ -603,18 +602,17 @@ CondCase
 // Loop statements
 For
   = _ ForKw __ init:((InitModKw __)? @Expression)?
+             _ var_:((EachModKw __)? @Identifier)?
              _ cond:((CondModKw __)? @Expression)?
+             _ coll:((FromModKw __)? @Expression)?
              _ step:((StepModKw __)? @Expression)?
              _ then:((ThenModKw __)? @Expression)?
           _ elseFor:((ElseModKw __)? @Expression)? {
-    return makeNode("for", { initial: init, condition: cond, step, then, else: elseFor });
-  }
-
-ForEach
-  = _ ForKw __ var_:((EachModKw __)? @Identifier)?
-             _ coll:((FromModKw __)? @Expression)?
-             _ then:((ThenModKw __)? @Expression)? {
-    return makeNode("for-each", { variable: var_, collection: coll, then });
+    if (init?.id?.toLowerCase() === ":each") {
+      return makeNode("for-each", { variable: var_, collection: coll, then, else: elseFor });
+    } else {
+      return makeNode("for", { initial: init, condition: cond, step, then, else: elseFor });
+    }
   }
 
 While

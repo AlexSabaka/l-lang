@@ -407,6 +407,7 @@ export interface ForEachNode extends ASTNode<"for-each"> {
   variable: IdentifierNode;
   collection: ASTNode;
   then: ASTNode;
+  else: ASTNode;
 }
 
 export interface WhileNode extends ASTNode<"while"> {

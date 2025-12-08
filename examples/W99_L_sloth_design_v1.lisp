@@ -289,12 +289,12 @@
         ;; here is clear distinguishment between instanse methods (starts with a dot)
         ;; and other methods
         ;; idk about extensions methods 
-                             ((Host.CreateDefaultBuilder args)
-                              |> .ConfigureWebHostDefaults (fn [builder] (builder.UseStartup<Startup>))
-                                 |> ConfigureLogging
-                                 |> .Build
-                                 |> .Run)))
-        
+        ((Host.CreateDefaultBuilder args)
+            |> .ConfigureWebHostDefaults (fn [builder] (builder.UseStartup<Startup>))
+            |> ConfigureLogging
+            |> .Build
+            |> .Run)))
+
     
 
     (fn :static ConfigureLogging [builder <- WebHostBuilder] -> WebHostBuilder (do

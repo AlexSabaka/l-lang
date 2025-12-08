@@ -1,0 +1,7 @@
+Error   from evalFile: 
+        ELL0006 Constant variable must have an initializer
+            (let uninitialized-const).....................................................at /Volumes/2TB/repos/l-lang/examples/02-errors/01_errors.lisp:20:6
+
+Error   from evalFile: 
+        ELL0007 Try-Catch-Finally statement must have either catch or finally block
+            (try (std.console.log "This is illegal")).....................................at /Volumes/2TB/repos/l-lang/examples/02-errors/01_errors.lisp:23:6
