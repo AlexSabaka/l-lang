@@ -83,62 +83,77 @@ Important: **Commit often**
 
 ## 🏗️ Priority 5: Compiler Architecture Refactor (Desugaring & Cleanup)
 *Context: Separate logic from generation, introduce desugaring pass, reorganize directory structure.*
-**STATUS: NOT STARTED** 🚧
+**STATUS: COMPLETE** ✅
 
-- [ ] **Task 5A: Directory Restructuring**
-    - [ ] Create new subdirectories under `src/compiler`:
-        - [ ] `frontend/` - Move `grammar/`, `ast.ts`, `AstProvider.ts`
-        - [ ] `analysis/` - Move `SymbolTable.ts`, `DependencyGraph.ts`
-        - [ ] `analysis/visitors/` - Move `BuildSymbolTableAstVisitor.ts`, `BuildDependencyGraphAstVisitor.ts`, `SemanticValidatorAstVisitor.ts`, `SyntaxRulesAstVisitor.ts`
-        - [ ] `transformation/` - Create new phase for desugaring
-        - [ ] `transformation/visitors/` - Move `InlineImportsAstVisitor.ts`, create new `DesugarAstVisitor.ts`
-        - [ ] `codegen/visitors/` - Move `JSTransformerAstVisitor.ts`
-        - [ ] `runtime/` - Create new for runtime helpers
-    - [ ] Update all import paths in visitor files and `Context.ts`
-    - [ ] Update `index.ts` barrel exports
+- [x] **Task 5A: Directory Restructuring** ✅
+    - [x] Create new subdirectories under `src/compiler`:
+        - [x] `frontend/` - Move `grammar/`, `ast.ts`, `AstProvider.ts`
+        - [x] `analysis/` - Move `SymbolTable.ts`, `DependencyGraph.ts`
+        - [x] `analysis/visitors/` - Move `BuildSymbolTableAstVisitor.ts`, `BuildDependencyGraphAstVisitor.ts`, `SemanticValidatorAstVisitor.ts`, `SyntaxRulesAstVisitor.ts`
+        - [x] `transformation/` - Create new phase for desugaring
+        - [x] `transformation/visitors/` - Move `InlineImportsAstVisitor.ts`, create new `DesugarAstVisitor.ts`
+        - [x] `codegen/visitors/` - Move `JSTransformerAstVisitor.ts`
+        - [x] `runtime/` - Create new for runtime helpers
+    - [x] Update all import paths in visitor files and `Context.ts`
+    - [x] Update `index.ts` barrel exports
+    - **Commit:** `76a5d5e` - Task 5A - Reorganize compiler by compilation phase
 
-- [ ] **Task 5B: Create `DesugarAstVisitor.ts`** (NEW!)
-    - [ ] Move `transformPipelineList` logic from `JSTransformer` to `DesugarAstVisitor`
-        - [ ] Convert `(a |> b |> c)` to nested function calls `(c (b a))`
-    - [ ] Move **Implicit Return Logic** from `JSTransformer`
-        - [ ] Scan function bodies and convert last expression to explicit `(return ...)`
-        - [ ] Exclude control statements, explicit returns, variable declarations
-    - [ ] Move **Matrix/List Unrolling** logic
-        - [ ] Convert `[1 | 2]` to `[[1], [2]]`
-    - [ ] Pipeline: Raw AST → DesugarAstVisitor → Simplified AST → JSTransformer
+- [x] **Task 5B: Create `DesugarAstVisitor.ts`** ✅
+    - [x] Move `transformPipelineList` logic from `JSTransformer` to `DesugarAstVisitor`
+        - [x] Convert `(a |> b |> c)` to nested function calls `(c (b a))`
+    - [x] Move **Implicit Return Logic** from `JSTransformer`
+        - [x] Scan function bodies and convert last expression to explicit `(return ...)`
+        - [x] Exclude control statements, explicit returns, variable declarations
+    - [x] Move **Matrix/List Unrolling** logic
+        - [x] Convert `[1 | 2]` to `[[1], [2]]`
+    - [x] Pipeline: Raw AST → DesugarAstVisitor → Simplified AST → JSTransformer
+    - **Commit:** `2ad0870` - Task 5B - Create DesugarAstVisitor for AST transformation
 
-- [ ] **Task 5C: Runtime Shim Integration**
-    - [ ] Create `src/compiler/runtime/match.ts` - Pattern matching helpers
-        - [ ] Implement `_ll_match_list(val, patterns)` for complex list matching
-        - [ ] Implement `_ll_match_struct(val, patterns)` for destructuring
-    - [ ] Create `src/compiler/runtime/types.ts` - Type checking helpers
-        - [ ] Implement `_ll_is_type(val, type)` for runtime type checks
-    - [ ] Create `src/compiler/runtime/index.ts` - Export and generate runtime shim string
-    - [ ] Update `JSTransformerAstVisitor.visitMatch()` to call runtime helpers instead of generating inline code
-    - [ ] Prepend runtime shim to generated output (like `std.console`)
+- [x] **Task 5C: Runtime Shim Integration** ✅
+    - [x] Create `src/compiler/runtime/match.ts` - Pattern matching helpers
+        - [x] Implement `_ll_match_list(val, patterns)` for complex list matching
+        - [x] Implement `_ll_match_struct(val, patterns)` for destructuring
+    - [x] Create `src/compiler/runtime/types.ts` - Type checking helpers
+        - [x] Implement `_ll_is_type(val, type)` for runtime type checks
+    - [x] Create `src/compiler/runtime/index.ts` - Export and generate runtime shim string
+    - [x] Update `JSTransformerAstVisitor.visitMatch()` to call runtime helpers instead of generating inline code
+    - [x] Prepend runtime shim to generated output (like `std.console`)
+    - **Commit:** `0d37c60` - Task 5C - Create runtime helpers for pattern matching & type checking
 
-- [ ] **Task 5D: Standardize `ClassBuilder`**
-    - [ ] Extract `ClassBuilder` from `JSTransformerAstVisitor.ts` into separate file
-    - [ ] Refactor to consume `SymbolTable` and return ESTree nodes instead of SourceNodes
-    - [ ] Remove direct codegen; let `JSTransformer` handle output
-    - [ ] Add unit tests for `ClassBuilder` with inheritance edge cases
+- [x] **Task 5D: Standardize `ClassBuilder`** ✅
+    - [x] Extract `ClassBuilder` from `JSTransformerAstVisitor.ts` into separate file
+    - [x] Refactor to consume `SymbolTable` and return ESTree nodes instead of SourceNodes
+    - [x] Remove direct codegen; let `JSTransformer` handle output
+    - [x] Add unit tests for `ClassBuilder` with inheritance edge cases
+    - **Commit:** `65a6393` - Task 5D - Extract ClassBuilder into separate module
 
-- [ ] **Task 5E: Simplify `JSTransformerAstVisitor.ts`**
-    - [ ] Remove pipeline transformation logic (now in `DesugarAstVisitor`)
-    - [ ] Remove implicit return logic (now in `DesugarAstVisitor`)
-    - [ ] Remove matrix unrolling logic (now in `DesugarAstVisitor`)
-    - [ ] Remove `ClassBuilder` instantiation (now separate module)
-    - [ ] Remove match codegen complexity (now calls runtime helpers)
-    - [ ] Result: **Pure codegen** mapping desugared AST to JS
+- [x] **Task 5E: Simplify `JSTransformerAstVisitor.ts`** ✅
+    - [x] Remove pipeline transformation logic (now in `DesugarAstVisitor`)
+    - [x] Remove implicit return logic (now in `DesugarAstVisitor`)
+    - [x] Remove matrix unrolling logic (now in `DesugarAstVisitor`)
+    - [x] Remove `ClassBuilder` instantiation (now separate module)
+    - [x] Remove match codegen complexity (now calls runtime helpers)
+    - [x] Result: **Pure codegen** mapping desugared AST to JS
+    - **Integrated with other tasks**
 
-- [ ] **Task 5F: Update Compilation Pipeline**
-    - [ ] Modify `Context.ts` to run visitors in new order:
+- [x] **Task 5F: Update Compilation Pipeline** ✅
+    - [x] Modify `Context.ts` to run visitors in new order:
         1. Parse (AstProvider)
         2. Analysis (BuildSymbolTable, BuildDependencyGraph, Semantic Validation)
         3. **NEW:** Desugaring (DesugarAstVisitor)
         4. Codegen (JSTransformer)
-    - [ ] Ensure `TreeShakeAstVisitor` runs after desugaring
-    - [ ] Add runtime shim prepend to final output
+    - [x] Ensure `TreeShakeAstVisitor` runs after desugaring
+    - [x] Add runtime shim prepend to final output
+    - **Commit:** `c58497b` - Task 5F - Integrate desugaring pass and runtime shim into compilation pipeline
+
+- [x] **Bonus: Reorganize helpers, consolidate lib + runtime + utils** ✅
+    - [x] Merged `src/compiler/lib/` → `src/compiler/helpers/runtime/`
+    - [x] Merged `src/compiler/utils/` → `src/compiler/helpers/utils/`
+    - [x] Consolidated `src/compiler/runtime/` → `src/compiler/helpers/runtime/`
+    - [x] Created organized barrel exports at each level
+    - [x] Updated all import paths across codebase (10+ files)
+    - [x] Updated getRuntimeShim() to be clean and isolated
+    - **Commit:** `ee9e438` - Reorganize helpers, consolidate lib + runtime + utils
 
 ---
 

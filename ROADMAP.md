@@ -56,27 +56,29 @@ Refining the grammar and implementing critical OOP features needed for real-worl
 
 ## 🏗️ Phase 2.5: Compiler Architecture Refactor (v0.3.5)
 **Theme:** "Separate concerns, simplify generation."
-**STATUS: NOT STARTED** 🚧
+**STATUS: COMPLETE** ✅
 
 Moving from "analysis + codegen" to "analysis + desugaring + codegen". This makes the codebase more modular and prepares us for IR-based compilation.
 
-*   **Objective A:** Introduce Desugaring Pass. ⏳
-    - Separate transformation logic (pipelines, implicit returns, list unrolling) from code generation.
-    - Create `DesugarAstVisitor` to normalize the AST before JS generation.
-    - Benefit: `JSTransformer` becomes pure codegen, easier to retarget (LLVM, Wasm, etc.).
+*   **Objective A:** Introduce Desugaring Pass. ✅
+    - Separated transformation logic (pipelines, implicit returns, list unrolling) into `DesugarAstVisitor`.
+    - AST is normalized before JS generation.
+    - Benefit: `JSTransformer` is now pure codegen, easier to retarget (LLVM, Wasm, etc.).
     
-*   **Objective B:** Reorganize `src/compiler` by phase. ⏳
-    - Group files into `frontend/`, `analysis/`, `transformation/`, `codegen/`, `runtime/`.
-    - Reduce cognitive load; each phase has a clear responsibility.
+*   **Objective B:** Reorganize `src/compiler` by phase. ✅
+    - Grouped files into `frontend/`, `analysis/`, `transformation/`, `codegen/`, `helpers/`.
+    - Clear phase-based architecture; each phase has single responsibility.
     
-*   **Objective C:** Extract Runtime Helpers. ⏳
-    - Move pattern matching logic (currently inline in `visitMatch`) to `runtime/match.ts`.
-    - Generate runtime shim at compile-time; prepend to output.
-    - Benefit: Generated code is cleaner; complex patterns don't bloat the output.
+*   **Objective C:** Extract Runtime Helpers. ✅
+    - Moved pattern matching logic to `helpers/runtime/match.ts`.
+    - Centralized type checking in `helpers/runtime/types.ts`.
+    - Runtime shim generated at compile-time; prepends to output.
+    - Benefit: Generated code is cleaner; complex patterns don't bloat output.
     
-*   **Objective D:** Standardize `ClassBuilder`. ⏳
-    - Extract from `JSTransformer`; make it return ESTree nodes.
-    - Add unit tests for inheritance edge cases.
+*   **Objective D:** Standardize `ClassBuilder`. ✅
+    - Extracted from `JSTransformer` into separate module.
+    - Returns ESTree nodes; removed direct string codegen.
+    - Unit tests added for inheritance edge cases.
 
 ## 🧠 Phase 3: The Brain Transplant (v0.4.0)
 **Theme:** "Prepare for the metal."
