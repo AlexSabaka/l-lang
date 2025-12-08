@@ -36,6 +36,7 @@ export function getCompilerOptions(
   return {
     minimumLogLevel: logLevel,
     logger: opts.logFile ? createFileLogger(opts.logFile) : console.log,
+    includeRuntimeShim: false,
     outputFile: opts.output ?? input?.replace(/\.\w+$/, ext ?? ".js"),
   };
 }

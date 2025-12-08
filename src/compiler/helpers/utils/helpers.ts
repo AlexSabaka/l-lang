@@ -19,19 +19,6 @@ export function isStandardLibReference(id: string): boolean {
   return !!obj;
 }
 
-export function getStandardLibReferenceSource(id: string): string {
-  const parts = id.split('.');
-  let obj = globalScope as any;
-  for (let p of parts) {
-    if (p in obj) {
-      obj = obj[p];
-    } else {
-      return "";
-    }
-  }
-  return obj.toString();
-}
-
 export function joinArray(array: any[], value: any): any[] {
   return array.flatMap((x) => [x, value]).slice(0, -1);
 }
@@ -78,53 +65,8 @@ export function formatVariable(
   }
 
   context.log(
-    LogLevel.Debug,
+    LogLevel.Verbose,
     `Formatting variable ${name} in the scope of ${scope}`
-  );
-
-  return format[scope]();
-}
-
-export function formatFunction(
-  scope: ScopeType,
-  node: ast.ASTNode,
-  async: boolean,
-  name: SourceNode | string,
-  params: (SourceNode | string)[],
-  body: (SourceNode | string)[],
-  context: Context
-) {
-  const kw = async ? [createSourceNode(node, "async ")] : [];
-  const arrowFuncName = !!name ? [`const `, name, ` = `] : [];
-
-  const format = {
-    [ScopeType.program]: () =>
-      createSourceNode(node, ...kw, `function `, ...(!!name ? [name] : []), "(", ...joinArray(params, ","), ") {", ...body, `}`),
-    [ScopeType.function]: () =>
-      createSourceNode(node, ...arrowFuncName, ` `, ...kw, ` (`, ...joinArray(params, ","), ") => {", ...body, `}`),
-    [ScopeType.method]: () =>
-      createSourceNode(node, ...arrowFuncName, ` `, ...kw, " (", ...joinArray(params, ","), ") => {", ...body, `}`),
-    [ScopeType.match]: () =>
-      createSourceNode(node, `(`, name, ` = `, ...kw, ` (`, ...joinArray(params, ","), ") => {", ...body, `})`),
-    [ScopeType.when]: () =>
-      createSourceNode(node, `(`, name, ` = `, ...kw, ` (`, ...joinArray(params, ","), ") => {", ...body, "})"),
-    [ScopeType.if]: () =>
-      createSourceNode(node, `(`, name, ` = `, ...kw, ` (`, ...joinArray(params, ","), `) => {`, ...body, `})`),
-    [ScopeType.class]: () =>
-      createSourceNode(node, ...kw, name, "(", ...joinArray(params, ","), ") {", ...body, "}"),
-    [ScopeType.interface]: () =>
-      createSourceNode(node, ...kw, name, "(", ...joinArray(params, ","), ");"),
-    [ScopeType.variable]: () =>
-      createSourceNode(node, `(`, ...kw, " (", ...joinArray(params, ","), ") => {", ...body, `})`),
-  };
-
-  if (!format[scope]) {
-    throw new Error(`${scope} is not defined for function formatting`);
-  }
-
-  context.log(
-    LogLevel.Debug,
-    `Formatting function ${name} in the scope of ${scope}`
   );
 
   return format[scope]();

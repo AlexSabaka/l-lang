@@ -2,7 +2,6 @@ import chalk from "chalk";
 import path from "node:path";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
-import * as astring from "astring";
 
 import { RuleSeverity } from "./rules";
 
@@ -17,7 +16,7 @@ import { checkBracketsBalance, getCaller } from "./helpers/utils";
 import { Command } from "commander";
 import { getCompilerOptions } from "./cli";
 import { DesugarAstVisitor } from "./transformation/visitors/DesugarAstVisitor";
-import { getRuntimeShim } from "./helpers/runtime";
+import { RuntimeProvider } from "./helpers/runtime";
 
 const { stdin, stdout } = process;
 
@@ -100,8 +99,12 @@ export function compileJS(file: string, options: CompilerOptions) {
   const transformer = new JSTransformerAstVisitor(context);
   const result = transformer.compile(ast);    // Return in compatible format
   
+  if (!options.includeRuntimeShim) {
+    return result;
+  }
+
   // NEW: Prepend runtime shim
-  const runtimeShim = getRuntimeShim();
+  const runtimeShim = RuntimeProvider.getRuntimeShim();
   const codeWithRuntime = runtimeShim + '\n' + result.code;
 
   return {
@@ -123,13 +126,13 @@ export function evalFile(
   file: string,
   command: Command) {
   const options = getCompilerOptions(command, file);
-  const js = compileJS(file, options);
+  const js = compileJS(file, { ...options, includeRuntimeShim: false });
 
   if (js) {
     if (options.minimumLogLevel <= LogLevel.Debug) {
-      console.log(chalk.underline.dim(" ".repeat(stdout.columns)));
+      console.log(chalk.strikethrough.dim(" ".repeat(stdout.columns)));
       console.log(highlight(js.code, { language: "javascript" }));
-      console.log(chalk.underline.dim(" ".repeat(stdout.columns)));
+      console.log(chalk.strikethrough.dim(" ".repeat(stdout.columns)));
     }
 
     lib.evalInScope(js.code, lib.globalScope);

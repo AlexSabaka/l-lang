@@ -10,10 +10,6 @@ import { deepStrictEqual, notDeepStrictEqual } from "./deepeq";
 import * as astring from "astring";
 
 const basicOperators = {
-  [encodeIdentifier('set!')]: (array: any[], index: number, value: any): any => {
-    array[index] = value;
-    return value;
-  },
   [encodeIdentifier('==')]: (a: any, b: any): boolean => deepStrictEqual(a, b),
   [encodeIdentifier('!=')]: (a: any, b: any): boolean => notDeepStrictEqual(a, b),
   [encodeIdentifier('≠')] : (a: any, b: any): boolean => notDeepStrictEqual(a, b),
@@ -38,6 +34,16 @@ const listFunctions = {
   tail: (a: any) => Array.isArray(a) && a.length > 0 ? a.slice(1) : a,
   elem: (a: any, i: number | string) => a[i],
   cons: (...args: any[]) => args.reduce((res, a) => Array.isArray(a) ? [...res, ...a] : [...res, a], []),
+
+  [encodeIdentifier('set!')]: (array: any[], index: number, value: any): any => {
+    array[index] = value;
+    return value;
+  },
+};
+
+const mapFunctions = {
+  "get": (map: any, key: string) => map[key],
+  "set": (map: any, key: string, value: any) => { map[key] = value; return value; },
 };
 
 const stdlib = {
@@ -63,7 +69,7 @@ const helpers = {
   call: (f: Function, a: any[]): any => f.call(globalScope, a),
   eval: (q: any): any => {
     const quoteAst = { ...q, _type: "list" };
-    const context = new Context("eval", { minimumLogLevel: LogLevel.Error });
+    const context = new Context("eval", { minimumLogLevel: LogLevel.Error, includeRuntimeShim: false });
     const transformer = new JSTransformerAstVisitor(context);
     const code = transformer.compile(quoteAst);
     return evaljs(code.code, globalScope);
@@ -71,7 +77,7 @@ const helpers = {
   throw: (a: any) => {
     throw a;
   },
-  formatObjectToString: (a: any) => {
+  __ll_format_object: (a: any) => {
     return formatWithOptions({ depth: null, colors: false }, a ?? "");
   },
 };
@@ -80,6 +86,7 @@ export const evalInScope = evaljs;
 
 export const globalScope = {
   ...listFunctions,
+  ...mapFunctions,
   ...basicOperators,
   ...stdlib,
   ...helpers,

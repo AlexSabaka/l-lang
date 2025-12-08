@@ -7,7 +7,6 @@ import {
   createSourceNode, 
   joinArray, 
   formatVariable, 
-  formatFunction, 
   isStandardLibReference, 
 } from "../../helpers/utils/helpers";
 import { uniqueIdentifier } from "../../helpers/utils/uniqueIdentifier";
@@ -536,7 +535,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
   visitTryCatch(node: ast.TryCatchNode) {
     const tryBlock = [ `try {`, this.visit(node.try), `}` ];
-    const catchVar = uniqueIdentifier(); 
+    const catchVar = uniqueIdentifier("tmp_catch_id"); 
     
     const catchBlocks = node.catch?.filter(x => !!x.filter)?.map(x => {
       const catchFilterVar = this.visit(x.filter.name);
@@ -578,7 +577,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
   visitMatch(node: ast.MatchNode) {
     return this.runInScope(ScopeType.match, () => {
-      const matchVar = uniqueIdentifier();
+      const matchVar = uniqueIdentifier("tmp_match_id");
       const matchVal = this.visit(node.expression);
 
       const matchCases = node.cases.map((x) => ({
@@ -708,7 +707,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   visitFormatExpression(node: ast.FormatExpressionNode) {
-    return createSourceNode(node, "${formatObjectToString(", this.visit(node.expression), ")}");
+    return createSourceNode(node, "${__ll_format_object(", this.visit(node.expression), ")}");
   }
 
   // =========================================================================
@@ -879,7 +878,7 @@ visitList(node: ast.ListNode) {
     if (this.inlinedSymbols[key]) return this.inlinedSymbols[key];
 
     try {
-      const uniq = encodeIdentifier(symName) + "_inlined_" + uniqueIdentifier();
+      const uniq = uniqueIdentifier("inlined_" + encodeIdentifier(symName));
       this.inlinedSymbols[key] = uniq;
 
       // Build a top-level definition for the symbol depending on its type

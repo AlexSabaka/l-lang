@@ -32,6 +32,7 @@ export enum LogLevel {
 export interface CompilerOptions {
   logger?: (msg: any, ...args: any[]) => void;
   minimumLogLevel: LogLevel;
+  includeRuntimeShim: boolean;
   outputFile?: string;
 }
 

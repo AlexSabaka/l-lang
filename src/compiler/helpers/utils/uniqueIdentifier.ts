@@ -6,5 +6,5 @@ export function uniqueIdentifier(identifierPrefix: string = "tmp_id"): string {
     identifiersInUse.set(identifierPrefix, 1);
     lastIdentifierNumber = 1;
   }
-  return `_ll_tmp_${identifierPrefix}_${lastIdentifierNumber++}`;
+  return `__ll_${identifierPrefix}_${lastIdentifierNumber++}`;
 }
