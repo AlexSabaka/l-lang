@@ -100,16 +100,6 @@ Quote "quote"
   / _ "'(" _ nodes:Expression* _ ")" _ {
     return makeNode("quote", { mode: "default", nodes });
   }
-  / _ mode:Identifier "'(" _ content:QuoteContent? _ ")" _ {
-    return makeNode("quote", { mode: mode.id, nodes: null });
-  }
-
-QuoteContent
-  = $QuotedExpression*
-
-QuotedExpression
-  = "(" _ QuoteContent _ ")"     // Match nested expressions within parentheses
-  / [^()]+                       // Match any content without parentheses
 
 
 // Unquoted expression
@@ -231,7 +221,7 @@ Type "type"
 
 UnionType
   // = types:IntersectionType|1.., "|"| {
-  = head:IntersectionType _ tail:("|" _ @IntersectionType)* {
+  = head:IntersectionType _ tail:(_ "|" _ @IntersectionType)* {
     const types = [head, ...tail];
     if (types.length === 1) {
       return types[0];
@@ -242,7 +232,7 @@ UnionType
 
 IntersectionType
   // = types:IntersectionType|1.., "&"| {
-  = head:BasicTypes _ tail:("&" _ @BasicTypes)* {
+  = head:BasicTypes _ tail:(_ "&" _ @BasicTypes)* {
     const types = [head, ...tail];
     if (types.length === 1) {
       return types[0];
@@ -428,9 +418,8 @@ StructBody
 
 // Typedef
 TypeDef
-  = _ DefTypeKw __ modifiers:(@Modifier _)* _ name:Identifier? _ {
-    // Continue...
-    return makeNode("type-def", { });
+  = _ DefTypeKw __ modifiers:(@Modifier _)* _ name:Identifier? _ type:Type? {
+    return makeNode("type-def", { name, type, modifiers });
   }
 
 
@@ -593,8 +582,8 @@ Cond
   }
 
 CondCase
-  = "(" _ cond:((CondModKw __)? @Expression)?
-        _ body:((ThenModKw __)? @Expression)? _ ")" {
+  = _ "(" _ cond:((CondModKw __)? @Expression)?
+          _ body:((ThenModKw __)? @Expression)? _ ")" {
     return makeNode("cond-case", { condition: cond, body });
   }
 

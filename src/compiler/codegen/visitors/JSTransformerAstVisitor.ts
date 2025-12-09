@@ -513,6 +513,18 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     });
   }
 
+  visitCond(node: ast.CondNode) {
+    const cases = node.cases.map(condCase => this.visit(condCase));
+    return createSourceNode(node, `switch (true) {`, ...cases, `}`);
+  }
+
+  visitCondCase(node: ast.CondCaseNode) {
+    const cond = this.visit(node.condition);
+    const then = this.visit(node.body);
+
+    return createSourceNode(node, `case (`, cond, `): {`, then, `}; break;`);
+  }
+
   visitWhile(node: ast.WhileNode) {
     const condition = this.visit(node.condition);
     const body = this.visit(node.then);

@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "ts-node index.ts",
-    "dev": "nodemon --watch . --exec ts-node -- index.ts -L Debug run ./../examples/test008.lisp",
+    "parser": "peggy -o ./compiler/frontend/grammar/l-lang.js --format es ./compiler/frontend/grammar/l-lang.pegjs",
     "build": "tsc",
     "test": "./node_modules/.bin/jest"
   },

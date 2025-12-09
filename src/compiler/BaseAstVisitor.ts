@@ -88,13 +88,13 @@ export class BaseAstVisitor {
         "control-comment": this.visitControlComment.bind(this),
       };
 
-    if (node === undefined) {
+    if (node === undefined || node === null) {
       this.context.log(LogLevel.Error, "Cannot process undefined node.");
       return undefined;
     }
 
     if (node?._type === undefined) {
-      this.context.log(LogLevel.Error, "Cannot process node without type.");
+      this.context.log(LogLevel.Error, `Cannot process node without type: ${node}`);
       return undefined;
     }
 
