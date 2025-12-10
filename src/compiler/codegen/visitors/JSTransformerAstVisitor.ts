@@ -111,10 +111,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // Core
   // =========================================================================
 
-  private inlineStandardLibrary(): string {
-    return ""; 
-  }
-
   public compile(root: ast.ASTNode) {
     // Remember the root source so we can detect imports vs local symbols
     this.rootSource = root && root._location && root._location.source ? root._location.source : undefined;
@@ -126,7 +122,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       `"use strict";\n\n`
     ];
 
-    const standardLibrary = createSourceNode(root, this.inlineStandardLibrary());
+    console.log(this.inlineStandardSymbols);
+    const standardLibrary = createSourceNode(root, "");
     const sourceName = root && root._location && root._location.source ? root._location.source : 'bundle.lisp';
     const sourceMapUrl = `\n\n//# sourceMappingURL=${path.basename(sourceName, '.lisp')}.js.map`;
 
@@ -702,7 +699,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     const id = encodeIdentifier(node.id);
     this.identifiers[node.id] = id;
-    if (isStandardLibReference(id)) this.inlineStandardSymbols.push(id);
+    if (RuntimeProvider.isRuntimeReference(node.id)) this.inlineStandardSymbols.push(node.id);
     return createSourceNode(node, id);
   }
 
