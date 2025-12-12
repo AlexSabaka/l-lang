@@ -83,7 +83,7 @@ export class DependencyGraph {
       // symbol table to the import unit so consumers see the final
       // module symbols.
       if (cached) {
-        importUnit.symbols = cached.symbols;
+        importUnit.symbols = cached.symbols!;
       }
 
       // Add to dependency-graph cache
@@ -92,7 +92,7 @@ export class DependencyGraph {
       // If an import unit exists but Context has processed the module
       // since then, prefer the Context symbol table (keeps single source).
       if (cached) {
-        importUnit.symbols = cached.symbols;
+        importUnit.symbols = cached.symbols!;
       }
     }
 

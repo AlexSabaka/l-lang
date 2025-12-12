@@ -16,12 +16,12 @@
 
     ;; 4. While Loop
     (mut i 5)
-    (std.console.log "Countdown:")
+    (console.log "Countdown:")
     (while (> i 0) (
-        (std.console.log i)
+        (console.log i)
         (i := (- i 1))
     ))
 
-    (std.console.log '"Factorial of 5: {(factorial 5)}")
-    (std.console.log '"Status 200 is: {(check-status 200)}")
+    (console.log '"Factorial of 5: {(factorial 5)}")
+    (console.log '"Status 200 is: {(check-status 200)}")
 )

@@ -2,8 +2,6 @@ import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
-import { Context, LogLevel } from '../compiler/Context';
-import { compileJS } from '../compiler/tools';
 
 const EXAMPLES_DIR = path.join(__dirname, '../../examples');
 const COMPILER_CMD = 'ts-node src/index.ts run'; 
@@ -28,6 +26,7 @@ console.log("🚀 Starting Snapshot Tests...\n");
 
 let passed = 0;
 let failed = 0;
+let skipped = 0;
 
 walkDir(EXAMPLES_DIR, (filePath) => {
   if (!filePath.endsWith('.lisp')) return;
@@ -41,6 +40,7 @@ walkDir(EXAMPLES_DIR, (filePath) => {
 
   // 1. Check if .expect file exists
   if (!fs.existsSync(expectPath)) {
+    skipped++;
     console.warn(`⚠️  Skipping ${fileName}: No .expect file found.`);
     return;
   }
@@ -59,9 +59,9 @@ walkDir(EXAMPLES_DIR, (filePath) => {
     });
 
     // 3. Compare
-    // const expected = fs.readFileSync(expectPath, 'utf-8');
+    const expected = fs.readFileSync(expectPath, 'utf-8');
     const actual = normalizeOutput(stdout);
-    // const normalizedExpected = normalizeOutput(expected);
+    const normalizedExpected = normalizeOutput(expected);
 
     // Filter out Compiler Info logs if they are polluting stdout
     // (A better way is to make the compiler write logs to stderr and program output to stdout)
@@ -73,15 +73,15 @@ walkDir(EXAMPLES_DIR, (filePath) => {
         .join('\n')
         .trim();
 
-    // if (cleanActual === normalizedExpected) {
+    if (cleanActual === normalizedExpected) {
       console.log(chalk.green("PASS"));
       passed++;
-    // } else {
-    //   console.log(chalk.red("FAIL"));
-    //   console.log(`\nExpected:\n${normalizedExpected}`);
-    //   console.log(`\nActual:\n${cleanActual}\n`);
-    //   failed++;
-    // }
+    } else {
+      console.log(chalk.red("FAIL"));
+      console.log(`\nExpected:\n${normalizedExpected}`);
+      console.log(`\nActual:\n${cleanActual}\n`);
+      failed++;
+    }
 
   } catch (e: any) {
     console.log(chalk.red("ERROR"));
@@ -90,6 +90,6 @@ walkDir(EXAMPLES_DIR, (filePath) => {
   }
 });
 
-console.log(`\nSummary: ${chalk.green(passed + " Passed")}, ${chalk.red(failed + " Failed")}`);
+console.log(`\nSummary: ${chalk.green(passed + " Passed")}, ${chalk.red(failed + " Failed")}, ${chalk.yellow(skipped + " Skipped")}`);
 
 if (failed > 0) process.exit(1);

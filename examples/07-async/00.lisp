@@ -7,12 +7,12 @@
 
     ;; 2. Async Consumer
     (async fn main-task [] (
-        (std.console.log "Fetching...")
+        (console.log "Fetching...")
         
         ;; Await Expression
         (let data (await (fetch-fake-data 42)))
         
-        (std.console.log '"Received: {(data)}")
+        (console.log '"Received: {(data)}")
         (return data)
     ))
 

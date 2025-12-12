@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { LogLevel } from "../../Context";
+import { LogLevel } from "../Context";
 import { formatWithOptions } from "node:util";
 import { getCaller } from "./getCaller";
 

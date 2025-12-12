@@ -1,59 +1,84 @@
 # 🦥 l-lang Language Reference
 
-This document covers the syntax, keywords, and core concepts of **l-lang**. 
+*Note: This language is in active development. Syntax is subject to change when better ideas materialize.*
 
-*Note: This language is in active development. Syntax subject to change.*
+---
+
+## 0. Core Philosophy
+
+**Everything is an expression. Every expression is data.**
+
+l-lang steals from Lisp, TypeScript, C#, Zig, and Go, because they are good at solving their problems.
+
+### Design Principles
+
+- **Homoiconicity First:** goal is to have every language construct to be a S-expressions.
+- **Static Types, Dynamic Spirit:** TypeScript-style structural typing with union types.
+- **Metaprogramming in Layers:** Choose your tool—comptime for generics, defmacro for rewrites, defsyntax for DSLs.
 
 ---
 
 ## 1. Basics & Comments
 
-**l-lang** uses S-expressions (parenthesized lists) for code structure.
+l-lang uses S-expressions (Lisp-style parenthesized lists).
 
 ### Comments
-```lisp
-;; This is a standard comment
-(let x 10) ; Inline comment
 
-;@ +perf inline   ;; Control comments (compiler directives)
+```lisp
+;; Standard comment - immutable variable x set to 10
+(let x 10) 
 ```
 
 ### Literals
+
 ```lisp
 10          ;; Integer
 3.14        ;; Float
-1/3         ;; Fraction
-10+2i       ;; Complex Number
-0xFF        ;; Hex
+1/3         ;; Fraction (exact rational)
+10+2i       ;; Complex number (because math people exist)
+0xFF        ;; Hexadecimal
 "Hello"     ;; String
-'"Count: {(x)}" ;; Formatted String (Interpolation)
-true / false    ;; Booleans
-nil             ;; Null/None
+'"Count: {(x)}" ;; Formatted string (interpolation)
+true / false    ;; Booleans (not truthy/falsy nonsense)
+nil             ;; The void
 ```
 
 ---
 
 ## 2. Variables & State
 
-Variables are immutable by default (`let`). Mutable variables must be declared with `mut`.
+Variables are **immutable by default** (`let`). Mutation must be explicit (`mut`).
 
 ### Immutable
+
 ```lisp
 (let pi 3.14159)
 (let name "Sloth")
 ```
 
 ### Mutable
+
 ```lisp
 (mut counter 0)
-(counter := (+ counter 1)) ;; Reassignment uses :=
+(counter := (+ counter 1)) ;; := for reassignment (not =)
+(counter *= (+ counter 2)) ;; *= same as counter = counter * (counter + 2)
+;; etc
 ```
 
 ### Type Annotations
-You can (and should) strictly type your variables using the `<-` operator.
+
+Use `<-` to annotate types. The compiler will infer when it can, but explicit is better.
+
 ```lisp
 (let x <- Number 10)
 (mut list <- List<String> ["a" "b"])
+```
+
+**Union Types:** When you need "this OR that":
+
+```lisp
+(let status <- String | Int "loading")
+(status := 200) ;; Valid - Int is in the union
 ```
 
 ---
@@ -61,34 +86,38 @@ You can (and should) strictly type your variables using the `<-` operator.
 ## 3. Data Structures
 
 ### Vectors & Lists
+
 ```lisp
-(let v [1 2 3])      ;; Vector (Array)
-(let l (1 2 3))      ;; List (Linked List / AST Node)
-(let v-access v[0])  ;; Indexer
+(let v [1 2 3])      ;; Vector (contiguous array)
+(let l (1 2 3))      ;; List (linked list / AST node)
+(let item v[0])      ;; Zero-indexed access
 ```
 
 ### Maps (Dictionaries)
-Keys can be keywords (starting with `:`) or strings.
+
+Keys can be keywords (`:name`) or strings. Keyword keys are preferred.
+
 ```lisp
 (let user { 
     :name "Sid" 
     :age 30 
-    "is-admin" false 
+    :"is-admin" false 
 })
-(std.console.log user.name)
-(std.console.log user["is-admin"])
+(std.console.log user.name)          ;; Dot access for keywords
+(std.console.log user["is-admin"])   ;; Bracket access for strings
 ```
 
 ### Matrices
-A unique native type for mathematical operations. Rows are separated by `|`.
+
+Native type for 2D math operations. Rows separated by `|`.
+
 ```lisp
 (let identity 
     [ 1, 0, 0 
     | 0, 1, 0 
     | 0, 0, 1 ])
 
-;; 2D Access
-(let val matrix[row, col])
+(let val identity[1, 2]) ;; 2D indexing: row, column
 ```
 
 ---
@@ -96,14 +125,22 @@ A unique native type for mathematical operations. Rows are separated by `|`.
 ## 4. Functions & Pipelines
 
 ### Definition
-Functions are defined with `fn`. Return types are specified with `->`.
+
+Functions use `fn`. Return types with `->` are optional but recommended.
+
 ```lisp
-(fn add [a <- Number, b <- Number] -> Number (
+(fn add [a <- Number b <- Number] -> Number (
     (return (+ a b))
+))
+
+;; Implicit return (last expression)
+(fn add [a <- Number b <- Number] (
+    (+ a b)
 ))
 ```
 
 ### Async / Await
+
 ```lisp
 (async fn fetch-data [id] (
     (let result (await (db.get id)))
@@ -112,14 +149,16 @@ Functions are defined with `fn`. Return types are specified with `->`.
 ```
 
 ### Pipelines (`|>`)
-The pipe operator passes the result of the previous expression as the *first* argument to the next function.
+
+Pass results forward. First argument by default.
+
 ```lisp
-;; Logic: square(add(10, 5))
+;; Instead of: square(add(5, 10))
 (5 
  |> (add 10) 
  |> square)
 
-;; Object method chaining
+;; Method chaining
 (query
  |> .Skip 10
  |> .Take 5)
@@ -130,40 +169,41 @@ The pipe operator passes the result of the previous expression as the *first* ar
 ## 5. Flow Control
 
 ### If / Else
-Standard conditional branching.
+
 ```lisp
 (if (> x 10)
     (print "Big")
     (print "Small"))
 ```
 
-### When (One-liner)
-Great for guards or single returns.
+### When (Guard Syntax)
+
 ```lisp
 (when is-loading :then "Please wait...")
 ```
 
-### Cond (Switch-like)
-Evaluates multiple conditions in order.
+### Cond (Multi-Branch)
+
 ```lisp
 (cond
     ((>= score 90) "A")
     ((>= score 80) "B")
-    (true          "F")) ;; Default
+    (true "F")) ;; Default case
 ```
 
 ### Loops
-**l-lang** uses explicit keywords for loop construction.
 
-**While Loop:**
+**While:**
+
 ```lisp
 (while (> i 0) (
     (i := (- i 1))
 ))
 ```
 
-**For Loop (C-Style):**
-Requires named arguments `:init`, `:cond`, `:step`.
+**For (C-Style):**
+Optional named arguments: `:init`, `:cond`, `:step`, `:then`. If skipped C-style `for` is inferred.
+
 ```lisp
 (for 
     :init (mut i 0)
@@ -173,6 +213,7 @@ Requires named arguments `:init`, `:cond`, `:step`.
 ```
 
 **For-Each:**
+
 ```lisp
 (for :each item :from list :then (
     (print item)
@@ -183,41 +224,68 @@ Requires named arguments `:init`, `:cond`, `:step`.
 
 ## 6. Pattern Matching
 
-The `match` expression is highly powerful. It supports constants, types, vectors, maps, and logic guards.
+`match` handles constants, types, destructuring, and guards.
 
 ```lisp
 (match value {
-    0            => "Zero"
-    val :is int  => "It's an integer"
-    [1 2 _]      => "Vector starting with 1, 2"
-    { :type "A" } => "Map with type A"
-    _            => "Default/Catch-all"
+    0              => "Literal zero"
+    x :is Int      => "Some integer"
+    [1 2 _]        => "Vector: [1, 2, anything]"
+    { :type "A" }  => "Map with key :type = 'A'"
+    _              => "Default case (matches everything)"
 })
+```
+
+### Type Matching with RTTI
+
+Runtime type introspection via `typeof`:
+
+```lisp
+(fn describe [obj] (
+    (match (typeof obj) {
+        Int      => "An integer"
+        String   => "Text"
+        Dog      => "A dog instance"
+        _        => "Something else"
+    })
+))
 ```
 
 ---
 
-## 7. Object Oriented Programming
-
-**l-lang** treats OOP as a first-class citizen with specific keywords for classes, inheritance, and encapsulation.
+## 7. Object-Oriented Programming
 
 ### Classes
-Use `defclass`. Properties marked `:ctor` are automatically initialized via the constructor.
+
 ```lisp
 (defclass Dog :extends Animal
-    (let :public :ctor name)  ;; Public field, set in constructor
-    (let :private age 0)      ;; Private field, default 0
+    (let :public :ctor name)  ;; Constructor param + public field
+    (let :private age 0)      ;; Private field, default value
 
     (fn :public speak [] (
-        (print '"{(this.name)} says Woof!")
+        (print '"(this.name) says Woof!")
     ))
 )
 
 (let d (new Dog "Buddy"))
+(d.speak)
+```
+
+**Memory Management Hints:**
+
+```lisp
+(defclass :gc Texture      ;; GC-managed (default)
+    (let buffer <- Buffer))
+
+(defclass :stack Point     ;; Stack-allocated (opt-in)
+    (let x <- Float)
+    (let y <- Float))
 ```
 
 ### Structs
-Value types (passed by copy).
+
+Value types. Passed by copy. Stack-allocated by default.
+
 ```lisp
 (defstruct Point
     (let :public x 0)
@@ -225,6 +293,7 @@ Value types (passed by copy).
 ```
 
 ### Interfaces
+
 ```lisp
 (definterface IRepository<T>
     (async fn GetAll [] -> List<T>)
@@ -232,22 +301,212 @@ Value types (passed by copy).
 ```
 
 ### Enums
+
 ```lisp
-(defenum HttpMethod :GET :POST :PUT :DELETE)
+;; With auto values 0..3
+(defenum HttpMethod
+    :GET
+    :POST
+    :PUT
+    :DELETE)
+
+;; Inferred values 200..204
+(defenum HttpStatusCode
+    :OK => 200
+    :Created
+    :Accepted
+    :Non-Authoritative-Information
+    :No-Content)
 ```
 
 ---
 
-## 8. Modules & Imports
+## 8. Metaprogramming: The Three Tiers
+
+l-lang gives you three levels of code manipulation.
+
+### Level 1: Comptime (Zig-Style)
+
+Evaluate code at compile-time. Types are values. Functions can run during compilation.
+
+```lisp
+;; Generic function via comptime
+(fn :comptime max [a b] (if (> a b) a b))
+
+;; Usage - compiler specializes
+(max 5 10)     ;; Generates max_int
+(max 3.14 2.7) ;; Generates max_float
+```
+
+**Comptime Parameters:**
+
+```lisp
+(fn create-array [comptime T, size <- Int] -> Array<T> (
+    ;; T is known at compile time, size at runtime
+    (Array<T>.new size)
+))
+```
+
+### Level 2: Defmacro (Simple Rewrites)
+
+Pattern-match and template-substitute. Auto-gensym prevents variable capture.
+
+```lisp
+;; Macro definition
+(defmacro unless [condition body] `(
+    (if (not ,condition) ,body)
+))
+
+;; Usage
+(unless (> x 10) (print "Small"))
+;; Expands to: (if (not (> x 10)) (print "Small"))
+```
+
+**Auto-Gensym:** Variables defined in macros are automatically renamed to avoid shadowing.
+
+```lisp
+(defmacro swap [a b] `(
+    (let temp ,a)  ;; Becomes temp_G1234 internally
+    (,a := ,b)
+    (,b := temp)
+))
+```
+
+### Level 3: Defsyntax (Full Power)
+
+Racket-style hygienic macros for building DSLs.
+
+```lisp
+(defsyntax for-each [pattern] (
+    ;; Pattern match on input syntax
+    ;; Manipulate AST nodes
+    ;; Return transformed syntax
+))
+```
+
+---
+
+## 9. Type System
+
+### Structural Typing
+
+Like TypeScript: types are defined by their shape, not their name.
+
+```lisp
+(definterface Nameable
+    (fn get-name [] -> String))
+
+(defclass Dog
+    (let :public name <- String)
+    (fn :public get-name [] -> String (return this.name)))
+
+;; Dog satisfies Nameable implicitly (duck typing)
+```
+
+### Generics
+
+```lisp
+(defclass List<T>
+    (let :private items <- Array<T>)
+    
+    (fn :public add [item <- T] (
+        (items.push item)
+    )))
+```
+
+### Union Types
+
+Explicit "or" relationships:
+
+```lisp
+(fn process [input <- String | Int] (
+    (match (typeof input) {
+        String => (print "Got text")
+        Int    => (print "Got number")
+    })
+))
+```
+
+### Type Guards
+
+Runtime type checks with `is` and `as`:
+
+```lisp
+(if (obj is Dog) (
+    (let d (obj as Dog))
+    (d.bark)
+))
+```
+
+---
+
+## 10. Modules & Imports
 
 ### Exporting
+
 ```lisp
-(fn calc [] (...))
-(export calc)
+(fn calculate [] (...))
+(export calculate)
 ```
 
 ### Importing
+
 ```lisp
-(import "math-lib.lisp")
-(import { sin, cos } from "math.lisp")
+(import "math-lib.lisp")               ;; Import all
+(import { sin, cos } from "math.lisp") ;; Import specific
 ```
+
+---
+
+## 11. Runtime Type Information (RTTI)
+
+Trimmed reflection—enough to inspect, not enough to break encapsulation.
+
+### Type Introspection
+
+```lisp
+(let t (typeof obj))
+(print t.name)           ;; "Dog"
+(print t.parent)         ;; Animal (if exists)
+(print t.fields)         ;; [{ name: "name", type: String }]
+(print t.methods)        ;; ["bark", "speak"]
+```
+
+### Runtime Type Checks
+
+```lisp
+(if (obj is Dog) ...)         ;; Type check
+(let d (obj as Dog))          ;; Downcast
+(let maybe (obj as? Dog))     ;; Safe cast (returns nil if fails)
+```
+
+---
+
+## 12. Memory Management
+
+**Default:** Garbage collected (Go-style tracing GC with escape analysis).
+
+**Opt-in Fine Control:**
+
+```lisp
+(defclass :gc User ...)      ;; GC-managed (default)
+(defclass :stack Point ...)  ;; Stack-allocated
+(defclass :manual Buffer     ;; Manually allocated and freed memory
+    (fn :destructor cleanup [] (
+        ;; Called on explicit free
+    )))
+```
+
+---
+
+## 13. Conventions
+
+### Preferred Naming
+
+- **Functions:** `kebab-case` (e.g., `get-user-by-id`)
+- **Classes:** `PascalCase` (e.g., `UserController`)
+- **Constants:** `CAPS_SNAKE_CASE` (e.g., `MAX_CONNECTIONS`)
+
+---
+
+*TBD...*

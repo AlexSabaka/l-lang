@@ -6,6 +6,6 @@
 
     (fn n-th [a <- Array<any> n <- Number] -> any (return a[n]))
 
-    (std.console.log "is-null nil (should be true):" (is-null nil))
-    (std.console.log "2nd element is (should be 3):" (n-th [1 2 3 4 5] 2))
+    (console.log "is-null nil (should be true):" (is-null nil))
+    (console.log "2nd element is (should be 3):" (n-th [1 2 3 4 5] 2))
 )

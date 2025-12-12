@@ -6,10 +6,10 @@
     (try 
         (risky-business)
      catch error (
-        (std.console.log '"Caught error: {(error)}")
+        (console.log '"Caught error: {(error)}")
      )
      finally (
-        (std.console.log "Cleanup complete.")
+        (console.log "Cleanup complete.")
      )
     )
     
@@ -20,5 +20,5 @@
     (let uninitialized-const)
 
     ;; LL0007: Try without catch/finally
-    (try (std.console.log "This is illegal"))
+    (try (console.log "This is illegal"))
 )

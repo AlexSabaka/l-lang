@@ -31,12 +31,12 @@
 
     (let fib (make-fib call))
 
-    (std.console.log '"Fib 10: {(fib 10)}") ;; Calc
-    (std.console.log '"Fib 33: {(fib 33)}") ;; Calc
-    (std.console.log '"Fib 33: {(fib 33)}") ;; Should be instant (cached)
-    (std.console.log '"Fib 10 again: {(fib 10)}") ;; Should be instant (cached)
+    (console.log '"Fib 10: {(fib 10)}") ;; Calc
+    (console.log '"Fib 33: {(fib 33)}") ;; Calc
+    (console.log '"Fib 33: {(fib 33)}") ;; Should be instant (cached)
+    (console.log '"Fib 10 again: {(fib 10)}") ;; Should be instant (cached)
 
-    (std.console.log '"Fib Base 10: {(fib-base 10)}") ;; Calc
-    (std.console.log '"Fib Base 31: {(fib-base 31)}") ;; Calc
-    (std.console.log '"Fib Base 10 again: {(fib-base 10)}") ;; Calc
+    (console.log '"Fib Base 10: {(fib-base 10)}") ;; Calc
+    (console.log '"Fib Base 31: {(fib-base 31)}") ;; Calc
+    (console.log '"Fib Base 10 again: {(fib-base 10)}") ;; Calc
 )

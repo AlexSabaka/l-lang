@@ -1,30 +1,16 @@
 import fs from "node:fs";
-import { CompilerOptions, Context, LogLevel } from "./Context";
 import { Command } from "commander";
+import { CompilerOptions, LogLevel } from "../compiler/Context";
 
-
-export interface CLICompilerOptions {
-  output?: string;
-  watch?: boolean;
-  debug?: boolean;
-  silent?: boolean;
-  verbose?: boolean;
-  version?: boolean;
-  logLevel?: LogLevel;
-  logFile?: string;
-}
-
-export function createFileLogger(file: string) {
+function createFileLogger(file: string) {
   const stream = fs.createWriteStream(file, { flags: "a" });
   return (...data: any[]) => stream.write(`${data.join(" ")}\n`);
 }
 
 export function getCompilerOptions(
-  command: Command,
-  input?: string,
-  ext?: string
+  command: Command
 ): CompilerOptions {
-  const opts = command.opts() as CLICompilerOptions;
+  const opts = command.opts()
   const logLevel = opts.logLevel ?? opts.verbose
       ? LogLevel.Verbose
       : opts.debug
@@ -35,7 +21,8 @@ export function getCompilerOptions(
   return {
     minimumLogLevel: logLevel,
     logger: opts.logFile ? createFileLogger(opts.logFile) : console.log,
+    legacy: !!opts.legacyJs,
     includeRuntimeShim: false,
-    outputFile: opts.output ?? input?.replace(/\.\w+$/, ext ?? ".js"),
+    stdout: false,
   };
 }

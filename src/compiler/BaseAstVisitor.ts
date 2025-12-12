@@ -40,6 +40,7 @@ export class BaseAstVisitor {
         "function-carrying": this.visitFunctionCarrying.bind(this),
         "class": this.visitClass.bind(this),
         "enum": this.visitEnum.bind(this),
+        "enum-key": this.visitEnumKey.bind(this),
         "struct": this.visitStruct.bind(this),
         "type-def": this.visitTypeDef.bind(this),
         "interface": this.visitInterface.bind(this),
@@ -212,6 +213,10 @@ export class BaseAstVisitor {
 
   visitEnum(node: ast.EnumNode): any {
     this.context.log(LogLevel.Verbose, "Method visitEnum skipped");
+  }
+
+  visitEnumKey(node: ast.EnumKeyNode): any {
+    this.context.log(LogLevel.Verbose, "Method visitEnumKey skipped");
   }
 
   visitStruct(node: ast.StructNode): any {

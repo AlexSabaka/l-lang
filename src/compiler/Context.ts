@@ -6,18 +6,18 @@ import {
   BuildDependencyGraphAstVisitor,
   BuildSymbolTableAstVisitor,
   SyntaxRulesAstVisitor,
-  JSTransformerAstVisitor,
-  AstVisitorConstructor,
-  TreeShakeAstVisitor,
-  InferTypesAstVisitor,
-  SemanticValidatorAstVisitor,
 } from "./index";
+
+import {
+  JSTransformerAstVisitorLegacy,
+  JSTransformerAstVisitorEstree
+} from "./codegen";
 
 import { ASTNode } from "./frontend/ast";
 import { SymbolTable } from "./analysis/SymbolTable";
 import { AstProvider } from "./frontend/AstProvider";
 import { DependencyGraph } from "./analysis/DependencyGraph";
-import { formatLogMessage } from "./helpers/utils";
+import { formatLogMessage } from "./utils";
 
 export const VERSION = "0.0.1";
 
@@ -33,7 +33,8 @@ export interface CompilerOptions {
   logger?: (msg: any, ...args: any[]) => void;
   minimumLogLevel: LogLevel;
   includeRuntimeShim: boolean;
-  outputFile?: string;
+  stdout: boolean;
+  legacy: boolean;
 }
 
 export interface PassPerformanceMetrics {
@@ -75,9 +76,9 @@ export class Context {
   // Map<AbsolutePath, ModuleData>
   private moduleCache: Map<string, { ast: ASTNode; symbols: SymbolTable }> = new Map();
 
-  constructor(file: string, options: CompilerOptions) {
-    this.dependencyGraph = new DependencyGraph(file);
-    this.mainModule = path.basename(file, ".lisp");
+  constructor(mainFile: string, options: CompilerOptions) {
+    this.dependencyGraph = new DependencyGraph(mainFile);
+    this.mainModule = path.basename(mainFile, ".lisp");
     this.options = options;
   }
 
@@ -85,7 +86,7 @@ export class Context {
    * Get or load a module
    * Returns cached version if already loaded
    */
-  getModule(filePath: string): { ast: ASTNode; symbols: SymbolTable } | undefined {
+  getModule(filePath: string): { ast: ASTNode; symbols?: SymbolTable } | undefined {
     const fullPath = path.resolve(filePath);
     return this.moduleCache.get(fullPath);
   }
@@ -111,42 +112,24 @@ export class Context {
     }
   }
 
-  process(file: string) {
+  process(file: string): { ast: ASTNode; symbols?: SymbolTable } {
     const fullPath = path.resolve(file);
 
     // If module already processed and cached, reuse its symbol table
     const cached = this.getModule(fullPath);
     if (cached) {
       // Merge cached symbols into the global symbol table without duplication
-      this.symbolTable.joinWithoutDuplication(cached.symbols);
-      return this;
+      this.symbolTable.joinWithoutDuplication(cached.symbols!);
+      return cached;
     }
 
-    const ast = this.astProvider.getAst(fullPath);
-    const result = this.processAst(ast as ASTNode);
+    const ast = this.astProvider.getAst(fullPath) as ASTNode;
 
-    // After processing, cache the module (AST + symbols) so subsequent
-    // imports reuse the same symbol table and avoid re-processing.
-    if (ast) {
-      // BuildSymbolTable was run inside processAst and the build result
-      // has been joined into this.symbolTable. We need a per-module
-      // symbol table to store in the cache — create a fresh builder by
-      // scanning the AST and building its symbol table separately.
-      const buildSymbolTableVisitor = new BuildSymbolTableAstVisitor(this);
-      buildSymbolTableVisitor.scanAndResolve(ast as ASTNode);
-      const moduleSymbols = buildSymbolTableVisitor.buildSymbolTable();
-      this.cacheModule(fullPath, ast as ASTNode, moduleSymbols);
-    }
-
-    return result;
-  }
-
-  private processAst(ast: ASTNode) {
     const syntaxRulesVisitor = new SyntaxRulesAstVisitor(this);
     syntaxRulesVisitor.visit(ast as ASTNode);
 
     if (this.results.hasErrors) {
-      return;
+      return { ast: ast as ASTNode };
     }
 
     const buildDependencyGraphVisitor = new BuildDependencyGraphAstVisitor(this);
@@ -154,8 +137,37 @@ export class Context {
 
     const buildSymbolTableVisitor = new BuildSymbolTableAstVisitor(this);
     buildSymbolTableVisitor.scanAndResolve(ast as ASTNode);
-    this.symbolTable.join(buildSymbolTableVisitor.buildSymbolTable());
 
-    return this;
+    const moduleSymbols = buildSymbolTableVisitor.buildSymbolTable();
+    this.symbolTable.join(moduleSymbols);
+
+    this.cacheModule(fullPath, ast as ASTNode, moduleSymbols);
+  
+    return  { ast: ast as ASTNode, symbols: moduleSymbols };
+  }
+
+  compile(file: string) {
+    const fullPath = path.resolve(file);
+
+    // If module already processed and cached, reuse its symbol table
+    let cached = this.getModule(fullPath);
+    if (!cached) {
+      cached = this.process(file);
+    }
+
+    let ast = cached.ast as ASTNode;
+
+    let transformer: JSTransformerAstVisitorEstree | JSTransformerAstVisitorLegacy | undefined = undefined;
+    if (this.options.legacy) {
+      // Use legacy transformer
+      transformer = new JSTransformerAstVisitorLegacy(this);
+    } else {
+      // Use new ESTree-based transformer (default)
+      transformer = new JSTransformerAstVisitorEstree(this);
+    }
+
+    const result = transformer.compile(ast);
+
+    return result;
   }
 }

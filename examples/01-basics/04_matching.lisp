@@ -17,6 +17,6 @@
         })
     ))
 
-    (std.console.log (describe-age 30))
-    (std.console.log (analyze-vector [1 9 9])) ;; Should match "Starts with one"
+    (console.log (describe-age 30))
+    (console.log (analyze-vector [1 9 9])) ;; Should match "Starts with one"
 )

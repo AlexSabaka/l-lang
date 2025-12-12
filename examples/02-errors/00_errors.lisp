@@ -8,18 +8,18 @@
             (return "Success"))
     ))
 
-    (std.console.log "Starting Try-Catch block...")
+    (console.log "Starting Try-Catch block...")
 
     (try
         ;; Trigger the error
         (risky-operation true)
     
     (catch err :of CustomError
-        (std.console.log '"Caught specific error: {(err.message)}"))
+        (console.log '"Caught specific error: {(err.message)}"))
     
     (catch err
-        (std.console.log "Caught generic error"))
+        (console.log "Caught generic error"))
     
     (finally
-        (std.console.log "Cleanup operation executed.")))
+        (console.log "Cleanup operation executed.")))
 )

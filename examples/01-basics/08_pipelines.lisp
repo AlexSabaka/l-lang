@@ -12,7 +12,7 @@
          |> (add 10) 
          |> square))
     
-    (std.console.log '"Pipeline A Result (225): {(result-a)}")
+    (console.log '"Pipeline A Result (225): {(result-a)}")
 
     ;; 2. Right Carrying (Backward Pipe / Composition)
     ;; Logic: square(add(10, 5))
@@ -20,7 +20,7 @@
     (let result-b
         (square <| (add 10) <| 5))
 
-    (std.console.log '"Pipeline B Result (225): {(result-b)}")
+    (console.log '"Pipeline B Result (225): {(result-b)}")
 
     ;; 3. Mixed with standard library methods (if shimmed)
     ;; (let str-len ("hello" |> .length)) 

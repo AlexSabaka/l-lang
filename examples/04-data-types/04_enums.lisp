@@ -8,20 +8,23 @@
 
     ;; 2. Struct Definition (Value type semantics)
     (defstruct Point
-        (let :public :ctor x 0)
-        (let :public :ctor y 0))
+        (let :ctor x 0)
+        (let :ctor y 0))
 
     (fn handle-request [method] (
         (match method {
-            HttpMethod.GET  => "Fetching resource..."
-            HttpMethod.POST => "Creating resource..."
+            HttpMethod:GET  => "Fetching resource..."
+            HttpMethod:POST => "Creating resource..."
             _               => "Unknown method"
         })
     ))
 
-    (let p (new Point))
+    (let p (Point 0 0))
     (p.x := 10)
 
-    (std.console.log (handle-request HttpMethod.GET))
-    (std.console.log '"Point: {(p.x)}, {(p.y)}")
+    (console.log (handle-request HttpMethod:POST))
+    (console.log (handle-request HttpMethod:GET))
+    (console.log (handle-request HttpMethod:DELETE))
+
+    (console.log '"Point {(p.x)}, {(p.y)}")
 )

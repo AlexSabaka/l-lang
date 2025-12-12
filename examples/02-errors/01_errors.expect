@@ -4,4 +4,4 @@ Error   from evalFile:
 
 Error   from evalFile: 
         ELL0007 Try-Catch-Finally statement must have either catch or finally block
-            (try (std.console.log "This is illegal")).....................................at /Volumes/2TB/repos/l-lang/examples/02-errors/01_errors.lisp:23:6
+            (try (console.log "This is illegal")).....................................at /Volumes/2TB/repos/l-lang/examples/02-errors/01_errors.lisp:23:6

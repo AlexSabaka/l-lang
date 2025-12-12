@@ -2,7 +2,7 @@
     ;; 1. Base Class
     (defclass Animal
         (let :ctor name)
-        (fn speak [] (std.console.log "Generic noise...")))
+        (fn speak [] (console.log "Generic noise...")))
 
     ;; 2. Inheritance
     (defclass Dog :extends Animal
@@ -10,7 +10,7 @@
         
         ;; Method Override
         (fn speak [] (
-            (std.console.log '"{(this.name)} the {(this.breed)} says Woof!")
+            (console.log '"{(this.name)} the {(this.breed)} says Woof!")
         ))
     )
 
@@ -20,5 +20,5 @@
     (my-pet.speak call) ;; Prints: Buddy the Golden Retriever says Woof!
     
     ;; 4. Accessing properties
-    (std.console.log my-pet.name)
+    (console.log my-pet.name)
 )

@@ -4,8 +4,8 @@ Error   from evalFile:
                     ;; Trigger the error
                     (risky-operation true)
                 (catch err :of CustomError
-                    (std.console.log '"Caught specific error: {(err.message)}"))
+                    (console.log '"Caught specific error: {(err.message)}"))
                 (catch err
-                    (std.console.log "Caught generic error"))
+                    (console.log "Caught generic error"))
                 (finally
-                    (std.console.log "Cleanup operation executed."))).....................at /Volumes/2TB/repos/l-lang/examples/02-errors/00_errors.lisp:13:6
+                    (console.log "Cleanup operation executed."))).....................at /Volumes/2TB/repos/l-lang/examples/02-errors/00_errors.lisp:13:6

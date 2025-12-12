@@ -32,5 +32,5 @@
             |> .apply evt3
         ))
 
-    (std.console.log '"Final Balance (should be 120): {(final-account.balance)}")
+    (console.log '"Final Balance (should be 120): {(final-account.balance)}")
 )

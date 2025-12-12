@@ -1,5 +1,6 @@
 import * as ast from "../../frontend/ast";
 import { BaseAstVisitor } from "../../BaseAstVisitor";
+import { LogLevel } from "../../Context";
 
 /**
  * DesugarAstVisitor - Transform complex syntax into simpler forms
@@ -72,14 +73,6 @@ export class DesugarAstVisitor extends BaseAstVisitor {
       ...node,
       body: transformedBody,
     };
-  }
-
-  /**
-   * Visit a node that may have children and desugar them.
-   */
-  private visitNodeWithChildren(node: any): ast.ASTNode {
-    // This is no longer used in the simplified desugaring approach
-    return node;
   }
 
   /**
@@ -227,6 +220,7 @@ export class DesugarAstVisitor extends BaseAstVisitor {
     const lastNode = desugaredBody[lastIndex];
 
     // Check if we should wrap the last node in a return
+    // TODO: Works odd
     if (this.shouldWrapInReturn(lastNode)) {
       desugaredBody[lastIndex] = this.wrapInReturn(lastNode);
     }
@@ -265,9 +259,10 @@ export class DesugarAstVisitor extends BaseAstVisitor {
         const head = nodes[0];
         if (
           head._type === 'simple-identifier' &&
-          (head as ast.SimpleIdentifierNode).id === 'return'
+          (head as ast.SimpleIdentifierNode).id === 'return' ||
+          (head as ast.SimpleIdentifierNode).id === 'throw'
         ) {
-          return false; // Already a return
+          return false;
         }
       }
     }

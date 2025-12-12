@@ -1,14 +1,12 @@
-import { VERSION as COMPILER_VERSION } from "./compiler";
-import { compileJS } from "./compiler/tools";
-import * as lib from "./compiler/helpers/runtime/stdlib";
+import { VERSION as COMPILER_VERSION, CompilerOptions, Context, LogLevel } from "./compiler";
+import evalInScope from "./compiler/runtime/evalInScope";
 
 document.onload = () => {
   // Scan document for l-lang scripts and evaluate them
   console.log(`l-lang Compiler Version: ${COMPILER_VERSION}`);
 
   // Combine global scope with window for browser environment
-  const globalScopeObj = lib.globalScope as any;
-  Object.assign(globalScopeObj, window);
+  const globalScopeObj = {} as any;
   globalScopeObj.window = window;
   globalScopeObj.document = document;
 
@@ -20,10 +18,16 @@ document.onload = () => {
     const blob = new Blob([code], { type: "text/plain" });
     const file = new File([blob], "inline-script.lisp", { type: "text/plain" });
 
-    const js = compileJS(file.name, { minimumLogLevel: 2 });
-    if (js) {
-      lib.evalInScope(js.code, lib.globalScope);
-    }
+    const options: CompilerOptions = {
+      minimumLogLevel: LogLevel.Error,
+      includeRuntimeShim: true,
+      legacy: false,
+      stdout: true,
+    };
+    const context = new Context(file.name, options);
+    const js = context.compile(file.name);
+
+    evalInScope(js.code, window);
   }
 
   scripts.forEach((script) => {

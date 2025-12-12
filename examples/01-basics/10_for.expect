@@ -6,3 +6,12 @@ Index: 3
 Index: 4
 For loop ended at 5
 Sum 1..10 is: 55
+i = 0, j = 0, Linear index: 0
+i = 0, j = 1, Linear index: 1
+i = 0, j = 2, Linear index: 2
+i = 1, j = 0, Linear index: 3
+i = 1, j = 1, Linear index: 4
+i = 1, j = 2, Linear index: 5
+i = 2, j = 0, Linear index: 6
+i = 2, j = 1, Linear index: 7
+i = 2, j = 2, Linear index: 8

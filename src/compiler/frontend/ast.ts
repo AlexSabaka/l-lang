@@ -66,6 +66,7 @@ export type NodeType =
   | "function-carrying"
   | "class"
   | "enum"
+  | "enum-key"
   | "struct"
   | "type-def"
   | "interface"
@@ -281,7 +282,12 @@ export interface ClassNode extends ASTNode<"class"> {
 export interface EnumNode extends ASTNode<"enum"> {
   name: TypeNameNode;
   modifiers: ModifierNode[];
-  body: ASTNode[];
+  body: EnumKeyNode[];
+}
+
+export interface EnumKeyNode extends ASTNode<"enum-key"> {
+  key: IdentifierNode | StringNode;
+  value: ASTNode;
 }
 
 export interface StructNode extends ASTNode<"struct"> {

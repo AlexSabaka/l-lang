@@ -51,7 +51,7 @@
         | 0, 1, 0
         | 0, 1, 0 ])
 
-    (std.console.log "Generation 0:" gen0)
+    (console.log "Generation 0:" gen0)
     (let gen1 (next-gen gen0))
-    (std.console.log "Generation 1 (Should be horizontal):" gen1)
+    (console.log "Generation 1 (Should be horizontal):" gen1)
 )

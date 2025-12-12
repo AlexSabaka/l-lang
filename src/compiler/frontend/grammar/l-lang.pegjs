@@ -398,13 +398,22 @@ ClassBodyDefinition
 
 // Enum
 Enum
-  = _ DefEnumKw __ modifiers:(@Modifier _)* _ name:TypeName? _ body:EnumBody* {
+  = _ DefEnumKw __ modifiers:(@Modifier _)* _ name:TypeName? _ body:EnumKey* {
     return makeNode("enum", { name, modifiers, body });
   }
 
-EnumBody
-  = Expression
+EnumKey
+  = EnumKeyValue
+  / Comment
 
+EnumKeyValue
+  = _ ":" _ key:EnumKeyName _ value:(RightDoubleArrowKw _ @Expression)? _ {
+    return makeNode("enum-key", { key, value })
+  }
+
+EnumKeyName
+  = Identifier
+  / String
 
 // Struct
 Struct
@@ -797,42 +806,17 @@ Ident
 
 // Comments
 Comment
-  = ControlComment / SimpleComment 
-
-SimpleComment
   = _ ';' comment:$ANY* {
     return makeNode("comment", { comment });
   }
 
-ControlComment
-  = _ ';@' WS* control:(
-      mode:[+-] WS* command:ControlCommentCommandKw options:(WS+ @ID)+ WS*{
-          return {
-            command: command,
-            mode: mode === "+" ? "enable" : "disbale",
-            options: options,
-          };
-        }
-    ) EOL {
-    return makeNode("control-comment", { ...control });
-  }
 
 ID = $[.,?'"|@:`~;^&*%$#=+!()\[\]/\\\\-_0-9a-zA-Z]+
 WS = [ \t]
 EOL = [\n\r]
 ANY = [^\n]
 
-
 // Keywords
-ControlCommentCommandKw
-  = "attr"i { return "compiler-attribute"; }
-  / "perf"i { return "performance-optimization"; }
-  / "lint"i { return "linter-option"; }
-  / "link"i { return "linker-option"; }
-  / "warn"i { return "warning"; }
-  / "def"i { return "define"; }
-  / "if"i { return "conditional"; }
-
 MatchKw = "match"i
 WhileKw = "while"i
 ForKw = "for"i
@@ -923,6 +907,7 @@ ModifierKw
     / "implicit-cast"i
     / "extension"i
     / "operator"i
+    / "comptime"i
     / "in"i
     / "out"i
     / "ref"i

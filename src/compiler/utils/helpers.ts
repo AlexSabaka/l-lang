@@ -1,23 +1,8 @@
-import * as ast from "../../frontend/ast";
+import * as ast from "../frontend/ast";
 
-import { globalScope } from "../runtime/stdlib";
-
-import { Context, LogLevel } from "../../Context";
-import { ScopeType } from "../../analysis/SymbolTable";
+import { Context, LogLevel } from "../Context";
+import { ScopeType } from "../analysis/SymbolTable";
 import { SourceNode } from "source-map";
-
-export function isStandardLibReference(id: string): boolean {
-  const parts = id.split('.');
-  let obj = globalScope as any;
-  for (let p of parts) {
-    if (p in obj) {
-      obj = obj[p];
-    } else {
-      return false;
-    }
-  }
-  return !!obj;
-}
 
 export function joinArray(array: any[], value: any): any[] {
   return array.flatMap((x) => [x, value]).slice(0, -1);
