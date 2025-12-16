@@ -11,6 +11,9 @@ import {
   encodeIdentifier,
 } from "../../../utils";
 import { ClassBuilder } from "../JSClassBuilder";
+import { SourceMapGenerator } from "source-map";
+import path from "path";
+import { formatWithOptions } from "util";
 
 /**
  * Helper to extract variable names declared within a pattern match
@@ -207,7 +210,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // =========================================================================
 
   public compile(root: ast.ASTNode) {
-    this.rootSource = root?._location?.source;
+    this.rootSource = root && root._location && root._location.source ? root._location.source : 'bundle.lisp';
     const program = this.visit(root) as ESTree.Program;
 
     // Prepend runtime shim if needed
@@ -263,21 +266,31 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       },
     };
 
+    const sourceMapUrlNode = {
+      type: "ExpressionStatement",
+      expression: {
+        type: "Literal",
+        raw: `\n\n//# sourceMappingURL=${path.basename(this.rootSource)}.map`,
+      },
+    } as ESTree.Statement;
+
     const finalProgram: ESTree.Program = {
       type: "Program",
       sourceType: "script",
-      body: [...header.body, wrappedBody],
+      body: [...header.body, wrappedBody, sourceMapUrlNode],
     };
 
     // Generate code with astring
+    const sourceMap = new SourceMapGenerator({ file: this.rootSource });
     const code = generate(finalProgram, {
       comments: true,
       indent: "  ",
+      sourceMap: sourceMap,
     });
 
     return {
       code,
-      map: null, // TODO: Generate source map from ESTree
+      map: sourceMap.toString()
     };
   }
 
@@ -479,36 +492,23 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   ): ESTree.Expression | null {
     if (nodes.length < 3) return null;
 
-    const firstOpNode = nodes[1];
-    let isBackward = false;
+    console.log("Hit the pipeline in the transpiler");
 
-    if (firstOpNode._type === "simple-identifier") {
-      const id = (firstOpNode as ast.SimpleIdentifierNode).id;
-      if (id === "<|") isBackward = true;
-      else if (id !== "|>") return null;
-    } else {
-      return null;
-    }
-
-    let processingNodes: ast.ASTNode[] = [];
-
-    if (isBackward) {
-      const seed = nodes[nodes.length - 1];
-      processingNodes.push(seed);
-      for (let i = nodes.length - 2; i >= 0; i -= 2) {
-        const func = nodes[i - 1];
-        processingNodes.push({ _type: "simple-identifier", id: "|>" } as any);
-        processingNodes.push(func);
-      }
-    } else {
-      processingNodes = nodes;
-    }
+    let processingNodes: ast.ASTNode[] = nodes;
 
     const seed = processingNodes[0];
     let current = this.visit(seed) as ESTree.Expression;
 
     for (let i = 1; i < processingNodes.length; i += 2) {
+      const id = (processingNodes[i] as ast.SimpleIdentifierNode).id;
+      const left = id === "|>";
+      const right = id === "<|";
+      if (!left && !right) {
+        // TODO: Throw
+      }
+
       const funcNode = processingNodes[i + 1];
+      console.log("!!! Dir = ", id, "!!! funcType = ", funcNode._type);
       if (!funcNode) return null;
 
       let functionNode: ast.ASTNode;
@@ -537,13 +537,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         funcNode._type === "composite-identifier"
       ) {
         functionNode = funcNode;
-
-        if (
-          funcNode._type === "simple-identifier" &&
-          (funcNode as any).id.startsWith(".")
-        ) {
+        
+        console.log("!!! ", (funcNode as ast.CompositeIdentifierNode).id);
+        if ((funcNode as ast.CompositeIdentifierNode).headless) {
           member = true;
-          const rawId = (funcNode as any).id.substring(1);
+          const rawId = (funcNode as any).id;
           functionNode = { ...funcNode, id: rawId } as any;
         }
       } else {
@@ -554,91 +552,16 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       const argExprs = args.map((a) => this.visit(a) as ESTree.Expression);
 
       if (member) {
-        current = ESTreeBuilder.callExpression(
+        current = ESTreeBuilder.memberExpression(
           funcNode,
-          ESTreeBuilder.memberExpression(
-            funcNode,
-            current,
-            fn as ESTree.Identifier
-          ),
-          argExprs
+          current,
+          fn as ESTree.Identifier
         );
       } else {
-        current = ESTreeBuilder.callExpression(funcNode, fn, [
-          current,
-          ...argExprs,
-        ]);
-      }
-    }
-
-    return current;
-  }
-
-  visitFunctionCarrying(node: ast.FunctionCarryingNode): ESTree.Expression {
-    const flatSequence: any[] = [];
-    let current = this.visit(node.identifier) as ESTree.Expression;
-
-    const collectSteps = (sequence: any[]) => {
-      for (const seq of sequence) {
-        if (
-          seq.arguments.length > 0 &&
-          seq.arguments[0]._type === "function-carrying"
-        ) {
-          const nestedNode = seq.arguments[0] as ast.FunctionCarryingNode;
-          const realArg = nestedNode.identifier;
-          flatSequence.push({
-            ...seq,
-            arguments: [realArg, ...seq.arguments.slice(1)],
-          });
-          collectSteps(nestedNode.sequence);
-        } else {
-          flatSequence.push(seq);
-        }
-      }
-    };
-
-    collectSteps(node.sequence);
-
-    for (const seq of flatSequence) {
-      const fn = this.visit(seq.function) as ESTree.Expression;
-      const args = seq.arguments.map(
-        (a: ast.ASTNode) => this.visit(a) as ESTree.Expression
-      );
-
-      if (seq.operator === "carrying-left") {
-        if (seq.memberFunction) {
-          current = ESTreeBuilder.callExpression(
-            seq.function,
-            ESTreeBuilder.memberExpression(
-              seq.function,
-              current,
-              fn as ESTree.Identifier
-            ),
-            args
-          );
-        } else {
-          current = ESTreeBuilder.callExpression(seq.function, fn, [
-            current,
-            ...args,
-          ]);
-        }
-      } else {
-        if (seq.memberFunction) {
-          current = ESTreeBuilder.callExpression(
-            seq.function,
-            ESTreeBuilder.memberExpression(
-              seq.function,
-              current,
-              fn as ESTree.Identifier
-            ),
-            args
-          );
-        } else {
-          current = ESTreeBuilder.callExpression(seq.function, fn, [
-            ...args,
-            current,
-          ]);
-        }
+        const calleeArgs =
+          left ? [current, ...argExprs] :
+          right ? [...argExprs, current] : [];
+        current = ESTreeBuilder.callExpression(funcNode, fn, calleeArgs);
       }
     }
 
@@ -825,36 +748,56 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       loc: ESTreeBuilder.loc(node),
     };
   }
-
+  
   visitFor(node: ast.ForNode): ESTree.BlockStatement {
-    const init = this.visit(node.initial) as ESTree.Statement;
-    const test = this.visit(node.condition) as ESTree.Expression;
-    const update = this.visit(node.step) as ESTree.Expression;
-    const body = this.visit(node.then);
-    const elseFor =
-      node.else !== null ? (this.visit(node.else) as ESTree.Statement) : null;
+    const containerStatements: ESTree.Statement[] = [];
 
-    const bodyStmt = this.isStatement(body)
-      ? (body as ESTree.Statement)
+    if (node.initial) {
+      const initResult = this.visit(node.initial);
+
+      if (initResult.type === "BlockStatement") {
+        containerStatements.push(...(initResult as ESTree.BlockStatement).body);
+      } else {
+        containerStatements.push(initResult as ESTree.Statement);
+      }
+    }
+
+    const test = node.condition
+      ? (this.visit(node.condition) as ESTree.Expression)
+      : null;
+      
+    const update = node.step
+      ? (this.visit(node.step) as ESTree.Expression)
+      : null;
+
+    const visitedBody = this.visit(node.then);
+
+    const bodyStmt = this.isStatement(visitedBody)
+      ? (visitedBody as ESTree.Statement)
       : ESTreeBuilder.blockStatement(node.then, [
           ESTreeBuilder.expressionStatement(
             node.then,
-            body as ESTree.Expression
+            visitedBody as ESTree.Expression
           ),
         ]);
 
     const forStmt: ESTree.ForStatement = {
       type: "ForStatement",
+      init: null,
       test,
       update,
       body: bodyStmt,
       loc: ESTreeBuilder.loc(node),
     };
 
-    const statements: ESTree.Statement[] = [init, forStmt];
-    if (elseFor) statements.push(elseFor);
+    containerStatements.push(forStmt);
 
-    return ESTreeBuilder.blockStatement(node, statements);
+    if (node.else) {
+      const elseResult = this.visit(node.else);
+      containerStatements.push(elseResult as ESTree.Statement);
+    }
+
+    return ESTreeBuilder.blockStatement(node, containerStatements);
   }
 
   visitForEach(node: ast.ForEachNode): ESTree.BlockStatement {
@@ -863,6 +806,19 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     const body = this.visit(node.then);
     const elseFor =
       node.else !== null ? (this.visit(node.else) as ESTree.Statement) : null;
+
+    const varDeclaration: ESTree.VariableDeclaration = {
+      type: "VariableDeclaration",
+      kind: "let",
+      declarations: [
+        {
+          type: "VariableDeclarator",
+          id: variable,
+          init: null,
+        },
+      ],
+      loc: ESTreeBuilder.loc(node.variable),
+    };
 
     const bodyStmt = this.isStatement(body)
       ? (body as ESTree.Statement)
@@ -875,49 +831,85 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     const forOfStmt: ESTree.ForOfStatement = {
       type: "ForOfStatement",
-      left: {
-        type: "VariableDeclaration",
-        kind: "let",
-        declarations: [
-          {
-            type: "VariableDeclarator",
-            id: variable,
-            init: null,
-          },
-        ],
-      },
+      left: variable, 
       right: collection,
       body: bodyStmt,
       await: false,
       loc: ESTreeBuilder.loc(node),
     };
 
-    const statements: ESTree.Statement[] = [forOfStmt];
+    const statements: ESTree.Statement[] = [varDeclaration, forOfStmt];
     if (elseFor) statements.push(elseFor);
 
     return ESTreeBuilder.blockStatement(node, statements);
   }
 
   visitTryCatch(node: ast.TryCatchNode): ESTree.TryStatement {
+    // 1. Build the Try Block
     const tryBlock = ESTreeBuilder.blockStatement(node.try, [
       this.visit(node.try) as ESTree.Statement,
     ]);
 
+    // 2. Generate a unique temp variable for the error object
     const catchVar = uniqueIdentifier("tmp_catch_id");
     const catchVarId = ESTreeBuilder.identifier(node, catchVar);
 
     let catchClause: ESTree.CatchClause | null = null;
 
     if (node.catch && node.catch.length > 0) {
-      const catchStatements: ESTree.Statement[] = [];
+      
+      // --- STEP A: Determine the "Bottom" of the chain (The final 'else') ---
+      const defaultCatch = node.catch.find((x) => !x.filter);
+      let chainTail: ESTree.Statement;
 
+      if (defaultCatch) {
+        // If we have a generic catch, that's our final 'else' block
+        // Wrap in BlockStatement to be safe if visit returns a single expression
+        const visitedBody = this.visit(defaultCatch.body) as ESTree.Statement;
+        chainTail = visitedBody.type === "BlockStatement" 
+          ? visitedBody 
+          : ESTreeBuilder.blockStatement(defaultCatch.body, [visitedBody]);
+      } else {
+        // If no generic catch, we MUST re-throw the error if no types matched
+        chainTail = {
+          type: "ThrowStatement",
+          argument: catchVarId,
+        } as ESTree.ThrowStatement;
+      }
+
+      // --- STEP B: Build the chain upwards (Reverse Loop) ---
       const filteredCatches = node.catch.filter((x) => !!x.filter);
-      for (const c of filteredCatches) {
-        const filterVar = this.visit(c.filter.name) as ESTree.Identifier;
-        const filterType = this.visit(c.filter.type) as ESTree.Identifier;
-        const catchBody = this.visit(c.body) as ESTree.Statement;
 
-        catchStatements.push({
+      for (let i = filteredCatches.length - 1; i >= 0; i--) {
+        const c = filteredCatches[i];
+        
+        const filterVar = this.visit(c.filter.name) as ESTree.Identifier;
+        const filterType = {
+          type: "Identifier",
+          name: c.filter.type.name,
+        } as ESTree.Identifier;
+
+        const visitedCatchBody = this.visit(c.body) as ESTree.Statement;
+        
+        // Build the block that runs if this error matches:
+        // { const err = tmp_id; ...user_code... }
+        const consequentBlock = ESTreeBuilder.blockStatement(c.body, [
+          {
+            type: "VariableDeclaration",
+            kind: "const",
+            declarations: [
+              {
+                type: "VariableDeclarator",
+                id: filterVar,
+                init: catchVarId,
+              },
+            ],
+          },
+          visitedCatchBody,
+        ]);
+
+        // Wrap the previous tail in a new IF statement
+        chainTail = {
           type: "IfStatement",
           test: {
             type: "BinaryExpression",
@@ -925,41 +917,20 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
             left: catchVarId,
             right: filterType,
           },
-          consequent: ESTreeBuilder.blockStatement(c.body, [
-            {
-              type: "VariableDeclaration",
-              kind: "const",
-              declarations: [
-                {
-                  type: "VariableDeclarator",
-                  id: filterVar,
-                  init: catchVarId,
-                },
-              ],
-            },
-            catchBody,
-          ]),
-          alternate: null,
-        } as ESTree.IfStatement);
+          consequent: consequentBlock,
+          alternate: chainTail, // <--- This links the chain!
+        } as ESTree.IfStatement;
       }
 
-      const defaultCatch = node.catch.find((x) => !x.filter);
-      if (defaultCatch) {
-        catchStatements.push(this.visit(defaultCatch.body) as ESTree.Statement);
-      } else {
-        catchStatements.push({
-          type: "ThrowStatement",
-          argument: catchVarId,
-        } as ESTree.ThrowStatement);
-      }
-
+      // --- STEP C: Assign the head of the chain to the catch clause ---
       catchClause = {
         type: "CatchClause",
         param: catchVarId,
-        body: ESTreeBuilder.blockStatement(node, catchStatements),
+        body: ESTreeBuilder.blockStatement(node, [chainTail]),
       };
     }
 
+    // 3. Finally Block
     const finallyBlock = node.finally
       ? ESTreeBuilder.blockStatement(node.finally, [
           this.visit(node.finally) as ESTree.Statement,
@@ -1248,12 +1219,13 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     node: ast.CompositeIdentifierNode
   ): ESTree.MemberExpression {
     const parts = node.parts;
+    const startPartId = node.headless ? 1 : 0;
     let expr: ESTree.Expression = ESTreeBuilder.identifier(
       node,
-      encodeIdentifier(parts[0])
+      encodeIdentifier(parts[startPartId])
     );
 
-    for (let i = 1; i < parts.length; i++) {
+    for (let i = startPartId + 1; i < parts.length; i++) {
       expr = ESTreeBuilder.memberExpression(
         node,
         expr,
@@ -1334,6 +1306,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   visitList(node: ast.ListNode): ESTree.Expression | ESTree.Statement {
     const nodes = Array.isArray(node.nodes) ? node.nodes : [node.nodes];
     if (nodes.length === 0) return ESTreeBuilder.literal(node, null);
+    if (nodes.length === 1) return this.visit(nodes[0]);
 
     const hasPipelineOp = nodes.some(
       (n) =>
@@ -1352,23 +1325,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     if (isHeadIdentifier) {
       const headId = (head as any).id;
-
-      if (
-        head._type === "simple-identifier" &&
-        headId === "new" &&
-        rest.length > 0
-      ) {
-        const className = this.visit(rest[0]) as ESTree.Expression;
-        const args = rest
-          .slice(1)
-          .map((x) => this.visit(x) as ESTree.Expression);
-        return {
-          type: "NewExpression",
-          callee: className,
-          arguments: args,
-          loc: ESTreeBuilder.loc(node),
-        } as ESTree.NewExpression;
-      }
 
       if (head._type === "simple-identifier" && headId === "return") {
         if (rest.length === 0) {
@@ -1498,7 +1454,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   ): ESTree.AssignmentExpression {
     return {
       type: "AssignmentExpression",
-      operator: node.operator.replace(":", "") as any,
+      operator: node.operator.replace(":", "") as ESTree.AssignmentOperator,
       left: this.visit(node.assignable) as ESTree.Pattern,
       right: this.visit(node.value) as ESTree.Expression,
       loc: ESTreeBuilder.loc(node),
@@ -1530,16 +1486,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     };
   }
 
-  visitControlComment(node: ast.ControlCommentNode): ESTree.EmptyStatement {
-    return { type: "EmptyStatement" };
-  }
-
-  visitComment(node: ast.CommentNode): ESTree.EmptyStatement {
-    return { type: "EmptyStatement" };
+  visitComment(node: ast.CommentNode): ESTree.SimpleLiteral {
+    return { type: "Literal", value: null, raw: `/* ${node.comment} */` };
   }
 
   visitQuote(node: ast.QuoteNode): ESTree.Literal {
-    if (node.mode !== "default") return ESTreeBuilder.literal(node, null);
     const serialized = JSON.stringify(node, (key, val) =>
       ["_location", "_parent"].includes(key) ? undefined : val
     );
@@ -1554,7 +1505,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // Utilities
   // =========================================================================
 
-  private isStatement(node: any): boolean {
+  private isStatement(node: ESTree.Node): boolean {
     if (!node || typeof node !== "object") return false;
     const type = node.type;
     return (
@@ -1565,7 +1516,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     );
   }
 
-  private isExpression(node: any): boolean {
+  private isExpression(node: ESTree.Node): boolean {
     if (!node || typeof node !== "object") return false;
     const type = node.type;
     return (
@@ -1577,11 +1528,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     );
   }
 
-  private isReturnStatement(node: any): boolean {
+  private isReturnStatement(node: ESTree.Node): boolean {
     return node && typeof node === "object" && node.type === "ReturnStatement";
   }
 
-  private isControlStatement(node: any): boolean {
+  private isControlStatement(node: ESTree.Node): boolean {
     if (!node || typeof node !== "object") return false;
     const type = node.type;
     return (

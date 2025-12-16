@@ -16,12 +16,12 @@
 
             (if (! (is-intersecting-walls new-x new-y))
                 (
-                    (set! this.position.x new-x)
-                    (set! this.position.y new-y)
+                    (this.position.x := new-x)
+                    (this.position.y := new-y)
                 )
             )
 
-            (set! this.direction (+ this.direction this.rotation-speed))
+            (this.direction := (+ this.direction this.rotation-speed))
         )
     )
 

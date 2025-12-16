@@ -6,9 +6,7 @@ import { Command } from "commander";
 import { Context, LogLevel } from "../../compiler/Context";
 
 import { getCompilerOptions } from "../getCompilerOptions";
-import { logCompilationMessages } from "../logCompilationMessages";
-import { ASTNode } from "../../compiler/frontend/ast";
-import { DesugarAstVisitor, InlineImportsAstVisitor } from "../../compiler/transformation";
+import { LlangTransformerAstVisitor } from "../../compiler";
 
 export function parse(file: string, command: Command) {
   const options = getCompilerOptions(command);
@@ -16,33 +14,25 @@ export function parse(file: string, command: Command) {
 
   let { ast } = context.process(file);
 
-  const { errors } = logCompilationMessages(context);
-  
-  if (errors > 0) {
+  if (context.results.hasErrors) {
     return;
   }
 
-  const inlineImportsVisitor = new InlineImportsAstVisitor(context);
-  ast = inlineImportsVisitor.visitProgram(ast as any) as ASTNode;
-
-  const desugarVisitor = new DesugarAstVisitor(context);
-  ast = desugarVisitor.visitProgram(ast as any) as ASTNode;
+  // const llangTranspiler = new LlangTransformerAstVisitor(context);
+  // const output =llangTranspiler.visit(ast);
+  const output = JSON.stringify(
+    ast,
+    (k, v) => (k === "_location" || k === "_parent" ? undefined : v),
+    2
+  );
 
   if (options.stdout) {
-    const trimmedAst = JSON.parse(
-      JSON.stringify(
-        ast,
-        (k, v) => (k === "_location" || k === "_parent" ? undefined : v)
-      ));
+    const trimmedAst = JSON.parse(output);
     context.log(LogLevel.Info, trimmedAst);
   }
 
   fs.writeFileSync(
     file.replace(".lisp", ".ast.json"),
-    JSON.stringify(
-      ast,
-      (k, v) => (k === "_location" || k === "_parent" ? undefined : v),
-      2
-    )
+    output
   );
 }

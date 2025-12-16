@@ -130,7 +130,7 @@ function __ll_is_type(val, type) {
     "list": `const list = (...args) => [...args];`,
 
     // Call wrapper
-    "call": `const call = (f, args) => f(...args);`,
+    "call": `const call = (f, args) => !!args && Array.isArray(args) ? f(...args) : f();`,
     "eval": ``,
   };
 

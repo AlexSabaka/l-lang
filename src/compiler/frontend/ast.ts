@@ -63,7 +63,6 @@ export type NodeType =
   | "variable"
   | "function"
   | "parameter"
-  | "function-carrying"
   | "class"
   | "enum"
   | "enum-key"
@@ -112,7 +111,6 @@ export type NodeType =
   | "simple-identifier"
   | "composite-identifier"
   | "comment"
-  | "control-comment"
   ;
 
 export interface ASTNode<T extends NodeType = NodeType> {
@@ -131,7 +129,6 @@ export interface ListNode extends ASTNode<"list"> {
 }
 
 export interface QuoteNode extends ASTNode<"quote"> {
-  mode: string;
   nodes: ASTNode[];
 }
 
@@ -168,7 +165,7 @@ export interface ImportNode extends ASTNode<"import"> {
 }
 
 export interface ImportDefinition {
-  symbols: ImportExportAlias;
+  symbols: ImportExportAlias[];
   source: FileImportSource | NamespaceImportSource;
 }
 
@@ -251,23 +248,6 @@ export interface ParameterNode extends ASTNode<"parameter"> {
   name: IdentifierNode;
   modifiers: ModifierNode[];
   type: TypeNode;
-}
-
-export interface FunctionCarryingNode extends ASTNode<"function-carrying"> {
-  identifier: IdentifierNode;
-  sequence: FunctionCarryingApply[];
-}
-
-export type FunctionCarryingOperator =
-  | "carrying-left"
-  | "carrying-right"
-  ;
-
-export interface FunctionCarryingApply {
-  operator: FunctionCarryingOperator;
-  function: IdentifierNode;
-  memberFunction: boolean;
-  arguments: ASTNode[];
 }
 
 export interface ClassNode extends ASTNode<"class"> {
@@ -557,6 +537,7 @@ export interface SimpleIdentifierNode extends ASTNode<"simple-identifier"> {
 
 export interface CompositeIdentifierNode extends ASTNode<"composite-identifier"> {
   id: string;
+  headless: boolean;
   parts: string[];
 }
 
@@ -578,9 +559,3 @@ export type ControlCommentMode =
   | "enable"
   | "disable"
   ;
-
-export interface ControlCommentNode extends ASTNode<"control-comment"> {
-  command: ControlCommentCommand;
-  mode: ControlCommentMode;
-  options: string[];
-}

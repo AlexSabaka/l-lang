@@ -12,7 +12,15 @@ const { stdout } = process;
 export function compile(file: string, command: Command) {
   const options = getCompilerOptions(command);
   const context = new Context(file, options);
+
+  context.process(file);
+
+  if (context.results.hasErrors) {
+    return;
+  }
+
   const js = context.compile(file);
+
   if (js) {
     if (options.stdout) {
       console.log(chalk.strikethrough.dim(" ".repeat(stdout.columns)));
@@ -20,7 +28,7 @@ export function compile(file: string, command: Command) {
       console.log(chalk.strikethrough.dim(" ".repeat(stdout.columns)));
     }
     fs.writeFileSync(file.replace(".lisp", ".js"), js.code);
-    // fs.writeFileSync(file.replace(".lisp", ".js.map"), js.map.toString());
+    fs.writeFileSync(file.replace(".lisp", ".lisp.map"), js.map.toString());
   }
 }
 

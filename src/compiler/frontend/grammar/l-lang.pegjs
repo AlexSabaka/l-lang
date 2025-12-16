@@ -62,7 +62,6 @@ Expression "expression"
   / For
   / While
   / TryCatchFinally
-  / FunctionCarrying
   / Match
 
   // 
@@ -345,21 +344,6 @@ FunctionParameter
   = _ name:Identifier _ modifiers:(@Modifier _)* _ type:(LeftArrowKw _ @Type)? {
     return makeNode("parameter", { name, modifiers, type });
   }
-
-
-// Function carrying
-FunctionCarrying
-  = _ id:Identifier _ seq:(
-    _ operator:CarryingOperator _ fn:("."? Identifier) _ args:(!CarryingOperator @Expression)* _ {
-      return { operator, function: fn[1], memberFunction: !!fn[0], arguments: args };
-    }
-  )+ _ {
-    return makeNode("function-carrying", { identifier: id, sequence: seq });
-  }
-
-CarryingOperator
-  = "|>" { return "carrying-left"; }
-  / "<|" { return "carrying-right"; }
 
 
 // Class
@@ -795,9 +779,9 @@ SimpleIdentifier
   }
 
 CompositeIdentifier
-  = _ head:Ident tail:( "." @Ident )+ {
-    const id = `${head}.${tail.join(".")}`;
-    return makeNode("composite-identifier", { id, parts: [ head, ...tail ] });
+  = _ head:Ident? tail:( "." @Ident )+ {
+    const id = !!head ? `${head}.${tail.join(".")}` : tail.join(".");
+    return makeNode("composite-identifier", { id, headless: !head, parts: [ head, ...tail ] });
   }
 
 Ident

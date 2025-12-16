@@ -17,13 +17,13 @@
 
     (let numbers [1 2 3 4 5 6])
 
-    (fn reduce-rec [arr func initial] (return 
+    (fn reduce-rec [arr initial func] (return 
         (if (empty arr)
             initial
-            (reduce-rec (tail arr) func (func initial (head arr)))
+            (reduce-rec (tail arr) (func initial (head arr)) func)
         )
     ))
 
-    (let sum (reduce-rec numbers (fn [acc x] (+ acc x)) 0))
+    (let sum (reduce-rec numbers 0 (fn [acc x] (+ acc x))))
     (console.log '"Sum (should be 21): {(sum)}")
 )

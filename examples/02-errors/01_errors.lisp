@@ -3,16 +3,6 @@
         (throw "Something went wrong")
     ))
 
-    (try 
-        (risky-business)
-     catch error (
-        (console.log '"Caught error: {(error)}")
-     )
-     finally (
-        (console.log "Cleanup complete.")
-     )
-    )
-    
     ;; LL0002: Fraction denominator cannot be zero
     (let bad-math 1/0)
 

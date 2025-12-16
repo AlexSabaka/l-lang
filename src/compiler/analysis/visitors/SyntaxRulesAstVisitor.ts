@@ -93,19 +93,15 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
     checkRules(node, [r.ImportMustHaveSource], this.context);
   }
 
-  visitNumber(node: ast.NumberNode) {
+  visitFractionNumber(node: ast.FractionNumberNode) {
     checkRules(
       node,
-      [r.FractionHasZeroDenominator as Rule<ast.NumberNode>],
+      [r.FractionHasZeroDenominator],
       this.context
     );
   }
 
   visitComment(node: ast.CommentNode) {
     // Optionally, we could check for TODOs or FIXMEs
-  }
-
-  visitControlComment(node: ast.ControlCommentNode) {
-    // NOTE: Implement validation for control comments if needed
   }
 }

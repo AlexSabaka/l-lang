@@ -1,2 +1,4 @@
-Pipeline A Result (225): 225
-Pipeline B Result (225): 225
+Pipeline A Result (1): 1
+Pipeline B Result (9): 9
+Pipeline C1 Result (0.25): 0.25
+Pipeline C2 Result (4): 4 == 4

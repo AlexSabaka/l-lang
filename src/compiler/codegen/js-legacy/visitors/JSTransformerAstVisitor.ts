@@ -279,195 +279,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     });
   }
 
-  private transformPipelineList(nodes: ast.ASTNode[]) {
-    if (nodes.length < 3) return null; 
-
-    // 1. Detect Direction
-    // We check the first operator to decide flow.
-    // [A, <|, B] -> Backward
-    // [A, |>, B] -> Forward
-    const firstOpNode = nodes[1];
-    let isBackward = false;
-    
-    if (firstOpNode._type === 'simple-identifier') {
-        const id = (firstOpNode as ast.SimpleIdentifierNode).id;
-        if (id === '<|') isBackward = true;
-        else if (id !== '|>') return null; // Not a pipeline
-    } else {
-        return null; // Not a pipeline
-    }
-
-    // 2. Normalize to Forward Pipeline List: [Seed, |>, Step1, |>, Step2...]
-    let processingNodes: ast.ASTNode[] = [];
-
-    if (isBackward) {
-        // Reverse the flow!
-        // Original: [FuncA, <|, FuncB, <|, Seed]
-        // Target:   [Seed, |>, FuncB, |>, FuncA]
-        
-        // Seed is the last element
-        const seed = nodes[nodes.length - 1];
-        processingNodes.push(seed);
-
-        // Iterate backwards, skipping the operators (assuming they are all consistent)
-        // i points to the Function/Step
-        for (let i = nodes.length - 2; i >= 0; i -= 2) {
-             const func = nodes[i-1];
-             // We inject the forward operator
-             processingNodes.push({ _type: 'simple-identifier', id: '|>' } as any); 
-             processingNodes.push(func);
-        }
-    } else {
-        // Already forward, just use as is
-        processingNodes = nodes;
-    }
-
-    // 3. Build the Sequence
-    const seed = processingNodes[0];
-    const sequence: any[] = [];
-    
-    // Iterate in pairs: [ |>, Func ]
-    for (let i = 1; i < processingNodes.length; i += 2) {
-      // const opNode = processingNodes[i]; // We know it's |> now
-      const funcNode = processingNodes[i+1];
-
-      if (!funcNode) return null;
-
-      let functionNode: ast.ASTNode;
-      let args: ast.ASTNode[] = [];
-      let member = false;
-
-      // Extract Function and Arguments
-      if (funcNode._type === 'list') {
-          // Case: (add 10)
-          const listNodes = (funcNode as ast.ListNode).nodes;
-          if (listNodes.length > 0) {
-              functionNode = listNodes[0];
-              args = listNodes.slice(1);
-              
-              // Member check: (.toString 16)
-              if (functionNode._type === 'simple-identifier' && (functionNode as any).id.startsWith('.')) {
-                  member = true;
-                  const rawId = (functionNode as any).id.substring(1);
-                  functionNode = { ...functionNode, id: rawId } as any;
-              }
-          } else {
-              return null; // Empty list
-          }
-      } 
-      else if (funcNode._type === 'simple-identifier' || funcNode._type === 'composite-identifier') {
-          // Case: square
-          functionNode = funcNode;
-          
-          // Member check: .length
-          if (funcNode._type === 'simple-identifier' && (funcNode as any).id.startsWith('.')) {
-              member = true;
-              const rawId = (funcNode as any).id.substring(1);
-              functionNode = { ...funcNode, id: rawId } as any;
-          }
-      } else {
-          // Case: Literal/Expression (e.g. 5, "hello", etc.)
-          // This allows things like: 5 |> add (where RHS is identifier)
-          // OR in reversed backward pipe: square <| 5 -> 5 |> square
-          // Here 'square' calls '5'? No.
-          // In normalized list: [5, |>, add]. funcNode is 'add'.
-          // If we had: square <| 5. Normalized: [5, |>, square]. funcNode is 'square'.
-          // This handles generic nodes gracefully.
-          functionNode = funcNode;
-      }
-
-      sequence.push({
-          operator: 'carrying-left', // Always forward now
-          function: functionNode,
-          memberFunction: member,
-          arguments: args
-      });
-    }
-
-    // 4. Create Synthetic AST Node
-    const syntheticNode: ast.FunctionCarryingNode = {
-        _type: 'function-carrying',
-        _location: seed._location,
-        _parent: undefined,
-        identifier: seed as any, 
-        sequence: sequence
-    };
-
-    return this.visitFunctionCarrying(syntheticNode);
-  }
-
-  visitFunctionCarrying(node: ast.FunctionCarryingNode) {
-    // 1. Flatten Right-Associative Nesting (Fix for Greedy Grammar)
-    // We create a new flat sequence list by unrolling any nested pipelines found in arguments.
-    const flatSequence: any[] = [];
-    
-    // We start with the identifier from the top node
-    let current = this.visit(node.identifier);
-
-    // Helper to recursively extract steps from a nested chain
-    const collectSteps = (sequence: any[]) => {
-      for (const seq of sequence) {
-        // Check if the FIRST argument is actually a nested FunctionCarryingNode (The greedy parse artifact)
-        if (seq.arguments.length > 0 && 
-            seq.arguments[0]._type === 'function-carrying') {
-              
-          const nestedNode = seq.arguments[0] as ast.FunctionCarryingNode;
-          
-          // 1. The identifier of the nested node becomes the REAL argument for this step
-          //    Original: .apply (evt1 |> ...)
-          //    Fixed:    .apply evt1
-          const realArg = nestedNode.identifier;
-          
-          // 2. Push the fixed step to our flat list
-          flatSequence.push({
-            ...seq,
-            arguments: [realArg, ...seq.arguments.slice(1)]
-          });
-
-          // 3. Recursively collect the steps from the nested node
-          collectSteps(nestedNode.sequence);
-          
-        } else {
-          // No nesting, just add the step
-          flatSequence.push(seq);
-        }
-      }
-    };
-
-    // Initial collection
-    collectSteps(node.sequence);
-
-    // 2. Iterate the now-linear pipeline
-    for (const seq of flatSequence) {
-      // Use the function identifier as the source map anchor
-      const anchorNode = seq.function; 
-      const fn = this.visit(anchorNode);
-      const args = seq.arguments.map((a: ast.ASTNode) => this.visit(a));
-
-      if (seq.operator === "carrying-left") {
-        // Operator |> (Pipe Forward)
-        if (seq.memberFunction) {
-          // Logic: x |> .method a b  --> x.method(a, b)
-          current = createSourceNode(anchorNode, current, '.', fn, '(', ...joinArray(args, ','), ')');
-        } else {
-          // Logic: x |> func a b     --> func(x, a, b)
-          current = createSourceNode(anchorNode, fn, '(', ...joinArray([current, ...args], ','), ')');
-        }
-      } else {
-        // Operator <| (Pipe Backward)
-        if (seq.memberFunction) {
-          // Logic: .method a b <| x  --> x.method(a, b)
-          current = createSourceNode(anchorNode, current, '.', fn, '(', ...joinArray(args, ','), ')');
-        } else {
-          // Logic: func a b <| x     --> func(a, b, x)
-          current = createSourceNode(anchorNode, fn, '(', ...joinArray([...args, current], ','), ')');
-        }
-      }
-    }
-
-    return current;
-  }
-
   visitVariable(node: ast.VariableNode) {
     this.pushScope(ScopeType.variable);
     const name = this.visit(node.name);
@@ -775,20 +586,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     const nodes = Array.isArray(node.nodes) ? node.nodes : [node.nodes];
     if (nodes.length === 0) return createSourceNode(node, "null");
 
-    // --- FIX: Detect Infix Pipelines ---
-    // Scan for |> or <| symbols
-    const hasPipelineOp = nodes.some(n => 
-        n._type === 'simple-identifier' && ['|>', '<|'].includes((n as any).id)
-    );
-
-    if (hasPipelineOp) {
-        // Attempt to transform. If valid pipeline, return result.
-        const result = this.transformPipelineList(nodes);
-        if (result) return result;
-        // If malformed, fall through to normal processing
-    }
-    // -----------------------------------
-
     const [head, ...rest] = nodes;
     const isHeadIdentifier = head._type === "simple-identifier" || head._type === "composite-identifier";
 
@@ -902,12 +699,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return createSourceNode(node, `await `, this.visit(node.expression));
   }
   
-  visitControlComment(node: ast.ControlCommentNode) { return createSourceNode(node, ""); }
   visitComment(node: ast.CommentNode) { return createSourceNode(node, `// ${node.comment}\n`); }
   
   // Handling serialization of quotes for macros/AST access at runtime
   visitQuote(node: ast.QuoteNode) {
-    if (node.mode !== "default") return createSourceNode(node, "null");
     const serialized = JSON.stringify(node, (key, val) => 
       ["_location", "_parent"].includes(key) ? undefined : val
     );
@@ -933,7 +728,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // Ensure an external symbol is inlined into the current module. Returns
   // the unique identifier name that refers to the inlined symbol.
   private ensureSymbolInlined(symbol: SymbolEntry): string {
-    // console.log('ensureSymbolInlined for', (symbol.name as any).id ?? (symbol.name as any).name, 'type=', symbol.type);
     const src = (symbol.value && (symbol.value as any)._location && (symbol.value as any)._location.source) || "";
     const symName = (symbol.name as any).id ?? (symbol.name as any).name ?? String(Math.random());
     const key = `${src}::${symName}`;

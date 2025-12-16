@@ -15,6 +15,13 @@ export function evalFile(
   command: Command) {
   const options = getCompilerOptions(command);
   const context = new Context(file, options);
+  
+  context.process(file);
+
+  if (context.results.hasErrors) {
+    return;
+  }
+
   const js = context.compile(file);
 
   if (js) {

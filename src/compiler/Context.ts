@@ -1,11 +1,15 @@
 import path from "node:path";
 
-import { RuleValidationResultsCollection } from "./rules";
+import { RuleSeverity, RuleValidationResultsCollection } from "./rules";
 
 import {
+  BaseAstTreeWalker,
   BuildDependencyGraphAstVisitor,
   BuildSymbolTableAstVisitor,
+  DesugarAstVisitor,
+  InlineImportsAstVisitor,
   SyntaxRulesAstVisitor,
+  TreeShakeAstVisitor,
 } from "./index";
 
 import {
@@ -17,7 +21,8 @@ import { ASTNode } from "./frontend/ast";
 import { SymbolTable } from "./analysis/SymbolTable";
 import { AstProvider } from "./frontend/AstProvider";
 import { DependencyGraph } from "./analysis/DependencyGraph";
-import { formatLogMessage } from "./utils";
+import { formatLogMessage, getCaller } from "./utils";
+import chalk from "chalk";
 
 export const VERSION = "0.0.1";
 
@@ -61,6 +66,35 @@ export class PerformanceMetrics {
   }
 }
 
+export function logCompilationMessages(context: Context) {
+  const all = context.results.all.sort((a, b) => a.line - b.line);
+
+  const logLevel = {
+    [RuleSeverity.Error]: LogLevel.Error,
+    [RuleSeverity.Warning]: LogLevel.Warning,
+    [RuleSeverity.Message]: LogLevel.Info,
+    [RuleSeverity.None]: LogLevel.Info,
+  };
+
+  const { errors, warnings, messages } = all.reduce((p, c) => {
+    context.log(logLevel[c.severity], c.message, getCaller(6));
+    return {
+      errors: p.errors + (c.severity === RuleSeverity.Error ? 1 : 0),
+      warnings: p.warnings + (c.severity === RuleSeverity.Warning ? 1 : 0),
+      messages: p.messages + (c.severity === RuleSeverity.Message ? 1 : 0),
+    };
+  }, { errors: 0, warnings: 0, messages: 0 });
+
+  context.log(
+    LogLevel.Info,
+    `${chalk.red(`${errors} errors`)}, ${chalk.yellow(`${warnings} warnings`)}, ${chalk.blueBright(`${messages} messages`)}`,
+    getCaller(3)
+  );
+
+  return { errors, warnings, messages } as const;
+}
+
+
 export class Context {
   public mainModule: string;
   public options: CompilerOptions;
@@ -72,8 +106,6 @@ export class Context {
   public results: RuleValidationResultsCollection =
     new RuleValidationResultsCollection();
   
-  // Module cache: prevents loading the same module multiple times
-  // Map<AbsolutePath, ModuleData>
   private moduleCache: Map<string, { ast: ASTNode; symbols: SymbolTable }> = new Map();
 
   constructor(mainFile: string, options: CompilerOptions) {
@@ -123,12 +155,13 @@ export class Context {
       return cached;
     }
 
-    const ast = this.astProvider.getAst(fullPath) as ASTNode;
+    let ast = this.astProvider.getAst(fullPath) as ASTNode;
 
     const syntaxRulesVisitor = new SyntaxRulesAstVisitor(this);
     syntaxRulesVisitor.visit(ast as ASTNode);
 
     if (this.results.hasErrors) {
+      logCompilationMessages(this);
       return { ast: ast as ASTNode };
     }
 
@@ -140,6 +173,15 @@ export class Context {
 
     const moduleSymbols = buildSymbolTableVisitor.buildSymbolTable();
     this.symbolTable.join(moduleSymbols);
+
+    // const inlineImportsVisitor = new InlineImportsAstVisitor(this);
+    // ast = inlineImportsVisitor.visit(ast) as ASTNode;
+
+    const treeShakerVisitor = new TreeShakeAstVisitor(this);
+    ast = treeShakerVisitor.visit(ast) as ASTNode;
+
+    const desugarVisitor = new DesugarAstVisitor(this);
+    ast = desugarVisitor.visit(ast) as ASTNode;
 
     this.cacheModule(fullPath, ast as ASTNode, moduleSymbols);
   

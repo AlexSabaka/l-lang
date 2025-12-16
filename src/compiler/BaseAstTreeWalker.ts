@@ -3,43 +3,47 @@ import { BaseAstVisitor } from "./BaseAstVisitor";
 
 export class BaseAstTreeWalker extends BaseAstVisitor {
   visit(node: ast.ASTNode, defaultVisitor?: (node?: ast.ASTNode) => any): any {
-    // 1. Visit the node itself
-    const result = super.visit(node, defaultVisitor);
+    // 1. STOP if node is null/undefined
+    if (!node) return node;
 
-    // 2. STOP if the visitor returned a new node (replacement) 
-    // or if the node is null/undefined
-    if (!node) return;
+    const result = {
+      ...super.visit(node),
+      _type: node._type,
+      _location: { ...node._location },
+      _parent: node._parent,
+    } as any;
 
-    // 3. Robust Generic Walk
+    // 3. Generic Walk
     for (const key of ast.getNodeIterableKeys(node)) {
       const value = node[key];
 
       if (Array.isArray(value)) {
         // Recursively handle nested arrays and nodes
-        const processArray = (arr: any) => {
+        const mapArray = (arr: any) => {
           if (!Array.isArray(arr)) {
             // If it's not an array but an ASTNode, process it
             if (ast.isAstNode(arr)) {
-              this.visit(arr, defaultVisitor);
+              return this.visit(arr, defaultVisitor);
             }
-            return;
+            return arr;
           }
-          arr.forEach((item: any) => {
+          return arr.map((item: any): any => {
             if (Array.isArray(item)) {
               // Nested array, recurse
-              processArray(item);
+              return mapArray(item);
             } else if (item && ast.isAstNode(item)) {
               // It's an ASTNode, process it
-              this.visit(item, defaultVisitor);
+              return this.visit(item, defaultVisitor);
+            } else {
+              return item;
             }
           });
         };
-        processArray(value);
+        result[key] = mapArray(value);
       } else if (ast.isAstNode(value)) {
-        this.visit(value, defaultVisitor);
+        result[key] = this.visit(value, defaultVisitor);
       }
     }
-    
     return result;
   }
 }

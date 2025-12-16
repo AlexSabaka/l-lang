@@ -1,5 +1,6 @@
 import * as ast from "../../frontend/ast";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
+import { formatWithOptions } from "util";
 
 export class TreeShakeAstVisitor extends BaseAstTreeWalker {
   visit(node: ast.ASTNode, defaultVisitor?: (node?: ast.ASTNode) => any): ast.ASTNode {
@@ -12,7 +13,7 @@ export class TreeShakeAstVisitor extends BaseAstTreeWalker {
 
   visitList(node: ast.ListNode) {
     if (node.nodes.length === 1) {
-      return node.nodes[0];
+      return this.visit(node.nodes[0]);
     }
   }
 }
