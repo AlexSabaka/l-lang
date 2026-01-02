@@ -1,5 +1,5 @@
 (
-    (fn check-num [n] (
+    (fn check-num [n <- Int] (
         ;; Standard If/Else
         (if (> n 0)
             (console.log "Positive")
@@ -13,7 +13,7 @@
     (check-num 0)
 
     ;; When Expression (Should return value)
-    (fn get-status [is-online] (
+    (fn get-status [is-online <- Boolean] (
         (return (when is-online :then "User is Online"))
     ))
 

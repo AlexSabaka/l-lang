@@ -52,7 +52,22 @@ Refining the grammar and implementing critical OOP features needed for real-worl
     - Grammar consolidated in `l-lang.pegjs`
     - Reorganized examples into semantic folders
     
-*   **Objective D:** Implement a lightweight Runtime Shim (Pattern matching logic, Type checks) to keep generated code clean. ⏳
+*   **Objective D:** Implement a lightweight Runtime Shim (Pattern matching logic, Type checks) to keep generated code clean. ✅
+    - Created runtime helpers for pattern matching (`helpers/runtime/match.ts`)
+    - Centralized type checking in `helpers/runtime/types.ts`
+    - Runtime shim generated at compile-time and prepends to output
+    - Benefit: Generated code is cleaner; complex patterns don't bloat output
+    
+*   **Objective E:** Fix Type Inference System for proper parameter and expression type handling. ✅ (NEW - Priority 4.5)
+    - **Fixed Critical Scope Isolation Bug:** Function parameters were becoming "Unknown" when referenced in bodies
+      - Root cause: BaseAstTreeWalker was performing double-traversal (once in function scope, once after exitScope)
+      - Solution: Override visit() in type passes to prevent auto-recursive traversal
+    - **Added Map Type Inference:** Map literals and indexer operations now properly typed
+      - Implemented `case "map"` to infer Map<K, V> types from key-value pairs
+      - Implemented `case "indexer"` to properly type array[i] and map[key] expressions
+    - **Extended TypeEnvironment:** Added map type support with keyType and valueType fields
+    - **Applied fixes to validators:** TypeCheckingValidatorAstVisitor also updated for proper scope management
+    - Result: All three test cases (02_fn_types, 06_flow_control, 07_memoization) now pass without type errors
 
 ## 🏗️ Phase 2.5: Compiler Architecture Refactor (v0.3.5)
 **Theme:** "Separate concerns, simplify generation."

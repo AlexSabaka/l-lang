@@ -1,7 +1,7 @@
 (
     (defclass BankAccount
         (let :ctor balance <- Number)
-        (let :ctor history <- List<{ :type -> String :amount -> Number }>)
+        (let :ctor history <- Any)
 
         (fn apply [event] -> BankAccount (
             (match event {

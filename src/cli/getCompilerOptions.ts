@@ -10,19 +10,56 @@ function createFileLogger(file: string) {
 export function getCompilerOptions(
   command: Command
 ): CompilerOptions {
-  const opts = command.opts()
-  const logLevel = opts.logLevel ?? opts.verbose
-      ? LogLevel.Verbose
-      : opts.debug
-      ? LogLevel.Debug
-      : opts.silent
-      ? LogLevel.Error
-    : LogLevel.Warning;
+  const opts = command.opts();
+
+  // Determine minimum log level. If --log-level is provided, parse it (case-insensitive).
+  // Otherwise, fall back to flags (--verbose, --debug, --silent) and then to Warning.
+  let logLevel: LogLevel = LogLevel.Warning;
+
+  if (opts.logLevel) {
+    const val = String(opts.logLevel).toLowerCase();
+    switch (val) {
+      case "verbose":
+      case "v":
+        logLevel = LogLevel.Verbose;
+        break;
+      case "debug":
+      case "d":
+        logLevel = LogLevel.Debug;
+        break;
+      case "info":
+      case "i":
+        logLevel = LogLevel.Info;
+        break;
+      case "warning":
+      case "warn":
+      case "w":
+        logLevel = LogLevel.Warning;
+        break;
+      case "error":
+      case "e":
+      case "silent":
+        logLevel = LogLevel.Error;
+        break;
+      default:
+        // Unknown value: warn and default to Warning
+        // Note: Using console.warn directly because logger may not yet be configured.
+        console.warn(`Unknown log level '${opts.logLevel}', defaulting to 'Warning'`);
+        logLevel = LogLevel.Warning;
+    }
+  } else if (opts.verbose) {
+    logLevel = LogLevel.Verbose;
+  } else if (opts.debug) {
+    logLevel = LogLevel.Debug;
+  } else if (opts.silent) {
+    logLevel = LogLevel.Error;
+  }
+
   return {
     minimumLogLevel: logLevel,
     logger: opts.logFile ? createFileLogger(opts.logFile) : console.log,
     legacy: !!opts.legacyJs,
-    includeRuntimeShim: false,
-    stdout: false,
+    includeRuntimeShim: !!opts.runtimeShim,
+    stdout: !!opts.outputJs,
   };
 }

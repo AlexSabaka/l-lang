@@ -3,14 +3,14 @@
     (fn add [a b] (return (+ a b)))
 
     ;; 2. Recursive Function (Factorial)
-    (fn factorial [n] (
+    (fn factorial [n <- Int] -> Int (
         (if (<= n 1)
             (return 1)
             (return (* n (factorial (- n 1)))))
     ))
 
     ;; 3. When Statement (One-liner logic)
-    (fn check-status [code] (
+    (fn check-status [code <- Int] (
         (return (when (== code 200) :then "OK"))
     ))
 

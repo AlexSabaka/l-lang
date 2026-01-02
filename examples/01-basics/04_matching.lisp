@@ -1,5 +1,5 @@
 (
-    (fn describe-age [age] (
+    (fn describe-age [age <- Int] (
         (match age {
             0  => "Unborn"
             18 => "Legal Adult"
@@ -8,7 +8,7 @@
         })
     ))
 
-    (fn analyze-vector [vec] (
+    (fn analyze-vector [vec <- Int[]] (
         (match vec {
             [1 2 3] => "Basic count"
             [1 _ _] => "Starts with one"

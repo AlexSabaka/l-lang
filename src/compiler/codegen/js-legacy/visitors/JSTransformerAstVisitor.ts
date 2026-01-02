@@ -25,8 +25,10 @@ function findIdentifiersToDefine(node: ast.MatchNode): string[] {
   const walkPattern = (p: ast.PatternNode): boolean => {
     switch (p._type) {
       case "identifier-pattern":
-        if (!RuntimeProvider.isRuntimeReference(p.id.id)) {
-          predefinedVariables.push(encodeIdentifier(p.id.id));
+        const id = p.id.id;
+        // Skip enum references (e.g., HttpMethod:GET) and runtime references
+        if (!id.includes(":") && !RuntimeProvider.isRuntimeReference(id)) {
+          predefinedVariables.push(encodeIdentifier(id));
         }
         return true;
       case "map-pattern":

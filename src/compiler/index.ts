@@ -15,7 +15,9 @@ export * from "./analysis/visitors/SyntaxRulesAstVisitor";
 
 export * from "./transformation/visitors/DesugarAstVisitor";
 export * from "./transformation/visitors/InlineImportsAstVisitor";
-export * from "./transformation/visitors/InferTypesAstVisitor";
 export * from "./transformation/visitors/TreeShakeAstVisitor";
+
+export * from "./types/visitors/InferTypesAstVisitor";
+export * from "./types/visitors/TypeCheckingValidatorAstVisitor";
 
 export * from "./codegen";

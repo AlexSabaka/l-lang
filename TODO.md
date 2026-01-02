@@ -166,9 +166,54 @@ Important: **Commit often**
 - [ ] **Unit Tests**
     - [ ] Create a test harness that runs a `.txt` file and asserts the output JS matches a snapshot.
 
+## 🔍 Priority 4.5: Type Inference System (COMPLETED) ✅
+*Context: Fixing critical bugs in parameter binding and type inference for complex expressions.*
+**STATUS: COMPLETE** ✅
+
+- [x] **Fix Parameter Binding Scope Isolation (CRITICAL)**
+    - [x] Override visit() in CollectTypesPass and InferAndCheckPass
+    - [x] Prevent BaseAstTreeWalker double-traversal that was causing scope mismatch
+    - [x] Add proper exitScope() calls in visitProgram()
+    - [x] Result: Function parameters now resolve correctly in function bodies
+    - **Commit:** Type inference scope fixes
+
+- [x] **Implement Map Type Inference**
+    - [x] Added `case "map"` to inferExpressionType()
+    - [x] Infers key and value types from key-value pairs
+    - [x] Returns Map<K, V> type using TypeEnvironment.map() helper
+    - **Commit:** Map type inference
+
+- [x] **Implement Indexer Type Inference**
+    - [x] Added `case "indexer"` to inferExpressionType()
+    - [x] Properly handles array[i] → element type
+    - [x] Properly handles map[key] → value type
+    - [x] Works with both array representations (generics[0] and inner field)
+    - **Commit:** Indexer type inference
+
+- [x] **Extend TypeEnvironment for Map Types**
+    - [x] Added "map" to InferredType.kind union
+    - [x] Added keyType, valueType, and inner fields to InferredType
+    - [x] Implemented TypeEnvironment.map() static helper method
+    - **Commit:** TypeEnvironment map type support
+
+- [x] **Fix TypeCheckingValidatorAstVisitor Scope Management**
+    - [x] Applied same visit() override to prevent double-traversal
+    - [x] Added map and indexer type inference cases
+    - **Commit:** Validator scope and type inference fixes
+
+- [x] **Testing & Validation**
+    - [x] All three test examples pass without type errors
+    - [x] 02_fn_types.lisp - Type annotations and parameter resolution ✅
+    - [x] 06_flow_control.lisp - Flow control with typed parameters ✅
+    - [x] 07_memoization.lisp - Map literals and indexer operations ✅
+
 ---
 
 ## 🧠 Backlog (For later)
-- [ ] Type Inference Visitor (The hard part).
+- [ ] **Advanced Type Inference**
+    - [ ] Implicit Return Type Inference - Infer return types from function body expressions
+    - [ ] Bidirectional Type Inference - Propagate expected types from call context to narrow Unknown types
+    - [ ] Better error messages with full context
+    - [ ] Full generic type support in type inference
 - [ ] LLVM IR Generation.
 - [ ] Self-hosting (Writing the compiler in l-lang).

@@ -1,10 +1,10 @@
 (
-    (fn get-grade [score]
+    (fn get-grade [score <- Int]
         (cond
-            ((>= score 90) "A")
-            ((>= score 80) "B")
-            ((>= score 70) "C")
-            (true          "F") ;; Default case
+            ((>= score 90) (return "A"))
+            ((>= score 80) (return "B"))
+            ((>= score 70) (return "C"))
+            (true          (return "F")) ;; Default case
         )
     )
 

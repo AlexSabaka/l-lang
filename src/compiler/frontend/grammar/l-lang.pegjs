@@ -757,14 +757,17 @@ FractionNumber
     return makeNode("fraction-number", { match: text().trim(), numerator: parseInt(a), denominator: parseInt(b) });
   }
 
+FloatNumber
+  = match:$([+-]? DigitSequence "." [0-9]*) {
+    return makeNode("float-number", { match, value: parseFloat(match) });
+  }
+  / match:$([+-]? DigitSequence ("." [0-9]+)? ("e" [+-]? [0-9]+)) {
+    return makeNode("float-number", { match, value: parseFloat(match) });
+  }
+
 IntegerNumber
   = match:$([+-]? DigitSequence) {
     return makeNode("integer-number", { match, value: parseInt(match) });
-  }
-
-FloatNumber
-  = match:$([+-]? DigitSequence ("." [0-9]+)? ("e" [+-]? [0-9]+)?) {
-    return makeNode("float-number", { match, value: parseFloat(match) });
   }
 
 

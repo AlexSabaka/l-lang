@@ -1,5 +1,5 @@
 (
-    (fn fib-base [n]
+    (fn fib-base [n <- Int] -> Int
         ;; Base cases
         (if (<= n 1) (return n))
 
@@ -13,7 +13,7 @@
         ;; 'memo' is captured in the closure
         (let memo {})
 
-        (fn fib-inner [n]
+        (fn fib-inner [n <- Int] -> Int
             ;; Check cache
             (if (!= memo[n] undefined)
                 (return memo[n])
@@ -29,7 +29,7 @@
         (return fib-inner)
     )
 
-    (let fib (make-fib call))
+    (let fib (make-fib))
 
     (console.log '"Fib 10: {(fib 10)}") ;; Calc
     (console.log '"Fib 33: {(fib 33)}") ;; Calc

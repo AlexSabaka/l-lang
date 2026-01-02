@@ -1,8 +1,8 @@
 (
     ;; Helper functions
-    (fn add [x <- Number y <- Number] -> Number (return (+ x y)))
-    (fn sub [x <- Number y <- Number] -> Number (return (- x y)))
-    (fn square [x] (return (* x x)))
+    (fn add [x <- Real y <- Real] -> Real (return (+ x y)))
+    (fn sub [x <- Real y <- Real] -> Real (return (- x y)))
+    (fn square [x <- Real] -> Real (return (* x x)))
 
     ;; 1. Left Carrying (Forward Pipe, Left Side Argument Placing)
     ;; 5 -> sub(7) -> square() -> result

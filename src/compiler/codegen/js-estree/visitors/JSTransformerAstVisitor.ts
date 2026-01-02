@@ -23,8 +23,10 @@ function findIdentifiersToDefine(node: ast.MatchNode): string[] {
   const walkPattern = (p: ast.PatternNode): boolean => {
     switch (p._type) {
       case "identifier-pattern":
-        if (!RuntimeProvider.isRuntimeReference(p.id.id)) {
-          predefinedVariables.push(encodeIdentifier(p.id.id));
+        const id = p.id.id;
+        // Skip enum references (e.g., HttpMethod:GET) and runtime references
+        if (!id.includes(":") && !RuntimeProvider.isRuntimeReference(id)) {
+          predefinedVariables.push(encodeIdentifier(id));
         }
         return true;
       case "map-pattern":
@@ -345,7 +347,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           ? (this.visit(keyNode.value) as ESTree.Expression)
           : ESTreeBuilder.literal(keyNode, keyIndex);
 
-      this.enumKeys[key] = value.toString();
+      // Store the actual value for pattern matching, not the stringified ESTree node
+      const enumValue = (value as any).value !== undefined ? (value as any).value : value;
+      this.enumKeys[key] = enumValue;
 
       declarations.push({
         type: "VariableDeclarator",
@@ -367,6 +371,22 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       type: "EmptyStatement",
       loc: ESTreeBuilder.loc(node),
     }));
+  }
+
+  visitExport(node: ast.ExportNode): ESTree.EmptyStatement {
+    // Export statements are handled at the module system level and don't generate code
+    return {
+      type: "EmptyStatement",
+      loc: ESTreeBuilder.loc(node),
+    };
+  }
+
+  visitImport(node: ast.ImportNode): ESTree.EmptyStatement {
+    // Import statements are handled during compilation and inlined; they don't generate code
+    return {
+      type: "EmptyStatement",
+      loc: ESTreeBuilder.loc(node),
+    };
   }
 
   // =========================================================================
@@ -481,7 +501,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           };
         }
 
-        console.log(this.context.astProvider.getSource(node._location));
+        this.context.log(LogLevel.Debug, this.context.astProvider.getSource(node._location));
         return funcExpr as any;
       }
     });
@@ -492,7 +512,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   ): ESTree.Expression | null {
     if (nodes.length < 3) return null;
 
-    console.log("Hit the pipeline in the transpiler");
+    this.context.log(LogLevel.Debug, "Hit the pipeline in the transpiler");
 
     let processingNodes: ast.ASTNode[] = nodes;
 
@@ -508,7 +528,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       }
 
       const funcNode = processingNodes[i + 1];
-      console.log("!!! Dir = ", id, "!!! funcType = ", funcNode._type);
+      this.context.log(LogLevel.Debug, `!!! Dir = ${id} !!! funcType = ${funcNode._type}`);
       if (!funcNode) return null;
 
       let functionNode: ast.ASTNode;
@@ -538,7 +558,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       ) {
         functionNode = funcNode;
         
-        console.log("!!! ", (funcNode as ast.CompositeIdentifierNode).id);
+        this.context.log(LogLevel.Debug, `!!! ${(funcNode as ast.CompositeIdentifierNode).id}`);
         if ((funcNode as ast.CompositeIdentifierNode).headless) {
           member = true;
           const rawId = (funcNode as any).id;
@@ -1306,7 +1326,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   visitList(node: ast.ListNode): ESTree.Expression | ESTree.Statement {
     const nodes = Array.isArray(node.nodes) ? node.nodes : [node.nodes];
     if (nodes.length === 0) return ESTreeBuilder.literal(node, null);
-    if (nodes.length === 1) return this.visit(nodes[0]);
+    
+    // Special case: single element that's NOT an identifier is just wrapped in parens (return it as-is)
+    if (nodes.length === 1 && nodes[0]._type !== "simple-identifier" && nodes[0]._type !== "composite-identifier") {
+      return this.visit(nodes[0]);
+    }
 
     const hasPipelineOp = nodes.some(
       (n) =>
@@ -1498,6 +1522,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   visitNull(node: ast.NullNode) {
+    // If the keyword is "undefined", emit undefined identifier instead of null literal
+    if (node.keyword && node.keyword.toLowerCase() === "undefined") {
+      return ESTreeBuilder.identifier(node, "undefined");
+    }
     return ESTreeBuilder.literal(node, null);
   }
 

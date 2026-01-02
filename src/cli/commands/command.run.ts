@@ -25,12 +25,7 @@ export function evalFile(
   const js = context.compile(file);
 
   if (js) {
-    if (options.minimumLogLevel <= LogLevel.Debug) {
-      console.log(chalk.strikethrough.dim(" ".repeat(stdout.columns)));
-      console.log(highlight(js.code, { language: "javascript" }));
-      console.log(chalk.strikethrough.dim(" ".repeat(stdout.columns)));
-    }
-
+    context.log(LogLevel.Info, chalk.strikethrough.dim(" ".repeat(stdout.columns)));
     evalInScope(js.code);
   }
 }

@@ -1,2 +1,3 @@
 is-null nil (should be true): true
+is-null 42 (should be false): false
 2nd element is (should be 3): 3

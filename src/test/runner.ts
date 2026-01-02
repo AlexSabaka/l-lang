@@ -63,13 +63,12 @@ walkDir(EXAMPLES_DIR, (filePath) => {
     const actual = normalizeOutput(stdout);
     const normalizedExpected = normalizeOutput(expected);
 
-    // Filter out Compiler Info logs if they are polluting stdout
+    // Filter out Compiler Info/Debug/Warn logs if they are polluting stdout
     // (A better way is to make the compiler write logs to stderr and program output to stdout)
-    // For now, let's assume actual contains just the program output or we clean it.
-    // Hack: remove lines starting with "Info" or "Debug"
+    // Match lines with format: "LogLevel    from caller: message"
     const cleanActual = actual
         .split('\n')
-        .filter(line => !line.match(/^(Info|Debug|Warn)\s+/))
+        // .filter(line => !line.match(/^(Info|Debug|Warn|Verbose|Error)\s+from\s+(!=evalFile)/))
         .join('\n')
         .trim();
 

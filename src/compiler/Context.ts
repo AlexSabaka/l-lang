@@ -10,6 +10,8 @@ import {
   InlineImportsAstVisitor,
   SyntaxRulesAstVisitor,
   TreeShakeAstVisitor,
+  InferTypesAstVisitor,
+  TypeCheckingValidatorAstVisitor,
 } from "./index";
 
 import {
@@ -182,6 +184,21 @@ export class Context {
 
     const desugarVisitor = new DesugarAstVisitor(this);
     ast = desugarVisitor.visit(ast) as ASTNode;
+
+    // Type Inference and Checking
+    const inferTypesVisitor = new InferTypesAstVisitor(this, moduleSymbols);
+    inferTypesVisitor.inferTypes(ast);
+    const typeEnv = inferTypesVisitor.getTypeEnvironment();
+
+    if (typeEnv) {
+      const typeCheckingValidator = new TypeCheckingValidatorAstVisitor(this, typeEnv, moduleSymbols);
+      typeCheckingValidator.visit(ast);
+    }
+
+    if (this.results.hasErrors) {
+      logCompilationMessages(this);
+      return { ast: ast as ASTNode };
+    }
 
     this.cacheModule(fullPath, ast as ASTNode, moduleSymbols);
   

@@ -48,10 +48,11 @@ export function repl(command: Command) {
   stdin.on("data", when([3], () => process.exit(0)));
   stdin.on("data", when([4], () => process.exit(0)));
 
-  stdin.on("data", when([27, 91, 65], () => console.log("up")));
-  stdin.on("data", when([27, 91, 66], () => console.log("down")));
-  stdin.on("data", when([27, 91, 67], () => console.log("right")));
-  stdin.on("data", when([27, 91, 68], () => console.log("left")));
+  // Arrow-key debug logging removed
+  // stdin.on("data", when([27, 91, 65], () => console.log("up")));
+  // stdin.on("data", when([27, 91, 66], () => console.log("down")));
+  // stdin.on("data", when([27, 91, 67], () => console.log("right")));
+  // stdin.on("data", when([27, 91, 68], () => console.log("left")));
 
   stdin.on("data", when([127], () => {
     input = input.slice(0, -1);
@@ -67,7 +68,7 @@ export function repl(command: Command) {
 
   stdin.on("data", when([13], () => {
     stdout.write("\n");
-    console.log(input);
+    stdout.write(input + "\n");
 
     const balance = checkBracketsBalance(input);
     if (typeof balance === "number") {

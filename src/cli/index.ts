@@ -20,6 +20,8 @@ program
   .option("-d, --debug", "debug mode")
   .option("-s, --silent", "silent mode")
   .option("--legacy-js", "use legacy JS transpiler")
+  .option("--output-js", "output compiled JavaScript to stdout")
+  .option("--runtime-shim", "include runtime shim in compiled output")
   .version(COMPILER_VERSION);
 
 program

@@ -26,7 +26,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     if (hasPipelineOp && node.nodes.length > 2) {
       const result = this.transformPipelineList(node);
       if (result) {
-        console.log("Ended desugaring with:", this.dump(result!));
+        // this.context.log(LogLevel.Debug, `Ended desugaring with: ${this.dump(result!)}`);
         return result;
       }
     }
@@ -40,7 +40,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
   }
 
   private transformPipelineList(node: ast.ListNode): ast.ListNode {
-    console.log("!!!--- Hit pipeline in the desugar");
+    this.context.log(LogLevel.Debug, "!!!--- Hit pipeline in the desugar");
 
     let processingNodes: ast.ASTNode[] = node.nodes;
 
@@ -57,7 +57,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       }
 
       const funcNode = processingNodes[i + 1];
-      console.log("!!!--- Dir = ", id, "!!!--- funcType = ", funcNode._type);
+      this.context.log(LogLevel.Debug, `!!!--- Dir = ${id} !!!--- funcType = ${funcNode._type}`);
 
       let functionNode: ast.ASTNode;
       let args: ast.ASTNode[] = [];
@@ -69,7 +69,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
           functionNode = listNodes[0];
           args = listNodes.slice(1);
 
-          console.log("--- Desugaring function node:", this.dump(functionNode));
+          this.context.log(LogLevel.Debug, `--- Desugaring function node: ${this.dump(functionNode)}`);
 
           if (
             functionNode._type === "composite-identifier" &&
@@ -81,7 +81,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
           }
         } else {
           // TODO: Log
-          console.log("--- Hit early return from desugar for node: ", this.dump(node));
+          this.context.log(LogLevel.Debug, `--- Hit early return from desugar for node: ${this.dump(node)}`);
           return node;
         }
       } else if (
@@ -90,7 +90,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       ) {
         functionNode = funcNode;
 
-        console.log("!!!--- ", (funcNode as ast.CompositeIdentifierNode).id);
+        this.context.log(LogLevel.Debug, `!!!--- ${(funcNode as ast.CompositeIdentifierNode).id}`);
         if ((funcNode as ast.CompositeIdentifierNode).headless) {
           member = true;
           const rawId = (funcNode as any).id;
@@ -103,7 +103,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       const fn = this.visit(functionNode) as ast.ASTNode;
       const argExprs = args.map((a) => this.visit(a) as ast.ASTNode);
 
-      console.log("!!!--- FN:", fn, " ARGS:", argExprs);
+      this.context.log(LogLevel.Debug, `!!!--- FN: ${(fn as any).name} ARGS: ${argExprs.map(a => (a as any).name).join(", ")}`);
 
       if (member) {
         current = {
@@ -137,7 +137,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       }
     }
 
-    console.log("complete desugar");
+    this.context.log(LogLevel.Debug, "complete desugar");
     return current!;
   }
 
