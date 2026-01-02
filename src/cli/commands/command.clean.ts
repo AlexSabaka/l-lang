@@ -43,7 +43,11 @@ export function clean(folder: string, command: Command) {
     const filesToDelete = [
       `${basePath}.js`,
       `${basePath}.lisp.map`,
-      `${basePath}.ast.json`,
+      `${basePath}.parsed.json`,
+      `${basePath}.symbols.json`,
+      `${basePath}.syntax.json`,
+      `${basePath}.desugar.json`,
+      `${basePath}.types.json`,
     ];
 
     filesToDelete.forEach((fileToDelete) => {

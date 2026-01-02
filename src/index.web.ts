@@ -21,13 +21,14 @@ document.onload = () => {
     const options: CompilerOptions = {
       minimumLogLevel: LogLevel.Error,
       includeRuntimeShim: true,
-      legacy: false,
+      language: "js",
+      stage: "codegen",
       stdout: true,
     };
     const context = new Context(file.name, options);
-    const js = context.compile(file.name);
+    const js = context.process(file.name);
 
-    evalInScope(js.code, window);
+    evalInScope(js.code!, window);
   }
 
   scripts.forEach((script) => {

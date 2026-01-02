@@ -38,14 +38,33 @@ export function isVisibilityModifier(modifier: ast.ModifierNode["modifier"]): mo
   return [ "public", "private", "protected", "internal" ].includes(modifier);
 }
 
+/**
+ * Inferred type information for a symbol
+ */
+export interface InferredType {
+  kind: "primitive" | "class" | "interface" | "generic" | "function" | "union" | "unknown" | "map";
+  name: string;
+  generics?: InferredType[];
+  params?: InferredType[];  // For function types
+  returns?: InferredType;   // For function types
+  alternatives?: InferredType[];  // For union types
+  keyType?: InferredType;   // For map types
+  valueType?: InferredType; // For map types
+  inner?: InferredType;     // For array element type (alternative to generics[0])
+  isArray?: boolean;
+  nullable?: boolean;
+}
+
 export interface SymbolEntry {
   name: ast.IdentifierNode | ast.TypeNameNode;
-  type: ast.NodeType;
+  nodeType: ast.NodeType;  // The AST node type (variable, function, class, etc)
   scope: Scope;
   value: ast.ASTNode;
   mutability: boolean;
   exportName: ast.IdentifierNode | ast.TypeNameNode | undefined;
   visibility: SymbolVisibility;
+  // Type information integrated into symbol entry
+  inferredType?: InferredType;  // The inferred or declared type of this symbol
 }
 
 export interface Scope {
@@ -67,8 +86,21 @@ export class SymbolTable {
     }
   }
 
-  resolveSymbol(name: ast.IdentifierNode | ast.TypeNameNode): SymbolEntry | undefined {
-    const symbolName = name.name ?? name.id;
+  /**
+   * Bind a type to an existing symbol
+   */
+  bindType(name: string, type: InferredType): void {
+    const symbol = this.resolveSymbol(name);
+    if (symbol) {
+      symbol.inferredType = type;
+    }
+  }
+
+  /**
+   * Resolve a symbol by identifier or string name
+   */
+  resolveSymbol(name: ast.IdentifierNode | ast.TypeNameNode | string): SymbolEntry | undefined {
+    const symbolName = typeof name === "string" ? name : (name.name ?? name.id);
     
     // Check cache first for O(1) lookup
     if (this.cacheValid && this.symbolCache.has(symbolName)) {
@@ -235,12 +267,13 @@ export class SymbolTableBuilder {
 
     this.active.table.set(node.name?.id ?? node.name?.name, {
       name: node.name,
-      type: node._type,
+      nodeType: node._type,
       scope: this.active,
       value: node,
       mutability: node.mutable ?? false,
       exportName: undefined,
       visibility: node.modifiers.filter(x => isVisibilityModifier(x.modifier)).at(0)?.modifier as SymbolVisibility,
+      // inferredType will be populated during type inference phase
     });
   }
 
@@ -264,5 +297,12 @@ export class SymbolTableBuilder {
       current = current.parent;
     }
     return symbol;
+  }
+
+  /**
+   * Get the root scope
+   */
+  getRoot(): Scope | undefined {
+    return this.root;
   }
 }

@@ -58,8 +58,9 @@ export function getCompilerOptions(
   return {
     minimumLogLevel: logLevel,
     logger: opts.logFile ? createFileLogger(opts.logFile) : console.log,
-    legacy: !!opts.legacyJs,
+    language: opts.language || "js",
+    stage: opts.stage || "codegen",
     includeRuntimeShim: !!opts.runtimeShim,
-    stdout: !!opts.outputJs,
+    stdout: !!opts.stdout,
   };
 }

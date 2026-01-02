@@ -1,7 +1,8 @@
 import * as ast from "../../frontend/ast";
 import { LogLevel, Context } from "../../Context";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
-import { TypeEnvironment, InferredType } from "../TypeEnvironment";
+import { TypeEnvironment } from "../TypeEnvironment";
+import { InferredType } from "../../analysis/SymbolTable";
 import { TypeChecker } from "../TypeChecker";
 import { SymbolTable } from "../../analysis";
 import { createRule, RuleSeverity } from "../../rules";

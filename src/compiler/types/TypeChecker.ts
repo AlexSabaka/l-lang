@@ -1,4 +1,4 @@
-import { InferredType } from "./TypeEnvironment";
+import { InferredType } from "../analysis/SymbolTable";
 
 /**
  * TypeChecker - Handles type compatibility and promotion rules
@@ -37,12 +37,12 @@ export class TypeChecker {
 
     // Union types: T is assignable to T1 | T2 if T is assignable to any alternative
     if (target.kind === "union") {
-      return target.alternatives?.some(alt => this.isAssignable(source, alt)) ?? false;
+      return target.alternatives?.some((alt: InferredType) => this.isAssignable(source, alt)) ?? false;
     }
 
     // Source union: T1 | T2 is assignable to T if all alternatives are assignable
     if (source.kind === "union") {
-      return source.alternatives?.every(alt => this.isAssignable(alt, target)) ?? false;
+      return source.alternatives?.every((alt: InferredType) => this.isAssignable(alt, target)) ?? false;
     }
 
     // TODO: Interface implementation checking
@@ -87,7 +87,7 @@ export class TypeChecker {
       if (a.generics.length !== b.generics.length) {
         return false;
       }
-      return a.generics.every((g, i) => this.typesEqual(g, b.generics![i]));
+      return a.generics.every((g: InferredType, i: number) => this.typesEqual(g, b.generics![i]));
     }
 
     // Check function signatures
@@ -98,7 +98,7 @@ export class TypeChecker {
       if (a.params!.length !== b.params!.length) {
         return false;
       }
-      return a.params!.every((p, i) => this.typesEqual(p, b.params![i]));
+      return a.params!.every((p: InferredType, i: number) => this.typesEqual(p, b.params![i]));
     }
 
     return true;

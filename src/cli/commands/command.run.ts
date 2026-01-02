@@ -15,17 +15,19 @@ export function evalFile(
   command: Command) {
   const options = getCompilerOptions(command);
   const context = new Context(file, options);
-  
-  context.process(file);
+
+  const { code } = context.process(file, "codegen");
 
   if (context.results.hasErrors) {
     return;
   }
 
-  const js = context.compile(file);
-
-  if (js) {
-    context.log(LogLevel.Info, chalk.strikethrough.dim(" ".repeat(stdout.columns)));
-    evalInScope(js.code);
+  if (code) {
+    if (options.stdout) {
+      context.log(LogLevel.Info, chalk.strikethrough.dim(" ".repeat(stdout.columns)));
+      console.log(highlight(code, { language: "javascript" }));
+      context.log(LogLevel.Info, chalk.strikethrough.dim(" ".repeat(stdout.columns)));
+    }
+    evalInScope(code);
   }
 }

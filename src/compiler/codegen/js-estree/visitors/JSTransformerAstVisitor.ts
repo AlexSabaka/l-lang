@@ -1620,7 +1620,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
       let defStmt: ESTree.Statement;
 
-      if (symbol.type === "function") {
+      if (symbol.nodeType === "function") {
         const fn = this.cloneNode(
           symbol.value as ast.FunctionNode
         ) as ast.FunctionNode;
@@ -1628,7 +1628,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           ? ({ ...fn.name, id: uniq } as any)
           : ({ _type: "simple-identifier", id: uniq } as any);
         defStmt = this.visit(fn) as ESTree.Statement;
-      } else if (symbol.type === "class") {
+      } else if (symbol.nodeType === "class") {
         const cls = this.cloneNode(
           symbol.value as ast.ClassNode
         ) as ast.ClassNode;
@@ -1636,7 +1636,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           ? ({ ...cls.name, name: uniq } as any)
           : ({ _type: "identifier", name: uniq } as any);
         defStmt = this.visit(cls) as ESTree.Statement;
-      } else if (symbol.type === "variable") {
+      } else if (symbol.nodeType === "variable") {
         const v = this.cloneNode(
           symbol.value as ast.VariableNode
         ) as ast.VariableNode;

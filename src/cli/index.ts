@@ -2,8 +2,7 @@
 
 import { Command } from "commander";
 import { VERSION as COMPILER_VERSION } from "../compiler";
-import { parse } from "./commands/command.parse";
-import { compile } from "./commands/command.compile";
+import { transform } from "./commands/command.transform";
 import { evalFile } from "./commands/command.run";
 import { repl } from "./commands/command.repl";
 import { clean } from "./commands/command.clean";
@@ -19,9 +18,10 @@ program
   .option("-w, --watch", "watch for changes and recompile")
   .option("-d, --debug", "debug mode")
   .option("-s, --silent", "silent mode")
-  .option("--legacy-js", "use legacy JS transpiler")
-  .option("--output-js", "output compiled JavaScript to stdout")
+  .option("--language", "use legacy JS transpiler")
+  .option("--stdout", "output compiled JavaScript to stdout")
   .option("--runtime-shim", "include runtime shim in compiled output")
+  .option("--stage <stage>", "compilation stage to stop at (parse, syntax, symbols, desugar, types, codegen)")
   .version(COMPILER_VERSION);
 
 program
@@ -31,16 +31,26 @@ program
   .action((folder) => clean(folder, program));
 
 program
+  .command("transform")
+  .description("transform a l-lang file (parse, compile, or intermediate stages)")
+  .argument("<file>", "l-lang file to transform")
+  .action((file) => transform(file, program));
+
+program
   .command("compile")
-  .description("compile a l-lang file")
+  .description("compile a l-lang file to JavaScript (alias for 'transform')")
   .argument("<file>", "l-lang file to compile")
-  .action((file) => compile(file, program));
+  .action((file) => transform(file, program));
 
 program
   .command("parse")
-  .description("parse a l-lang file to an AST")
+  .description("parse a l-lang file to an AST (alias for 'transform --stage parse')")
   .argument("<file>", "l-lang file to parse")
-  .action((file) => parse(file, program));
+  .option("--stage <stage>", "override stage")
+  .action((file, opts) => {
+    program.opts().stage = opts.stage || "parse";
+    transform(file, program);
+  });
 
 program
   .command("run")

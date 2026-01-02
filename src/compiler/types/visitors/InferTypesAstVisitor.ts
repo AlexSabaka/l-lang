@@ -1,9 +1,25 @@
 import * as ast from "../../frontend/ast";
-import { LogLevel } from "../../Context";
+import { Context, LogLevel } from "../../Context";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
-import { TypeEnvironment, InferredType } from "../TypeEnvironment";
+import { TypeEnvironment } from "../TypeEnvironment";
+import { InferredType } from "../../analysis/SymbolTable";
 import { TypeChecker } from "../TypeChecker";
 import { SymbolTable } from "../../analysis";
+
+/**
+ * Convert kebab-case or lowercase node type to camelCase method name
+ * e.g., "simple-identifier" → "visitSimpleIdentifier", "program" → "visitProgram"
+ */
+function toCamelCase(str: string): string {
+  return str
+    .split("-")
+    .map((part, i) => i === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1))
+    .join("");
+}
+
+function getVisitMethodName(nodeType: string): string {
+  return `visit${toCamelCase(nodeType).charAt(0).toUpperCase() + toCamelCase(nodeType).slice(1)}`;
+}
 
 /**
  * CollectTypesPass - First pass: Collect explicit type annotations
@@ -16,9 +32,9 @@ class CollectTypesPass extends BaseAstTreeWalker {
   private typeEnv: TypeEnvironment;
   private symbolTable: SymbolTable;
 
-  constructor(context: any, symbolTable: SymbolTable) {
+  constructor(context: Context, symbolTable: SymbolTable) {
     super(context);
-    this.typeEnv = new TypeEnvironment();
+    this.typeEnv = new TypeEnvironment(symbolTable);
     this.symbolTable = symbolTable;
   }
 
@@ -32,17 +48,38 @@ class CollectTypesPass extends BaseAstTreeWalker {
    */
   visit(node: ast.ASTNode): any {
     if (!node) return node;
+    // Convert node type to camelCase method name
+    const methodName = getVisitMethodName(node._type);
     // Only call the visitXxx method, don't do automatic recursive traversal
-    return (this as any)[`visit${node._type}`]?.(node) ?? node;
+    return (this as any)[methodName]?.(node) ?? node;
   }
 
   visitProgram(node: ast.ProgramNode) {
     this.typeEnv.enterScope(node);
     
-    // Only scan top-level declarations
+    // Scan top-level declarations
+    // The program might contain:
+    // 1. Direct declarations (variable, function, class, interface)
+    // 2. Lists containing declarations (e.g., (var x 10))
+    // 3. Nested lists of expressions containing declarations
     for (const item of node.program) {
-      if (item._type === "function" || item._type === "class" || 
-          item._type === "interface" || item._type === "variable") {
+      if (item._type === "list" && item.nodes && item.nodes.length > 0) {
+        // Scan through all items in the list
+        for (const subItem of item.nodes) {
+          if (subItem._type === "variable" || subItem._type === "function" ||
+              subItem._type === "class" || subItem._type === "interface") {
+            this.visit(subItem);
+          } else if (subItem._type === "list" && subItem.nodes && subItem.nodes.length > 0) {
+            // Check nested lists for declarations
+            const nestedFirst = subItem.nodes[0];
+            if (nestedFirst._type === "variable" || nestedFirst._type === "function" ||
+                nestedFirst._type === "class" || nestedFirst._type === "interface") {
+              this.visit(nestedFirst);
+            }
+          }
+        }
+      } else if (item._type === "function" || item._type === "class" || 
+                 item._type === "interface" || item._type === "variable") {
         this.visit(item);
       }
     }
@@ -57,6 +94,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     if (node.type) {
       const inferredType = this.convertAstTypeToInferred(node.type);
       this.typeEnv.bindIdentifier(varName, inferredType, node);
+      // this.symbolTable
       this.context.log(LogLevel.Debug, `Collected type for variable '${varName}': ${TypeChecker.formatType(inferredType)}`);
     }
     // If no explicit type, we'll infer it in pass 2
@@ -235,18 +273,53 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    */
   visit(node: ast.ASTNode): any {
     if (!node) return node;
+    const methodName = getVisitMethodName(node._type);
+    this.context.log(LogLevel.Debug, `[InferAndCheckPass.visit] Calling ${methodName} for node type: ${node._type}`);
     // Only call the visitXxx method, don't do automatic recursive traversal
-    return (this as any)[`visit${node._type}`]?.(node) ?? node;
+    return (this as any)[methodName]?.(node) ?? node;
   }
 
   visitProgram(node: ast.ProgramNode) {
     this.typeEnv.enterScope(node);
-    node.program.forEach(item => this.visit(item));
+    this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitProgram] Processing ${node.program.length} program items`);
+    node.program.forEach((item, idx) => {
+      this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitProgram] Item ${idx}: type=${item._type}`);
+      this.visit(item);
+    });
     this.typeEnv.exitScope();
+  }
+
+  visitList(node: ast.ListNode) {
+    // Lists may contain declarations and expressions
+    // Scan through the list for declarations we need to process
+    if (node.nodes && node.nodes.length > 0) {
+      this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitList] Processing list with ${node.nodes.length} nodes`);
+      for (let i = 0; i < node.nodes.length; i++) {
+        const item = node.nodes[i];
+        this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitList] Node ${i}: type=${item._type}`);
+        // Check for direct declarations
+        if (item._type === "variable" || item._type === "function" || 
+            item._type === "class" || item._type === "interface") {
+          this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitList] Found direct declaration: ${item._type}`);
+          this.visit(item);
+        }
+        // Check for lists that contain declarations
+        else if (item._type === "list" && item.nodes && item.nodes.length > 0) {
+          const innerFirst = item.nodes[0];
+          if (innerFirst._type === "variable" || innerFirst._type === "function" ||
+              innerFirst._type === "class" || innerFirst._type === "interface") {
+            this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitList] Found nested declaration: ${innerFirst._type}`);
+            this.visit(innerFirst);
+          }
+        }
+        // Skip comments and other non-declaration items
+      }
+    }
   }
 
   visitVariable(node: ast.VariableNode) {
     const varName = node.name.id;
+    this.context.log(LogLevel.Info, `[InferAndCheckPass.visitVariable] Processing variable: ${varName}`);
     
     // If value exists, infer its type
     if (node.value) {
@@ -264,10 +337,14 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       } else {
         // No explicit type - bind the inferred type
         this.typeEnv.bindIdentifier(varName, valueType, node);
-        this.context.log(LogLevel.Debug, `Inferred type for '${varName}': ${TypeChecker.formatType(valueType)}`);
+        this.context.log(LogLevel.Info, `[InferAndCheckPass] Bound inferred type for '${varName}': ${TypeChecker.formatType(valueType)}`);
       }
       
       this.typeEnv.setType(node, valueType);
+    } else {
+      // No initial value - default to Any type
+      this.typeEnv.bindIdentifier(varName, TypeEnvironment.unknown(), node);
+      this.context.log(LogLevel.Info, `[InferAndCheckPass] No initializer for '${varName}', bound Any type`);
     }
   }
 

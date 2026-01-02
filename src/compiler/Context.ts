@@ -16,7 +16,8 @@ import {
 
 import {
   JSTransformerAstVisitorLegacy,
-  JSTransformerAstVisitorEstree
+  JSTransformerAstVisitorEstree,
+  LlangTransformerAstVisitor
 } from "./codegen";
 
 import { ASTNode } from "./frontend/ast";
@@ -25,6 +26,7 @@ import { AstProvider } from "./frontend/AstProvider";
 import { DependencyGraph } from "./analysis/DependencyGraph";
 import { formatLogMessage, getCaller } from "./utils";
 import chalk from "chalk";
+import { PerformanceMetrics } from "./PerformanceMetrics";
 
 export const VERSION = "0.0.1";
 
@@ -36,36 +38,17 @@ export enum LogLevel {
   Error,
 }
 
+export type CompilationStage = "parse" | "syntax" | "symbols" | "desugar" | "types" | "codegen";
+
+export type CompilationLanguage = "llang" | "js" | "legacy-js";
+
 export interface CompilerOptions {
   logger?: (msg: any, ...args: any[]) => void;
   minimumLogLevel: LogLevel;
   includeRuntimeShim: boolean;
   stdout: boolean;
-  legacy: boolean;
-}
-
-export interface PassPerformanceMetrics {
-  time: number;
-  memory: number;
-  additional?: Record<string, object>;
-}
-
-export class PerformanceMetrics {
-  private metrics: Map<string, PassPerformanceMetrics> = new Map();
-
-  add(name: string, time: number, memory: number, additional?: Record<string, object>) {
-    this.metrics.set(name, { time, memory, additional });
-  }
-
-  get totalTime(): number {
-    return Array.from(this.metrics.values())
-      .reduce((acc, curr) => acc + curr.time, 0);
-  }
-
-  get totalMemory(): number {
-    return Array.from(this.metrics.values())
-      .reduce((acc, curr) => acc + curr.memory, 0);
-  }
+  stage: CompilationStage;
+  language: CompilationLanguage;
 }
 
 export function logCompilationMessages(context: Context) {
@@ -133,20 +116,15 @@ export class Context {
     this.moduleCache.set(fullPath, { ast, symbols });
   }
 
-  /**
-   * Get cache hit count (for optimization metrics)
-   */
-  getModuleCacheSize(): number {
-    return this.moduleCache.size;
-  }
-
   log(level: LogLevel, msg: any, caller?: string) {
     if (level >= this.options.minimumLogLevel) {
       this.options.logger?.call(null, formatLogMessage(level, msg, caller));
     }
   }
 
-  process(file: string): { ast: ASTNode; symbols?: SymbolTable } {
+  process(file: string, stopAt?: CompilationStage): { ast: ASTNode; symbols?: SymbolTable, code?: string, map?: any } {
+    stopAt ??= this.options.stage || "codegen";
+
     const fullPath = path.resolve(file);
 
     // If module already processed and cached, reuse its symbol table
@@ -159,11 +137,21 @@ export class Context {
 
     let ast = this.astProvider.getAst(fullPath) as ASTNode;
 
+    // Store parse stage AST
+    if (stopAt === "parse") {
+      return { ast: ast as ASTNode };
+    }
+
     const syntaxRulesVisitor = new SyntaxRulesAstVisitor(this);
     syntaxRulesVisitor.visit(ast as ASTNode);
 
     if (this.results.hasErrors) {
       logCompilationMessages(this);
+      return { ast: ast as ASTNode };
+    }
+
+    // Store syntax stage AST
+    if (stopAt === "syntax") {
       return { ast: ast as ASTNode };
     }
 
@@ -175,6 +163,11 @@ export class Context {
 
     const moduleSymbols = buildSymbolTableVisitor.buildSymbolTable();
     this.symbolTable.join(moduleSymbols);
+    
+    // Store symbols stage AST and symbols
+    if (stopAt === "symbols") {
+      return { ast: ast as ASTNode, symbols: moduleSymbols };
+    }
 
     // const inlineImportsVisitor = new InlineImportsAstVisitor(this);
     // ast = inlineImportsVisitor.visit(ast) as ASTNode;
@@ -184,6 +177,11 @@ export class Context {
 
     const desugarVisitor = new DesugarAstVisitor(this);
     ast = desugarVisitor.visit(ast) as ASTNode;
+    
+    // Store desugar stage AST and symbols
+    if (stopAt === "desugar") {
+      return { ast: ast as ASTNode, symbols: moduleSymbols };
+    }
 
     // Type Inference and Checking
     const inferTypesVisitor = new InferTypesAstVisitor(this, moduleSymbols);
@@ -194,6 +192,11 @@ export class Context {
       const typeCheckingValidator = new TypeCheckingValidatorAstVisitor(this, typeEnv, moduleSymbols);
       typeCheckingValidator.visit(ast);
     }
+    
+    // Store types stage AST and symbols (types are now part of symbol table)
+    if (stopAt === "types") {
+      return { ast: ast as ASTNode, symbols: moduleSymbols };
+    }
 
     if (this.results.hasErrors) {
       logCompilationMessages(this);
@@ -201,32 +204,25 @@ export class Context {
     }
 
     this.cacheModule(fullPath, ast as ASTNode, moduleSymbols);
-  
-    return  { ast: ast as ASTNode, symbols: moduleSymbols };
-  }
 
-  compile(file: string) {
-    const fullPath = path.resolve(file);
-
-    // If module already processed and cached, reuse its symbol table
-    let cached = this.getModule(fullPath);
-    if (!cached) {
-      cached = this.process(file);
+    if (stopAt !== "codegen") {
+      return { ast: ast as ASTNode, symbols: moduleSymbols };
     }
 
-    let ast = cached.ast as ASTNode;
-
-    let transformer: JSTransformerAstVisitorEstree | JSTransformerAstVisitorLegacy | undefined = undefined;
-    if (this.options.legacy) {
+    let transformer = undefined;
+    if (this.options.language === "legacy-js") {
       // Use legacy transformer
       transformer = new JSTransformerAstVisitorLegacy(this);
-    } else {
+    } else if (this.options.language === "js") {
       // Use new ESTree-based transformer (default)
       transformer = new JSTransformerAstVisitorEstree(this);
+    } else {
+      // Use l-lang to l-lang transformer
+      transformer = new LlangTransformerAstVisitor(this);
     }
 
     const result = transformer.compile(ast);
 
-    return result;
+    return { ast: ast as ASTNode, symbols: moduleSymbols, code: result.code, map: result.map };
   }
 }

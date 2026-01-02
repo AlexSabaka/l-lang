@@ -6,6 +6,13 @@ export class LlangTransformerAstVisitor extends BaseAstVisitor {
     super(context);
   }
 
+  public compile(root: ast.ASTNode) {
+    this.context.log(LogLevel.Debug, "Starting Llang AST to Llang code transformation...", "LlangTransformerAstVisitor.compile");
+    const result = this.visit(root);
+    this.context.log(LogLevel.Debug, "Completed Llang AST to Llang code transformation.", "LlangTransformerAstVisitor.compile");
+    return { code: result, map: null };
+  }
+
   private mapVisitJoinNodes(nodes: ast.ASTNode[], indent: string = ' ', end: string = ''): string {
     if (!nodes || nodes.length === 0) return '';
     return `${nodes.map(x => this.visit(x)).join(indent)}${end}`;

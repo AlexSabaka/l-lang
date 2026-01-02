@@ -1,49 +1,13 @@
 import * as ast from "../frontend/ast";
+import { InferredType, SymbolTable } from "../analysis/SymbolTable";
 
 /**
- * Represents an inferred or declared type in the system
- */
-export interface InferredType {
-  kind: "primitive" | "class" | "interface" | "generic" | "function" | "union" | "unknown" | "map";
-  name: string;
-  generics?: InferredType[];
-  params?: InferredType[];  // For function types
-  returns?: InferredType;   // For function types
-  alternatives?: InferredType[];  // For union types
-  keyType?: InferredType;   // For map types
-  valueType?: InferredType; // For map types
-  inner?: InferredType;     // For array element type (alternative to generics[0])
-  isArray?: boolean;
-  nullable?: boolean;
-}
-
-/**
- * Type environment entry - associates an AST node with its inferred type
- */
-export interface TypeEntry {
-  node: ast.ASTNode;
-  type: InferredType;
-  scope: TypeScope;
-}
-
-/**
- * Scope for type resolution
- */
-export interface TypeScope {
-  node: ast.ASTNode;
-  types: Map<string, TypeEntry>;
-  scopes: TypeScope[];
-  parent: TypeScope | undefined;
-}
-
-/**
- * TypeEnvironment - Manages type inference state across the compilation
- * Similar to SymbolTable but specifically for type information
+ * TypeEnvironment - Manages type inference and binds inferred types to the symbol table
+ * Maintains scope hierarchy during traversal and updates symbol entries with their inferred types
  */
 export class TypeEnvironment {
-  private root: TypeScope | undefined;
-  private active: TypeScope | undefined;
-  private typeCache: Map<string, InferredType> = new Map();
+  private symbolTable: SymbolTable;
+  private scopeStack: Scope[] = [];
 
   // Built-in primitive types
   private static PRIMITIVES: Map<string, InferredType> = new Map([
@@ -56,136 +20,88 @@ export class TypeEnvironment {
     ["Any", { kind: "unknown", name: "Any" }],
   ]);
 
-  constructor() {
-    // Initialize with built-in types
-    TypeEnvironment.PRIMITIVES.forEach((type, name) => {
-      this.typeCache.set(name, type);
+  constructor(symbolTable: SymbolTable) {
+    this.symbolTable = symbolTable;
+  }
+
+  /**
+   * Enter a new scope for type tracking
+   */
+  enterScope(node: ast.ASTNode): void {
+    this.scopeStack.push({
+      node,
+      localTypes: new Map(),
     });
   }
 
   /**
-   * Enter a new type scope
+   * Exit the current scope
    */
-  enterScope(node: ast.ASTNode) {
-    if (!this.root) {
-      this.root = {
-        node,
-        types: new Map(),
-        scopes: [],
-        parent: undefined,
-      };
-      this.active = this.root;
-      return;
+  exitScope(): void {
+    if (this.scopeStack.length > 0) {
+      this.scopeStack.pop();
     }
-
-    if (!this.active) {
-      this.active = this.root;
-    }
-
-    if (this.active.node === node) {
-      return;
-    }
-
-    const newScope: TypeScope = {
-      node,
-      types: new Map(),
-      scopes: [],
-      parent: this.active,
-    };
-
-    this.active.scopes.push(newScope);
-    this.active = newScope;
   }
 
   /**
-   * Exit current scope
+   * Set type for an expression node
    */
-  exitScope() {
-    if (!this.active || !this.active.parent) {
-      throw new Error("Cannot exit root scope or no active scope");
+  setType(node: ast.ASTNode, type: InferredType): void {
+    if (this.scopeStack.length === 0) {
+      return;
     }
-    this.active = this.active.parent;
-  }
-
-  /**
-   * Associate a node with an inferred type
-   */
-  setType(node: ast.ASTNode, type: InferredType) {
-    if (!this.active) {
-      throw new Error("No active scope to set type");
-    }
-
     const key = this.getNodeKey(node);
-    this.active.types.set(key, {
-      node,
-      type,
-      scope: this.active,
-    });
+    this.scopeStack[this.scopeStack.length - 1].localTypes.set(key, type);
   }
 
   /**
-   * Bind an identifier to a type in the current scope
-   */
-  bindIdentifier(name: string, type: InferredType, node: ast.ASTNode) {
-    if (!this.active) {
-      throw new Error("No active scope to bind identifier");
-    }
-
-    this.active.types.set(name, {
-      node,
-      type,
-      scope: this.active,
-    });
-  }
-
-  /**
-   * Resolve type for an identifier
-   */
-  resolveIdentifier(name: string): InferredType | undefined {
-    let current: TypeScope | undefined = this.active;
-
-    while (current) {
-      const entry = current.types.get(name);
-      if (entry) {
-        return entry.type;
-      }
-      current = current.parent;
-    }
-
-    // Check primitives
-    return this.typeCache.get(name);
-  }
-
-  /**
-   * Return a debug representation of the scope chain (node types and keys)
-   */
-  debugScopeChain(): string {
-    const chain: string[] = [];
-    let c: TypeScope | undefined = this.active;
-    while (c) {
-      const nodeType = (c.node && ((c.node as any)._type ?? (c.node as any).name?.name)) || 'root';
-      chain.push(`${nodeType}(${[...c.types.keys()].join(',')})`);
-      c = c.parent;
-    }
-    return chain.join(' -> ');
-  }
-
-  /**
-   * Get type for a specific AST node
+   * Get type for an expression node
    */
   getType(node: ast.ASTNode): InferredType | undefined {
     const key = this.getNodeKey(node);
-    let current: TypeScope | undefined = this.active;
-
-    while (current) {
-      const entry = current.types.get(key);
-      if (entry) {
-        return entry.type;
+    // Search from innermost scope outward
+    for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+      const type = this.scopeStack[i].localTypes.get(key);
+      if (type) {
+        return type;
       }
-      current = current.parent;
+    }
+    return undefined;
+  }
+
+  /**
+   * Bind an identifier to a type in the symbol table
+   */
+  bindIdentifier(name: string, type: InferredType, node: ast.ASTNode): void {
+    this.symbolTable.bindType(name, type);
+  }
+
+  /**
+   * Resolve type for an identifier (primitives or symbol types)
+   */
+  resolveIdentifier(name: string): InferredType | undefined {
+    // Check if it's a built-in primitive
+    if (TypeEnvironment.PRIMITIVES.has(name)) {
+      return TypeEnvironment.PRIMITIVES.get(name);
+    }
+
+    // Check symbol table for user-defined types
+    const symbol = this.symbolTable.resolveSymbol(name);
+    if (symbol && symbol.inferredType) {
+      return symbol.inferredType;
     }
 
     return undefined;
+  }
+
+  /**
+   * Debug: Get current scope chain
+   */
+  debugScopeChain(): string {
+    return this.scopeStack.map((s, i) => {
+      const nodeType = (s.node && ((s.node as any)._type ?? (s.node as any).name?.name)) || 'root';
+      return `${i}: ${nodeType}(${[...s.localTypes.keys()].length} types)`;
+    }).join(' -> ');
   }
 
   /**
@@ -255,4 +171,12 @@ export class TypeEnvironment {
   static unknown(): InferredType {
     return { kind: "unknown", name: "Unknown" };
   }
+}
+
+/**
+ * Local scope for type tracking
+ */
+interface Scope {
+  node: ast.ASTNode;
+  localTypes: Map<string, InferredType>;
 }

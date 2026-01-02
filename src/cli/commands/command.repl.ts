@@ -19,10 +19,10 @@ export function evalSource(source: string, options: CompilerOptions) {
   fs.writeFileSync(file, source);
 
   const context = new Context(file, options);
-  const js = context.compile(file);
+  const { code, map } = context.process(file, "codegen");
 
-  if (js) {
-    evalInScope(js.code);
+  if (code) {
+    evalInScope(code);
   }
 
   fs.rmSync(file);

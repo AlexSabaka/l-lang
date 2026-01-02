@@ -743,17 +743,17 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // Build a top-level definition for the symbol depending on its type
       let defParts: (SourceNode | string)[] = [];
 
-      if (symbol.type === "function") {
+      if (symbol.nodeType === "function") {
         const fn = this.cloneNode(symbol.value as ast.FunctionNode) as ast.FunctionNode;
         // replace name
         fn.name = fn.name ? { ...fn.name, id: uniq } as any : { _type: "simple-identifier", id: uniq } as any;
         // Visiting the cloned function will inline any nested references as needed
         defParts = [ this.visit(fn) ];
-      } else if (symbol.type === "class") {
+      } else if (symbol.nodeType === "class") {
         const cls = this.cloneNode(symbol.value as ast.ClassNode) as ast.ClassNode;
         cls.name = cls.name ? { ...cls.name, name: uniq } as any : { _type: "identifier", name: uniq } as any;
         defParts = [ this.visit(cls) ];
-      } else if (symbol.type === "variable") {
+      } else if (symbol.nodeType === "variable") {
         const v = this.cloneNode(symbol.value as ast.VariableNode) as ast.VariableNode;
         // create const uniq = <value>
         const valueNode = v.value ? this.visit(v.value) : "undefined";
