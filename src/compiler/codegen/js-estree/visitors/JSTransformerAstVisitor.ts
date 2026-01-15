@@ -167,9 +167,257 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   private inlinedSymbols: Record<string, string> = {};
   private inlinedDefinitions: Record<string, ESTree.Statement> = {};
   private rootSource?: string;
+  private typesMetadata: Record<string, any> = {};
+
+  getTypesMetadata(): Record<string, any> {
+    return this.typesMetadata;
+  }
 
   constructor(context: Context) {
     super(context);
+    this.collectTypesMetadata();
+  }
+
+  // =========================================================================
+  // Types Metadata Collection
+  // =========================================================================
+
+  private collectTypesMetadata(): void {
+    // Extract type information from symbol table and compile to metadata
+    const symbolTable = this.context.symbolTable;
+    if (!symbolTable) {
+      return;
+    }
+
+    // Get all symbols by resolving known names or traversing cache
+    // For now, we'll collect types as we process declarations
+    // This will be populated as classes, functions, and variables are visited
+  }
+
+  private collectMetadataFromSymbolTable(): void {
+    // Collect type metadata for all visited classes and functions
+    for (const className of this.classes) {
+      const entry = this.context.symbolTable.resolveSymbol(className);
+      if (entry && entry.inferredType) {
+        const classNode = entry.value as ast.ClassNode;
+        const metadata = this.serializeTypeMetadata(className, entry, classNode);
+        if (metadata) {
+          this.typesMetadata[className] = metadata;
+        }
+      }
+    }
+
+    for (const funcName of this.functions) {
+      const entry = this.context.symbolTable.resolveSymbol(funcName);
+      if (entry && entry.inferredType) {
+        const metadata = this.serializeTypeMetadata(funcName, entry, entry.value);
+        if (metadata) {
+          this.typesMetadata[funcName] = metadata;
+        }
+      }
+    }
+  }
+  
+  private getTypeName(t: any): string {
+     if (!t) return 'Any';
+     
+     // Recursive handling of wrapper nodes
+     if (t._type === 'type') {
+         return t.type ? this.getTypeName(t.type) : 'Any';
+     }
+     
+     if (t._type === 'simple-type') {
+         return t.name ? this.getTypeName(t.name) : 'Any';
+     }
+
+     // Base cases
+     if (t._type === 'type-name') {
+         return typeof t.name === 'string' ? t.name : 'Any';
+     }
+     
+     if (t._type === 'function-type') return 'Function';
+     
+     // Fallback for direct string or object with name
+     if (typeof t.name === 'string') return t.name;
+     if (t.type && typeof t.type.name === 'string') return t.type.name;
+     
+     return 'Any';
+  }
+
+  private serializeTypeMetadata(name: any, entry: SymbolEntry, astNode?: ast.ASTNode): Record<string, any> | null {
+    const typeName = typeof name === 'string' ? name : (name as any).id || (name as any).name || String(name);
+    const inferredType = entry.inferredType;
+
+    if (!inferredType) {
+      return null;
+    }
+
+    const metadata: any = {
+      name: typeName,
+      kind: inferredType.kind,
+    };
+
+
+    // Add type-specific metadata
+    if (inferredType.kind === 'class' || inferredType.kind === 'struct') {
+      // Extract properties and methods from the class body if available
+      const classNode = astNode as ast.ClassNode;
+
+      // Add inheritance metadata
+      if (classNode && classNode.extends && classNode.extends.length > 0) {
+        const parentRef = classNode.extends[0];
+        if (parentRef && parentRef.type) {
+             metadata.extends = parentRef.type.name;
+        }
+      }
+
+      if (classNode && classNode.body) {
+        const properties: any[] = [];
+        // Change methods from string[] to object[] for detailed info
+        const methods: any[] = [];
+
+        this.context.log(LogLevel.Debug, `Extracting metadata for class ${typeName}: body has ${classNode.body.length} items`);
+
+        for (const item of classNode.body) {
+          // Check if it's a variable (property)
+          if (item._type === 'variable' || (item._type === 'list' && item.nodes?.[0]?._type === 'variable')) {
+            const varNode = item._type === 'variable' ? item : (item.nodes?.[0] as ast.VariableNode);
+            if (varNode && varNode._type === 'variable') {
+              const propName = typeof varNode.name === 'string' ? varNode.name : (varNode.name as any).id || (varNode.name as any).name;
+              
+              // Extract modifiers
+              let isPublic = true; // Default public in l-lang? Or private? 
+              // According to docs: (let :private age 0)
+              let isPrivate = false;
+              let isStatic = false;
+
+              if (varNode.modifiers) {
+                  const mods = varNode.modifiers.map((m: any) => m.modifier);
+                  if (mods.includes(':private')) { isPrivate = true; isPublic = false; }
+                  if (mods.includes(':public')) { isPublic = true; isPrivate = false; }
+                  if (mods.includes(':static')) isStatic = true;
+                  // Handle constructor explicit modifiers if present on fields
+                  if (mods.includes(':ctor')) { /* standard ctor field */ }
+              }
+
+              // Extract type
+              const typeName = this.getTypeName(varNode.type);
+
+              properties.push({
+                name: propName,
+                type: typeName,
+                isPublic,
+                isPrivate,
+                isStatic
+              });
+            }
+          }
+          // Check if it's a function (method)
+          else if (item._type === 'function') {
+            const funcNode = item as ast.FunctionNode;
+            const methodName = typeof funcNode.name === 'string' ? funcNode.name : (funcNode.name as any)?.id || (funcNode.name as any)?.name;
+            if (methodName) {
+              const params = funcNode.params.map(p => ({
+                 name: (p.name as any).id || (p.name as any).name || 'unknown',
+                 type: this.getTypeName(p.type)
+              }));
+              const returns = this.getTypeName(funcNode.returns);
+              
+              methods.push({
+                  name: methodName,
+                  params,
+                  returns
+              });
+            }
+          }
+          // Check if it's a list containing a function (e.g., wrapped function)
+          else if (item._type === 'list' && item.nodes && item.nodes.length > 0) {
+            const firstNode = item.nodes[0];
+            // If the first node is a function, extract the method name
+            if (firstNode._type === 'function') {
+              const funcNode = firstNode as ast.FunctionNode;
+              const methodName = typeof funcNode.name === 'string' ? funcNode.name : (funcNode.name as any)?.id || (funcNode.name as any)?.name;
+              if (methodName) {
+                  const params = funcNode.params.map(p => ({
+                     name: (p.name as any).id || (p.name as any).name || 'unknown',
+                     type: this.getTypeName(p.type)
+                  }));
+                  const returns = this.getTypeName(funcNode.returns);
+                  
+                  methods.push({
+                      name: methodName,
+                      params,
+                      returns
+                  });
+              }
+            }
+          }
+        }
+
+        metadata.properties = properties;
+        metadata.methods = methods;
+      } else {
+        metadata.properties = (inferredType.members || []).map(m => ({
+          name: m.name,
+          type: m.type.name,
+          isPublic: m.isPublic,
+          isPrivate: m.isPrivate,
+        }));
+        metadata.methods = [];
+      }
+
+      if (inferredType.ctorInfo) {
+        metadata.constructor = {
+          params: inferredType.ctorInfo.params.map(p => ({
+            name: p.name,
+            type: p.type.name,
+            hasDefault: p.hasDefault,
+          })),
+          requiredCount: inferredType.ctorInfo.requiredCount,
+        };
+      }
+    }
+
+    if (inferredType.kind === 'function') {
+      if (astNode && astNode._type === 'function') {
+          const funcNode = astNode as ast.FunctionNode;
+          
+          metadata.paramsList = funcNode.params.map(p => {
+             const n = p.name as any;
+             const rawName = n.id || n.name;
+             const finalName = typeof rawName === 'string' ? rawName : 'unknown';
+             
+             return { 
+               name: finalName,
+               type: this.getTypeName(p.type)
+             };
+          });
+      } else {
+          metadata.paramsList = (inferredType.params || []).map(p => ({ name: p.name }));
+      }
+      metadata.returns = inferredType.returns?.name || 'Any';
+    }
+
+    if (inferredType.kind === 'array') {
+      metadata.elementType = inferredType.inner?.name || 'Any';
+    }
+
+    if (inferredType.kind === 'map') {
+      metadata.keyType = inferredType.keyType?.name || 'String';
+      metadata.valueType = inferredType.valueType?.name || 'Any';
+    }
+
+    if (inferredType.kind === 'union') {
+      metadata.alternatives = (inferredType.alternatives || []).map(a => a.name);
+    }
+
+    if (inferredType.generics) {
+      metadata.generics = inferredType.generics.map(g => g.name);
+    }
+
+    metadata.nullable = inferredType.nullable ?? false;
+
+    return metadata;
   }
 
   // =========================================================================
@@ -215,9 +463,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     this.rootSource = root && root._location && root._location.source ? root._location.source : 'bundle.lisp';
     const program = this.visit(root) as ESTree.Program;
 
+    // Collect types metadata from visited classes and functions
+    this.collectMetadataFromSymbolTable();
+
+    this.context.log(LogLevel.Debug, `Passing ${Object.keys(this.typesMetadata).length} type entries to runtime shim`);
+
     // Prepend runtime shim if needed
     const runtimeShim = RuntimeProvider.getRuntimeShimForSymbols(
-      this.inlineStandardSymbols
+      this.inlineStandardSymbols,
+      this.typesMetadata
     );
 
     // Add header comment
@@ -324,7 +578,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // =========================================================================
 
   visitClass(node: ast.ClassNode): ESTree.ClassDeclaration {
-    this.classes.push(node.name.name);
+    // Store the original symbol name (before any encoding) for metadata lookup
+    const originalName = node.name.name;
+    this.classes.push(originalName);
 
     return this.runInScope(ScopeType.class, () => {
       const classBuilder = new ClassBuilder(node, this.context, this);
@@ -373,6 +629,13 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     }));
   }
 
+  visitTypeDef(node: ast.TypeDefNode) {
+    return this.runInScope(ScopeType.interface, () => ({
+      type: "EmptyStatement",
+      loc: ESTreeBuilder.loc(node),
+    }));
+  }
+
   visitExport(node: ast.ExportNode): ESTree.EmptyStatement {
     // Export statements are handled at the module system level and don't generate code
     return {
@@ -408,8 +671,14 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       const name = node.name
         ? (this.visit(node.name) as ESTree.Identifier)
         : null;
-      if (name) {
-        this.functions.push(name.name);
+      if (name && node.name) {
+        // Store the original symbol name (before encoding) for metadata lookup
+        const originalName = typeof node.name === 'object' && 'id' in node.name
+          ? (node.name as any).id
+          : (typeof node.name === 'object' && 'name' in node.name
+              ? (node.name as any).name
+              : name.name);
+        this.functions.push(originalName);
       }
 
       const params = node.params.map((x) => this.visit(x) as ESTree.Pattern);
@@ -1231,7 +1500,14 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return ESTreeBuilder.identifier(node, id);
   }
 
-  visitSimpleIdentifier(node: ast.SimpleIdentifierNode): ESTree.Identifier {
+  visitSimpleIdentifier(node: ast.SimpleIdentifierNode): ESTree.Identifier | ESTree.Literal {
+    if (node.id.startsWith(':')) {
+        // Treat keywords as string literals (runtime atom behavior)
+        // Strip colon for cleaner JS values? Or keep?
+        // l-lang usage typically implies :key -> "key" or special symbol
+        // For named args, treating as string prevents ReferenceError
+        return ESTreeBuilder.literal(node, node.id);
+    }
     return this.visitIdentifier(node);
   }
 
@@ -1249,7 +1525,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       expr = ESTreeBuilder.memberExpression(
         node,
         expr,
-        ESTreeBuilder.identifier(node, parts[i])
+        ESTreeBuilder.identifier(node, encodeIdentifier(parts[i]))
       );
     }
 
@@ -1361,6 +1637,22 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         return ESTreeBuilder.returnStatement(node, returnValue);
       }
 
+      // Handle (new ClassName args...) -> new ClassName(args...)
+      if (head._type === "simple-identifier" && headId === "new") {
+        if (rest.length === 0) {
+          return ESTreeBuilder.identifier(node, "undefined");
+        }
+        const classNameNode = rest[0];
+        const constructorArgs = rest.slice(1).map((x) => this.visit(x) as ESTree.Expression);
+        const callee = this.visit(classNameNode) as ESTree.Expression;
+        return {
+          type: "NewExpression",
+          callee,
+          arguments: constructorArgs,
+          loc: ESTreeBuilder.loc(node),
+        } as ESTree.NewExpression;
+      }
+
       const callee = this.visit(head) as ESTree.Expression;
       const args = rest.map((x) => this.visit(x) as ESTree.Expression);
       const calleeStr = this.expressionToString(callee);
@@ -1381,10 +1673,27 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       }
 
       const isKnownFunction =
-        this.functions.includes(calleeStr) ||
+        this.functions.includes((head as any).id) ||
         this.functions.includes(memberName);
 
-      if (args.length > 0 || isKnownFunction) {
+      // L-lang semantics: (expr) is a call, expr is a reference
+      // - (func) = call func with zero args
+      // - (obj.method) = call method with zero args
+      // - (obj.prop) = also a call in strict interpretation, but often means access
+      //
+      // Heuristic: if it has args OR is a simple-identifier function, call it
+      // Composite identifiers with no args are ambiguous (could be property or method)
+      // For now: composite with no args → property access
+      //          simple identifier with no args + known function → call
+      //          anything with args → call
+      if (args.length > 0 || (isKnownFunction && head._type === "simple-identifier")) {
+        return ESTreeBuilder.callExpression(node, callee, args);
+      }
+
+      // For composite identifiers with no args, if it ends with common method names, call it
+      // This is a heuristic - ideally we'd have type information
+      const methodLikeNames = ['speak', 'toString', 'valueOf', 'toJSON', 'then', 'catch', 'finally'];
+      if (head._type === "composite-identifier" && methodLikeNames.includes(memberName)) {
         return ESTreeBuilder.callExpression(node, callee, args);
       }
 

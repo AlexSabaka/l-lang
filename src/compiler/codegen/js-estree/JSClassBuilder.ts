@@ -1,6 +1,7 @@
 import * as ESTree from "estree";
 import * as ast from "../../frontend/ast";
 import { Context } from "../../Context";
+import { encodeIdentifier } from "../../utils";
 
 /**
  * Helper function to extract constructor parameters from a class node
@@ -178,7 +179,7 @@ export class ClassBuilder {
     // --- Code Generation ---
     const params: ESTree.Identifier[] = finalConstructorParams.map(p => ({
       type: "Identifier",
-      name: p,
+      name: encodeIdentifier(p),
       loc: loc(this.node)
     }));
 
@@ -188,7 +189,7 @@ export class ClassBuilder {
     if (parentClassName) {
       const superArgs: ESTree.Identifier[] = superCallArgs.map(arg => ({
         type: "Identifier",
-        name: arg
+        name: encodeIdentifier(arg)
       }));
 
       bodyStatements.push({
@@ -202,11 +203,17 @@ export class ClassBuilder {
       });
     }
 
-    // Add field assignments
+    // Add field assignments (fields use encoded names)
     for (const v of this.ctorVars) {
-      const fieldName = this.visitor.visit(v.name) as ESTree.Identifier;
       const isPrivate = v.modifiers.some((x) => x.modifier === "private");
+      // fieldName should already be encoded via visitor
+      const fieldName = this.visitor.visit(v.name) as ESTree.Identifier;
       
+      // The parameter name matches the unencoded field name logic, so we must encode it too
+      // to match constructor params
+      const paramNameRaw = (v.name as any).id ?? (v.name as any).name;
+      const paramRefName = encodeIdentifier(paramNameRaw);
+
       const targetField: ESTree.MemberExpression = {
         type: "MemberExpression",
         object: { type: "ThisExpression" },
@@ -223,7 +230,7 @@ export class ClassBuilder {
           type: "AssignmentExpression",
           operator: "=",
           left: targetField as any,
-          right: { type: "Identifier", name: fieldName.name }
+          right: { type: "Identifier", name: paramRefName } // Use encoded param name
         }
       });
     }

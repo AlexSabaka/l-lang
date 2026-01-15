@@ -41,7 +41,8 @@ class ScanPassVisitor extends BaseAstTreeWalker {
         return;
       }
 
-      if (item._type === "function" || item._type === "class" || item._type === "interface" || item._type === "variable") {
+      if (item._type === "function" || item._type === "class" || item._type === "interface" || 
+          item._type === "variable" || item._type === "type-def" || item._type === "struct") {
         this.symbolTableBuilder.defineSymbol(item as any);
       }
     };
@@ -64,6 +65,16 @@ class ScanPassVisitor extends BaseAstTreeWalker {
   visitInterface(node: ast.InterfaceNode) {
     // ScanPass: Don't visit interface body yet
     // This is handled in ResolvePass
+  }
+
+  visitTypeDef(node: ast.TypeDefNode) {
+    // ScanPass: Register type-def name so it's available for forward references
+    // No body to scan
+  }
+
+  visitStruct(node: ast.StructNode) {
+    // ScanPass: Register struct name
+    // Don't scan body yet - that's for ResolvePass
   }
 }
 
@@ -107,6 +118,13 @@ class ResolvePassVisitor extends BaseAstTreeWalker {
       if (member._type === "function" || member._type === "variable") {
         this.symbolTableBuilder.defineSymbol(member as any);
       }
+      // Check for members wrapped in lists (e.g., constructor parameters)
+      else if (member._type === "list" && member.nodes && member.nodes.length > 0) {
+        const innerFirst = member.nodes[0];
+        if (innerFirst._type === "variable" || innerFirst._type === "function") {
+          this.symbolTableBuilder.defineSymbol(innerFirst as any);
+        }
+      }
     }
     // Then resolve them
     node.body.map(x => this.visitIfNotNull(x));
@@ -116,6 +134,31 @@ class ResolvePassVisitor extends BaseAstTreeWalker {
   visitInterface(node: ast.InterfaceNode) {
     this.symbolTableBuilder.enterScope(node);
     node.body.map(x => this.visitIfNotNull(x));
+    this.symbolTableBuilder.exitScope();
+  }
+
+  visitTypeDef(node: ast.TypeDefNode) {
+    // Type-def already defined in ScanPass
+    // No body to resolve - just the type expression
+  }
+
+  visitStruct(node: ast.StructNode) {
+    // Struct already defined in ScanPass
+    // Now enter its scope and resolve body members
+    this.symbolTableBuilder.enterScope(node);
+    if (node.body) {
+      for (const member of node.body) {
+        if (member._type === "list" && (member as any).nodes && (member as any).nodes.length > 0) {
+          const firstNode = (member as any).nodes[0];
+          if (firstNode._type === "variable" || firstNode._type === "function") {
+            this.symbolTableBuilder.defineSymbol(firstNode as any);
+          }
+        } else if (member._type === "variable" || member._type === "function") {
+          this.symbolTableBuilder.defineSymbol(member as any);
+        }
+      }
+      node.body.map(x => this.visitIfNotNull(x));
+    }
     this.symbolTableBuilder.exitScope();
   }
 

@@ -112,6 +112,7 @@ Targeting native binaries via LLVM.
 *   **Objective C:** Native standard library implementation.
 
 ---
+
 **Status Legend:**
 *   🚧 In Progress
 *   ✅ Complete

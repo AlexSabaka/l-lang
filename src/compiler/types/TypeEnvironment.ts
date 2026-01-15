@@ -84,6 +84,41 @@ export class TypeEnvironment {
     if (TypeEnvironment.PRIMITIVES.has(name)) {
       return TypeEnvironment.PRIMITIVES.get(name);
     }
+    
+    // Support dot notation for member access
+    if (name.includes('.')) {
+        const parts = name.split('.');
+        let currentType = this.resolveIdentifier(parts[0]);
+        
+        if (!currentType) return undefined;
+        
+        for (let i = 1; i < parts.length; i++) {
+           if (!currentType) return undefined;
+           
+           // Resolve type-ref to actual type definition if needed
+           if (currentType.kind === 'type-ref' && currentType.refName) {
+               const resolved = this.resolveIdentifier(currentType.refName);
+               if (resolved) currentType = resolved;
+           }
+
+           const memberName = parts[i];
+           // Lookup member in currentType
+           if (currentType.kind === 'class' || currentType.kind === 'struct' || currentType.kind === 'interface') {
+               const member: any = currentType.members?.find((m: any) => m.name === memberName);
+               if (member) {
+                   currentType = member.type;
+               } else {
+                   // Member not found in 'members' list
+                   // TODO: Handle interface inheritance lookups if needed
+                   return undefined;
+               }
+           } else {
+               // Cannot access property on non-object type (primitive/func)
+               return undefined;
+           }
+        }
+        return currentType;
+    }
 
     // Check symbol table for user-defined types
     const symbol = this.symbolTable.resolveSymbol(name);

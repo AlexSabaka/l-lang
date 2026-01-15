@@ -1,4 +1,4 @@
-import { InferredType } from "../analysis/SymbolTable";
+import { InferredType, SymbolTable } from "../analysis/SymbolTable";
 
 /**
  * TypeChecker - Handles type compatibility and promotion rules
@@ -9,46 +9,87 @@ export class TypeChecker {
    * Check if 'source' can be assigned to 'target'
    * Returns true if assignment is valid
    */
-  static isAssignable(source: InferredType, target: InferredType): boolean {
+  static isAssignable(source: InferredType, target: InferredType, symbolTable?: SymbolTable): boolean {
+    // Unwrap type-aliases and type-refs for comparison
+    const sourceUnwrapped = this.unwrapType(source, symbolTable);
+    const targetUnwrapped = this.unwrapType(target, symbolTable);
+
     // Exact match
-    if (this.typesEqual(source, target)) {
+    if (this.typesEqual(sourceUnwrapped, targetUnwrapped)) {
       return true;
     }
 
     // Any type accepts everything (like 'object' in C#)
-    if (target.kind === "unknown" && target.name === "Any") {
+    if (targetUnwrapped.kind === "unknown" && targetUnwrapped.name === "Any") {
       return true;
     }
 
     // Null can be assigned to nullable types
-    if (source.name === "Null" && target.nullable) {
+    if (sourceUnwrapped.name === "Null" && targetUnwrapped.nullable) {
       return true;
     }
 
     // Numeric promotion: Int -> Real (like C# int -> double)
-    if (this.canPromote(source, target)) {
+    if (this.canPromote(sourceUnwrapped, targetUnwrapped)) {
       return true;
     }
 
     // Array covariance: Array<Derived> -> Array<Base> (read-only)
-    if (this.isArrayCovariant(source, target)) {
+    if (this.isArrayCovariant(sourceUnwrapped, targetUnwrapped, symbolTable)) {
       return true;
     }
 
     // Union types: T is assignable to T1 | T2 if T is assignable to any alternative
-    if (target.kind === "union") {
-      return target.alternatives?.some((alt: InferredType) => this.isAssignable(source, alt)) ?? false;
+    if (targetUnwrapped.kind === "union") {
+      // For each target alternative, unwrap it and check if source is assignable to it
+      return targetUnwrapped.alternatives?.some((alt: InferredType) => {
+        const unwrappedAlt = this.unwrapType(alt, symbolTable);
+        return this.isAssignable(sourceUnwrapped, unwrappedAlt, symbolTable);
+      }) ?? false;
     }
 
     // Source union: T1 | T2 is assignable to T if all alternatives are assignable
-    if (source.kind === "union") {
-      return source.alternatives?.every((alt: InferredType) => this.isAssignable(alt, target)) ?? false;
+    if (sourceUnwrapped.kind === "union") {
+      // For each source alternative, unwrap it and check if it's assignable to target
+      const allAssignable = sourceUnwrapped.alternatives?.every((alt: InferredType) => {
+        const unwrappedAlt = this.unwrapType(alt, symbolTable);
+        return this.isAssignable(unwrappedAlt, targetUnwrapped, symbolTable);
+      }) ?? false;
+      return allAssignable;
     }
 
     // TODO: Interface implementation checking
     // TODO: Class inheritance checking
 
     return false;
+  }
+
+  /**
+   * Unwrap type-alias and type-ref to get the underlying type
+   */
+  static unwrapType(type: InferredType, symbolTable?: SymbolTable): InferredType {
+    if (!type) {
+      return type;
+    }
+
+    // If it's a type-alias, use its aliased type
+    if (type.kind === "type-alias" && type.aliasedType) {
+      return this.unwrapType(type.aliasedType, symbolTable);
+    }
+
+    // If it's a type-ref, look it up in the symbol table to get the actual type
+    if (type.kind === "type-ref" && type.refName) {
+      if (symbolTable) {
+        const symbol = symbolTable.resolveSymbol(type.refName);
+        if (symbol && symbol.inferredType) {
+          return this.unwrapType(symbol.inferredType, symbolTable);
+        }
+      }
+      // If no symbol table provided, just return the type-ref as-is
+      // This will be handled by the union/array logic
+    }
+
+    return type;
   }
 
   /**
@@ -108,7 +149,7 @@ export class TypeChecker {
    * Array covariance check
    * Array<Derived> can be used where Array<Base> is expected (read-only)
    */
-  static isArrayCovariant(source: InferredType, target: InferredType): boolean {
+  static isArrayCovariant(source: InferredType, target: InferredType, symbolTable?: SymbolTable): boolean {
     if (!source.isArray || !target.isArray) {
       return false;
     }
@@ -119,7 +160,7 @@ export class TypeChecker {
 
     // TODO: Check if source element type is derived from target element type
     // For now, just check if they're assignable
-    return this.isAssignable(source.generics[0], target.generics[0]);
+    return this.isAssignable(source.generics[0], target.generics[0], symbolTable);
   }
 
   /**
@@ -198,6 +239,26 @@ export class TypeChecker {
 
     if (type.kind === "union") {
       return type.alternatives!.map((a: any) => this.formatType(a)).join(" | ");
+    }
+
+    // Type-alias: format as the aliased type
+    if (type.kind === "type-alias") {
+      return `${type.name}` + (type.aliasedType ? ` (alias for ${this.formatType(type.aliasedType)})` : "");
+    }
+
+    // Type-ref: format as the reference name
+    if (type.kind === "type-ref") {
+      return type.refName || type.name;
+    }
+
+    // Struct: format as struct name
+    if (type.kind === "struct") {
+      return `struct ${type.name}`;
+    }
+
+    // Array: format with element type
+    if (type.kind === "array" && type.inner) {
+      return `${this.formatType(type.inner)}[]`;
     }
 
     return type.name || "Unknown";

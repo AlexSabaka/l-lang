@@ -15,9 +15,9 @@
     )
 
     ;; 3. Instantiation & Usage
-    (let my-pet (Dog "Buddy" "Golden Retriever"))
+    (let my-pet (new Dog "Buddy" "Golden Retriever"))
     
-    (my-pet.speak call) ;; Prints: Buddy the Golden Retriever says Woof!
+    (my-pet.speak) ;; Prints: Buddy the Golden Retriever says Woof!
     
     ;; 4. Accessing properties
     (console.log my-pet.name)

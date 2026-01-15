@@ -1,4 +1,4 @@
-# 📝 Implementation Tasks
+# 📋 Implementation Tasks & TODO
 
 This list is ordered by priority. **Do not jump ahead.** Start with "Priority 0". Finish the current block to unlock the next level. 🎮 
 
@@ -96,7 +96,7 @@ Important: **Commit often**
         - [x] `runtime/` - Create new for runtime helpers
     - [x] Update all import paths in visitor files and `Context.ts`
     - [x] Update `index.ts` barrel exports
-    - **Commit:** `76a5d5e` - Task 5A - Reorganize compiler by compilation phase
+    - **Commit:** Check [Context.ts](../../src/compiler/Context.ts) for `process()` method
 
 - [x] **Task 5B: Create `DesugarAstVisitor.ts`** ✅
     - [x] Move `transformPipelineList` logic from `JSTransformer` to `DesugarAstVisitor`
@@ -107,44 +107,32 @@ Important: **Commit often**
     - [x] Move **Matrix/List Unrolling** logic
         - [x] Convert `[1 | 2]` to `[[1], [2]]`
     - [x] Pipeline: Raw AST → DesugarAstVisitor → Simplified AST → JSTransformer
-    - **Commit:** `2ad0870` - Task 5B - Create DesugarAstVisitor for AST transformation
 
 - [x] **Task 5C: Runtime Shim Integration** ✅
-    - [x] Create `src/compiler/runtime/match.ts` - Pattern matching helpers
-        - [x] Implement `_ll_match_list(val, patterns)` for complex list matching
-        - [x] Implement `_ll_match_struct(val, patterns)` for destructuring
-    - [x] Create `src/compiler/runtime/types.ts` - Type checking helpers
-        - [x] Implement `_ll_is_type(val, type)` for runtime type checks
-    - [x] Create `src/compiler/runtime/index.ts` - Export and generate runtime shim string
-    - [x] Update `JSTransformerAstVisitor.visitMatch()` to call runtime helpers instead of generating inline code
-    - [x] Prepend runtime shim to generated output (like `std.console`)
-    - **Commit:** `0d37c60` - Task 5C - Create runtime helpers for pattern matching & type checking
+    - [x] Create `src/compiler/helpers/runtime/match.ts` - Pattern matching helpers
+    - [x] Create `src/compiler/helpers/runtime/types.ts` - Type checking helpers
+    - [x] Create `src/compiler/helpers/runtime/index.ts` - Export and generate runtime shim string
+    - [x] Update `JSTransformerAstVisitor.visitMatch()` to call runtime helpers
+    - [x] Prepend runtime shim to generated output
 
 - [x] **Task 5D: Standardize `ClassBuilder`** ✅
     - [x] Extract `ClassBuilder` from `JSTransformerAstVisitor.ts` into separate file
-    - [x] Refactor to consume `SymbolTable` and return ESTree nodes instead of SourceNodes
+    - [x] Refactor to consume `SymbolTable` and return ESTree nodes
     - [x] Remove direct codegen; let `JSTransformer` handle output
     - [x] Add unit tests for `ClassBuilder` with inheritance edge cases
-    - **Commit:** `65a6393` - Task 5D - Extract ClassBuilder into separate module
 
 - [x] **Task 5E: Simplify `JSTransformerAstVisitor.ts`** ✅
-    - [x] Remove pipeline transformation logic (now in `DesugarAstVisitor`)
-    - [x] Remove implicit return logic (now in `DesugarAstVisitor`)
-    - [x] Remove matrix unrolling logic (now in `DesugarAstVisitor`)
-    - [x] Remove `ClassBuilder` instantiation (now separate module)
-    - [x] Remove match codegen complexity (now calls runtime helpers)
+    - [x] Remove pipeline transformation logic
+    - [x] Remove implicit return logic
+    - [x] Remove matrix unrolling logic
+    - [x] Remove `ClassBuilder` instantiation
+    - [x] Remove match codegen complexity
     - [x] Result: **Pure codegen** mapping desugared AST to JS
-    - **Integrated with other tasks**
 
 - [x] **Task 5F: Update Compilation Pipeline** ✅
-    - [x] Modify `Context.ts` to run visitors in new order:
-        1. Parse (AstProvider)
-        2. Analysis (BuildSymbolTable, BuildDependencyGraph, Semantic Validation)
-        3. **NEW:** Desugaring (DesugarAstVisitor)
-        4. Codegen (JSTransformer)
+    - [x] Modify `Context.ts` to run visitors in new order
     - [x] Ensure `TreeShakeAstVisitor` runs after desugaring
     - [x] Add runtime shim prepend to final output
-    - **Commit:** `c58497b` - Task 5F - Integrate desugaring pass and runtime shim into compilation pipeline
 
 - [x] **Bonus: Reorganize helpers, consolidate lib + runtime + utils** ✅
     - [x] Merged `src/compiler/lib/` → `src/compiler/helpers/runtime/`
@@ -152,8 +140,43 @@ Important: **Commit often**
     - [x] Consolidated `src/compiler/runtime/` → `src/compiler/helpers/runtime/`
     - [x] Created organized barrel exports at each level
     - [x] Updated all import paths across codebase (10+ files)
-    - [x] Updated getRuntimeShim() to be clean and isolated
-    - **Commit:** `ee9e438` - Reorganize helpers, consolidate lib + runtime + utils
+
+---
+
+## 🔍 Priority 4.5: Type Inference System (COMPLETED) ✅
+*Context: Fixing critical bugs in parameter binding and type inference for complex expressions.*
+**STATUS: COMPLETE** ✅
+
+- [x] **Fix Parameter Binding Scope Isolation (CRITICAL)**
+    - [x] Override visit() in CollectTypesPass and InferAndCheckPass
+    - [x] Prevent BaseAstTreeWalker double-traversal
+    - [x] Add proper exitScope() calls in visitProgram()
+    - [x] Result: Function parameters now resolve correctly in function bodies
+
+- [x] **Implement Map Type Inference**
+    - [x] Added `case "map"` to inferExpressionType()
+    - [x] Infers key and value types from key-value pairs
+    - [x] Returns Map<K, V> type using TypeEnvironment.map() helper
+
+- [x] **Implement Indexer Type Inference**
+    - [x] Added `case "indexer"` to inferExpressionType()
+    - [x] Properly handles array[i] → element type
+    - [x] Properly handles map[key] → value type
+
+- [x] **Extend TypeEnvironment for Map Types**
+    - [x] Added "map" to InferredType.kind union
+    - [x] Added keyType, valueType, and inner fields to InferredType
+    - [x] Implemented TypeEnvironment.map() static helper method
+
+- [x] **Fix TypeCheckingValidatorAstVisitor Scope Management**
+    - [x] Applied same visit() override to prevent double-traversal
+    - [x] Added map and indexer type inference cases
+
+- [x] **Testing & Validation**
+    - [x] All three test examples pass without type errors
+    - [x] 02_fn_types.lisp - Type annotations and parameter resolution ✅
+    - [x] 06_flow_control.lisp - Flow control with typed parameters ✅
+    - [x] 07_memoization.lisp - Map literals and indexer operations ✅
 
 ---
 
@@ -165,49 +188,6 @@ Important: **Commit often**
     - [ ] Add rule: `UnusedVariable` (Warning if defined but never read - requires Symbol Table usage count).
 - [ ] **Unit Tests**
     - [ ] Create a test harness that runs a `.txt` file and asserts the output JS matches a snapshot.
-
-## 🔍 Priority 4.5: Type Inference System (COMPLETED) ✅
-*Context: Fixing critical bugs in parameter binding and type inference for complex expressions.*
-**STATUS: COMPLETE** ✅
-
-- [x] **Fix Parameter Binding Scope Isolation (CRITICAL)**
-    - [x] Override visit() in CollectTypesPass and InferAndCheckPass
-    - [x] Prevent BaseAstTreeWalker double-traversal that was causing scope mismatch
-    - [x] Add proper exitScope() calls in visitProgram()
-    - [x] Result: Function parameters now resolve correctly in function bodies
-    - **Commit:** Type inference scope fixes
-
-- [x] **Implement Map Type Inference**
-    - [x] Added `case "map"` to inferExpressionType()
-    - [x] Infers key and value types from key-value pairs
-    - [x] Returns Map<K, V> type using TypeEnvironment.map() helper
-    - **Commit:** Map type inference
-
-- [x] **Implement Indexer Type Inference**
-    - [x] Added `case "indexer"` to inferExpressionType()
-    - [x] Properly handles array[i] → element type
-    - [x] Properly handles map[key] → value type
-    - [x] Works with both array representations (generics[0] and inner field)
-    - **Commit:** Indexer type inference
-
-- [x] **Extend TypeEnvironment for Map Types**
-    - [x] Added "map" to InferredType.kind union
-    - [x] Added keyType, valueType, and inner fields to InferredType
-    - [x] Implemented TypeEnvironment.map() static helper method
-    - **Commit:** TypeEnvironment map type support
-
-- [x] **Fix TypeCheckingValidatorAstVisitor Scope Management**
-    - [x] Applied same visit() override to prevent double-traversal
-    - [x] Added map and indexer type inference cases
-    - **Commit:** Validator scope and type inference fixes
-
-- [x] **Testing & Validation**
-    - [x] All three test examples pass without type errors
-    - [x] 02_fn_types.lisp - Type annotations and parameter resolution ✅
-    - [x] 06_flow_control.lisp - Flow control with typed parameters ✅
-    - [x] 07_memoization.lisp - Map literals and indexer operations ✅
-
----
 
 ## 🧠 Backlog (For later)
 - [ ] **Advanced Type Inference**

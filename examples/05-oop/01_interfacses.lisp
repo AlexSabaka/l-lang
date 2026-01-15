@@ -28,15 +28,15 @@
     )
 
     (fn print-shape-info [s <- Shape] (
-        (console.log '"Shape Area: {(s.area call)}")
-        (console.log '"Shape Perim: {(s.perimeter call)}")
+        (console.log '"Shape Area: {(s.area)}")
+        (console.log '"Shape Perim: {(s.perimeter)}")
     ))
 
-    (let r (new Rectangle))
+    (let r (Rectangle))
     (r.width := 10)
     (r.height := 20)
 
-    (let c (new Circle))
+    (let c (Circle))
     (c.radius := 5)
 
     (print-shape-info r)

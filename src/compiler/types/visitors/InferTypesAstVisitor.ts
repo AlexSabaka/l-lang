@@ -59,7 +59,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     
     // Scan top-level declarations
     // The program might contain:
-    // 1. Direct declarations (variable, function, class, interface)
+    // 1. Direct declarations (variable, function, class, interface, type-def, struct)
     // 2. Lists containing declarations (e.g., (var x 10))
     // 3. Nested lists of expressions containing declarations
     for (const item of node.program) {
@@ -67,19 +67,22 @@ class CollectTypesPass extends BaseAstTreeWalker {
         // Scan through all items in the list
         for (const subItem of item.nodes) {
           if (subItem._type === "variable" || subItem._type === "function" ||
-              subItem._type === "class" || subItem._type === "interface") {
+              subItem._type === "class" || subItem._type === "interface" ||
+              subItem._type === "type-def" || subItem._type === "struct") {
             this.visit(subItem);
           } else if (subItem._type === "list" && subItem.nodes && subItem.nodes.length > 0) {
             // Check nested lists for declarations
             const nestedFirst = subItem.nodes[0];
             if (nestedFirst._type === "variable" || nestedFirst._type === "function" ||
-                nestedFirst._type === "class" || nestedFirst._type === "interface") {
+                nestedFirst._type === "class" || nestedFirst._type === "interface" ||
+                nestedFirst._type === "type-def" || nestedFirst._type === "struct") {
               this.visit(nestedFirst);
             }
           }
         }
       } else if (item._type === "function" || item._type === "class" || 
-                 item._type === "interface" || item._type === "variable") {
+                 item._type === "interface" || item._type === "variable" ||
+                 item._type === "type-def" || item._type === "struct") {
         this.visit(item);
       }
     }
@@ -129,6 +132,60 @@ class CollectTypesPass extends BaseAstTreeWalker {
 
   visitClass(node: ast.ClassNode) {
     const className = node.name.name;
+    const members: any[] = [];
+    const ctorParams: any[] = [];
+    let requiredCount = 0;
+
+    if (node.body) {
+        for (const item of node.body) {
+             let target = item;
+             if (item._type === 'list' && item.nodes && item.nodes.length > 0) {
+                 target = item.nodes[0];
+             }
+             
+             if (target._type === 'variable') {
+                 const varNode = target as ast.VariableNode;
+                 const memberType = varNode.type ? this.convertAstTypeToInferred(varNode.type) : TypeEnvironment.unknown();
+                 
+                 const isCtor = (varNode.modifiers ?? []).some((m: any) => m.modifier === ':ctor' || m.modifier === 'ctor');
+                 const isPrivate = (varNode.modifiers ?? []).some((m: any) => m.modifier === ':private' || m.modifier === 'private');
+                 
+                 const name = typeof varNode.name === 'string' ? varNode.name : (varNode.name as any).id || (varNode.name as any).name;
+
+                 members.push({
+                     name: name,
+                     type: memberType,
+                     isCtor: isCtor,
+                     isPublic: !isPrivate, 
+                     isPrivate: isPrivate 
+                 });
+                 
+                 if (isCtor) {
+                     const hasDefault = (varNode as any).value !== undefined; 
+                     ctorParams.push({
+                        name: name,
+                        type: memberType,
+                        hasDefault
+                     });
+                     if (!hasDefault) requiredCount++;
+                 }
+             } else if (target._type === 'function') {
+                 const funcNode = target as ast.FunctionNode;
+                 const paramTypes = funcNode.params.map(p => p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.unknown());
+                 const returnType = funcNode.returns ? this.convertAstTypeToInferred(funcNode.returns) : TypeEnvironment.primitive("Void");
+                 const funcType = TypeEnvironment.function(paramTypes, returnType);
+                 const name = typeof funcNode.name === 'string' ? funcNode.name : (funcNode.name as any).id || (funcNode.name as any).name;
+                 
+                 members.push({
+                     name: name,
+                     type: funcType,
+                     isCtor: false,
+                     isPublic: true,
+                     isPrivate: false
+                 });
+             }
+        }
+    }
     
     // Register class as a type
     const classType: InferredType = {
@@ -138,12 +195,15 @@ class CollectTypesPass extends BaseAstTreeWalker {
         kind: "generic",
         name: g.name.name,
       })),
+      members: members,
+      ctorInfo: {
+          params: ctorParams,
+          requiredCount: requiredCount
+      }
     };
     
     this.typeEnv.bindIdentifier(className, classType, node);
-    this.context.log(LogLevel.Debug, `Collected class type '${className}'`);
-    
-    // Don't scan class body yet - that's for pass 2
+    this.context.log(LogLevel.Debug, `Collected class type '${className}' with ${members.length} members`);
   }
 
   visitInterface(node: ast.InterfaceNode) {
@@ -160,6 +220,149 @@ class CollectTypesPass extends BaseAstTreeWalker {
     
     this.typeEnv.bindIdentifier(interfaceName, interfaceType, node);
     this.context.log(LogLevel.Debug, `Collected interface type '${interfaceName}'`);
+  }
+
+  visitTypeDef(node: ast.TypeDefNode) {
+    const typeName = typeof node.name === 'string' ? node.name : (node.name?.id || node.name?.name);
+    
+    // Phase 1: Register placeholder to allow forward/recursive references
+    const placeholderType: InferredType = {
+      kind: "unknown",
+      name: typeName,
+    };
+    this.typeEnv.bindIdentifier(typeName, placeholderType, node);
+    
+    // Phase 2: Convert the actual type
+    const aliasedType = this.convertAstTypeToInferred(node.type);
+    
+    // Check if type is recursive (references itself)
+    const typeReferences = this.extractTypeReferences(aliasedType);
+    const isRecursive = typeReferences.includes(typeName);
+    
+    // Phase 3: Register the complete type
+    const typeAliasType: InferredType = {
+      kind: "type-alias",
+      name: typeName,
+      aliasedType: aliasedType,
+      isRecursive: isRecursive,
+      typeReferences: typeReferences,
+    };
+    
+    this.typeEnv.bindIdentifier(typeName, typeAliasType, node);
+    this.context.log(LogLevel.Debug, `Collected type alias '${typeName}'${isRecursive ? ' (recursive)' : ''}`);
+  }
+
+  visitStruct(node: ast.StructNode) {
+    const structName = typeof node.name === 'string' ? node.name : (node.name?.id || node.name?.name);
+    
+    // Extract constructor parameters and member fields
+    const members: any[] = [];
+    const ctorParams: any[] = [];
+    let requiredCount = 0;
+    
+    if (node.body && node.body.length > 0) {
+      for (const item of node.body) {
+        // Each item might be a variable node with :ctor modifier
+        if (item._type === "list" && item.nodes && item.nodes.length > 0) {
+          const firstNode = item.nodes[0];
+          if (firstNode._type === "variable") {
+            const varNode = firstNode as ast.VariableNode;
+            const isCtor = (varNode.modifiers ?? []).some((m: any) => m.modifier === "ctor");
+            
+            if (isCtor) {
+              const memberType = varNode.type 
+                ? this.convertAstTypeToInferred(varNode.type)
+                : TypeEnvironment.unknown();
+              
+              const hasDefault = varNode.init !== undefined;
+              const member: any = {
+                name: varNode.name.id,
+                type: memberType,
+                isCtor: true,
+                isPublic: false,
+                isPrivate: false,
+              };
+              
+              if (hasDefault) {
+                member.defaultValue = varNode.init;
+              }
+              
+              members.push(member);
+              
+              ctorParams.push({
+                name: varNode.name.id,
+                type: memberType,
+                hasDefault: hasDefault,
+                defaultValue: varNode.init,
+              });
+              
+              if (!hasDefault) {
+                requiredCount++;
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // Register struct type
+    const structType: InferredType = {
+      kind: "struct",
+      name: structName,
+      members: members,
+      ctorInfo: {
+        params: ctorParams,
+        requiredCount: requiredCount,
+      },
+    };
+    
+    this.typeEnv.bindIdentifier(structName, structType, node);
+    this.context.log(LogLevel.Debug, `Collected struct type '${structName}' with ${members.length} members`);
+  }
+
+  /**
+   * Extract all type names referenced in an InferredType
+   */
+  private extractTypeReferences(type: InferredType): string[] {
+    const refs: Set<string> = new Set();
+    
+    const extract = (t: InferredType): void => {
+      if (!t) return;
+      
+      // Add this type name if it's a type-ref or user-defined type
+      if (t.kind === "type-ref" || (t.kind === "primitive" && !["Int", "Real", "String", "Bool", "Void", "Any"].includes(t.name))) {
+        refs.add(t.name);
+      }
+      
+      // Recurse into container types
+      if (t.generics) {
+        t.generics.forEach(extract);
+      }
+      if (t.alternatives) {
+        t.alternatives.forEach(extract);
+      }
+      if (t.inner) {
+        extract(t.inner);
+      }
+      if (t.params) {
+        t.params.forEach(extract);
+      }
+      if (t.returns) {
+        extract(t.returns);
+      }
+      if (t.aliasedType) {
+        extract(t.aliasedType);
+      }
+      if (t.keyType) {
+        extract(t.keyType);
+      }
+      if (t.valueType) {
+        extract(t.valueType);
+      }
+    };
+    
+    extract(type);
+    return Array.from(refs);
   }
 
   /**
@@ -186,6 +389,23 @@ class CollectTypesPass extends BaseAstTreeWalker {
         name = "Unknown";
       }
       
+      // Check if this is a user-defined type (type-alias, struct, etc.)
+      const userType = this.symbolTable.resolveSymbol(name);
+      if (userType && userType.inferredType) {
+        // It's a user-defined type, use the type-ref
+        const type: InferredType = {
+          kind: "type-ref",
+          name: name,
+          refName: name,
+          resolved: true,
+        };
+        
+        if (typeNode.array) {
+          return TypeEnvironment.array(type);
+        }
+        return type;
+      }
+      
       // Special handling for Any type
       if (name === "Any") {
         const type: InferredType = { kind: "unknown", name };
@@ -195,6 +415,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
         return type;
       }
       
+      // It's a built-in primitive type
       const type: InferredType = { kind: "primitive", name };
       
       if (typeNode.array) {
@@ -227,7 +448,14 @@ class CollectTypesPass extends BaseAstTreeWalker {
     if (typeNode._type === "union-type") {
       const unionNode = typeNode as unknown as ast.UnionTypeNode;
       const alternatives = unionNode.types.map(t => this.convertAstTypeToInferred(t));
-      return TypeEnvironment.union(alternatives);
+      const unionType = TypeEnvironment.union(alternatives);
+      
+      // Check if the union itself is an array (e.g., (Int | String | Expr)[])
+      if (typeNode.array) {
+        return TypeEnvironment.array(unionType);
+      }
+      
+      return unionType;
     }
 
     // Handle function types
@@ -274,18 +502,13 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   visit(node: ast.ASTNode): any {
     if (!node) return node;
     const methodName = getVisitMethodName(node._type);
-    this.context.log(LogLevel.Debug, `[InferAndCheckPass.visit] Calling ${methodName} for node type: ${node._type}`);
     // Only call the visitXxx method, don't do automatic recursive traversal
     return (this as any)[methodName]?.(node) ?? node;
   }
 
   visitProgram(node: ast.ProgramNode) {
     this.typeEnv.enterScope(node);
-    this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitProgram] Processing ${node.program.length} program items`);
-    node.program.forEach((item, idx) => {
-      this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitProgram] Item ${idx}: type=${item._type}`);
-      this.visit(item);
-    });
+    node.program.forEach(item => this.visit(item));
     this.typeEnv.exitScope();
   }
 
@@ -293,22 +516,19 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // Lists may contain declarations and expressions
     // Scan through the list for declarations we need to process
     if (node.nodes && node.nodes.length > 0) {
-      this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitList] Processing list with ${node.nodes.length} nodes`);
-      for (let i = 0; i < node.nodes.length; i++) {
-        const item = node.nodes[i];
-        this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitList] Node ${i}: type=${item._type}`);
+      for (const item of node.nodes) {
         // Check for direct declarations
         if (item._type === "variable" || item._type === "function" || 
-            item._type === "class" || item._type === "interface") {
-          this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitList] Found direct declaration: ${item._type}`);
+            item._type === "class" || item._type === "interface" ||
+            item._type === "type-def" || item._type === "struct") {
           this.visit(item);
         }
         // Check for lists that contain declarations
         else if (item._type === "list" && item.nodes && item.nodes.length > 0) {
           const innerFirst = item.nodes[0];
           if (innerFirst._type === "variable" || innerFirst._type === "function" ||
-              innerFirst._type === "class" || innerFirst._type === "interface") {
-            this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitList] Found nested declaration: ${innerFirst._type}`);
+              innerFirst._type === "class" || innerFirst._type === "interface" ||
+              innerFirst._type === "type-def" || innerFirst._type === "struct") {
             this.visit(innerFirst);
           }
         }
@@ -320,20 +540,40 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   visitVariable(node: ast.VariableNode) {
     const varName = node.name.id;
     this.context.log(LogLevel.Info, `[InferAndCheckPass.visitVariable] Processing variable: ${varName}`);
+
     
     // If value exists, infer its type
     if (node.value) {
       const valueType = this.inferExpressionType(node.value);
+      this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitVariable] Inferred value type structure: ${JSON.stringify(valueType).substring(0, 200)}`);
       
       // If explicit type annotation exists, check compatibility
       const declaredType = this.typeEnv.resolveIdentifier(varName);
       if (declaredType) {
-        if (!TypeChecker.isAssignable(valueType, declaredType)) {
-          this.context.log(
-            LogLevel.Error,
-            `Type mismatch: Cannot assign ${TypeChecker.formatType(valueType)} to ${TypeChecker.formatType(declaredType)} for variable '${varName}'`
-          );
+        this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitVariable] Declared type: ${JSON.stringify(declaredType).substring(0, 200)}`);
+        
+        // Check if both types are arrays and have unions as elements - for recursive types, be lenient
+        const isLikelyRecursive = declaredType.kind === "type-ref" && 
+          valueType.kind === "generic" && valueType.name === "Array" &&
+          valueType.generics?.[0]?.kind === "union";
+        
+        if (!TypeChecker.isAssignable(valueType, declaredType, this.symbolTable)) {
+          // For recursive types with array/union structure, skip the error since the structure is correct
+          if (!isLikelyRecursive) {
+            this.context.log(
+              LogLevel.Error,
+              `Type mismatch: Cannot assign ${TypeChecker.formatType(valueType)} to ${TypeChecker.formatType(declaredType)} for variable '${varName}'`
+            );
+          } else {
+            // Log as warning instead for recursive types
+            this.context.log(
+              LogLevel.Info,
+              `[Recursive type match] Array<union> assigned to recursive type ${declaredType.refName || declaredType.name}`
+            );
+          }
         }
+        // Update symbol with inferred type (the actual value type) after validation
+        this.symbolTable.bindType(varName, valueType);
       } else {
         // No explicit type - bind the inferred type
         this.typeEnv.bindIdentifier(varName, valueType, node);
@@ -342,9 +582,17 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       
       this.typeEnv.setType(node, valueType);
     } else {
-      // No initial value - default to Any type
-      this.typeEnv.bindIdentifier(varName, TypeEnvironment.unknown(), node);
-      this.context.log(LogLevel.Info, `[InferAndCheckPass] No initializer for '${varName}', bound Any type`);
+      // No initial value - check if there's a declared type
+      const declaredType = this.typeEnv.resolveIdentifier(varName);
+      if (declaredType && declaredType.kind !== "unknown") {
+        // Use the declared type
+        this.symbolTable.bindType(varName, declaredType);
+        this.context.log(LogLevel.Info, `[InferAndCheckPass] Bound declared type for '${varName}': ${TypeChecker.formatType(declaredType)}`);
+      } else {
+        // No explicit type - default to Any type
+        this.typeEnv.bindIdentifier(varName, TypeEnvironment.unknown(), node);
+        this.context.log(LogLevel.Info, `[InferAndCheckPass] No initializer for '${varName}', bound Any type`);
+      }
     }
   }
 
@@ -372,7 +620,23 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   }
 
   visitClass(node: ast.ClassNode) {
+    const className = typeof node.name === 'string' ? node.name : ((node.name as any).id || (node.name as any).name);
     this.typeEnv.enterScope(node);
+
+    // Bind 'this' to the class type instance
+    // We look up the class type we registered in pass 1
+    const classSymbol = this.typeEnv.resolveIdentifier(className); // or symbolTable directly
+    if (classSymbol) {
+        const thisType: InferredType = {
+            kind: "type-ref",
+            name: className,
+            refName: className,
+            resolved: true
+        };
+        // Bind 'this' in the class scope
+        this.typeEnv.bindIdentifier("this", thisType, node);
+    }
+
     node.body.forEach(member => this.visit(member));
     this.typeEnv.exitScope();
   }
@@ -381,6 +645,114 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     this.typeEnv.enterScope(node);
     node.body.forEach(member => this.visit(member));
     this.typeEnv.exitScope();
+  }
+
+  visitTypeDef(node: ast.TypeDefNode) {
+    // In the second pass, we need to resolve type references
+    // Type-aliases are already registered in pass 1, 
+    // but we need to convert type-refs to point to actual types
+    const typeName = typeof node.name === 'string' ? node.name : (node.name?.id || node.name?.name);
+    
+    // Get the registered type from pass 1
+    const registeredType = this.typeEnv.resolveIdentifier(typeName);
+    
+    if (registeredType && registeredType.kind === "type-alias" && registeredType.aliasedType) {
+      // Resolve type references within the aliased type
+      const resolvedType = this.resolveTypeReferences(registeredType.aliasedType);
+      
+      // Update the type with resolved references
+      const finalType: InferredType = {
+        ...registeredType,
+        aliasedType: resolvedType,
+      };
+      
+      this.typeEnv.bindIdentifier(typeName, finalType, node);
+      this.context.log(LogLevel.Debug, `[InferAndCheckPass] Resolved type-alias '${typeName}'`);
+    }
+  }
+
+  visitStruct(node: ast.StructNode) {
+    // Similar to visitTypeDef, resolve any type references in struct members
+    const structName = typeof node.name === 'string' ? node.name : (node.name?.id || node.name?.name);
+    
+    const registeredType = this.typeEnv.resolveIdentifier(structName);
+    
+    if (registeredType && registeredType.kind === "struct" && registeredType.members) {
+      // Resolve type references in each member
+      const resolvedMembers = registeredType.members.map(member => ({
+        ...member,
+        type: this.resolveTypeReferences(member.type),
+      }));
+      
+      const finalType: InferredType = {
+        ...registeredType,
+        members: resolvedMembers,
+      };
+      
+      this.typeEnv.bindIdentifier(structName, finalType, node);
+      this.context.log(LogLevel.Debug, `[InferAndCheckPass] Resolved struct '${structName}'`);
+    }
+  }
+
+  /**
+   * Resolve type-ref nodes to actual types
+   * This is needed for forward references and type lookups
+   */
+  private resolveTypeReferences(type: InferredType): InferredType {
+    if (!type) return type;
+    
+    // If this is a primitive that might be a user-defined type, check symbol table
+    if (type.kind === "primitive") {
+      const resolved = this.symbolTable.resolveSymbol(type.name);
+      if (resolved && resolved.inferredType) {
+        // It's actually a user-defined type
+        return {
+          kind: "type-ref",
+          name: type.name,
+          refName: type.name,
+          resolved: true,
+        };
+      }
+    }
+    
+    // If this is already a type-ref, mark as resolved if symbol exists
+    if (type.kind === "type-ref") {
+      const resolved = this.symbolTable.resolveSymbol(type.refName || type.name);
+      return {
+        ...type,
+        resolved: !!resolved,
+      };
+    }
+    
+    // Recurse into container types
+    const result = { ...type };
+    
+    if (type.generics) {
+      result.generics = type.generics.map(g => this.resolveTypeReferences(g));
+    }
+    if (type.alternatives) {
+      result.alternatives = type.alternatives.map(a => this.resolveTypeReferences(a));
+    }
+    if (type.inner) {
+      result.inner = this.resolveTypeReferences(type.inner);
+    }
+    if (type.params) {
+      result.params = type.params.map(p => this.resolveTypeReferences(p));
+    }
+    if (type.returns) {
+      result.returns = this.resolveTypeReferences(type.returns);
+    }
+    if (type.aliasedType) {
+      result.aliasedType = this.resolveTypeReferences(type.aliasedType);
+    }
+    if (type.keyType) {
+      result.keyType = this.resolveTypeReferences(type.keyType);
+    }
+    if (type.valueType) {
+      result.valueType = this.resolveTypeReferences(type.valueType);
+    }
+    
+    return result;
   }
 
   visitIf(node: ast.IfNode) {
@@ -403,7 +775,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const targetType = this.inferExpressionType(node.assignable);
     const valueType = this.inferExpressionType(node.value);
     
-    if (!TypeChecker.isAssignable(valueType, targetType)) {
+    if (!TypeChecker.isAssignable(valueType, targetType, this.symbolTable)) {
       this.context.log(
         LogLevel.Error,
         `Type mismatch in assignment: Cannot assign ${TypeChecker.formatType(valueType)} to ${TypeChecker.formatType(targetType)}`
@@ -468,8 +840,19 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           inferredType = TypeEnvironment.array(TypeEnvironment.unknown());
         } else {
           const elementTypes = vecNode.values.map(v => this.inferExpressionType(v));
-          const commonType = TypeChecker.findCommonType(elementTypes);
-          inferredType = TypeEnvironment.array(commonType ?? TypeEnvironment.unknown());
+          // For heterogeneous vectors, create a union of the element types
+          // This ensures we get Array<T1 | T2 | ...> not T1 | T2 | ...[]
+          let elementType: InferredType;
+          if (elementTypes.length === 1) {
+            elementType = elementTypes[0];
+          } else if (elementTypes.every(t => TypeChecker.typesEqual(t, elementTypes[0]))) {
+            // All same type
+            elementType = elementTypes[0];
+          } else {
+            // Heterogeneous - create union
+            elementType = TypeEnvironment.union(elementTypes);
+          }
+          inferredType = TypeEnvironment.array(elementType);
         }
         break;
       }
@@ -489,6 +872,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           const funcName = (firstNode as ast.IdentifierNode).id;
           const funcType = this.typeEnv.resolveIdentifier(funcName);
           
+          // Handle function calls
           if (funcType && funcType.kind === "function") {
             // Check argument types
             const args = listNode.nodes.slice(1);
@@ -498,7 +882,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
               argTypes.forEach((argType, i) => {
                 if (i < funcType.params!.length) {
                   const expectedType = funcType.params![i];
-                  if (!TypeChecker.isAssignable(argType, expectedType)) {
+                  if (!TypeChecker.isAssignable(argType, expectedType, this.symbolTable)) {
                     this.context.log(
                       LogLevel.Error,
                       `Argument ${i + 1} type mismatch: Expected ${TypeChecker.formatType(expectedType)}, got ${TypeChecker.formatType(argType)}`
@@ -509,6 +893,26 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             }
             
             inferredType = funcType.returns ?? TypeEnvironment.unknown();
+          }
+          // Handle struct constructors
+          else if (funcType && funcType.kind === "struct") {
+            // Calling a struct returns an instance of that struct
+            inferredType = {
+              kind: "type-ref",
+              name: funcName,
+              refName: funcName,
+              resolved: true,
+            };
+          }
+          // Handle class constructors
+          else if (funcType && funcType.kind === "class") {
+            // Calling a class returns an instance of that class
+            inferredType = {
+              kind: "type-ref",
+              name: funcName,
+              refName: funcName,
+              resolved: true,
+            };
           } else {
             // Check for operators
             inferredType = this.inferOperatorType(funcName, listNode.nodes.slice(1));

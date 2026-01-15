@@ -1,11 +1,13 @@
 (
-    (fn error [msg] (
+    (fn error [msg <- String] -> Real (
         (console.log msg)
         (return NaN)
     ))
 
+    (deftype Expr (Int | String | Expr)[])
+
     ;; A tiny Lisp interpreter that handles (+, -, *)
-    (fn eval-expr [expr] (return
+    (fn eval-expr [expr <- Expr] -> Real (return
         (match expr {
             ["+" a b] => (+ (eval-expr a) (eval-expr b))
             ["-" a b] => (- (eval-expr a) (eval-expr b))
@@ -15,6 +17,6 @@
         })
     ))
 
-    (let program ["+" 10 ["*" 5 ["-" 10 8]]])
+    (let program <- Expr ["+" 10 ["*" 5 ["-" 10 8]]])
     (console.log '"Result should be 20: {(eval-expr program)}")
 )

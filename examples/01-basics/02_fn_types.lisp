@@ -14,3 +14,5 @@
     (let array [1 2 3 4 5])
     (console.log "2nd element is (should be 3):" (n-th array 2))
 )
+(console.log "Type of is-null:" (type "is-null"))
+(console.log "Type of n-th:" (type "n-th"))

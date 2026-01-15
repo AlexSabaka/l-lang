@@ -5,7 +5,11 @@ type SymbolName = string;
 
 export class RuntimeProvider {
 
+  // Global type metadata storage
+  public static readonly TYPES_METADATA_VAR = '__ll_type_metadata';
+
   private static readonly LL_RUNTIME: string = `const _util = require("util");
+let ${RuntimeProvider.TYPES_METADATA_VAR} = {};
 let _readline = null;
 try { _readline = require("readline-sync"); } catch (e) { /* optional */ }
 function __ll_deep_eq(a, b) {
@@ -132,6 +136,23 @@ function __ll_is_type(val, type) {
     // Call wrapper
     "call": `const call = (f, args) => !!args && Array.isArray(args) ? f(...args) : f();`,
     "eval": ``,
+    "type": `const type = (typeNameOrObj) => {
+  // If it's a string, look up the type metadata
+  if (typeof typeNameOrObj === 'string') {
+    return __ll_type_metadata[typeNameOrObj] || { name: typeNameOrObj, kind: 'unknown', properties: [], methods: [], generics: [] };
+  }
+  // If it's an object (instance), try to get its type
+  if (typeof typeNameOrObj === 'object' && typeNameOrObj !== null) {
+    const typeName = typeNameOrObj.constructor?.name || 'Object';
+    return __ll_type_metadata[typeName] || { name: typeName, kind: 'object', properties: Object.keys(typeNameOrObj), methods: [], generics: [] };
+  }
+  // If it's a function (class), get its type
+  if (typeof typeNameOrObj === 'function') {
+    const typeName = typeNameOrObj.name;
+    return __ll_type_metadata[typeName] || { name: typeName, kind: 'class', properties: [], methods: [], generics: [] };
+  }
+  return { kind: 'unknown', properties: [], methods: [], generics: [] };
+};`,
   };
 
 
@@ -139,19 +160,28 @@ function __ll_is_type(val, type) {
    * Gets the full runtime shim with all symbols
    */
   public static getRuntimeShim(): string {
+
     return this.getRuntimeShimForSymbols(Object.keys(this.SYMBOL_MAP));
   }
 
   /**
    * Gets a runtime shim containing only the specified symbols
    * @param symbols - Array of symbol names to include
+   * @param typesMetadata - Optional compiled types metadata to include
    * @returns Generated runtime preamble string
    */
-  public static getRuntimeShimForSymbols(symbols: SymbolName[]): string {
-    const symbolDefinitions = symbols
+  public static getRuntimeShimForSymbols(symbols: SymbolName[], typesMetadata?: Record<string, any>): string {
+    // Always include the type function for runtime type introspection
+    const symbolSet = new Set([...symbols, 'type']);
+    
+    const symbolDefinitions = Array.from(symbolSet)
       .filter(symbol => symbol in this.SYMBOL_MAP)
       .map(symbol => this.SYMBOL_MAP[symbol])
       .join('\n');
+
+    const metadataInit = typesMetadata && Object.keys(typesMetadata).length > 0
+      ? `${this.TYPES_METADATA_VAR} = ${JSON.stringify(typesMetadata, null, 2)};`
+      : `// No type metadata`;
 
     return `
 /**
@@ -161,6 +191,7 @@ function __ll_is_type(val, type) {
 "use strict";
 ${this.LL_RUNTIME}
 ${symbolDefinitions}
+${metadataInit}
 `;
   }
 

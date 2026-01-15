@@ -38,7 +38,7 @@ export class TypeCheckingValidatorAstVisitor extends BaseAstTreeWalker {
       const valueType = this.inferExpressionType(node.value);
       const declaredType = this.typeEnv.resolveIdentifier(varName);
 
-      if (declaredType && !TypeChecker.isAssignable(valueType, declaredType)) {
+      if (declaredType && !TypeChecker.isAssignable(valueType, declaredType, this.symbolTable)) {
         this.reportTypeError(
           node.value,
           `Type mismatch: Cannot assign ${TypeChecker.formatType(valueType)} to ${TypeChecker.formatType(declaredType)}`
@@ -66,7 +66,7 @@ export class TypeCheckingValidatorAstVisitor extends BaseAstTreeWalker {
           argTypes.forEach((argType, i) => {
             if (i < funcType.params!.length) {
               const expectedType = funcType.params![i];
-              if (!TypeChecker.isAssignable(argType, expectedType)) {
+              if (!TypeChecker.isAssignable(argType, expectedType, this.symbolTable)) {
                 // Safely extract type name
                 let expectedStr = "Unknown";
                 if (expectedType && typeof expectedType === 'object' && 'name' in expectedType) {
@@ -88,7 +88,7 @@ export class TypeCheckingValidatorAstVisitor extends BaseAstTreeWalker {
     const targetType = this.inferExpressionType(node.assignable);
     const valueType = this.inferExpressionType(node.value);
 
-    if (!TypeChecker.isAssignable(valueType, targetType)) {
+    if (!TypeChecker.isAssignable(valueType, targetType, this.symbolTable)) {
       this.reportTypeError(
         node.value,
         `Type mismatch in assignment: Cannot assign ${TypeChecker.formatType(valueType)} to ${TypeChecker.formatType(targetType)}`

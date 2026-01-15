@@ -509,4 +509,4 @@ Trimmed reflection—enough to inspect, not enough to break encapsulation.
 
 ---
 
-*TBD...*
+*Last Updated: January 2026*

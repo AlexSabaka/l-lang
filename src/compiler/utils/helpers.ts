@@ -43,9 +43,11 @@ export function formatVariable(
     [ScopeType.class]: () => createSourceNode(node, name, ...va),
     [ScopeType.interface]: () => createSourceNode(node, kw, name, ...va),
     [ScopeType.variable]: () => createSourceNode(node, name, ...va),
+    [ScopeType.struct]: () => createSourceNode(node, kw, name, ...va),
+    ["type-def" as any]: () => createSourceNode(node, kw, name, ...va),
   };
 
-  if (!format[scope]) {
+  if (!format[scope as any]) {
     throw new Error(`${scope} is not defined for variable formatting`);
   }
 
@@ -54,5 +56,5 @@ export function formatVariable(
     `Formatting variable ${name} in the scope of ${scope}`
   );
 
-  return format[scope]();
+  return (format as any)[scope]();
 }

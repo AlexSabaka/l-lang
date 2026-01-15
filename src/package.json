@@ -10,7 +10,8 @@
     "start": "ts-node index.ts",
     "parser": "peggy -o ./compiler/frontend/grammar/l-lang.js --format es ./compiler/frontend/grammar/l-lang.pegjs",
     "build": "tsc",
-    "test": "./node_modules/.bin/jest"
+    "test": "ts-node test/runner.ts",
+    "test:verbose": "ts-node test/runner.ts --verbose"
   },
   "author": "Alex Sabaka",
   "license": "MIT",

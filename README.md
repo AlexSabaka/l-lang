@@ -78,21 +78,44 @@ See [ROADMAP.md](ROADMAP.md) for the details.
 ```bash
 # Clone the repo
 git clone https://github.com/AlexSabaka/l-lang.git
-cd l-lang/src
+cd l-lang
 
 # Install dependencies
-npm install
+cd src && npm install
 
 # Build the compiler
 npm run parser
 npm run build
 
-# Run single file
-node src/dist/index.js run examples/00_vars.lisp
+# Compile and run a file
+ts-node src/index.ts run examples/01-basics/00_vars.lisp
 
-# Run tests
-node src/dist/test/runner.js
+# Or compile to JavaScript
+ts-node src/index.ts transform examples/01-basics/00_vars.lisp
+node examples/01-basics/00_vars.js
+
+# Run test suite (27/27 passing ✅)
+npm test
+
+# Run tests with detailed output
+npm test -- --verbose
 ```
+
+### Test Status
+
+**27/27 tests passing (100%)** 🎉
+
+All core features validated:
+- ✅ Variables, functions, closures
+- ✅ String interpolation  
+- ✅ Pattern matching
+- ✅ Control flow (if/when/cond/for/while)
+- ✅ Classes & inheritance
+- ✅ Error handling
+- ✅ Module system
+- ✅ Pipelines
+
+See [src/test/README.md](src/test/README.md) for testing documentation.
 
 ---
 

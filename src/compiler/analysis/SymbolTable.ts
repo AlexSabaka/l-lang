@@ -10,6 +10,8 @@ export enum ScopeType {
   match = "match",
   when = "when",
   if = "if",
+  struct = "struct",
+  "type-def" = "type-def",
 
   // list = "list",
   // quote = "quote",
@@ -29,7 +31,7 @@ export enum ScopeType {
 }
 
 export function isNodeScope(type: any): type is ScopeType {
-  return [ "program", "class", "interface", "function", "variable", "method", "match", "when", "if" ].includes(type);
+  return [ "program", "class", "interface", "function", "variable", "method", "match", "when", "if", "struct", "type-def" ].includes(type);
 }
 
 export type SymbolVisibility = "public" | "private" | "protected" | "internal";
@@ -42,7 +44,7 @@ export function isVisibilityModifier(modifier: ast.ModifierNode["modifier"]): mo
  * Inferred type information for a symbol
  */
 export interface InferredType {
-  kind: "primitive" | "class" | "interface" | "generic" | "function" | "union" | "unknown" | "map";
+  kind: "primitive" | "class" | "interface" | "generic" | "function" | "union" | "unknown" | "map" | "type-alias" | "struct" | "type-ref" | "array";
   name: string;
   generics?: InferredType[];
   params?: InferredType[];  // For function types
@@ -53,6 +55,46 @@ export interface InferredType {
   inner?: InferredType;     // For array element type (alternative to generics[0])
   isArray?: boolean;
   nullable?: boolean;
+  // Type alias support
+  aliasedType?: InferredType;  // What this type-alias points to
+  isRecursive?: boolean;  // True if type-alias references itself
+  typeReferences?: string[];  // Names of types referenced in definition
+  // Type reference support (forward references to types)
+  refName?: string;  // Name of the type being referenced
+  resolved?: boolean;  // Whether this type-ref has been resolved
+  // Struct support
+  members?: StructMember[];  // Struct member information
+  ctorInfo?: ConstructorInfo;  // Struct constructor information (renamed to avoid TypeScript 'constructor' conflict)
+}
+
+/**
+ * Information about a struct member
+ */
+export interface StructMember {
+  name: string;
+  type: InferredType;
+  isCtor: boolean;  // True if marked with :ctor modifier
+  isPublic: boolean;
+  isPrivate: boolean;
+  defaultValue?: any;  // Default value if :ctor param has default
+}
+
+/**
+ * Information about a struct constructor
+ */
+export interface ConstructorInfo {
+  params: ConstructorParam[];
+  requiredCount: number;  // Number of required (non-default) params
+}
+
+/**
+ * Constructor parameter information
+ */
+export interface ConstructorParam {
+  name: string;
+  type: InferredType;
+  hasDefault: boolean;
+  defaultValue?: any;
 }
 
 export interface SymbolEntry {
@@ -256,7 +298,7 @@ export class SymbolTableBuilder {
     this.active = this.active.parent;
   }
 
-  defineSymbol(node: ast.VariableNode | ast.FunctionNode | ast.ClassNode | ast.InterfaceNode) {
+  defineSymbol(node: ast.VariableNode | ast.FunctionNode | ast.ClassNode | ast.InterfaceNode | ast.TypeDefNode | ast.StructNode) {
     if (this.root === undefined) {
       throw new Error("No root scope. Cannot define symbol.");
     }
@@ -265,14 +307,26 @@ export class SymbolTableBuilder {
       throw new Error("No active scope. Cannot define symbol.");
     }
 
-    this.active.table.set(node.name?.id ?? node.name?.name, {
-      name: node.name,
+    // Get the name from the node (different types have different name structures)
+    let name: string;
+    if (node._type === "type-def" || node._type === "struct") {
+      // TypeDefNode and StructNode have name as an IdentifierNode or TypeNameNode
+      name = (node as any).name?.id || (node as any).name?.name;
+    } else {
+      // Other node types (variable, function, class, interface)
+      name = node.name?.id ?? node.name?.name;
+    }
+
+    const modifiers = (node as any).modifiers || [];
+    
+    this.active.table.set(name, {
+      name: (node as any).name,
       nodeType: node._type,
       scope: this.active,
       value: node,
-      mutability: node.mutable ?? false,
+      mutability: (node as any).mutable ?? false,
       exportName: undefined,
-      visibility: node.modifiers.filter(x => isVisibilityModifier(x.modifier)).at(0)?.modifier as SymbolVisibility,
+      visibility: modifiers.filter((x: any) => isVisibilityModifier(x.modifier)).at(0)?.modifier as SymbolVisibility ?? "internal",
       // inferredType will be populated during type inference phase
     });
   }
