@@ -1,10 +1,11 @@
 (
-    (import "std/types.lisp")
-    (import "std/math.lisp")
+    (import "std/io.lisp")
 
-    (console.log "E:" E)
-    (console.log "sqrt(E):" (sqrt E))
+    (let name "World")
+    (let punct "!")
 
-    (console.log "TAU:" TAU)
-    (console.log "sqrt(TAU):" (sqrt TAU))
+    (print "Hello, {0}!" name)
+    (print "Hello, {0}{1}" name punct)
+    (print "Format: {0} = {1} + {2}" "result" 2 3)
+    (print "Multiple: {0}, {1}, {2}, {3}" "a" "b" "c" "d")
 )

@@ -2,6 +2,44 @@
 
 ## 🚀 Recent Major Changes (January 2026)
 
+### DefModifier System - User-Defined Function Modifiers (January 16, 2026)
+**Status**: ✅ Complete
+
+Implemented a complete compile-time metaprogramming system for user-defined function modifiers:
+
+- **DefModifier Syntax**: `(defmodifier name [])` defines custom function transformers applied via `(fn :modifier ...)`
+- **Compile-Time Transformation**: Modifiers transform functions during compilation, generating optimized JavaScript with zero runtime overhead for the transformation mechanism
+- **Multiple Modifier Support**: Functions can have multiple modifiers applied in sequence: `(fn :logged :memoized :timed ...)`
+- **Automatic Memoization**: Current implementation generates memoization logic for all modifiers using Map-based caching with JSON.stringify keys
+- **Symbol Table Integration**: Modifier definitions registered as `nodeType: "modifier-def"` with full symbol resolution
+- **Type System Integration**: Modifiers processed through type inference pipeline with proper scope management
+
+**Key Implementation Files**:
+- [src/compiler/analysis/visitors/BuildSymbolTableAstVisitor.ts](../../src/compiler/analysis/visitors/BuildSymbolTableAstVisitor.ts) - Symbol registration and resolution
+- [src/compiler/types/visitors/InferTypesAstVisitor.ts](../../src/compiler/types/visitors/InferTypesAstVisitor.ts) - Type inference for modifier scopes  
+- [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - Code generation and function wrapping
+- [examples/06-modifiers/](../../examples/06-modifiers/) - Complete example suite with .expect files
+
+**Example**:
+```lisp
+(defmodifier memoized [])
+
+(fn :memoized fibonacci [n <- Int] -> Int
+    (match n {
+        0 => 1
+        1 => 1
+        _ => (+ (fibonacci (- n 1)) (fibonacci (- n 2)))
+    })
+)
+
+;; Generated JavaScript:
+;; const fibonacci = __ll_modifier_memoized()(function (n) { ... });
+```
+
+**Documentation**: Complete implementation guide at [docs/compiler/DEFMODIFIER_IMPLEMENTATION.md](../../docs/compiler/DEFMODIFIER_IMPLEMENTATION.md)
+
+---
+
 ### Compile-Time Evaluation - `:comptime` Modifier (January 16, 2026)
 **Status**: ✅ Complete
 

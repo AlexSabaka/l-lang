@@ -24,6 +24,8 @@ function serializeSymbolTable(scope: Scope | undefined): any {
         nodeType: entry.nodeType,
         mutability: entry.mutability,
         visibility: entry.visibility,
+        // Convert Set to Array for JSON serialization
+        modifiers: Array.from(entry.modifiers || []),
         // Include inferred type if available
         ...(entry.inferredType && { inferredType: entry.inferredType }),
       };

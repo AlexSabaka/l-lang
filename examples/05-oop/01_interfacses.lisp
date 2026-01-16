@@ -41,4 +41,6 @@
 
     (print-shape-info r)
     (print-shape-info c)
+
+    (console.log (type r))
 )

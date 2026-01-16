@@ -3,6 +3,7 @@ export * from "./analysis/DependencyGraph";
 export * from "./analysis/SymbolTable";
 export * from "./frontend/AstProvider";
 export * as ast from "./frontend/ast";
+export * from "./helpers/modifiers";
 
 // Visitors
 export * from "./BaseAstVisitor";

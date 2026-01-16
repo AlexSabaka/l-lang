@@ -5,6 +5,7 @@ import { RuleSeverity } from "../../rules";
 import { SymbolEntry } from "../../analysis/SymbolTable";
 import { JSTransformerAstVisitor } from "../../codegen/js-estree/visitors/JSTransformerAstVisitor";
 import { DesugarAstVisitor } from "./DesugarAstVisitor";
+import { hasModifier } from "../../helpers/modifiers";
 import * as vm from "node:vm";
 import { generate } from "astring";
 import { encodeIdentifier } from "../../utils/encodeIdentifier";
@@ -82,7 +83,7 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
   }
 
   visitVariable(node: ast.VariableNode): ast.VariableNode {
-    const isComptime = node.modifiers.some(m => m.modifier === "comptime");
+    const isComptime = hasModifier(node.modifiers, "comptime");
     
     // Visit value first in case it has nested comptime calls
     const visitedValue = this.visit(node.value) as ast.ASTNode;
@@ -123,7 +124,7 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
       const firstNode = node.nodes[0];
       if (firstNode._type === "function") {
         const funcNode = firstNode as ast.FunctionNode;
-        const isComptime = funcNode.modifiers?.some((m) => m.modifier === "comptime");
+        const isComptime = hasModifier(funcNode.modifiers, "comptime");
         if (isComptime) {
           this.context.log(
             LogLevel.Info,

@@ -1,42 +1,29 @@
 (
+    ;; Base Fibonacci function without memoization
     (fn fib-base [n <- Int] -> Int
-        ;; Base cases
         (if (<= n 1) (return n))
-
-        ;; Recurse
-        (let result (+ (fib-base (- n 1)) (fib-base (- n 2))))
-        (return result)
+        (+ (fib-base (- n 1)) (fib-base (- n 2)))
     )
 
-    ;; High-order function generator
-    (fn make-fib []
-        ;; 'memo' is captured in the closure
-        (let memo {})
+    ;; Global memo cache
+    (let memo {})
 
-        (fn fib-inner [n <- Int] -> Int
-            ;; Check cache
-            (if (!= memo[n] undefined)
-                (return memo[n])
-            )
-
-            (let result (fib-base n))
-
-            ;; Cache result
-            (memo[n] := result)
-            (return result)
+    ;; Memoized Fibonacci function using simple statements
+    (fn fib [n <- Int] -> Int
+        (if (!= memo[n] undefined) (return memo[n]))
+        (if (<= n 1) 
+            (memo[n] := n)
+            (memo[n] := (+ (fib (- n 1)) (fib (- n 2))))
         )
-
-        (return fib-inner)
+        memo[n]
     )
 
-    (let fib (make-fib))
+    (console.log '"Fib 10: {(fib 10)}") 
+    (console.log '"Fib 33: {(fib 33)}") 
+    (console.log '"Fib 33: {(fib 33)}") 
+    (console.log '"Fib 10 again: {(fib 10)}") 
 
-    (console.log '"Fib 10: {(fib 10)}") ;; Calc
-    (console.log '"Fib 33: {(fib 33)}") ;; Calc
-    (console.log '"Fib 33: {(fib 33)}") ;; Should be instant (cached)
-    (console.log '"Fib 10 again: {(fib 10)}") ;; Should be instant (cached)
-
-    (console.log '"Fib Base 10: {(fib-base 10)}") ;; Calc
-    (console.log '"Fib Base 31: {(fib-base 31)}") ;; Calc
-    (console.log '"Fib Base 10 again: {(fib-base 10)}") ;; Calc
+    (console.log '"Fib Base 10: {(fib-base 10)}") 
+    (console.log '"Fib Base 31: {(fib-base 31)}") 
+    (console.log '"Fib Base 10 again: {(fib-base 10)}") 
 )

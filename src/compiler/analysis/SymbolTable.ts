@@ -1,4 +1,5 @@
 import * as ast from "../frontend/ast";
+import { SymbolVisibility, getVisibility, getModifierNames } from "../helpers/modifiers";
 
 export enum ScopeType {
   program = "program",
@@ -32,12 +33,6 @@ export enum ScopeType {
 
 export function isNodeScope(type: any): type is ScopeType {
   return [ "program", "class", "interface", "function", "variable", "method", "match", "when", "if", "struct", "type-def" ].includes(type);
-}
-
-export type SymbolVisibility = "public" | "private" | "protected" | "internal";
-
-export function isVisibilityModifier(modifier: ast.ModifierNode["modifier"]): modifier is SymbolVisibility {
-  return [ "public", "private", "protected", "internal" ].includes(modifier);
 }
 
 /**
@@ -109,9 +104,12 @@ export interface SymbolEntry {
   visibility: SymbolVisibility;
   // Type information integrated into symbol entry
   inferredType?: InferredType;  // The inferred or declared type of this symbol
-  isOperator?: boolean;        // True if the function has the :operator modifier
-  operatorSymbol?: string;     // The actual operator symbol (e.g., "+", "-", "==")
-  isComptime?: boolean;        // True if the symbol has the :comptime modifier
+  // Generic modifier storage
+  modifiers: Set<string>;       // All modifier names (normalized, without colon prefix)
+  
+  // Computed properties for common modifiers
+  get isOperator(): boolean;
+  get isComptime(): boolean;
 }
 
 export interface Scope {
@@ -335,7 +333,7 @@ export class SymbolTableBuilder {
     this.active = this.active.parent;
   }
 
-  defineSymbol(node: ast.VariableNode | ast.FunctionNode | ast.ClassNode | ast.InterfaceNode | ast.TypeDefNode | ast.StructNode) {
+  defineSymbol(node: ast.VariableNode | ast.FunctionNode | ast.ClassNode | ast.InterfaceNode | ast.TypeDefNode | ast.StructNode | ast.ModifierDefNode) {
     if (this.root === undefined) {
       throw new Error("No root scope. Cannot define symbol.");
     }
@@ -349,14 +347,17 @@ export class SymbolTableBuilder {
     if (node._type === "type-def" || node._type === "struct") {
       // TypeDefNode and StructNode have name as an IdentifierNode or TypeNameNode
       name = (node as any).name?.id || (node as any).name?.name;
+    } else if (node._type === "modifier-def") {
+      // ModifierDefNode has name as a string
+      name = (node as ast.ModifierDefNode).name;
     } else {
       // Other node types (variable, function, class, interface)
       name = node.name?.id ?? node.name?.name;
     }
 
     const modifiers = (node as any).modifiers || [];
-    const isOperator = modifiers.some((m: any) => m.modifier === "operator");
-    const isComptime = modifiers.some((m: any) => m.modifier === "comptime");
+    const modifierNames = new Set<string>(getModifierNames(modifiers));
+    const visibility = getVisibility(modifiers);
     
     this.active.table.set(name, {
       name: (node as any).name,
@@ -365,10 +366,10 @@ export class SymbolTableBuilder {
       value: node,
       mutability: (node as any).mutable ?? false,
       exportName: undefined,
-      visibility: modifiers.filter((x: any) => isVisibilityModifier(x.modifier)).at(0)?.modifier as SymbolVisibility ?? "internal",
-      isOperator,
-      operatorSymbol: isOperator ? name : undefined,
-      isComptime,
+      visibility,
+      modifiers: modifierNames,
+      get isOperator() { return modifierNames.has("operator"); },
+      get isComptime() { return modifierNames.has("comptime"); },
       // inferredType will be populated during type inference phase
     });
   }

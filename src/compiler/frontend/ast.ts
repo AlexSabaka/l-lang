@@ -60,6 +60,7 @@ export type NodeType =
   | "map-key-type"
   | "mapped-type"
   | "modifier"
+  | "modifier-def"
   | "variable"
   | "function"
   | "parameter"
@@ -224,6 +225,7 @@ export interface MappedTypeNode extends ASTNode<"mapped-type"> {
 
 export interface ModifierNode extends ASTNode<"modifier"> {
   modifier: string;
+  args?: ASTNode[];
 }
 
 export interface VariableNode extends ASTNode<"variable"> {
@@ -248,6 +250,7 @@ export interface ParameterNode extends ASTNode<"parameter"> {
   name: IdentifierNode;
   modifiers: ModifierNode[];
   type: TypeNode;
+  spread?: boolean;
 }
 
 export interface ClassNode extends ASTNode<"class"> {
@@ -277,6 +280,12 @@ export interface StructNode extends ASTNode<"struct"> {
 }
 
 export interface TypeDefNode extends ASTNode<"type-def"> {}
+
+export interface ModifierDefNode extends ASTNode<"modifier-def"> {
+  name: string;
+  params: ParameterNode[];
+  body: ASTNode[];
+}
 
 export interface InterfaceNode extends ASTNode<"interface"> {
   name: TypeNameNode;

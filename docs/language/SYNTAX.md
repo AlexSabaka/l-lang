@@ -166,6 +166,71 @@ Pass results forward. First argument by default.
 
 ---
 
+## 4.5. Function Modifiers
+
+### Built-in Modifiers
+
+l-lang includes several built-in modifiers for functions:
+
+```lisp
+(fn :operator + [a <- Int, b <- Int] -> Int ...)  ;; Operator overloading
+(fn :async fetch-data [url] ...)                  ;; Async function
+```
+
+### Custom Modifiers with `defmodifier`
+
+Define custom function modifiers that transform functions at compile time:
+
+```lisp
+;; Define a memoization modifier
+(defmodifier memoized [])
+
+;; Apply to functions with :modifier syntax
+(fn :memoized fibonacci [n <- Int] -> Int
+    (match n {
+        0 => 1
+        1 => 1
+        _ => (+ (fibonacci (- n 1)) (fibonacci (- n 2)))
+    })
+)
+```
+
+The memoized modifier automatically adds caching to functions, dramatically improving performance for recursive algorithms.
+
+### Multiple Modifiers
+
+Functions can have multiple modifiers applied:
+
+```lisp
+(defmodifier logged [])
+(defmodifier timed [])
+
+;; Function with logging, timing, and memoization
+(fn :logged :timed :memoized complex-calculation [x] -> Int
+    ;; Expensive computation here
+    (fibonacci (+ x 10))
+)
+```
+
+Modifiers are applied in order, creating nested transformations.
+
+### How Modifiers Work
+
+- `defmodifier` creates a higher-order function that transforms other functions
+- Currently generates memoization logic (extensible in future versions)
+- Applied at compile time, not runtime
+- Zero performance overhead for the transformation itself
+
+### Examples
+
+See `examples/06-modifiers/` for comprehensive examples including:
+- Basic modifier usage
+- Logging and timing modifiers  
+- Retry logic modifiers
+- Multiple modifier combinations
+
+---
+
 ## 5. Flow Control
 
 ### If / Else
@@ -238,11 +303,11 @@ Optional named arguments: `:init`, `:cond`, `:step`, `:then`. If skipped C-style
 
 ### Type Matching with RTTI
 
-Runtime type introspection via `typeof`:
+Runtime type introspection via `type`:
 
 ```lisp
 (fn describe [obj] (
-    (match (typeof obj) {
+    (match (type obj) {
         Int      => "An integer"
         String   => "Text"
         Dog      => "A dog instance"
@@ -469,7 +534,7 @@ Explicit "or" relationships:
 
 ```lisp
 (fn process [input <- String | Int] (
-    (match (typeof input) {
+    (match (type input) {
         String => (print "Got text")
         Int    => (print "Got number")
     })
@@ -552,7 +617,7 @@ Trimmed reflection—enough to inspect, not enough to break encapsulation.
 ### Type Introspection
 
 ```lisp
-(let t (typeof obj))
+(let t (type obj))
 (print t.name)           ;; "Dog"
 (print t.parent)         ;; Animal (if exists)
 (print t.fields)         ;; [{ name: "name", type: String }]

@@ -1,0 +1,4 @@
+Testing timing modifier:
+Fast function result: 30
+Slow fibonacci fib(10): 89
+Another call fib(8): 34

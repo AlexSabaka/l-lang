@@ -51,6 +51,7 @@ export class BaseAstVisitor {
         "map-key-type": this.visitMapKeyType.bind(this),
         "mapped-type": this.visitMappedType.bind(this),
         "modifier": this.visitModifier.bind(this),
+        "modifier-def": this.visitModifierDef?.bind(this),
         "variable": this.visitVariable.bind(this),
         "function": this.visitFunction.bind(this),
         "parameter": this.visitParameter.bind(this),
@@ -223,6 +224,11 @@ export class BaseAstVisitor {
 
   visitModifier(node: ast.ModifierNode): any {
     this.context.log(LogLevel.Verbose, "Method visitModifier skipped");
+    return node;
+  }
+
+  visitModifierDef?(node: ast.ModifierDefNode): any {
+    this.context.log(LogLevel.Verbose, "Method visitModifierDef skipped");
     return node;
   }
 

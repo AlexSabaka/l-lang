@@ -52,6 +52,9 @@ Expression "expression"
   / Struct
   / Enum
 
+  // Custom modifier definitions
+  / DefModifier
+
   // Await operator
   / Await
 
@@ -314,9 +317,15 @@ TypeSelector
 
 // Modifier
 Modifier
-  = ":" modifier:ModifierKw _ {
-    return makeNode("modifier", { modifier });
+  = ":" modifier:ModifierName _ args:ModifierArgs? _ {
+    return makeNode("modifier", { modifier, args });
   }
+
+ModifierName
+  = [a-zA-Z_][a-zA-Z0-9_-]* { return text().toLowerCase(); }
+
+ModifierArgs
+  = "[" _ args:Expression|.., ","?| _ "]" _ { return args; }
 
 // Variable definition
 Variable
@@ -341,8 +350,8 @@ Function
   }
 
 FunctionParameter
-  = _ name:Identifier _ modifiers:(@Modifier _)* _ type:(LeftArrowKw _ @Type)? {
-    return makeNode("parameter", { name, modifiers, type });
+  = _ spread:SpreadKw? _ name:Identifier _ modifiers:(@Modifier _)* _ type:(LeftArrowKw _ @Type)? {
+    return makeNode("parameter", { name, modifiers, type, spread: !!spread });
   }
 
 
@@ -413,6 +422,13 @@ StructBody
 TypeDef
   = _ DefTypeKw __ modifiers:(@Modifier _)* _ name:Identifier? _ type:Type? {
     return makeNode("type-def", { name, type, modifiers });
+  }
+
+// Custom modifier definition
+DefModifier
+  = _ DefModifierKw __ name:ModifierName _ params:("[" _ @FunctionParameter|.., ","?| _ "]" _)?
+    _ body:Expression* _ {
+    return makeNode("modifier-def", { name, params: params || [], body });
   }
 
 
@@ -821,7 +837,7 @@ DefTypeKw = "deftype"i
 DefEnumKw = "defenum"i
 DefMacroKw = "defmacro"i
 DefStructKw = "defstruct"i
-DefTraitKw = "deftrait"i
+DefModifierKw = "defmodifier"i
 FunctionKw = "fn"i
 LetKw = "let"i
 MutKw = "mut"i
@@ -881,30 +897,6 @@ LeftDoubleArrowKw = "<="i
 RightDoubleArrowKw = "=>"i
 
 AssignmentOperatorKw = "="i
-
-ModifierKw
-  = (
-      "public"i
-    / "private"i
-    / "static"i
-    / "internal"i
-    / "extern"i
-    / "override"i
-    / "explicit-cast"i
-    / "implicit-cast"i
-    / "extension"i
-    / "operator"i
-    / "comptime"i
-    / "in"i
-    / "out"i
-    / "ref"i
-    / "readonly"i
-    / "nullable"i
-    / "ctor"i
-  ) {
-    return text().toLowerCase();
-  }
-
 
 // Misc
 // NOTE: Under review to get cut coz almost identical

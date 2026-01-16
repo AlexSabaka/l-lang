@@ -21,4 +21,13 @@
     
     ;; 4. Accessing properties
     (console.log my-pet.name)
+
+    ;; 5. Type Introspection
+    (let my-pet-type (type my-pet))
+    (let my-pet-parent-type (type my-pet-type["extends"]))
+    (console.log
+        "My pet is a"
+        my-pet-type["name"]
+        "which is a subclass of"
+        my-pet-parent-type["name"])
 )

@@ -42,7 +42,8 @@ class ScanPassVisitor extends BaseAstTreeWalker {
       }
 
       if (item._type === "function" || item._type === "class" || item._type === "interface" || 
-          item._type === "variable" || item._type === "type-def" || item._type === "struct") {
+          item._type === "variable" || item._type === "type-def" || item._type === "struct" || 
+          item._type === "modifier-def") {
         this.symbolTableBuilder.defineSymbol(item as any);
       }
     };
@@ -75,6 +76,15 @@ class ScanPassVisitor extends BaseAstTreeWalker {
   visitStruct(node: ast.StructNode) {
     // ScanPass: Register struct name
     // Don't scan body yet - that's for ResolvePass
+  }
+
+  visitModifierDef(node: ast.ModifierDefNode) {
+    // ScanPass: Don't visit modifier body yet
+    // This is handled in ResolvePass
+  }
+
+  visitSpread(node: ast.SpreadNode) {
+    // ScanPass: Spread is not a top-level declaration, skip
   }
 }
 
@@ -160,6 +170,21 @@ class ResolvePassVisitor extends BaseAstTreeWalker {
       node.body.map(x => this.visitIfNotNull(x));
     }
     this.symbolTableBuilder.exitScope();
+  }
+
+  visitModifierDef(node: ast.ModifierDefNode) {
+    // Modifier already defined in ScanPass
+    // Only enter scope if there are params or body items that need scope
+    if (node.params.length > 0 || node.body.length > 0) {
+      this.symbolTableBuilder.enterScope(node);
+      [...node.params, ...node.body].map(x => this.visitIfNotNull(x));
+      this.symbolTableBuilder.exitScope();
+    }
+  }
+
+  visitSpread(node: ast.SpreadNode) {
+    // ResolvePass: Visit the spread expression for symbol resolution
+    this.visitIfNotNull(node.expression);
   }
 
   visitExport(node: ast.ExportNode) {

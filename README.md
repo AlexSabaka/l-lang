@@ -51,6 +51,16 @@ It's a general-purpose language currently transpiling to JavaScript (LLVM backen
 ;; Comptime generics (Zig-inspired)
 (fn :comptime max [a b] (if (> a b) a b))
 
+;; User-defined function modifiers
+(defmodifier memoized [])
+(fn :memoized fibonacci [n] (
+    (match n {
+        0 => 1
+        1 => 1
+        _ => (+ (fibonacci (- n 1)) (fibonacci (- n 2)))
+    })
+))
+
 ;; Runtime type introspection
 (fn describe [x] (
     (match (typeof x) {
@@ -135,6 +145,7 @@ All core features validated:
 - ✅ Error handling
 - ✅ Module system
 - ✅ Pipelines
+- ✅ **DefModifiers** - User-defined function transformers (`examples/06-modifiers/`)
 
 See [src/test/README.md](src/test/README.md) for testing documentation.
 

@@ -1,4 +1,4 @@
-(namespace std.io
+(
   (import "enumerable.lisp")
 
   (fn print [msg <- String ...args <- Any[]] -> Void
@@ -9,4 +9,5 @@
     ))
     (console.log msg)
   )
+  (export print)
 )

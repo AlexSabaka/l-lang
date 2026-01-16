@@ -149,6 +149,48 @@ InferTypesAstVisitor.visitVariable()
 }
 ```
 
+### 5. DefModifier Implementation Pattern
+
+**Architecture**: DefModifier syntax `(defmodifier name [])` creates user-defined function transformers that operate at compile time.
+
+**Implementation Phases**:
+
+1. **Symbol Table Phase**: Register modifier definitions as `nodeType: "modifier-def"`
+2. **Type Inference Phase**: Process modifier scopes and register function transformer types  
+3. **Code Generation Phase**: Generate JavaScript modifier functions and apply them to modified functions
+
+**Generated Code Pattern**:
+```javascript
+// Modifier definition generates transformer function
+function __ll_modifier_memoized() {
+  return originalFunction => {
+    const cache = new Map();
+    return (...args) => {
+      const key = JSON.stringify(args);
+      if (cache.has(key)) return cache.get(key);
+      const result = originalFunction.apply(this, args);
+      cache.set(key, result);
+      return result;
+    };
+  };
+}
+
+// Modified function gets wrapped automatically  
+const fibonacci = __ll_modifier_memoized()(function (n) {
+  // Original function body
+});
+```
+
+**Key Implementation Files**:
+- [BuildSymbolTableAstVisitor.ts](../../src/compiler/analysis/visitors/BuildSymbolTableAstVisitor.ts) - `visitModifierDef()` methods
+- [SymbolTable.ts](../../src/compiler/analysis/SymbolTable.ts) - Extended `defineSymbol()` for modifier-def nodes
+- [InferTypesAstVisitor.ts](../../src/compiler/types/visitors/InferTypesAstVisitor.ts) - Modifier scope and type handling
+- [JSTransformerAstVisitor.ts](../../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - `visitModifierDef()` and `applyModifiersToDeclaration()`
+
+**Application Pattern**: Functions with `:modifier` syntax trigger `applyModifiersToDeclaration()` which wraps the function declaration with modifier transformations.
+
+**Examples**: See `examples/06-modifiers/` for comprehensive usage patterns including memoization, logging, timing, and multiple modifier combinations.
+
 ## Development Workflows
 
 ### Testing Compilation Stages

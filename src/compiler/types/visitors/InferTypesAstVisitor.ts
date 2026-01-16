@@ -496,6 +496,34 @@ class CollectTypesPass extends BaseAstTreeWalker {
     // Fallback
     return TypeEnvironment.unknown();
   }
+
+  visitModifierDef(node: ast.ModifierDefNode) {
+    const modifierName = node.name;
+    
+    // Register modifier as a function transformer type
+    const paramTypes = node.params.map(p => 
+      p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.unknown()
+    );
+    
+    const transformerType: InferredType = {
+      kind: "function",
+      name: `${modifierName}_modifier_transformer`,
+      params: paramTypes,
+      returns: {
+        kind: "function", 
+        name: "transformed_function",
+        params: [TypeEnvironment.unknown()],
+        returns: TypeEnvironment.unknown()
+      }
+    };
+    
+    this.typeEnv.bindIdentifier(modifierName, transformerType, node);
+  }
+
+  visitSpread(node: ast.SpreadNode) {
+    // CollectTypesPass: Visit the spread expression
+    this.visit(node.expression);
+  }
 }
 
 /**
@@ -1138,6 +1166,27 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     }
 
     return TypeEnvironment.unknown();
+  }
+
+  visitModifierDef(node: ast.ModifierDefNode) {
+    // Enter modifier scope and infer body types
+    this.typeEnv.enterScope(node);
+    
+    // Process parameters
+    node.params.forEach(param => this.visit(param));
+    
+    // Process body statements
+    node.body.forEach(stmt => this.visit(stmt));
+    
+    this.typeEnv.exitScope();
+  }
+
+  visitSpread(node: ast.SpreadNode) {
+    // InferAndCheckPass: Infer type of the spread expression
+    const exprType = this.visit(node.expression);
+    // For spread in function parameters, we typically expect array types
+    // The spread should preserve the element type of the array
+    return exprType;
   }
 }
 

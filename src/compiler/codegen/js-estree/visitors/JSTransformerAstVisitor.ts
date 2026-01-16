@@ -170,6 +170,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   private typesMetadata: Record<string, any> = {};
   private overloadCounter = 0;
   private operatorRegistrations: ESTree.Statement[] = [];
+  private modifierDefinitions: Map<string, ast.ModifierDefNode> = new Map();
 
   getTypesMetadata(): Record<string, any> {
     return this.typesMetadata;
@@ -791,7 +792,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           loc: ESTreeBuilder.loc(node),
         } as ESTree.MethodDefinition;
       } else if (this.scope[1] === ScopeType.program) {
-        return {
+        let declaration = {
           type: "FunctionDeclaration",
           id: name,
           params,
@@ -800,19 +801,22 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           async: node.async,
           loc: ESTreeBuilder.loc(node),
         } as ESTree.FunctionDeclaration;
+
+        // Apply custom modifiers if present
+        return this.applyModifiersToDeclaration(node, declaration, originalName);
       } else {
         const funcExpr: ESTree.ArrowFunctionExpression = {
           type: "ArrowFunctionExpression",
+          expression: false,
           params,
           body,
-          expression: true,
           generator: false,
           async: node.async,
           loc: ESTreeBuilder.loc(node),
         };
 
         if (name) {
-          return {
+          let variableDecl: ESTree.VariableDeclaration = {
             type: "VariableDeclaration",
             kind: "const",
             declarations: [
@@ -824,12 +828,93 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
             ],
             loc: ESTreeBuilder.loc(node),
           };
+
+          // Apply custom modifiers if present
+          return this.applyModifiersToDeclaration(node, variableDecl, originalName);
         }
 
         this.context.log(LogLevel.Debug, this.context.astProvider.getSource(node._location));
         return funcExpr as any;
       }
     });
+  }
+
+  private applyModifiersToDeclaration(
+    node: ast.FunctionNode, 
+    declaration: ESTree.FunctionDeclaration | ESTree.VariableDeclaration, 
+    originalName: string
+  ): ESTree.FunctionDeclaration | ESTree.VariableDeclaration {
+    // Get custom modifiers (non-operator modifiers)
+    const customModifiers = node.modifiers?.filter(m => m.modifier !== 'operator') || [];
+    
+    if (customModifiers.length === 0) {
+      return declaration;
+    }
+
+    // For each custom modifier, wrap the function
+    for (const modifierRef of customModifiers) {
+      const modifierName = modifierRef.modifier;
+      
+      if (declaration.type === "FunctionDeclaration") {
+        // Transform function declaration to variable declaration with modifier application
+        const funcDecl = declaration as ESTree.FunctionDeclaration;
+        declaration = {
+          type: "VariableDeclaration",
+          kind: "const", 
+          declarations: [
+            {
+              type: "VariableDeclarator",
+              id: funcDecl.id!,
+              init: {
+                type: "CallExpression",
+                callee: {
+                  type: "CallExpression",
+                  callee: {
+                    type: "Identifier",
+                    name: `__ll_modifier_${modifierName}`
+                  },
+                  arguments: [],
+                  optional: false
+                },
+                arguments: [
+                  {
+                    type: "FunctionExpression",
+                    id: null,
+                    params: funcDecl.params,
+                    body: funcDecl.body,
+                    generator: false,
+                    async: funcDecl.async
+                  }
+                ],
+                optional: false
+              }
+            }
+          ],
+          loc: declaration.loc
+        } as ESTree.VariableDeclaration;
+      } else if (declaration.type === "VariableDeclaration") {
+        // Wrap the existing initializer with modifier application
+        const varDecl = declaration as ESTree.VariableDeclaration;
+        const declarator = varDecl.declarations[0] as ESTree.VariableDeclarator;
+        
+        declarator.init = {
+          type: "CallExpression",
+          callee: {
+            type: "CallExpression", 
+            callee: {
+              type: "Identifier",
+              name: `__ll_modifier_${modifierName}`
+            },
+            arguments: [],
+            optional: false
+          },
+          arguments: [declarator.init as ESTree.Expression],
+          optional: false
+        };
+      }
+    }
+
+    return declaration;
   }
 
   private transformPipelineList(
@@ -937,8 +1022,172 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     };
   }
 
-  visitParameter(node: ast.ParameterNode): ESTree.Identifier {
-    return this.visit(node.name) as ESTree.Identifier;
+  visitModifierDef(node: ast.ModifierDefNode): ESTree.FunctionDeclaration {
+    // Store modifier definition for later use
+    this.modifierDefinitions.set(node.name, node);
+    
+    const modifierName = `__ll_modifier_${node.name}`;
+    
+    // For now, implement a simple memoization transformer
+    return {
+      type: "FunctionDeclaration",
+      id: { type: "Identifier", name: modifierName },
+      params: [],
+      body: {
+        type: "BlockStatement",
+        body: [
+          {
+            type: "ReturnStatement", 
+            argument: {
+              type: "ArrowFunctionExpression",
+              expression: false,
+              params: [{ type: "Identifier", name: "originalFunction" }],
+              body: {
+                type: "BlockStatement",
+                body: [
+                  {
+                    type: "VariableDeclaration",
+                    kind: "const",
+                    declarations: [{
+                      type: "VariableDeclarator",
+                      id: { type: "Identifier", name: "cache" },
+                      init: {
+                        type: "NewExpression",
+                        callee: { type: "Identifier", name: "Map" },
+                        arguments: []
+                      }
+                    }]
+                  },
+                  {
+                    type: "ReturnStatement",
+                    argument: {
+                      type: "ArrowFunctionExpression",
+                      expression: false,
+                      params: [{ type: "RestElement", argument: { type: "Identifier", name: "args" } }],
+                      body: {
+                        type: "BlockStatement",
+                        body: [
+                          {
+                            type: "VariableDeclaration",
+                            kind: "const",
+                            declarations: [{
+                              type: "VariableDeclarator",
+                              id: { type: "Identifier", name: "key" },
+                              init: {
+                                type: "CallExpression",
+                                callee: {
+                                  type: "MemberExpression",
+                                  object: { type: "Identifier", name: "JSON" },
+                                  property: { type: "Identifier", name: "stringify" },
+                                  computed: false,
+                                  optional: false
+                                },
+                                arguments: [{ type: "Identifier", name: "args" }],
+                                optional: false
+                              }
+                            }]
+                          },
+                          {
+                            type: "IfStatement",
+                            test: {
+                              type: "CallExpression",
+                              callee: {
+                                type: "MemberExpression",
+                                object: { type: "Identifier", name: "cache" },
+                                property: { type: "Identifier", name: "has" },
+                                computed: false,
+                                optional: false
+                              },
+                              arguments: [{ type: "Identifier", name: "key" }],
+                              optional: false
+                            },
+                            consequent: {
+                              type: "ReturnStatement",
+                              argument: {
+                                type: "CallExpression",
+                                callee: {
+                                  type: "MemberExpression",
+                                  object: { type: "Identifier", name: "cache" },
+                                  property: { type: "Identifier", name: "get" },
+                                  computed: false,
+                                  optional: false
+                                },
+                                arguments: [{ type: "Identifier", name: "key" }],
+                                optional: false
+                              }
+                            }
+                          },
+                          {
+                            type: "VariableDeclaration",
+                            kind: "const", 
+                            declarations: [{
+                              type: "VariableDeclarator",
+                              id: { type: "Identifier", name: "result" },
+                              init: {
+                                type: "CallExpression",
+                                callee: {
+                                  type: "MemberExpression",
+                                  object: { type: "Identifier", name: "originalFunction" },
+                                  property: { type: "Identifier", name: "apply" },
+                                  computed: false,
+                                  optional: false
+                                },
+                                arguments: [
+                                  { type: "ThisExpression" },
+                                  { type: "Identifier", name: "args" }
+                                ],
+                                optional: false
+                              }
+                            }]
+                          },
+                          {
+                            type: "ExpressionStatement",
+                            expression: {
+                              type: "CallExpression",
+                              callee: {
+                                type: "MemberExpression",
+                                object: { type: "Identifier", name: "cache" },
+                                property: { type: "Identifier", name: "set" },
+                                computed: false,
+                                optional: false
+                              },
+                              arguments: [
+                                { type: "Identifier", name: "key" },
+                                { type: "Identifier", name: "result" }
+                              ],
+                              optional: false
+                            }
+                          },
+                          {
+                            type: "ReturnStatement",
+                            argument: { type: "Identifier", name: "result" }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    };
+  }
+
+  visitParameter(node: ast.ParameterNode): ESTree.Identifier | ESTree.RestElement {
+    const identifier = this.visit(node.name) as ESTree.Identifier;
+    
+    // If this is a spread parameter, create a RestElement
+    if (node.spread) {
+      return {
+        type: "RestElement",
+        argument: identifier,
+        loc: ESTreeBuilder.loc(node),
+      };
+    }
+    
+    return identifier;
   }
 
   // =========================================================================
@@ -1874,6 +2123,14 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   visitAwait(node: ast.AwaitNode): ESTree.AwaitExpression {
     return {
       type: "AwaitExpression",
+      argument: this.visit(node.expression) as ESTree.Expression,
+      loc: ESTreeBuilder.loc(node),
+    };
+  }
+
+  visitSpread(node: ast.SpreadNode): ESTree.SpreadElement {
+    return {
+      type: "SpreadElement",
       argument: this.visit(node.expression) as ESTree.Expression,
       loc: ESTreeBuilder.loc(node),
     };

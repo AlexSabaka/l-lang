@@ -1,0 +1,1 @@
+{"version":3,"sources":["/Volumes/2TB/repos/l-lang/examples/04-data-types/10_comptime.lisp"],"names":["x","console","log","fact5","sum","y"],"mappings":";;;UACkBA,IAAE;IAChBC,QAAAC,IAAW,wBAAwBF;UAO/BG,QAAM;IACVF,QAAAC,IAAW,0BAA0BC;UAIvBC,MAAI;IAClBH,QAAAC,IAAW,uBAAuBE;UAE9BC,IAAE","file":"/Volumes/2TB/repos/l-lang/examples/04-data-types/10_comptime.lisp"}
