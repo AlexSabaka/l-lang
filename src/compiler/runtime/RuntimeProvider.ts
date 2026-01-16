@@ -27,6 +27,31 @@ function __ll_deep_eq(a, b) {
   return true;
 }
 function __ll_format_object(obj) { return _util.formatWithOptions({ depth: null, colors: false }, obj !== undefined && obj !== null ? obj : ""); }
+const __ll_op_registry = {
+  operators: {},
+  register: function(symbol, params, fn) {
+    if (!this.operators[symbol]) this.operators[symbol] = [];
+    this.operators[symbol].push({ params, fn });
+  },
+  lookup: function(symbol, args) {
+    const list = this.operators[symbol];
+    if (!list) return null;
+    for (const entry of list) {
+      if (entry.params.length !== args.length) continue;
+      let match = true;
+      for (let i = 0; i < args.length; i++) {
+        const val = args[i];
+        const expectedType = entry.params[i];
+        if (!__ll_is_type(val, expectedType)) {
+          match = false;
+          break;
+        }
+      }
+      if (match) return entry.fn;
+    }
+    return null;
+  }
+};
 function __ll_match_list(val, patterns) {
   if (!Array.isArray(val)) return false;
   if (val.length !== patterns.length) return false;
@@ -83,10 +108,14 @@ function __ll_match_struct(val, patterns) {
   return true;
 }
 function __ll_is_type(val, type) {
-  switch (type) {
+  const t = type.toLowerCase();
+  switch (t) {
     case 'number': return typeof val === 'number';
+    case 'int': return typeof val === 'number';
+    case 'float': return typeof val === 'number';
     case 'string': return typeof val === 'string';
     case 'boolean': return typeof val === 'boolean';
+    case 'bool': return typeof val === 'boolean';
     case 'function': return typeof val === 'function';
     case 'array': return Array.isArray(val);
     case 'object': return typeof val === 'object' && val !== null && !Array.isArray(val);
@@ -94,10 +123,17 @@ function __ll_is_type(val, type) {
     case 'undefined': return val === undefined;
     case 'any': return true;
     default:
-      try {
-        // Check for named classes (globals)
-        return val instanceof eval(type); 
-      } catch { return false; }
+      if (val === null || val === undefined) return false;
+      // Check constructor name (handles classes/structs even in IIFE)
+      let current = val;
+      while (current) {
+        if (current.constructor && current.constructor.name === type) return true;
+        // Also check l-lang specific type metadata if available
+        if (current.__ll_type === type) return true;
+        current = Object.getPrototypeOf(current);
+        if (current === Object.prototype || !current) break;
+      }
+      return false;
   }
 }`;
 
@@ -107,13 +143,91 @@ function __ll_is_type(val, type) {
   private static readonly SYMBOL_MAP: Record<SymbolName, string> = {
     // Core Operators
     "!": `const ${encodeIdentifier('!')} = (a) => !a;`,
-    "==": `const ${encodeIdentifier('==')} = (a, b) => __ll_deep_eq(a, b);`,
-    "!=": `const ${encodeIdentifier('!=')} = (a, b) => !__ll_deep_eq(a, b);`,
-    "≠": `const ${encodeIdentifier('≠')}  = (a, b) => !__ll_deep_eq(a, b);`,
-    "+": `const ${encodeIdentifier('+')} = (...args) => args.reduce((a, b) => a + b);`,
-    "-": `const ${encodeIdentifier('-')} = (...args) => args.reduce((a, b) => a - b);`,
-    "*": `const ${encodeIdentifier('*')} = (...args) => args.reduce((a, b) => a * b);`,
-    "/": `const ${encodeIdentifier('/')} = (...args) => args.reduce((a, b) => a / b);`,
+    "==": `const ${encodeIdentifier('==')} = (a, b) => {
+      const overload = __ll_op_registry.lookup('==', [a, b]);
+      if (overload) return overload(a, b);
+      if (a && typeof a['${encodeIdentifier('==')}_1'] === 'function') return a['${encodeIdentifier('==')}_1'](b);
+      return __ll_deep_eq(a, b);
+    };`,
+    "!=": `const ${encodeIdentifier('!=')} = (a, b) => {
+      const eq = ${encodeIdentifier('==')};
+      return !eq(a, b);
+    };`,
+    "≠": `const ${encodeIdentifier('≠')}  = (a, b) => {
+      const eq = ${encodeIdentifier('==')};
+      return !eq(a, b);
+    };`,
+    "+": `const ${encodeIdentifier('+')} = (...args) => {
+      if (args.length === 0) return 0;
+      let res = args[0];
+      for (let i = 1; i < args.length; i++) {
+        const next = args[i];
+        const overload = __ll_op_registry.lookup('+', [res, next]);
+        if (overload) {
+          res = overload(res, next);
+        } else if (res && typeof res['${encodeIdentifier('+')}_1'] === 'function') {
+          res = res['${encodeIdentifier('+')}_1'](next);
+        } else {
+          res = res + next;
+        }
+      }
+      return res;
+    };`,
+    "-": `const ${encodeIdentifier('-')} = (...args) => {
+      if (args.length === 0) return 0;
+      if (args.length === 1) {
+        const val = args[0];
+        const overload = __ll_op_registry.lookup('-', [val]);
+        if (overload) return overload(val);
+        if (val && typeof val['${encodeIdentifier('-')}_0'] === 'function') return val['${encodeIdentifier('-')}_0']();
+        return -val;
+      }
+      let res = args[0];
+      for (let i = 1; i < args.length; i++) {
+        const next = args[i];
+        const overload = __ll_op_registry.lookup('-', [res, next]);
+        if (overload) {
+          res = overload(res, next);
+        } else if (res && typeof res['${encodeIdentifier('-')}_1'] === 'function') {
+          res = res['${encodeIdentifier('-')}_1'](next);
+        } else {
+          res = res - next;
+        }
+      }
+      return res;
+    };`,
+    "*": `const ${encodeIdentifier('*')} = (...args) => {
+      if (args.length === 0) return 1;
+      let res = args[0];
+      for (let i = 1; i < args.length; i++) {
+        const next = args[i];
+        const overload = __ll_op_registry.lookup('*', [res, next]);
+        if (overload) {
+          res = overload(res, next);
+        } else if (res && typeof res['${encodeIdentifier('*')}_1'] === 'function') {
+          res = res['${encodeIdentifier('*')}_1'](next);
+        } else {
+          res = res * next;
+        }
+      }
+      return res;
+    };`,
+    "/": `const ${encodeIdentifier('/')} = (...args) => {
+      if (args.length === 0) return 1;
+      let res = args[0];
+      for (let i = 1; i < args.length; i++) {
+        const next = args[i];
+        const overload = __ll_op_registry.lookup('/', [res, next]);
+        if (overload) {
+          res = overload(res, next);
+        } else if (res && typeof res['${encodeIdentifier('/')}_1'] === 'function') {
+          res = res['${encodeIdentifier('/')}_1'](next);
+        } else {
+          res = res / next;
+        }
+      }
+      return res;
+    };`,
     "||": `const ${encodeIdentifier('||')} = (...args) => args.reduce((a, b) => a || b);`,
     "&&": `const ${encodeIdentifier('&&')} = (...args) => args.reduce((a, b) => a && b);`,
     "<": `const ${encodeIdentifier('<')}  = (a, b) => a < b;`,
@@ -173,6 +287,11 @@ function __ll_is_type(val, type) {
   public static getRuntimeShimForSymbols(symbols: SymbolName[], typesMetadata?: Record<string, any>): string {
     // Always include the type function for runtime type introspection
     const symbolSet = new Set([...symbols, 'type']);
+
+    // Handle operator dependencies
+    if (symbolSet.has('!=') || symbolSet.has('≠')) {
+       symbolSet.add('==');
+    }
     
     const symbolDefinitions = Array.from(symbolSet)
       .filter(symbol => symbol in this.SYMBOL_MAP)

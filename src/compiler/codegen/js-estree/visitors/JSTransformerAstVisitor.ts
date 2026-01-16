@@ -168,6 +168,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   private inlinedDefinitions: Record<string, ESTree.Statement> = {};
   private rootSource?: string;
   private typesMetadata: Record<string, any> = {};
+  private overloadCounter = 0;
+  private operatorRegistrations: ESTree.Statement[] = [];
 
   getTypesMetadata(): Record<string, any> {
     return this.typesMetadata;
@@ -468,59 +470,65 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     this.context.log(LogLevel.Debug, `Passing ${Object.keys(this.typesMetadata).length} type entries to runtime shim`);
 
-    // Prepend runtime shim if needed
-    const runtimeShim = RuntimeProvider.getRuntimeShimForSymbols(
-      this.inlineStandardSymbols,
-      this.typesMetadata
-    );
+    // Generate runtime shim if needed (we'll prepend it as string later)
+    const includeShim = this.context.options.includeRuntimeShim;
+    const runtimeShim = includeShim 
+      ? RuntimeProvider.getRuntimeShimForSymbols(
+          this.inlineStandardSymbols,
+          this.typesMetadata
+        )
+      : '';
 
     // Add header comment
+    const headerBody: ESTree.Statement[] = [
+      {
+        type: "ExpressionStatement",
+        expression: {
+          type: "Literal",
+          value: "use strict",
+        },
+        directive: "use strict",
+      } as ESTree.Directive,
+    ];
+
     const header: ESTree.Program = {
       type: "Program",
       sourceType: "script",
-      body: [
-        {
-          type: "ExpressionStatement",
-          expression: {
-            type: "Literal",
-            value: "use strict",
-          },
-          directive: "use strict",
-        } as ESTree.Directive,
-        {
-          type: "ExpressionStatement",
-          expression: {
-            type: "Literal",
-            raw: runtimeShim,
-          },
-        } as ESTree.Statement,
-      ],
+      body: headerBody,
     };
 
     // Prepend inlined definitions
-    const inlinedDefs = Object.values(this.inlinedDefinitions);
+    const inlinedDefs = (Object.values(this.inlinedDefinitions) as unknown) as ESTree.Statement[];
 
-    // Wrap everything in IIFE
-    const wrappedBody: ESTree.ExpressionStatement = {
-      type: "ExpressionStatement",
-      expression: {
-        type: "CallExpression",
-        callee: {
-          type: "FunctionExpression",
-          id: null,
-          params: [],
-          body: {
-            type: "BlockStatement",
-            // @ts-expect-error
-            body: [...inlinedDefs, ...program.body],
+    let finalBody: (ESTree.Statement | ESTree.ModuleDeclaration)[];
+
+    if (this.context.options.noIIFE) {
+      // Just put statements at top level
+      finalBody = [...header.body as any, ...inlinedDefs, ...program.body];
+    } else {
+      // Wrap everything in IIFE
+      const wrappedBody: ESTree.ExpressionStatement = {
+        type: "ExpressionStatement",
+        expression: {
+          type: "CallExpression",
+          callee: {
+            type: "FunctionExpression",
+            id: null,
+            params: [],
+            body: {
+              type: "BlockStatement",
+              // @ts-expect-error
+              body: [...inlinedDefs, ...program.body],
+            },
+            generator: false,
+            async: false,
           },
-          generator: false,
-          async: false,
+          arguments: [],
+          optional: false,
         },
-        arguments: [],
-        optional: false,
-      },
-    };
+      };
+      finalBody = [...header.body as any, wrappedBody];
+    }
 
     const sourceMapUrlNode = {
       type: "ExpressionStatement",
@@ -533,16 +541,21 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     const finalProgram: ESTree.Program = {
       type: "Program",
       sourceType: "script",
-      body: [...header.body, wrappedBody, sourceMapUrlNode],
+      body: [...finalBody, sourceMapUrlNode],
     };
 
     // Generate code with astring
     const sourceMap = new SourceMapGenerator({ file: this.rootSource });
-    const code = generate(finalProgram, {
+    let code = generate(finalProgram, {
       comments: true,
       indent: "  ",
       sourceMap: sourceMap,
     });
+
+    // Prepend runtime shim as raw string (since it's hard to inject into ESTree)
+    if (includeShim && runtimeShim) {
+      code = runtimeShim + '\n' + code;
+    }
 
     return {
       code,
@@ -564,6 +577,12 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           );
         }
       }
+    }
+
+    // Add operator registrations at the beginning of the program scope
+    if (this.operatorRegistrations.length > 0) {
+      statements.unshift(...this.operatorRegistrations as any);
+      this.operatorRegistrations = []; // Clear
     }
 
     return {
@@ -668,17 +687,54 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       : ScopeType.function;
 
     return this.runInScope(nextScope, () => {
-      const name = node.name
+      let name = node.name
         ? (this.visit(node.name) as ESTree.Identifier)
         : null;
+      let originalName = '';
       if (name && node.name) {
         // Store the original symbol name (before encoding) for metadata lookup
-        const originalName = typeof node.name === 'object' && 'id' in node.name
+        originalName = typeof node.name === 'object' && 'id' in node.name
           ? (node.name as any).id
           : (typeof node.name === 'object' && 'name' in node.name
               ? (node.name as any).name
               : name.name);
         this.functions.push(originalName);
+      }
+
+      const isOperator = node.modifiers?.some(m => m.modifier === 'operator');
+      if (isOperator && name) {
+        if (this.scope.length === 2 && this.scope[1] === ScopeType.program) {
+          const overloadName = `__ll_overload_${name.name}_${this.overloadCounter++}`;
+          const paramTypes = node.params.map(p => this.getTypeName(p.type));
+          
+          this.operatorRegistrations.push({
+            type: 'ExpressionStatement',
+            expression: {
+              type: 'CallExpression',
+              callee: {
+                type: 'MemberExpression',
+                object: { type: 'Identifier', name: '__ll_op_registry' },
+                property: { type: 'Identifier', name: 'register' },
+                computed: false,
+                optional: false
+              },
+              arguments: [
+                { type: 'Literal', value: originalName },
+                {
+                  type: 'ArrayExpression',
+                  elements: paramTypes.map(pt => ({ type: 'Literal', value: pt }))
+                },
+                { type: 'Identifier', name: overloadName }
+              ],
+              optional: false
+            }
+          } as ESTree.Statement);
+
+          name = { ...name, name: overloadName } as ESTree.Identifier;
+        } else if (this.currentScope() === ScopeType.method) {
+          // Append arity for methods to avoid shadowing in JS prototype
+          name = { ...name, name: `${name.name}_${node.params.length}` } as ESTree.Identifier;
+        }
       }
 
       const params = node.params.map((x) => this.visit(x) as ESTree.Pattern);
@@ -869,7 +925,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     return {
       type: "VariableDeclaration",
-      kind: node.mutable ? "let" : "const",
+      kind: this.context.options.noIIFE ? "var" : (node.mutable ? "let" : "const"),
       declarations: [
         {
           type: "VariableDeclarator",
@@ -1681,12 +1737,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // - (obj.method) = call method with zero args
       // - (obj.prop) = also a call in strict interpretation, but often means access
       //
-      // Heuristic: if it has args OR is a simple-identifier function, call it
-      // Composite identifiers with no args are ambiguous (could be property or method)
-      // For now: composite with no args → property access
-      //          simple identifier with no args + known function → call
-      //          anything with args → call
-      if (args.length > 0 || (isKnownFunction && head._type === "simple-identifier")) {
+      // Heuristic: if it has args OR is a known function/method name, call it
+      if (args.length > 0 || isKnownFunction) {
         return ESTreeBuilder.callExpression(node, callee, args);
       }
 
@@ -1701,12 +1753,20 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     }
 
     // Implicit block
+    const registrationsBefore = this.operatorRegistrations.length;
     const statements = nodes.map((x) => {
       const result = this.visit(x);
       return this.isStatement(result)
         ? (result as ESTree.Statement)
         : ESTreeBuilder.expressionStatement(x, result as ESTree.Expression);
     });
+
+    // Capture registrations added in this scope
+    if (this.operatorRegistrations.length > registrationsBefore) {
+      const newRegs = this.operatorRegistrations.slice(registrationsBefore);
+      statements.unshift(...newRegs as any);
+      this.operatorRegistrations = this.operatorRegistrations.slice(0, registrationsBefore);
+    }
 
     if (statements.length === 1) return statements[0];
 

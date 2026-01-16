@@ -76,6 +76,8 @@ export interface StructMember {
   isCtor: boolean;  // True if marked with :ctor modifier
   isPublic: boolean;
   isPrivate: boolean;
+  isOperator?: boolean; // True if this is an operator overload
+  operatorSymbol?: string; // The operator symbol
   defaultValue?: any;  // Default value if :ctor param has default
 }
 
@@ -107,6 +109,8 @@ export interface SymbolEntry {
   visibility: SymbolVisibility;
   // Type information integrated into symbol entry
   inferredType?: InferredType;  // The inferred or declared type of this symbol
+  isOperator?: boolean;        // True if the function has the :operator modifier
+  operatorSymbol?: string;     // The actual operator symbol (e.g., "+", "-", "==")
 }
 
 export interface Scope {
@@ -230,6 +234,38 @@ export class SymbolTable {
     }
     return symbol;
   }
+
+  /**
+   * Get all symbols from all scopes (useful for REPL autocomplete)
+   */
+  getAllSymbols(): Map<string, SymbolEntry> {
+    const allSymbols = new Map<string, SymbolEntry>();
+    
+    for (const scope of this.scopes) {
+      this.collectSymbolsFromScope(scope, allSymbols);
+    }
+    
+    return allSymbols;
+  }
+
+  /**
+   * Recursively collect symbols from a scope and its children
+   */
+  private collectSymbolsFromScope(scope: Scope, symbols: Map<string, SymbolEntry>): void {
+    // Add symbols from current scope
+    for (const [name, entry] of scope.table.entries()) {
+      if (!symbols.has(name)) {
+        symbols.set(name, entry);
+      }
+    }
+
+    // Recursively add from child scopes
+    if (scope.scopes) {
+      for (const childScope of scope.scopes) {
+        this.collectSymbolsFromScope(childScope, symbols);
+      }
+    }
+  }
 }
 
 export class SymbolTableBuilder {
@@ -318,6 +354,7 @@ export class SymbolTableBuilder {
     }
 
     const modifiers = (node as any).modifiers || [];
+    const isOperator = modifiers.some((m: any) => m.modifier === "operator");
     
     this.active.table.set(name, {
       name: (node as any).name,
@@ -327,6 +364,8 @@ export class SymbolTableBuilder {
       mutability: (node as any).mutable ?? false,
       exportName: undefined,
       visibility: modifiers.filter((x: any) => isVisibilityModifier(x.modifier)).at(0)?.modifier as SymbolVisibility ?? "internal",
+      isOperator,
+      operatorSymbol: isOperator ? name : undefined,
       // inferredType will be populated during type inference phase
     });
   }

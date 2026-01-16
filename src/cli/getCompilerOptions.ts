@@ -60,7 +60,7 @@ export function getCompilerOptions(
     logger: opts.logFile ? createFileLogger(opts.logFile) : console.log,
     language: opts.language || "js",
     stage: opts.stage || "codegen",
-    includeRuntimeShim: !!opts.runtimeShim,
+    includeRuntimeShim: opts.runtimeShim !== undefined ? !!opts.runtimeShim : true, // default to true
     stdout: !!opts.stdout,
   };
 }

@@ -176,12 +176,16 @@ class CollectTypesPass extends BaseAstTreeWalker {
                  const funcType = TypeEnvironment.function(paramTypes, returnType);
                  const name = typeof funcNode.name === 'string' ? funcNode.name : (funcNode.name as any).id || (funcNode.name as any).name;
                  
+                 const isOperator = (funcNode.modifiers ?? []).some((m: any) => m.modifier === 'operator' || m.modifier === ':operator');
+
                  members.push({
                      name: name,
                      type: funcType,
                      isCtor: false,
                      isPublic: true,
-                     isPrivate: false
+                     isPrivate: false,
+                     isOperator: isOperator,
+                     operatorSymbol: isOperator ? name : undefined
                  });
              }
         }
@@ -262,45 +266,65 @@ class CollectTypesPass extends BaseAstTreeWalker {
     
     if (node.body && node.body.length > 0) {
       for (const item of node.body) {
-        // Each item might be a variable node with :ctor modifier
-        if (item._type === "list" && item.nodes && item.nodes.length > 0) {
-          const firstNode = item.nodes[0];
-          if (firstNode._type === "variable") {
-            const varNode = firstNode as ast.VariableNode;
-            const isCtor = (varNode.modifiers ?? []).some((m: any) => m.modifier === "ctor");
+        let target = item;
+        if (item._type === 'list' && item.nodes && item.nodes.length > 0) {
+          target = item.nodes[0];
+        }
+
+        if (target._type === "variable") {
+          const varNode = target as ast.VariableNode;
+          const isCtor = (varNode.modifiers ?? []).some((m: any) => m.modifier === "ctor" || m.modifier === ":ctor");
+          const isPrivate = (varNode.modifiers ?? []).some((m: any) => m.modifier === "private" || m.modifier === ":private");
+          const name = typeof varNode.name === 'string' ? varNode.name : (varNode.name as any).id || (varNode.name as any).name;
+
+          const memberType = varNode.type 
+            ? this.convertAstTypeToInferred(varNode.type)
+            : TypeEnvironment.unknown();
+          
+          const member: any = {
+            name: name,
+            type: memberType,
+            isCtor: isCtor,
+            isPublic: !isPrivate,
+            isPrivate: isPrivate,
+          };
+          
+          if (isCtor) {
+            const hasDefault = varNode.init !== undefined;
+            if (hasDefault) {
+              member.defaultValue = varNode.init;
+            }
             
-            if (isCtor) {
-              const memberType = varNode.type 
-                ? this.convertAstTypeToInferred(varNode.type)
-                : TypeEnvironment.unknown();
-              
-              const hasDefault = varNode.init !== undefined;
-              const member: any = {
-                name: varNode.name.id,
-                type: memberType,
-                isCtor: true,
-                isPublic: false,
-                isPrivate: false,
-              };
-              
-              if (hasDefault) {
-                member.defaultValue = varNode.init;
-              }
-              
-              members.push(member);
-              
-              ctorParams.push({
-                name: varNode.name.id,
-                type: memberType,
-                hasDefault: hasDefault,
-                defaultValue: varNode.init,
-              });
-              
-              if (!hasDefault) {
-                requiredCount++;
-              }
+            ctorParams.push({
+              name: name,
+              type: memberType,
+              hasDefault: hasDefault,
+              defaultValue: varNode.init,
+            });
+            
+            if (!hasDefault) {
+              requiredCount++;
             }
           }
+          members.push(member);
+        } else if (target._type === "function") {
+          const funcNode = target as ast.FunctionNode;
+          const paramTypes = funcNode.params.map(p => p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.unknown());
+          const returnType = funcNode.returns ? this.convertAstTypeToInferred(funcNode.returns) : TypeEnvironment.primitive("Void");
+          const funcType = TypeEnvironment.function(paramTypes, returnType);
+          const name = typeof funcNode.name === 'string' ? funcNode.name : (funcNode.name as any).id || (funcNode.name as any).name;
+          
+          const isOperator = (funcNode.modifiers ?? []).some((m: any) => m.modifier === 'operator' || m.modifier === ':operator');
+
+          members.push({
+            name: name,
+            type: funcType,
+            isCtor: false,
+            isPublic: true,
+            isPrivate: false,
+            isOperator: isOperator,
+            operatorSymbol: isOperator ? name : undefined
+          });
         }
       }
     }
@@ -1005,6 +1029,13 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     if (args.length === 1) {
       // Unary operator
       const operandType = this.inferExpressionType(args[0]);
+
+      // Check for user-defined operator first
+      const userOpType = TypeChecker.findOperator(operandType, op, 0, this.symbolTable);
+      if (userOpType && userOpType.kind === "function") {
+        return userOpType.returns || TypeEnvironment.unknown();
+      }
+
       const resultType = TypeChecker.getUnaryOpType(op, operandType);
       
       if (!resultType) {
@@ -1020,6 +1051,17 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       // Binary operator
       const leftType = this.inferExpressionType(args[0]);
       const rightType = this.inferExpressionType(args[1]);
+
+      // Check for user-defined operator first on the left operand
+      const userOpType = TypeChecker.findOperator(leftType, op, 1, this.symbolTable);
+      if (userOpType && userOpType.kind === "function") {
+        // We SHOULD also check if rightType is assignable to the first parameter of userOpType
+        const firstParamType = userOpType.params?.[0];
+        if (firstParamType && TypeChecker.isAssignable(rightType, firstParamType, this.symbolTable)) {
+          return userOpType.returns || TypeEnvironment.unknown();
+        }
+      }
+
       const resultType = TypeChecker.getBinaryOpType(op, leftType, rightType);
       
       if (!resultType) {

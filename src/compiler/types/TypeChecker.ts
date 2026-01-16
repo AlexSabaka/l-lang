@@ -65,6 +65,20 @@ export class TypeChecker {
   }
 
   /**
+   * Find a user-defined operator in a type
+   */
+  static findOperator(type: InferredType, op: string, paramCount: number, symbolTable?: SymbolTable): InferredType | undefined {
+    const unwrapped = this.unwrapType(type, symbolTable);
+
+    if (unwrapped.kind === "struct" || unwrapped.kind === "class") {
+      const member = unwrapped.members?.find(m => m.isOperator && m.operatorSymbol === op && (m.type as any).params?.length === paramCount);
+      return member?.type;
+    }
+
+    return undefined;
+  }
+
+  /**
    * Unwrap type-alias and type-ref to get the underlying type
    */
   static unwrapType(type: InferredType, symbolTable?: SymbolTable): InferredType {

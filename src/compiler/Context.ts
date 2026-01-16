@@ -49,6 +49,7 @@ export interface CompilerOptions {
   stdout: boolean;
   stage: CompilationStage;
   language: CompilationLanguage;
+  noIIFE?: boolean; // For REPL and other use cases
 }
 
 export function logCompilationMessages(context: Context) {
