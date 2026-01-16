@@ -75,6 +75,20 @@ Welcome to the l-lang compiler documentation. This directory contains complete i
   - Known limitations & future work
   - Architecture improvements
 
+- [TEST_CONSOLIDATION.md](development/TEST_CONSOLIDATION.md) - Test infrastructure consolidation
+  - Unified TypeScript test runner
+  - Color-coded output & verbose mode
+  - Test workflow improvements
+
+- [REPL_GUIDE.md](development/REPL_GUIDE.md) - Interactive REPL features & usage
+  - Syntax highlighting
+  - Intelligent autocomplete (Tab key)
+  - Persistent context across evaluations
+  - Multi-line input support
+  - REPL commands (.help, .symbols, .types, etc.)
+  - Keyboard shortcuts
+  - Usage examples & troubleshooting
+
 - [TODO.md](development/TODO.md) - Implementation task list (ordered by priority)
   - Priority 0: ESTree code generation ✅
   - Priority 1: Two-pass symbol table ✅

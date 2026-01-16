@@ -1,0 +1,13 @@
+--- Running Complex Math Test ---
+Vector A: 1 0 0
+Vector B: 0 1 0
+Dot Product (A . B): 0
+Vector C: 3 4 0
+Magnitude of C: 5
+--- Matrix Test ---
+Matrix:
+[ 1, 0, 0 ]
+[ 0, 1, 0 ]
+[ 0, 0, 1 ]
+--- Complex Number Test ---
+Complex Addition Result: 4 + 6 i

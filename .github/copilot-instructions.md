@@ -222,26 +222,152 @@ Pipeline transformations `(a |> b)` → `(b a)` and implicit returns must be com
 
 [Context.ts](src/compiler/Context.ts#L204) runs DesugarAstVisitor before types stage—do NOT move it.
 
+### Code Generation: List Semantics & Call vs Reference Disambiguation
+
+**Critical Understanding**: In l-lang, parentheses determine call vs reference semantics:
+- `(func)` or `(func args)` → **function call** (generates CallExpression)
+- `func` → **reference** (generates Identifier for passing to higher-order functions)
+
+**Problem**: JSTransformerAstVisitor must distinguish between:
+1. Function calls: `(console.log x)` → `console.log(x)`
+2. Object construction: `(new Dog "Buddy")` → `new Dog("Buddy")`
+3. Property access: `p.x` → reference, not `p.x()`
+4. Method calls: `(p.speak)` → `p.speak()` (even without args)
+
+**Solution Pattern in visitList() (lines 1602-1695)**:
+
+```typescript
+// 1. Handle "new" keyword explicitly
+if (firstNode._type === "identifier" && firstNode.value === "new") {
+  return ESTreeBuilder.NewExpression(className, constructorArgs);
+}
+
+// 2. Composite identifiers (e.g., p.x, console.log)
+if (firstNode._type === "composite-identifier") {
+  const hasArgs = node.nodes.length > 1;
+  const parts = firstNode.parts;
+  const lastName = parts[parts.length - 1].value;
+  
+  // If args present OR lastName looks like method → CallExpression
+  if (hasArgs || isMethodName(lastName)) {
+    return CallExpression(memberExpr, args);
+  }
+  // No args and not method name → MemberExpression (property access)
+  return memberExpr;
+}
+
+// 3. Zero-arg function calls (requires symbol tracking)
+if (firstNode._type === "identifier" && node.nodes.length === 1) {
+  const originalName = decodeIdentifier(firstNode.value);
+  if (this.functions.has(originalName) || this.classes.has(originalName)) {
+    return CallExpression(identifier, []);
+  }
+  // Not a known function → return reference
+  return identifier;
+}
+```
+
+**Heuristics** (when type info unavailable at codegen):
+- Method name whitelist: `speak`, `toString`, `valueOf`, `keys`, `values`, etc.
+- Function tracking: `this.functions` and `this.classes` sets populated during traversal
+- Identifier encoding: Must use `decodeIdentifier()` to handle `make-fib` → `make2dfib` mapping
+
+**Common Bugs** (Jan 2026 fixes):
+1. **Composite identifiers always called**: Fixed by checking args presence + method name heuristic
+2. **`new` keyword ignored**: Added explicit check before general identifier handling
+3. **Zero-arg calls returned as references**: Fixed by checking `this.functions` set with decoded names
+4. **Method calls without args treated as property access**: Added method name whitelist
+5. **Operator Method Shadowing**: Fixed by appending arity to operator method names (e.g., `_2d_0` for unary, `_2d_1` for binary) to allow both in the same class prototype.
+
+### 5. Operator Overloading & Dynamic Dispatch
+
+**Architecture**: L-lang uses a hybrid dispatch system for operators like `+`, `-`, `*`, `/`, `==`.
+
+1.  **Standalone Overloads**: Functions with `:operator` modifier are registered via `__ll_op_registry.register(symbol, typeNames, function)`.
+2.  **Method Overloads**: Classes/structs implement `_xxx_arity` methods.
+3.  **Runtime Helpers**: The `RuntimeProvider.ts` emits helper functions (e.g., `const _2b = (...) => ...`) that:
+    - Attempt `__ll_op_registry.lookup` first.
+    - If no overload, attempt method call on the left operand (e.g., `a._2b_1(b)`).
+    - Fall back to native JS (e.g., `a + b`).
+
+**Codegen Pattern**:
+```typescript
+if (isOperator && name) {
+  if (isProgramScope) {
+    // Register standalone overload
+    this.operatorRegistrations.push(registerCall(originalName, paramTypes, internalName));
+  } else if (isMethodScope) {
+    // Append arity to method name
+    name.name = `${name.name}_${node.params.length}`;
+  }
+}
+```
+
+**Testing Strategy**: Use examples with `.expect` files to validate output:
+```bash
+npm test  # Runs all 30 validated examples (100% passing as of Jan 16, 2026)
+```
+
 ## Testing & Validation
 
 ### Run Tests
 ```bash
+npm test                # Run all tests via unified TypeScript runner
+./test_all.sh          # Alternative: bash wrapper with same functionality
+npm test -- --verbose  # Show diffs for failed tests
+```
+
+**Current Status** (Jan 15, 2026): 27/27 tests passing (100%), 38 examples pending .expect files
+
+### Test Infrastructure
+
+**Unified Test Runner** ([src/test/runner.ts](src/test/runner.ts)):
+- Recursively finds all `.lisp` files in `examples/`
+- For each file with `.expect`: compiles → executes → compares output
+- Color-coded output: ✅ PASS, ❌ FAIL, ⚠️ SKIP, 💥 ERROR
+- Verbose mode: `--verbose` flag shows detailed diffs
+- CI-friendly: exits with code 0 (all pass) or 1 (failures/errors)
+
+**Test Workflow**:
+```bash
+# 1. Create example file
+examples/01-basics/new_feature.lisp
+
+# 2. Generate expected output
+ts-node src/index.tRun example-based integration tests
+```
+
+**Note**: Grammar changes require `npm run parser` before `npm run build`.
+
+**Pre-commit Checklist**:
+1. Run `npm run parser` if grammar changed
+2. Run `npm run build` to ensure TypeScript compiles
+3. Run `npm test` to verify all 27 tests pass
+4. Verify no regressions in generated JavaScript code
 npm test
+
+# 4. Debug failures
+npm test -- --verbose  # Shows exact diff between expected vs actual
 ```
 
 ### Example-Based Testing
-All examples in `examples/` have `.expect` files showing expected output:
+
+All examples in `examples/` with `.expect` files are auto-validated:
 ```bash
-examples/01-basics/00_vars.lisp      # Input
-examples/01-basics/00_vars.expect    # Expected stdout
-examples/01-basics/00_vars.js        # Generated (after compile)
+examples/01-basics/00_vars.lisp      # Input (l-lang source)
+examples/01-basics/00_vars.expect    # Expected stdout when running .js
+examples/01-basics/00_vars.js        # Generated JavaScript (transient)
 ```
+
+**Skip Logic**: Examples without `.expect` files are reported as SKIP (not failures)
 
 ### Common Test Patterns
 
-- **Type inference**: `examples/04-data-types/04_enums.lisp` (union types)
-- **Scoping**: `examples/10-algorithms/01_evaluator.lisp` (nested functions)
-- **Classes**: `examples/05-oop/00_inheritance.lisp` (super calls, member access)
+- **Type inference**: [examples/04-data-types/04_enums.lisp](examples/04-data-types/04_enums.lisp) (union types)
+- **Scoping**: [examples/10-algorithms/01_evaluator.lisp](examples/10-algorithms/01_evaluator.lisp) (nested functions)
+- **Classes**: [examples/05-oop/00_inheritance.lisp](examples/05-oop/00_inheritance.lisp) (super calls, member access)
+- **Closures**: [examples/01-basics/07_memoization.lisp](examples/01-basics/07_memoization.lisp) (closure capture)
+- **Pattern matching**: [examples/01-basics/03_matching.lisp](examples/01-basics/03_matching.lisp) (match expressions)
 
 ## Build & Deployment
 
@@ -253,10 +379,50 @@ npm test         # Jest unit tests
 
 **Note**: Grammar changes require `npm run parser` before `npm run build`.
 
-## Debugging Tips
+5. **Compare generated JavaScript**: Use `--stage codegen` and inspect `.js` file for unexpected output
+6. **Test-driven debugging**: Create minimal `.lisp` example + `.expect` file, run `npm test -- --verbose`
 
-1. **Enable debug logging**: `ts-node ./src/index.ts transform ... -L Debug`
-2. **Inspect AST**: Use `jq` on stage outputs (`.ast`, `.symbols`)
+## Known Limitations & Workarounds
+
+### Codegen Phase Lacks Type Information
+
+**Problem**: JavaScript generation (phase 6) operates on desugared AST without type annotations. Cannot distinguish methods from properties by type alone.
+
+**Current Workaround**: Heuristic-based disambiguation in `visitList()`:
+- Method name whitelist for common patterns (`speak`, `toString`, etc.)
+- Function/class tracking via `this.functions` and `this.classes` sets
+- Presence of arguments as primary signal
+
+**Future Solution**: Pass type information from phase 5 (types) to phase 6 (codegen) via AST decoration or parallel data structure.
+
+### Identifier Encoding Inconsistency
+
+**Problem**: L-lang identifiers with hyphens (`make-fib`) are encoded to valid JS (`make2dfib`). Must use `decodeIdentifier()` when looking up symbols.
+
+**Pattern**:
+```typescript
+// WRONG: Will fail for hyphenated names
+if (this.functions.has(node.value)) { ... }
+
+// CORRECT: Decode first
+const originalName = decodeIdentifier(node.value);
+if (this.functions.has(originalName)) { ... }
+```
+
+**Affected Files**: JSTransformerAstVisitor.ts, anywhere comparing against symbol table
+
+### Test Coverage Gaps
+
+**Status**: 27/65 examples have `.expect` files (41.5% coverage)
+
+**Priority for `.expect` creation**:
+1. Core features without coverage (async/await, destructuring)
+2. Edge cases discovered during development
+3. Regression tests for fixed bugs
+
+---
+
+**Last Updated**: Jan 15, 2026 | Added codegen patterns, test infrastructure, known limitation
 3. **Trace visitor calls**: Add `context.log(LogLevel.Info, ...)` in visitXxx methods
 4. **Check scope chains**: TypeEnvironment has `debugScopeChain()` for scope stack inspection
 

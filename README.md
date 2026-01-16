@@ -87,6 +87,9 @@ cd src && npm install
 npm run parser
 npm run build
 
+# Interactive REPL 🎨
+ts-node src/index.ts repl
+
 # Compile and run a file
 ts-node src/index.ts run examples/01-basics/00_vars.lisp
 
@@ -100,6 +103,24 @@ npm test
 # Run tests with detailed output
 npm test -- --verbose
 ```
+
+### Interactive REPL
+
+Launch the feature-rich REPL for exploring l-lang:
+
+```bash
+ts-node src/index.ts repl
+```
+
+**Features:**
+- 🎨 Syntax highlighting
+- 🔍 Tab-based autocomplete (keywords, symbols, member access)
+- 💾 Persistent context across evaluations
+- 📝 Multi-line input with bracket balancing
+- ⌨️ Command history (↑/↓ arrows)
+- 🔧 Built-in commands (`.help`, `.symbols`, `.types`, `.reset`)
+
+See [docs/development/REPL_GUIDE.md](docs/development/REPL_GUIDE.md) for complete documentation.
 
 ### Test Status
 

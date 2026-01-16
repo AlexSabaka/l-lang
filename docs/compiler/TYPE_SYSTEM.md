@@ -144,6 +144,22 @@ Example:
 
 **Rule**: Value assignable to union if it matches any alternative.
 
+## Operator Overloading & Dispatch
+
+Operator overloading is implemented using a runtime registration and dispatch system.
+
+### Registry-Based Dispatch (Standalone)
+
+When an operator is used with types that don't support it natively, the runtime calls `__ll_op_registry.lookup(op, args)`. This lookup uses the argument types to find a registered overload.
+
+### Method-Based Dispatch (Structs/Classes)
+
+Operators are also dispatched to methods named after the encoded operator with an arity suffix:
+- Binary `+` -> calls method `_2b_1(other)` on the left operand.
+- Unary `-` -> calls method `_2d_0()` on the operand.
+
+This ensures that binary and unary versions of the same operator (like `-`) do not shadow each other in the JavaScript prototype.
+
 ## Type Representation in JSON Output
 
 After the `types` compilation stage, symbol entries include inferred types:

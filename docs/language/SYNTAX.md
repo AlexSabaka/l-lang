@@ -292,6 +292,34 @@ Value types. Passed by copy. Stack-allocated by default.
     (let :public y 0))
 ```
 
+### Operator Overloading
+
+You can define custom behavior for operators using the `:operator` modifier. The function name must be the operator symbol.
+
+```lisp
+(defstruct Vector2
+    (let :ctor x <- Real)
+    (let :ctor y <- Real)
+
+    ;; Binary + operator
+    (fn :operator + [other <- Vector2] -> Vector2
+        (return (new Vector2 (+ this.x other.x) (+ this.y other.y)))
+    )
+
+    ;; Unary - operator (negation)
+    (fn :operator - [] -> Vector2
+        (return (new Vector2 (- 0 this.x) (- 0 this.y)))
+    )
+)
+
+(let v1 (new Vector2 1 2))
+(let v2 (new Vector2 3 4))
+(let v3 (+ v1 v2))  ;; Vector2(4, 6)
+(let v4 (- v1))     ;; Vector2(-1, -2)
+```
+
+Supported operators: `+`, `-`, `*`, `/`, `==`, `!=` etc.
+
 ### Interfaces
 
 ```lisp
@@ -440,7 +468,45 @@ Runtime type checks with `is` and `as`:
 
 ---
 
-## 10. Modules & Imports
+## 10. Operator Overloading
+
+L-lang supports operator overloading for both standalone functions and class/struct methods using the `:operator` modifier.
+
+### Standalone Operators
+
+Define overloads for specific types at the module level:
+
+```lisp
+(fn :operator + [a <- Complex b <- Complex] -> Complex (
+    (new Complex (+ a.real b.real) (+ a.imag b.imag))
+))
+```
+
+### Method-Style Operators
+
+Implement operators directly inside a struct or class:
+
+```lisp
+(defstruct Vector2
+    (let :ctor x <- Real 0)
+    (let :ctor y <- Real 0)
+
+    (fn :operator + [other <- Vector2] (
+        (new Vector2 (+ x other.x) (+ y other.y))
+    ))
+
+    ;; Unary negation
+    (fn :operator - [] (
+        (new Vector2 (- x) (- y))
+    ))
+)
+```
+
+Operators supported: `+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`, `<=`, `>=`.
+
+---
+
+## 11. Modules & Imports
 
 ### Exporting
 

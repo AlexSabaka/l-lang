@@ -178,6 +178,16 @@ Important: **Commit often**
     - [x] 06_flow_control.lisp - Flow control with typed parameters ✅
     - [x] 07_memoization.lisp - Map literals and indexer operations ✅
 
+## ✅ Priority 7: Operator Overloading (COMPLETED) ✅
+*Context: Support for `:operator` modifier in standalone functions and class methods.*
+**STATUS: COMPLETE** ✅
+
+- [x] **Operator Registry**: Implement `__ll_op_registry` for standalone overloads.
+- [x] **Dynamic Dispatch**: Update native operator helpers to support registry and method lookups.
+- [x] **Arity-Specific Naming**: Avoid JS prototype shadowing with `_op_arity` naming convention.
+- [x] **Registration Hoisting**: Ensure standalone overloads are registered before use.
+- [x] **Type-Safe Dispatch**: Integrate with `__ll_is_type` for reliable runtime type matching.
+
 ---
 
 ## 🛠️ Priority 6: Tooling & DX

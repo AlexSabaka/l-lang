@@ -2,6 +2,24 @@
 
 ## 🚀 Recent Major Changes (January 2026)
 
+### Operator Overloading (January 16, 2026)
+**Status**: ✅ Complete
+
+Implemented comprehensive operator overloading support for both standalone functions and class/struct methods:
+
+- **Standalone Overloading**: Functions marked with `:operator` are registered in a global `__ll_op_registry` and dispatched at runtime based on argument types.
+- **Method Overloading**: Classes and structs can implement operators (e.g., `_2b` for `+`) which are called via dynamic dispatch when used as the left operand.
+- **Dynamic Arity Support**: Handles both unary and binary operators (e.g., `-` for negation and subtraction) through arity-suffixed method names (e.g., `_2d_0`, `_2d_1`) to avoid prototype shadowing.
+- **Runtime Dispatch Engine**: Updated `+`, `-`, `*`, `/`, and `==` runtime implementations to prioritize registry overloads, then method dispatch, then native JS operations.
+- **Symbol Table Metadata**: Added `isOperator` and `operatorSymbol` tracking to `SymbolEntry`.
+
+**Key Implementation Files**:
+- [src/compiler/runtime/RuntimeProvider.ts](../../src/compiler/runtime/RuntimeProvider.ts) - Global operator registry and revamped operator dispatchers
+- [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - Operator registration hoisting and renaming
+- [src/compiler/analysis/SymbolTable.ts](../../src/compiler/analysis/SymbolTable.ts) - Operator metadata in symbol table
+
+---
+
 ### Type System Extensions (January 3, 2026)
 **Status**: ✅ Complete
 
