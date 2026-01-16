@@ -355,18 +355,37 @@ l-lang gives you three levels of code manipulation.
 
 ### Level 1: Comptime (Zig-Style)
 
-Evaluate code at compile-time. Types are values. Functions can run during compilation.
+**Status**: ✅ Implemented (January 16, 2026)
+
+Evaluate code at compile-time. Functions marked with `:comptime` are executed during compilation and their results are inlined as constants.
 
 ```lisp
-;; Generic function via comptime
-(fn :comptime max [a b] (if (> a b) a b))
+;; Comptime function - evaluated at compile time
+(fn :comptime factorial [n]
+  (if (<= n 1) 1 (* n (factorial (- n 1)))))
 
-;; Usage - compiler specializes
-(max 5 10)     ;; Generates max_int
-(max 3.14 2.7) ;; Generates max_float
+;; Usage - compiler evaluates and inlines result
+(let fact5 (factorial 5))  ;; Compiles to: const fact5 = 120;
+;; The factorial function definition does NOT appear in compiled output
 ```
 
-**Comptime Parameters:**
+**Key Features**:
+- **VM-Based Execution**: Comptime functions are transpiled to JavaScript and executed in a Node.js `vm` sandbox
+- **Recursive Support**: Handles recursive functions (factorial, Fibonacci, etc.)
+- **Dead Code Elimination**: Function definitions marked `:comptime` are removed from output after evaluation
+- **Constant Propagation**: All comptime calls are replaced with their computed literal values
+
+**Example with Multiple Comptime Functions**:
+```lisp
+(fn :comptime add [a b] (+ a b))
+(fn :comptime multiply [a b] (* a b))
+
+(let x (multiply 5 6))     ;; const x = 30;
+(let y (add 7 3))          ;; const y = 10;
+;; add and multiply functions not in output
+```
+
+**Comptime Parameters** (Planned):
 
 ```lisp
 (fn create-array [comptime T, size <- Int] -> Array<T> (
@@ -374,6 +393,8 @@ Evaluate code at compile-time. Types are values. Functions can run during compil
     (Array<T>.new size)
 ))
 ```
+
+*Note: Type-level comptime parameters are planned for future implementation. Currently supported for function execution only.*
 
 ### Level 2: Defmacro (Simple Rewrites)
 

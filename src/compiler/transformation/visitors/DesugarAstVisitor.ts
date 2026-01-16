@@ -16,11 +16,56 @@ import { formatWithOptions } from "util";
  */
 export class DesugarAstVisitor extends BaseAstTreeWalker {
   /**
+   * Override visit to control recursion manually.
+   * This prevents BaseAstTreeWalker from auto-recursing and overwriting
+   * our desugared transformations.
+   */
+  visitProgram(node: ast.ProgramNode): ast.ProgramNode {
+    (node as any).program = (node as any).program.map((n: any, i: number) => {
+      return this.visit(n);
+    });
+    return node;
+  }
+
+  visit(node: ast.ASTNode): any {
+    if (!node) return node;
+    // this.context.log(LogLevel.Info, `[DESUGAR] visit: ${node._type} (parent: ${node._parent?._type})`);
+
+    const type = node._type;
+    const methodName = `visit${type
+      .split("-")
+      .map((s) => s[0].toUpperCase() + s.slice(1))
+      .join("")}`;
+
+    if ((this as any)[methodName]) {
+      return (this as any)[methodName](node);
+    }
+
+    // Manual fallbacks for container nodes
+    if (type === "program") {
+      return this.visitProgram(node as any);
+    }
+
+    return node;
+  }
+
+  /**
    * Desugar a list node - check if it's a pipeline and transform.
    */
-  visitList(node: ast.ListNode): ast.ListNode {
+  visitList(node: ast.ListNode): ast.ASTNode {
+    // 0. Unwrap trivial lists: (expression) -> expression
+    // Only if it's not an identifier (to avoid ambiguous calls like (func))
+    if (
+      node.nodes.length === 1 &&
+      node.nodes[0]._type !== "simple-identifier" &&
+      node.nodes[0]._type !== "composite-identifier"
+    ) {
+      return this.visit(node.nodes[0]);
+    }
+
     const hasPipelineOp = node.nodes.some(
-      (n) => n._type === "simple-identifier" && ["|>", "<|"].includes(n.id)
+      (n) =>
+        n._type === "simple-identifier" && ["|>", "<|"].includes((n as any).id)
     );
 
     if (hasPipelineOp && node.nodes.length > 2) {
@@ -36,7 +81,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       _location: { ...node._location },
       _parent: node._parent,
       nodes: node.nodes.map((n) => this.visit(n) as ast.ASTNode),
-    };
+    } as ast.ListNode;
   }
 
   private transformPipelineList(node: ast.ListNode): ast.ListNode {
@@ -145,29 +190,27 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
    * Desugar a function node - inject implicit returns.
    * Desugars the function body only.
    */
-  // visitFunction(node: ast.FunctionNode): ast.FunctionNode {
-  //   console.log("hit function desugaring");
-  //   // Transform body: inject implicit returns
-  //   if (node.body.length === 0) return node;
+  visitFunction(node: ast.FunctionNode): ast.FunctionNode {
+    this.context.log(LogLevel.Info, `Desugaring function: ${node.name?.id || node.name?.value || "anonymous"}`);
+    // Transform body: inject implicit returns
+    if (node.body.length === 0) return node;
 
-  //   // Desugar all nodes (pipelines, etc.)
-  //   const transformedBody = node.body.map((x) => this.visit(x));
+    // Desugar all nodes (pipelines, etc.)
+    const transformedBody = node.body.map((x) => this.visit(x) as ast.ASTNode);
 
-  //   // Apply implicit return ONLY to the last node if appropriate
-  //   const lastIndex = transformedBody.length - 1;
-  //   const lastNode = transformedBody[lastIndex];
+    // Apply implicit return ONLY to the last node if appropriate
+    const lastIndex = transformedBody.length - 1;
+    let lastNode = transformedBody[lastIndex];
 
-  //   // Check if we should wrap the last node in a return
-  //   // TODO: Works odd
-  //   if (this.shouldWrapInReturn(lastNode)) {
-  //     transformedBody[lastIndex] = this.wrapInReturn(lastNode);
-  //   }
+    // Check if we should wrap the last node in a return
+    if (this.shouldWrapInReturn(lastNode)) {
+      this.context.log(LogLevel.Info, `Wrapping last node of type ${lastNode._type} in return`);
+      transformedBody[lastIndex] = this.wrapInReturn(lastNode);
+    }
 
-  //   return {
-  //     ...node,
-  //     body: transformedBody,
-  //   };
-  // }
+    node.body = transformedBody;
+    return node;
+  }
 
   /**
    * Check if a node should be wrapped in an implicit return.
@@ -175,7 +218,6 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
   private shouldWrapInReturn(node: ast.ASTNode): boolean {
     // Never wrap control structures or explicit definitions
     const excludedTypes: Set<ast.NodeType> = new Set([
-      "if",
       "while",
       "try-catch",
       "for",
@@ -192,6 +234,10 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       return false;
     }
 
+    if (node._type === "if") {
+      return true; // We'll handle this recursively in wrapInReturn
+    }
+
     // Check if it's already a return statement
     if (node._type === "list") {
       const listNode = node as ast.ListNode;
@@ -201,9 +247,9 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       if (nodes.length > 0) {
         const head = nodes[0];
         if (
-          (head._type === "simple-identifier" &&
-            (head as ast.SimpleIdentifierNode).id === "return") ||
-          (head as ast.SimpleIdentifierNode).id === "throw"
+          head._type === "simple-identifier" &&
+          ((head as ast.SimpleIdentifierNode).id === "return" ||
+            (head as ast.SimpleIdentifierNode).id === "throw")
         ) {
           return false;
         }
@@ -217,20 +263,33 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
    * Wrap a node in an explicit return.
    * Returns are represented as (return value) lists.
    */
-  private wrapInReturn(node: ast.ASTNode): ast.ListNode {
+  private wrapInReturn(node: ast.ASTNode): ast.ASTNode {
+    if (!this.shouldWrapInReturn(node)) {
+      return node;
+    }
+
+    if (node._type === "if") {
+      const ifNode = node as ast.IfNode;
+      return {
+        ...ifNode,
+        then: this.wrapInReturn(ifNode.then),
+        else: ifNode.else ? this.wrapInReturn(ifNode.else) : undefined,
+      } as ast.IfNode;
+    }
+
     return {
       _type: "list",
-      _location: node._location,
+      _location: { ...node._location },
       _parent: node._parent,
       nodes: [
         {
           _type: "simple-identifier",
           id: "return",
-          _location: node._location,
+          _location: { ...node._location },
           _parent: undefined,
         } as ast.SimpleIdentifierNode,
         node,
       ],
-    };
+    } as ast.ListNode;
   }
 }

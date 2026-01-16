@@ -6,6 +6,7 @@ import {
   BaseAstTreeWalker,
   BuildDependencyGraphAstVisitor,
   BuildSymbolTableAstVisitor,
+  ComptimeEvaluationAstVisitor,
   DesugarAstVisitor,
   InlineImportsAstVisitor,
   SyntaxRulesAstVisitor,
@@ -176,8 +177,8 @@ export class Context {
     const treeShakerVisitor = new TreeShakeAstVisitor(this);
     ast = treeShakerVisitor.visit(ast) as ASTNode;
 
-    const desugarVisitor = new DesugarAstVisitor(this);
-    ast = desugarVisitor.visit(ast) as ASTNode;
+    const comptimeVisitor = new ComptimeEvaluationAstVisitor(this);
+    ast = comptimeVisitor.visit(ast) as ASTNode;
     
     // Store desugar stage AST and symbols
     if (stopAt === "desugar") {

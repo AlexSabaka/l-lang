@@ -17,11 +17,13 @@ Input (.lisp)
     ↓
 [3] SYMBOLS       → Symbol table + dependency analysis (2-pass scan/resolve)
     ↓
-[4] DESUGAR       → Transform complex syntax (pipelines |>, implicit returns)
+[4] TREESHAKE     → Remove unused imports and dead code
     ↓
-[5] TYPES         → Type inference (2-pass collect/infer) + validation
+[5] COMPTIME      → Evaluate :comptime functions, inline results, remove definitions
     ↓
-[6] CODEGEN       → ESTree AST → JavaScript (astring)
+[6] TYPES         → Type inference (2-pass collect/infer) + validation
+    ↓
+[7] CODEGEN       → ESTree AST → JavaScript (astring)
     ↓
 Output (.js)
 ```
@@ -44,6 +46,7 @@ src/compiler/
 │   └── visitors/     # BuildSymbolTableAstVisitor, SemanticValidatorAstVisitor
 ├── transformation/   # AST normalization passes
 │   └── visitors/     # DesugarAstVisitor (pipelines, implicit returns)
+│                     # ComptimeEvaluationAstVisitor (compile-time execution)
 ├── types/           # Type inference engine
 │   ├── TypeEnvironment.ts # Scope-aware type binding
 │   ├── TypeChecker.ts    # Type compatibility checking
@@ -220,11 +223,43 @@ cat 00_vars.types.json | jq '.symbols.entries.x.inferredType'
 
 **Safe Pattern**: Use `symbolTable.joinWithoutDuplication()` to merge imported symbols.
 
+### Comptime Evaluation (Phase 5)
+
+**Purpose**: Execute compile-time functions and inline their results as constants.
+
+**Implementation** ([ComptimeEvaluationAstVisitor.ts](../../src/compiler/transformation/visitors/ComptimeEvaluationAstVisitor.ts)):
+
+1. **Detect Comptime Functions**: Check `modifiers` for `:comptime` flag
+2. **VM Execution**:
+   - Transpile function to JavaScript using JSTransformerAstVisitor
+   - Execute in Node.js `vm` sandbox with timeout protection
+   - Cache results in `comptimeValues` map
+3. **Inline Results**: Replace function call nodes with NumberNode/StringNode literals
+4. **Dead Code Elimination**: Return `null` from `visitList()` for comptime functions to mark for removal
+5. **AST Filtering**: Parent visitors filter `null` values from child arrays
+
+**Key Design Decisions**:
+- Runs AFTER symbols phase to access symbol table for type information
+- Runs BEFORE types phase so inlined values can be type-checked
+- Uses DesugarAstVisitor locally (not globally) to handle implicit returns without breaking other constructs
+- Recursive functions supported via proper function hoisting in VM context
+
+**Example Flow**:
+```typescript
+// Input: (let x (factorial 5))
+// 1. Detect factorial is comptime from symbol table
+// 2. Transpile factorial function to JS
+// 3. Execute in vm: factorial(5) → 120
+// 4. Replace call node with NumberNode(120)
+// 5. Mark factorial function definition for removal
+// Output: const x = 120;
+```
+
 ### Desugaring Must Run Before Codegen
 
 Pipeline transformations `(a |> b)` → `(b a)` and implicit returns must be complete before JavaScript generation. If JSTransformer receives unsugared AST, it will crash.
 
-[Context.ts](../../src/compiler/Context.ts#L204) runs DesugarAstVisitor before types stage—do NOT move it.
+**Note**: DesugarAstVisitor is NOT run globally anymore (removed from pipeline). It's only invoked locally within ComptimeEvaluationAstVisitor to handle implicit returns for comptime functions.
 
 ## Testing & Validation
 

@@ -111,6 +111,7 @@ export interface SymbolEntry {
   inferredType?: InferredType;  // The inferred or declared type of this symbol
   isOperator?: boolean;        // True if the function has the :operator modifier
   operatorSymbol?: string;     // The actual operator symbol (e.g., "+", "-", "==")
+  isComptime?: boolean;        // True if the symbol has the :comptime modifier
 }
 
 export interface Scope {
@@ -355,6 +356,7 @@ export class SymbolTableBuilder {
 
     const modifiers = (node as any).modifiers || [];
     const isOperator = modifiers.some((m: any) => m.modifier === "operator");
+    const isComptime = modifiers.some((m: any) => m.modifier === "comptime");
     
     this.active.table.set(name, {
       name: (node as any).name,
@@ -366,6 +368,7 @@ export class SymbolTableBuilder {
       visibility: modifiers.filter((x: any) => isVisibilityModifier(x.modifier)).at(0)?.modifier as SymbolVisibility ?? "internal",
       isOperator,
       operatorSymbol: isOperator ? name : undefined,
+      isComptime,
       // inferredType will be populated during type inference phase
     });
   }

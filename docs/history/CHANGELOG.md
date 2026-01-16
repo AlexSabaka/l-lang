@@ -2,6 +2,34 @@
 
 ## 🚀 Recent Major Changes (January 2026)
 
+### Compile-Time Evaluation - `:comptime` Modifier (January 16, 2026)
+**Status**: ✅ Complete
+
+Implemented Zig-style compile-time evaluation for functions and constants:
+
+- **Comptime Functions**: Functions marked with `:comptime` are evaluated at compile time and their definitions are removed from output
+- **VM-Based Evaluation**: Uses Node.js `vm` module to execute transpiled L-Lang snippets in a sandbox
+- **Recursive Support**: Handles recursive comptime functions (e.g., factorial, Fibonacci)
+- **Dead Code Elimination**: Comptime function definitions are completely removed from compiled JavaScript output
+- **Symbol Table Integration**: Tracks `isComptime` flag in symbol metadata for compile-time identification
+- **Constant Inlining**: All comptime function calls are replaced with literal values at compile time
+
+**Key Implementation Files**:
+- [src/compiler/transformation/visitors/ComptimeEvaluationAstVisitor.ts](../../src/compiler/transformation/visitors/ComptimeEvaluationAstVisitor.ts) - VM-based evaluation and AST node removal
+- [src/compiler/analysis/SymbolTable.ts](../../src/compiler/analysis/SymbolTable.ts) - Comptime metadata tracking
+- [examples/04-data-types/10_comptime.lisp](../../examples/04-data-types/10_comptime.lisp) - Test case with recursive factorial and addition
+
+**Example**:
+```lisp
+(fn :comptime factorial [n]
+  (if (<= n 1) 1 (* n (factorial (- n 1)))))
+
+(let fact5 (factorial 5))  ;; Compiled to: const fact5 = 120;
+;; factorial function definition not present in output
+```
+
+---
+
 ### Operator Overloading (January 16, 2026)
 **Status**: ✅ Complete
 

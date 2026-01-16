@@ -1,0 +1,3 @@
+Comptime constant x: 30
+Comptime factorial(5): 120
+Comptime add(5, 7): 12
