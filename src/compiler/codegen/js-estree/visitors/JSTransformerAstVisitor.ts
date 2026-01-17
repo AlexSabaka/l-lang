@@ -562,6 +562,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     };
 
     // Create source map generator
+    // Note: The 'file' property is the generated file name, not the source
     const sourceMap = new SourceMapGenerator({ 
       file: path.basename(this.rootSource, path.extname(this.rootSource)) + '.js'
     });
@@ -585,12 +586,43 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       indent: "  ",
       sourceMap: sourceMap,  // astring will add mappings automatically
     });
+    
+    // WORKAROUND: astring uses the 'file' property as the source instead of .loc.source
+    // We need to manually fix the sources array to point to the original .lisp files
+    const mapObj = JSON.parse(sourceMap.toString());
+    if (mapObj.sources && mapObj.sources.length > 0 && this.rootSource) {
+      // Replace .js extensions with the original source path
+      const rootSource = this.rootSource; // Capture for closure
+      mapObj.sources = mapObj.sources.map((src: string) => {
+        // If the source is just a basename with .js, replace it with the actual source path
+        const expectedJsName = path.basename(rootSource, path.extname(rootSource)) + '.js';
+        if (src === expectedJsName) {
+          return rootSource;
+        }
+        return src;
+      });
+    }
+    
+    // Recreate the source map with fixed sources
+    const fixedSourceMap = new SourceMapGenerator({ file: mapObj.file || 'output.js' });
+    if (mapObj.sources && mapObj.sourcesContent) {
+      mapObj.sources.forEach((src: string, i: number) => {
+        const content = mapObj.sourcesContent[i];
+        if (content !== undefined) {
+          fixedSourceMap.setSourceContent(src, content);
+        }
+      });
+    }
+    
+    // Copy mappings - we need to parse and recreate them with the correct source
+    // For now, let's just update the JSON and stringify it back
+    const correctedMapStr = JSON.stringify(mapObj);
 
     // Calculate runtime shim offset
     const shimLines = (includeShim && runtimeShim) ? runtimeShim.split('\n').length : 0;
     
     let finalCode = generatedCode;
-    let finalMap = sourceMap.toString();
+    let finalMap = correctedMapStr;
     
     // If we have a runtime shim, we need to adjust the source map line numbers
     if (shimLines > 0) {
