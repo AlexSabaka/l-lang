@@ -588,16 +588,16 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     });
     
     // WORKAROUND: astring uses the 'file' property as the source instead of .loc.source
-    // We need to manually fix the sources array to point to the original .lisp files
+    // We need to manually fix the sources array to use relative paths (just the filename)
     const mapObj = JSON.parse(sourceMap.toString());
     if (mapObj.sources && mapObj.sources.length > 0 && this.rootSource) {
-      // Replace .js extensions with the original source path
+      // Replace .js extensions with just the .lisp filename (no path)
       const rootSource = this.rootSource; // Capture for closure
       mapObj.sources = mapObj.sources.map((src: string) => {
-        // If the source is just a basename with .js, replace it with the actual source path
+        // If the source is just a basename with .js, replace it with the .lisp filename
         const expectedJsName = path.basename(rootSource, path.extname(rootSource)) + '.js';
         if (src === expectedJsName) {
-          return rootSource;
+          return path.basename(rootSource);  // Just the filename, e.g., "modifiers_demo.lisp"
         }
         return src;
       });
