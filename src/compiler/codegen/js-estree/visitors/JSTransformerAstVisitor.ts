@@ -561,23 +561,12 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       body: finalBody,
     };
 
-    // Generate code with astring
-    // astring doesn't have direct source-map support, it relies on ESTree loc properties
-    let code = generate(finalProgram, {
-      comments: true,
-      indent: "  ",
-    });
-
-    // Calculate runtime shim line offset for source map adjustment
-    const shimLines = includeShim && runtimeShim ? runtimeShim.split('\n').length : 0;
-
-    // Build source map using source-map library
-    // We'll manually create mappings based on the ESTree loc properties
+    // Create source map generator
     const sourceMap = new SourceMapGenerator({ 
       file: path.basename(this.rootSource, path.extname(this.rootSource)) + '.js'
     });
 
-    // Read the original source file for source map content
+    // Read and set the original source file content for source map
     try {
       const fs = require('fs');
       if (fs.existsSync(this.rootSource)) {
@@ -589,23 +578,72 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       this.context.log(LogLevel.Debug, `Could not read source file ${this.rootSource} for source map: ${err}`);
     }
 
-    // Traverse the generated code lines and create mappings based on ESTree locations
-    // This is a simplified approach - for full accuracy we'd need to parse the generated code
-    // and match it back to ESTree nodes, but that's complex. Instead, we'll create mappings
-    // for major constructs that have location info.
-    this.createSourceMapMappings(finalProgram, sourceMap, shimLines);
+    // Generate code with astring - it will automatically populate the source map
+    // based on the .loc properties in our ESTree nodes
+    const generatedCode = generate(finalProgram, {
+      comments: true,
+      indent: "  ",
+      sourceMap: sourceMap,  // astring will add mappings automatically
+    });
 
-    // Prepend runtime shim as raw string (since it's hard to inject into ESTree)
-    if (includeShim && runtimeShim) {
-      code = runtimeShim + '\n' + code;
+    // Calculate runtime shim offset
+    const shimLines = (includeShim && runtimeShim) ? runtimeShim.split('\n').length : 0;
+    
+    let finalCode = generatedCode;
+    let finalMap = sourceMap.toString();
+    
+    // If we have a runtime shim, we need to adjust the source map line numbers
+    if (shimLines > 0) {
+      // Parse the source map
+      const mapObj = JSON.parse(finalMap);
+      
+      // Adjust the mappings by offsetting line numbers
+      // The mappings string is VLQ encoded, but we can reconstruct it
+      const { SourceMapGenerator } = require('source-map');
+      const adjustedGenerator = new SourceMapGenerator({
+        file: mapObj.file
+      });
+      
+      // Copy source content
+      if (mapObj.sources && mapObj.sourcesContent) {
+        mapObj.sources.forEach((source: string, i: number) => {
+          adjustedGenerator.setSourceContent(source, mapObj.sourcesContent[i]);
+        });
+      }
+      
+      // Manually decode and re-encode mappings with offset
+      // Simple approach: decode mappings using a basic VLQ parser
+      const base64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+      const mappingLines = mapObj.mappings.split(';');
+      
+      const newMappings: string[] = [];
+      
+      // Add empty lines for the shim
+      for (let i = 0; i < shimLines; i++) {
+        newMappings.push('');
+      }
+      
+      // Copy existing mappings
+      newMappings.push(...mappingLines);
+      
+      // Reconstruct the map with adjusted mappings
+      const newMapObj = {
+        ...mapObj,
+        mappings: newMappings.join(';')
+      };
+      
+      finalMap = JSON.stringify(newMapObj);
+      finalCode = (runtimeShim + '\n' + generatedCode);
+    } else if (includeShim && runtimeShim) {
+      finalCode = runtimeShim + '\n' + generatedCode;
     }
 
     // Add source map URL comment
-    code += `\n\n//# sourceMappingURL=${path.basename(this.rootSource, path.extname(this.rootSource))}.js.map`;
+    finalCode += `\n\n//# sourceMappingURL=${path.basename(this.rootSource, path.extname(this.rootSource))}.js.map`;
 
     return {
-      code,
-      map: sourceMap.toString()
+      code: finalCode,
+      map: finalMap
     };
   }
 
@@ -2229,74 +2267,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // =========================================================================
   // Utilities
   // =========================================================================
-
-  private createSourceMapMappings(
-    program: ESTree.Program,
-    sourceMap: SourceMapGenerator,
-    lineOffset: number
-  ): void {
-    // Walk the ESTree and create source map mappings
-    let currentGeneratedLine = lineOffset + 1; // Start after runtime shim
-
-    const walk = (node: any, depth: number = 0) => {
-      if (!node) return;
-
-      // Skip nodes without location info
-      if (!node.loc || !node.loc.source) {
-        // Still traverse children
-        for (const key in node) {
-          if (key === 'loc' || key === 'type') continue;
-          const value = node[key];
-          if (Array.isArray(value)) {
-            value.forEach(child => walk(child, depth + 1));
-          } else if (value && typeof value === 'object') {
-            walk(value, depth + 1);
-          }
-        }
-        return;
-      }
-
-      // Create a mapping for this node
-      try {
-        sourceMap.addMapping({
-          generated: {
-            line: currentGeneratedLine,
-            column: depth * 2 // Rough estimate based on indentation
-          },
-          original: {
-            line: node.loc.start.line,
-            column: node.loc.start.column
-          },
-          source: node.loc.source || this.rootSource
-        });
-
-        // Rough approximation: count how many lines this node might generate
-        // In reality, we'd need to know the exact generated output
-        if (node.type === 'FunctionDeclaration' || node.type === 'ClassDeclaration') {
-          currentGeneratedLine += 3; // Rough estimate
-        } else if (node.type === 'IfStatement' || node.type === 'WhileStatement') {
-          currentGeneratedLine += 1;
-        } else {
-          currentGeneratedLine += 1;
-        }
-      } catch (err) {
-        // Ignore mapping errors
-      }
-
-      // Traverse children
-      for (const key in node) {
-        if (key === 'loc' || key === 'type') continue;
-        const value = node[key];
-        if (Array.isArray(value)) {
-          value.forEach(child => walk(child, depth + 1));
-        } else if (value && typeof value === 'object') {
-          walk(value, depth + 1);
-        }
-      }
-    };
-
-    walk(program, 0);
-  }
 
   private isStatement(node: ESTree.Node): boolean {
     if (!node || typeof node !== "object") return false;
