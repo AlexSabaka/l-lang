@@ -1993,7 +1993,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
       // For composite identifiers with no args, if it ends with common method names, call it
       // This is a heuristic - ideally we'd have type information
-      const methodLikeNames = ['speak', 'toString', 'valueOf', 'toJSON', 'then', 'catch', 'finally'];
+      const methodLikeNames = [
+        'speak', 'toString', 'valueOf', 'toJSON', 'then', 'catch', 'finally',
+        // String methods
+        'toUpperCase', 'toLowerCase', 'trim', 'trimStart', 'trimEnd',
+        // Array methods  
+        'push', 'pop', 'shift', 'unshift', 'reverse', 'sort',
+        // Common object methods
+        'keys', 'values', 'entries'
+      ];
       if (head._type === "composite-identifier" && methodLikeNames.includes(memberName)) {
         return ESTreeBuilder.callExpression(node, callee, args);
       }

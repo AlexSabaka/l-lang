@@ -6,14 +6,14 @@ First char: h
 Last char: o
 str1 equals str2
 str1 not equals str3
-Upper: [Function: toUpperCase]
-Lower: [Function: toLowerCase]
+Upper: HELLO WORLD
+Lower: hello world
 Index of 'fox': 16
 Slice [0:4]: Java
 Slice [4:]: Script
 Split by comma: [ 'apple', 'banana', 'orange' ]
 Before: '   hello   ' Length: 9
-After: ' [Function: trim] ' Length: 0
+After: ' hello ' Length: 5
 Valid email format indicator
 Code starts with 'function'
 Is a PDF file
