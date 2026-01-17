@@ -650,10 +650,28 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   visitTypeDef(node: ast.TypeDefNode) {
-    return this.runInScope(ScopeType.interface, () => ({
-      type: "EmptyStatement",
+    // For aliases to classes/structs, generate a const binding at runtime
+    // e.g., (deftype Vector Vector3) -> const Vector = Vector3;
+    const aliasName = encodeIdentifier(node.name.id);
+    
+    // Extract the target name from the type node
+    let targetName = "undefined";
+    if (node.type && (node.type as any).type && (node.type as any).type.name) {
+      targetName = encodeIdentifier((node.type as any).type.name.name);
+    }
+    
+    return {
+      type: "VariableDeclaration",
+      kind: "const",
+      declarations: [
+        {
+          type: "VariableDeclarator",
+          id: { type: "Identifier", name: aliasName },
+          init: { type: "Identifier", name: targetName },
+        },
+      ],
       loc: ESTreeBuilder.loc(node),
-    }));
+    } as ESTree.VariableDeclaration;
   }
 
   visitExport(node: ast.ExportNode): ESTree.EmptyStatement {

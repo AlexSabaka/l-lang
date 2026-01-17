@@ -8,10 +8,11 @@ export class RuntimeProvider {
   // Global type metadata storage
   public static readonly TYPES_METADATA_VAR = '__ll_type_metadata';
 
-  private static readonly LL_RUNTIME: string = `const _util = require("util");
-let ${RuntimeProvider.TYPES_METADATA_VAR} = {};
+  private static readonly LL_RUNTIME: string = `let ${RuntimeProvider.TYPES_METADATA_VAR} = {};
 let _readline = null;
 try { _readline = require("readline-sync"); } catch (e) { /* optional */ }
+let _util = null;
+try { _util = require("util"); } catch (e) { /* optional */ }
 function __ll_deep_eq(a, b) {
   if (a === b) return true;
   if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;

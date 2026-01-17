@@ -10,28 +10,28 @@
     ;; 1. Basic vector destructuring
     (console.log "--- Vector Destructuring ---")
     (let point [10 20])
-    (let [x y] <- point)
+    (let [x y] point)
     (console.log "Coordinates: x=" x ", y=" y)
 
     ;; 2. Partial vector destructuring
     (let rgb [255 128 64])
-    (let [r g b] <- rgb)
+    (let [r g b] rgb)
     (console.log "Color: R=" r " G=" g " B=" b)
 
     ;; 3. Destructuring with rest element (if supported)
     (let numbers [1 2 3 4 5])
-    (let [first second ...rest] <- numbers)
+    (let [first second ...rest] numbers)
     (console.log "First:" first "Second:" second "Rest:" rest)
 
     ;; 4. Basic map destructuring
     (console.log "--- Map Destructuring ---")
     (let person {:name "Alice" :age 30 :city "NYC"})
-    (let {:name :age} <- person)
+    (let {:name :age} person)
     (console.log "Person: " name ", Age: " age)
 
     ;; 5. Map destructuring with aliases
     (let user {:firstName "Bob" :lastName "Smith"})
-    (let {:firstName first-name :lastName last-name} <- user)
+    (let {:firstName first-name :lastName last-name} user)
     (console.log "User:" (+ first-name " " last-name))
 
     ;; 6. Nested destructuring
@@ -40,7 +40,7 @@
         :user {:name "Charlie" :id 123}
         :settings {:theme "dark" :lang "en"}
     })
-    (let {:user {:name :id} :settings {:theme}} <- user-profile)
+    (let {:user {:name :id} :settings {:theme}} user-profile)
     (console.log "User:" name "(ID:" id ") Theme:" theme)
 
     ;; 7. Destructuring in function parameters
@@ -77,17 +77,17 @@
     (let a 1)
     (let b 2)
     (console.log "Before: a=" a " b=" b)
-    (let [a b] <- [b a])
+    (let [a b] [b a])
     (console.log "After: a=" a " b=" b)
 
     ;; 12. Multiple return value destructuring
     (console.log "--- Multiple Returns ---")
-    (fn divide-with-remainder [a <- Int :b Int] -> [Int Int] (
+    (fn divide-with-remainder [a <- Int b <- Int] -> [Int Int] (
         (let quotient (/ a b))
         (let remainder (% a b))
         (return [quotient remainder])
     ))
-    (let [q r] <- (divide-with-remainder 17 :b 5))
+    (let [q r] (divide-with-remainder 17 5))
     (console.log "17 / 5 = " q " remainder " r)
 
     ;; 13. Destructuring in pattern matching
@@ -112,9 +112,9 @@
             {:id 3 :value "C"}
         ]
     })
-    (let {:status :data items} <- result)
+    (let {:status :data items} result)
     (console.log "Status:" status)
-    (for :each {:id :value} :from items :then (
-        (console.log "Item ID=" id " Value=" value)
+    (for :each x :from items :then (
+        (console.log "Item ID=" x["id"] " Value=" x["value"])
     ))
 )
