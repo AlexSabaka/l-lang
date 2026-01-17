@@ -82,7 +82,7 @@ export function transform(file: string, command: Command) {
       console.log(chalk.strikethrough.dim(" ".repeat(stdout.columns)));
     }
     fs.writeFileSync(file.replace(".lisp", ".js"), code);
-    fs.writeFileSync(file.replace(".lisp", ".lisp.map"), map.toString());
+    fs.writeFileSync(file.replace(".lisp", ".js.map"), map.toString());
   } else {
     // Intermediate stage: output AST with unified symbol table (with type info)
     const astOutput = JSON.stringify(
