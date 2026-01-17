@@ -2,9 +2,9 @@
   "name": "l-lang",
   "version": "0.1.0",
   "description": "l-lang implementation for the JavaScript",
-  "main": "index.ts",
+  "main": "./dist/index.js",
   "bin": {
-    "llang": "./dist/index.js"
+    "l-lang": "./dist/cli/index.js"
   },
   "scripts": {
     "start": "ts-node index.ts",
