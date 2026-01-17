@@ -107,12 +107,14 @@ Hello, l-lang! 👋
 
 | Command | Purpose |
 |---------|---------|
-| `npm test` | Run test suite (36/39 passing) |
+| `npm test` | Run test suite (50/81 passing) |
 | `npm run build` | Compile TypeScript → `dist/` |
 | `npm run parser` | Regenerate PEG.js grammar |
 | `ts-node src/index.ts run FILE.lisp` | Compile & execute file |
 | `ts-node src/index.ts transform FILE.lisp` | Compile to JavaScript |
 | `ts-node src/index.ts repl` | Interactive REPL shell |
+| `ts-node src/index.ts run --perf FILE.lisp` | Run with performance profiling |
+| `ts-node src/index.ts transform --perf FILE.lisp` | Compile with performance metrics |
 
 ---
 

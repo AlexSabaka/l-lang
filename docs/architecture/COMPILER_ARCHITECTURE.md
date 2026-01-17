@@ -220,6 +220,34 @@ ts-node ./src/index.ts transform examples/01-basics/00_vars.lisp
 cat 00_vars.types.json | jq '.symbols.entries.x.inferredType'
 ```
 
+### Performance Profiling
+
+Use `--perf` flag to measure compilation pass performance and identify bottlenecks:
+
+```bash
+# Performance profiling for full compilation
+ts-node ./src/index.ts transform --perf examples/05-oop/00_inheritance.lisp
+
+# Profiling specific compilation stages
+ts-node ./src/index.ts transform --perf --stage types examples/01-basics/08_pipelines.lisp
+
+# Performance analysis while running code
+ts-node ./src/index.ts run --perf examples/01-basics/07_memoization.lisp
+```
+
+**Typical Performance Characteristics**:
+- **Parse stage**: 60-90% of compilation time (PEG.js parsing overhead)
+- **Symbol resolution**: 2-8% with moderate memory usage 
+- **Type inference**: 8-17% with highest memory consumption
+- **Code generation**: 3-6% with visitor-intensive processing
+
+**Key Metrics Tracked**:
+- Pass-by-pass timing with percentages
+- Memory usage and delta per pass
+- AST node counts and visitor operations
+- Pass-specific data (symbols count, output size, etc.)
+- Bottleneck identification and optimization recommendations
+
 ### Grammar Updates
 
 1. Edit [l-lang.pegjs](../../src/compiler/frontend/grammar/l-lang.pegjs)
