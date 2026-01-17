@@ -1,0 +1,56 @@
+# l-lang Documentation Directory
+
+This directory contains comprehensive documentation for the l-lang compiler and language.
+
+## Quick Navigation
+
+Start here based on your role:
+
+### 👤 Language Users
+- **[QUICK_START.md](QUICK_START.md)** - Installation & first program (5 min)
+- **[API_REFERENCE.md](API_REFERENCE.md)** - Built-in functions & standard library
+- **[language/SYNTAX.md](language/SYNTAX.md)** - Complete language reference
+
+### 👨‍💻 Compiler Contributors  
+- **[CONTRIBUTING.md](../CONTRIBUTING.md)** - How to contribute
+- **[architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md)** - 6-stage pipeline
+- **[development/IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md)** - Adding features
+
+### 📚 Full Index
+- **[INDEX.md](INDEX.md)** - Documentation hub with all resources
+- **[SIDEBAR.md](SIDEBAR.md)** - Organized navigation menu
+- **[../TABLE_OF_CONTENTS.md](../TABLE_OF_CONTENTS.md)** - Complete table of contents
+
+---
+
+## Directory Structure
+
+```
+docs/
+├── INDEX.md                          # Documentation hub (START HERE)
+├── SIDEBAR.md                        # Navigation menu
+├── QUICK_START.md                    # 5-min quickstart
+├── API_REFERENCE.md                  # Built-in functions
+├── language/
+│   └── SYNTAX.md                     # Complete language reference
+├── architecture/
+│   └── COMPILER_ARCHITECTURE.md      # 6-stage compilation pipeline
+├── compiler/
+│   ├── TYPE_SYSTEM.md                # Type inference & checking
+│   ├── DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md
+│   └── DEFMODIFIER_IMPLEMENTATION.md
+├── development/
+│   ├── IMPLEMENTATION_GUIDE.md        # How to add features
+│   ├── REPL_GUIDE.md                  # Interactive REPL
+│   ├── BUG_FIXES_SUMMARY.md           # Recent improvements
+│   ├── TEST_CONSOLIDATION.md          # Testing infrastructure
+│   └── TODO.md                        # Progress & tasks
+├── planning/
+│   └── ROADMAP.md                    # Future directions
+└── history/
+    └── CHANGELOG.md                  # Timeline of changes
+```
+
+---
+
+For detailed information about the documentation structure, see **[../DOCUMENTATION_SUMMARY.md](../DOCUMENTATION_SUMMARY.md)**.

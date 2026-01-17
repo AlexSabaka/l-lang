@@ -136,3 +136,4 @@ dist
 .tmp/
 examples/*.js*
 examples/*/*.js*
+examples/*/*.map

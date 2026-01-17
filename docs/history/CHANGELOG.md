@@ -2,6 +2,45 @@
 
 ## 🚀 Recent Major Changes (January 2026)
 
+### Spread Syntax in Function Parameters (January 17, 2026)
+**Status**: ✅ Complete
+
+Implemented proper support for spread/rest parameters in function definitions:
+
+- **Spread Parameter Syntax**: Functions can now accept variable arguments using `...args <- Type[]` syntax
+- **JavaScript Rest Parameters**: Generates correct JavaScript rest parameter syntax (`function name(param, ...args)`)
+- **AST Processing**: Updated `JSTransformerAstVisitor.visitParameter` to create `RestElement` nodes for spread parameters
+- **Type System Integration**: Spread parameters work correctly through the entire compilation pipeline (parsing → symbols → types → codegen)
+- **Template String Support**: Enables advanced string interpolation patterns with variable argument counts
+
+**Key Implementation Files**:
+- [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - RestElement generation for spread parameters
+- [examples/20-stdlib/std/io.lisp](../../examples/20-stdlib/std/io.lisp) - Template string function using spread parameters
+- [examples/20-stdlib/01_main.lisp](../../examples/20-stdlib/01_main.lisp) - Test cases demonstrating spread parameter usage
+
+**Example**:
+```lisp
+(fn print [msg <- String ...args <- Any[]] -> Void
+    (for :each arg :from (zip args (range 0 args.length 1)) :then (
+        (match arg {
+            [value index] => (msg := (msg.replace (+ "{" index "}") (value.toString)))
+        })
+    ))
+    (console.log msg)
+)
+
+;; Generated JavaScript:
+;; function print(msg, ...args) { ... }
+
+;; Usage:
+(print "Hello, {0}!" "World")           ;; "Hello, World!"
+(print "Format: {0} = {1} + {2}" "result" 2 3)  ;; "Format: result = 2 + 3"
+```
+
+**Test Results**: ✅ `examples/20-stdlib/01_main.lisp` now passes with correct spread parameter handling
+
+---
+
 ### DefModifier System - User-Defined Function Modifiers (January 16, 2026)
 **Status**: ✅ Complete
 

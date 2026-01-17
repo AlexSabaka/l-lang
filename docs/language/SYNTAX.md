@@ -139,6 +139,28 @@ Functions use `fn`. Return types with `->` are optional but recommended.
 ))
 ```
 
+### Spread Parameters
+
+Functions can accept variable numbers of arguments using spread syntax:
+
+```lisp
+(fn print [msg <- String ...args <- Any[]] -> Void (
+    ;; args is an array containing all additional arguments
+    (for :each arg :from args :then (
+        (console.log arg)
+    ))
+))
+
+;; Usage
+(print "Hello" "world" 42 true)  ;; msg="Hello", args=["world", 42, true]
+```
+
+**Key Features**:
+- Use `...paramName` to collect remaining arguments into an array
+- Type annotation follows normal pattern: `...args <- Type[]`  
+- Generates efficient JavaScript rest parameters: `function print(msg, ...args)`
+- Can be combined with regular parameters (spread parameter must be last)
+
 ### Async / Await
 
 ```lisp

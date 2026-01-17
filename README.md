@@ -79,11 +79,35 @@ It's a general-purpose language currently transpiling to JavaScript (LLVM backen
 
 The compiler transpiles to JavaScript. Stabilizing syntax and building the standard library while trying not to add every feature that seems cool.
 
-See [ROADMAP.md](ROADMAP.md) for the details.
+See [ROADMAP.md](docs/planning/ROADMAP.md) for the details.
 
 ---
 
-## Installation & Usage
+## 📚 Documentation
+
+**New to l-lang?** Start here:
+
+1. **[docs/QUICK_START.md](docs/QUICK_START.md)** ⚡ - Get running in 5 minutes
+2. **[docs/API_REFERENCE.md](docs/API_REFERENCE.md)** 🔌 - Built-in functions & standard library
+3. **[docs/language/SYNTAX.md](docs/language/SYNTAX.md)** 📖 - Complete language reference
+4. **[TABLE_OF_CONTENTS.md](TABLE_OF_CONTENTS.md)** 📑 - Full documentation index
+
+**For contributors:**
+1. **[CONTRIBUTING.md](CONTRIBUTING.md)** 🤝 - How to contribute to l-lang
+2. **[docs/architecture/COMPILER_ARCHITECTURE.md](docs/architecture/COMPILER_ARCHITECTURE.md)** 🏗️ - 6-stage compilation pipeline
+3. **[docs/development/IMPLEMENTATION_GUIDE.md](docs/development/IMPLEMENTATION_GUIDE.md)** 🛠️ - How to add features
+4. **[docs/development/TODO.md](docs/development/TODO.md)** ✅ - Current tasks & progress
+
+**Other useful docs:**
+- **[docs/INDEX.md](docs/INDEX.md)** - Documentation hub (role-based pathways)
+- **[docs/SIDEBAR.md](docs/SIDEBAR.md)** - Navigation sidebar for all topics
+- **[docs/compiler/TYPE_SYSTEM.md](docs/compiler/TYPE_SYSTEM.md)** - Type inference deep dive
+- **[docs/development/REPL_GUIDE.md](docs/development/REPL_GUIDE.md)** - Interactive REPL features
+- **[docs/planning/ROADMAP.md](docs/planning/ROADMAP.md)** - Future roadmap
+
+**See [TABLE_OF_CONTENTS.md](TABLE_OF_CONTENTS.md) for the complete documentation index.**
+
+---
 
 ```bash
 # Clone the repo
@@ -134,7 +158,7 @@ See [docs/development/REPL_GUIDE.md](docs/development/REPL_GUIDE.md) for complet
 
 ### Test Status
 
-**27/27 tests passing (100%)** 🎉
+**36/39 tests passing (92%)** ✅
 
 All core features validated:
 - ✅ Variables, functions, closures
@@ -153,7 +177,20 @@ See [src/test/README.md](src/test/README.md) for testing documentation.
 
 ## Contributing
 
-Sloths and turtle followers are welcomed. If you see a bug and want to fix it, then do it. If you see a missing feature, create a proposal for it.
+Sloths and turtle followers are welcomed! Here's how to get started:
+
+1. **Read [CONTRIBUTING.md](CONTRIBUTING.md)** for contribution guidelines
+2. **Check [docs/development/TODO.md](docs/development/TODO.md)** for tasks
+3. **Read [docs/architecture/COMPILER_ARCHITECTURE.md](docs/architecture/COMPILER_ARCHITECTURE.md)** to understand the compiler
+4. **Follow patterns** in [docs/development/IMPLEMENTATION_GUIDE.md](docs/development/IMPLEMENTATION_GUIDE.md)
+
+**Want to help?** We need:
+- Bug fixes (see [docs/development/BUG_FIXES_SUMMARY.md](docs/development/BUG_FIXES_SUMMARY.md))
+- Documentation & examples
+- Standard library implementation
+- Type system improvements
+- Grammar enhancements
+- LLVM backend (future phase)
 
 ### Disclaimer
 

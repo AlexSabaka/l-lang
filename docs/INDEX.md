@@ -1,237 +1,214 @@
 # 📚 l-lang Documentation Index
 
-Welcome to the l-lang compiler documentation. This directory contains complete information about the l-lang language, compiler architecture, and development guides.
+Welcome to the **l-lang** compiler documentation. This directory contains complete information about the language, compiler architecture, and development guides for the **l-lang statically-typed Lisp** that transpiles to JavaScript.
+
+**Current Status**: Pre-Alpha (36/39 tests passing, Phase 3.5 architecture - integrated type system)
+
+---
 
 ## 🗺️ Documentation Organization
 
-### [language/](language/)
-**Language Reference & Syntax**
+### 📖 Core Resources (Start Here!)
 
-- [SYNTAX.md](language/SYNTAX.md) - Complete language reference
-  - Basics, comments, literals
-  - Variables, state, type annotations
-  - Data structures (vectors, maps, matrices)
-  - Functions, pipelines, async/await
-  - Flow control (if/else, loops, pattern matching)
-  - OOP (classes, structs, interfaces, enums)
-  - Metaprogramming (comptime, defmacro, defsyntax)
-  - Type system (structural typing, generics, unions, guards)
-  - Modules & imports
-  - Runtime type information (RTTI)
-  - Memory management
-  - Naming conventions
+| Resource | Purpose | Best For |
+|----------|---------|----------|
+| **[QUICK_START.md](QUICK_START.md)** | Get running in 5 minutes | New users, quick setup |
+| **[SIDEBAR.md](SIDEBAR.md)** | Complete navigation menu | Finding topics, web browsing |
+| **[API_REFERENCE.md](API_REFERENCE.md)** | Built-in functions & API | Developers, looking up functions |
+| **[language/SYNTAX.md](language/SYNTAX.md)** | Complete language guide | Learning l-lang syntax |
 
-### [compiler/](compiler/)
-**Compiler Design & Implementation Details**
+### 🏗️ Architecture & Design
 
-- [COMPILER_ARCHITECTURE.md](../architecture/COMPILER_ARCHITECTURE.md) - Core architecture guide
-  - 6-stage compilation pipeline
-  - Directory structure
-  - Visitor pattern & controlled traversal
-  - Two-pass analysis pattern
-  - AST structure quirks
-  - Symbol table integration
-  - Development workflows
-  - Testing & validation
-  - Build & deployment
-  - Debugging tips
+- **[architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md)** (346 lines) - Complete 6-stage pipeline
+  - Parse → Syntax → Symbols → Desugar → Types → Codegen
+  - Visitor patterns, AST structure
+  - Symbol table design
+  - Critical gotchas & debugging
 
-- [TYPE_SYSTEM.md](compiler/TYPE_SYSTEM.md) - Type system architecture
-  - InferredType interface
+- **[compiler/TYPE_SYSTEM.md](compiler/TYPE_SYSTEM.md)** (260 lines) - Type inference deep dive
+  - InferredType interface & kinds
   - TypeEnvironment (scope management)
-  - TypeChecker (compatibility rules)
-  - Type inference pipeline
-  - Special type cases (recursive, structs, unions)
-  - JSON representation
-  - Common issues & solutions
+  - Type inference pipeline (2-pass)
   - Adding new type kinds
 
-- [DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md) - Type alias & struct implementation
-  - Complete implementation summary
-  - Symbol collection
-  - Type inference (2-pass)
-  - Type compatibility
-  - Test results & examples
-  - Architecture improvements
+### 📚 Detailed Guides
+### 📚 Detailed Guides
 
-### [architecture/](architecture/)
-**Detailed Architectural Guides**
+- **[compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md)** (262 lines) - Type aliases & structs
+- **[compiler/DEFMODIFIER_IMPLEMENTATION.md](compiler/DEFMODIFIER_IMPLEMENTATION.md)** (302 lines) - User-defined modifiers
 
-- [COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md)
-  - Full compilation pipeline (6 stages)
-  - Phase-based directory structure
-  - Key architectural patterns
-  - Critical gotchas & edge cases
-  - Development workflows
+### 🛠️ Development & Contributing
 
-### [development/](development/)
-**Development & Implementation Guides**
+- **[development/IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md)** (316 lines) - How to add features
+  - Patterns for adding type kinds, transformations, runtime helpers
+  - Using compilation artifact JSON files (`.parsed.json`, `.symbols.json`, `.types.json`)
+  - Debugging techniques & tools
 
-- [BUG_FIXES_SUMMARY.md](development/BUG_FIXES_SUMMARY.md) - Recent bug fixes (Jan 2026)
-  - Critical codegen fixes (string interpolation, `new` keyword)
-  - Zero-arg function calls fix
-  - Method vs property disambiguation
-  - Test results: 27/27 passing (100%)
-  - Known limitations & future work
-  - Architecture improvements
+- **[development/REPL_GUIDE.md](development/REPL_GUIDE.md)** (342 lines) - Interactive REPL
+  - Syntax highlighting, tab-completion
+  - Commands: `.help`, `.symbols`, `.types`, `.reset`
+  - Keyboard navigation
 
-- [TEST_CONSOLIDATION.md](development/TEST_CONSOLIDATION.md) - Test infrastructure consolidation
+- **[development/BUG_FIXES_SUMMARY.md](development/BUG_FIXES_SUMMARY.md)** (317 lines) - Recent improvements
+  - Critical codegen fixes (string interpolation, `new` keyword, zero-arg calls)
+  - Test results: 36/39 passing (92%)
+
+- **[development/TEST_CONSOLIDATION.md](development/TEST_CONSOLIDATION.md)** (219 lines) - Test infrastructure
   - Unified TypeScript test runner
-  - Color-coded output & verbose mode
-  - Test workflow improvements
+  - Running specific tests, verbose mode
 
-- [REPL_GUIDE.md](development/REPL_GUIDE.md) - Interactive REPL features & usage
-  - Syntax highlighting
-  - Intelligent autocomplete (Tab key)
-  - Persistent context across evaluations
-  - Multi-line input support
-  - REPL commands (.help, .symbols, .types, etc.)
-  - Keyboard shortcuts
-  - Usage examples & troubleshooting
+- **[development/TODO.md](development/TODO.md)** (227 lines) - Implementation checklist
+  - What's complete ✅
+  - What's in progress
+  - What's next (LLVM backend)
 
-- [TODO.md](development/TODO.md) - Implementation task list (ordered by priority)
-  - Priority 0: ESTree code generation ✅
-  - Priority 1: Two-pass symbol table ✅
-  - Priority 2: Module dependency caching ✅
-  - Priority 3: Grammar & syntax polish ✅
-  - Priority 4: OOP & inheritance ✅
-  - Priority 4.5: Type inference fixes ✅
-  - Priority 5: Architecture refactor ✅
-  - Priority 6: Tooling & developer experience
+### 📊 Project Status & Planning
 
-- [IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md) - How to implement new features
-  - Adding new type kinds (step-by-step)
-  - Adding AST transformations
-  - Adding runtime helpers
-  - Understanding compilation artifacts (.parsed.json, .symbols.json, .types.json, .js)
-  - Debugging tools
-  - Common implementation tasks
-
-### [planning/](planning/)
-**Roadmap & Future Planning**
-
-- [ROADMAP.md](planning/ROADMAP.md) - Product roadmap
-  - Phase 1: Stabilization & architecture fixes ✅
-  - Phase 2: Syntax harmonization & OOP ✅
+- **[planning/ROADMAP.md](planning/ROADMAP.md)** (119 lines) - Product roadmap
+  - Phase 1: Stabilization ✅
+  - Phase 2: OOP & syntax ✅
   - Phase 2.5: Architecture refactor ✅
-  - Phase 3: High-Level IR (future)
-  - Phase 4: Native compilation via LLVM (future)
+  - Phase 3: High-level IR (future)
+  - Phase 4: LLVM native compilation (future)
 
-### [history/](history/)
-**Changelog & Implementation History**
-
-- [CHANGELOG.md](history/CHANGELOG.md) - Timeline of major changes
+- **[history/CHANGELOG.md](history/CHANGELOG.md)** (290 lines) - Timeline of changes
   - Type system extensions (Jan 2026)
   - Architecture refactor (Jan 2026)
-  - Type inference fixes (Dec 2025)
   - OOP implementation (Nov 2025)
-  - Module system fixes (Oct 2025)
-  - ESTree codegen (Sep 2025)
-  - Previous milestones
-  - Known issues
-  - Compiler statistics
+  - Previous milestones & known issues
 
 ---
 
 ## 🎯 Quick Start by Role
 
 ### For Language Users
-1. Start with [language/SYNTAX.md](language/SYNTAX.md) - Learn l-lang syntax and features
-2. Check examples in `examples/` directory
-3. Review [ROADMAP.md](planning/ROADMAP.md) to see what's coming
+1. **[QUICK_START.md](QUICK_START.md)** - Installation & your first program (5 min)
+2. **[API_REFERENCE.md](API_REFERENCE.md)** - Built-in functions & standard library
+3. **[language/SYNTAX.md](language/SYNTAX.md)** - Complete language reference
+4. Check `examples/` directory for working code examples
 
 ### For Compiler Contributors
-1. Read [COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md) - Understand the architecture
-2. Follow [IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md) - Learn how to add features
-3. Reference [TYPE_SYSTEM.md](compiler/TYPE_SYSTEM.md) - Understand type handling
-4. Check [TODO.md](development/TODO.md) - Find tasks to work on
+1. **[QUICK_START.md](QUICK_START.md)** - Setup & project structure (5 min)
+2. **[architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md)** - Pipeline architecture
+3. **[development/IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md)** - How to add features
+4. **[compiler/TYPE_SYSTEM.md](compiler/TYPE_SYSTEM.md)** - Type inference details
+5. **[development/TODO.md](development/TODO.md)** - Find a task to work on
 
-### For Debuggers
-1. Review [COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#critical-context--gotchas) - Common gotchas
-2. Learn [IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md#debugging-tools) - Debugging techniques
-3. Inspect `.json` artifacts at each compilation stage
+### For Debugging Issues
+1. **[architecture/COMPILER_ARCHITECTURE.md#critical-context--gotchas](architecture/COMPILER_ARCHITECTURE.md#critical-context--gotchas)** - Common pitfalls
+2. **[development/IMPLEMENTATION_GUIDE.md#debugging-tools](development/IMPLEMENTATION_GUIDE.md#debugging-tools)** - Debugging techniques
+3. **[development/BUG_FIXES_SUMMARY.md](development/BUG_FIXES_SUMMARY.md)** - Recent fixes & patterns
+4. **[SIDEBAR.md](SIDEBAR.md)** - Quick lookup by topic
 
 ### For Adding Language Features
-1. Read [IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md) - Pattern for adding features
-2. Study existing implementations like [DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md)
-3. Reference [TYPE_SYSTEM.md](compiler/TYPE_SYSTEM.md) if adding types
-4. Check [CHANGELOG.md](history/CHANGELOG.md) for recent patterns
+1. **[development/IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md)** - Feature implementation pattern
+2. **[compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md)** - Real implementation example
+3. **[compiler/TYPE_SYSTEM.md](compiler/TYPE_SYSTEM.md)** - If adding types
+4. **[development/BUG_FIXES_SUMMARY.md](development/BUG_FIXES_SUMMARY.md)** - Recent patterns & gotchas
 
 ---
 
 ## 🔍 Finding Information by Topic
 
-### Syntax & Language Features
-- Variables & types: [SYNTAX.md](language/SYNTAX.md#2-variables--state)
-- Functions & pipelines: [SYNTAX.md](language/SYNTAX.md#4-functions--pipelines)
-- Pattern matching: [SYNTAX.md](language/SYNTAX.md#6-pattern-matching)
-- OOP: [SYNTAX.md](language/SYNTAX.md#7-object-oriented-programming)
-- Metaprogramming: [SYNTAX.md](language/SYNTAX.md#8-metaprogramming-the-three-tiers)
+### Language & Syntax
+- **Variables & types**: [language/SYNTAX.md](language/SYNTAX.md) | [API_REFERENCE.md](API_REFERENCE.md#-type-system)
+- **Functions & pipelines**: [language/SYNTAX.md](language/SYNTAX.md) | [API_REFERENCE.md](API_REFERENCE.md#-pipeline-operator)
+- **Pattern matching**: [language/SYNTAX.md](language/SYNTAX.md) | [API_REFERENCE.md](API_REFERENCE.md#-pattern-matching)
+- **OOP (classes, inheritance)**: [language/SYNTAX.md](language/SYNTAX.md) | [API_REFERENCE.md](API_REFERENCE.md#-object-oriented-programming)
+- **Metaprogramming**: [language/SYNTAX.md](language/SYNTAX.md) | [API_REFERENCE.md](API_REFERENCE.md#-metaprogramming)
+- **Modules & imports**: [language/SYNTAX.md](language/SYNTAX.md) | [API_REFERENCE.md](API_REFERENCE.md#-module-system)
 
 ### Compiler Architecture
-- 6-stage pipeline: [COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#architecture-overview)
-- Symbol table: [COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#4-symboltable-structure-with-integrated-types)
-- Type inference: [TYPE_SYSTEM.md](compiler/TYPE_SYSTEM.md#type-inference-pipeline)
-- Code generation: [COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#testing-compilation-stages)
+- **6-stage pipeline**: [architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#architecture-overview)
+- **Symbol table & resolution**: [architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#4-symboltable-structure-with-integrated-types)
+- **Type inference**: [compiler/TYPE_SYSTEM.md](compiler/TYPE_SYSTEM.md#type-inference-pipeline) | [architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#adding-type-inference-for-new-constructs)
+- **Code generation**: [architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#testing-compilation-stages)
+- **AST design**: [architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#3-ast-structure-quirk-list-wrapped-declarations)
 
-### Implementation Details
-- Adding type kinds: [IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md#pattern-adding-a-new-type-kind)
-- Adding transformations: [IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md#pattern-adding-transformations-in-desugaring)
-- Adding runtime helpers: [IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md#pattern-adding-runtime-helpers)
-- Type-alias implementation: [DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md)
+### Implementation & Development
+- **Adding type kinds**: [development/IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md#pattern-adding-a-new-type-kind)
+- **Adding syntax transformations**: [development/IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md#pattern-adding-transformations-in-desugaring)
+- **Adding runtime helpers**: [development/IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md#pattern-adding-runtime-helpers)
+- **Type aliases & structs**: [compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md)
+- **User-defined modifiers**: [compiler/DEFMODIFIER_IMPLEMENTATION.md](compiler/DEFMODIFIER_IMPLEMENTATION.md)
 
 ### Development Workflow
-- Test compilation stages: [COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#testing-compilation-stages)
-- Grammar updates: [COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#grammar-updates)
-- Type inference: [COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#adding-type-inference-for-new-constructs)
-- Debugging: [COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#debugging-tips)
+- **Testing stages**: [architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#testing-compilation-stages)
+- **Grammar updates**: [architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#grammar-updates)
+- **Running tests**: [development/TEST_CONSOLIDATION.md](development/TEST_CONSOLIDATION.md)
+- **REPL usage**: [development/REPL_GUIDE.md](development/REPL_GUIDE.md)
+- **Debugging**: [architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md#debugging-tips) | [development/IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md#debugging-tools)
 
 ### Project Status
-- Completed work: [TODO.md](development/TODO.md) (✅ sections)
-- Current work: [TODO.md](development/TODO.md#-priority-4-oopinheritance-class-improvements)
-- Future work: [ROADMAP.md](planning/ROADMAP.md)
-- Timeline: [CHANGELOG.md](history/CHANGELOG.md)
-
----
-
-## 📞 Related Resources
-
-### Source Code
-- [src/compiler/frontend/grammar/l-lang.pegjs](../../src/compiler/frontend/grammar/l-lang.pegjs) - PEG.js grammar
-- [src/compiler/frontend/ast.ts](../../src/compiler/frontend/ast.ts) - AST node definitions
-- [src/compiler/analysis/SymbolTable.ts](../../src/compiler/analysis/SymbolTable.ts) - Symbol table
-- [src/compiler/types/visitors/InferTypesAstVisitor.ts](../../src/compiler/types/visitors/InferTypesAstVisitor.ts) - Type inference
-- [src/compiler/types/TypeChecker.ts](../../src/compiler/types/TypeChecker.ts) - Type rules
-- [src/compiler/Context.ts](../../src/compiler/Context.ts) - Compilation orchestrator
-
-### Examples
-- [examples/01-basics/](../../examples/01-basics/) - Basic syntax
-- [examples/04-data-types/](../../examples/04-data-types/) - Type system
-- [examples/05-oop/](../../examples/05-oop/) - Classes & inheritance
-- [examples/10-algorithms/](../../examples/10-algorithms/) - Complex examples
-
-### Root Files
-- [README.md](../../README.md) - Project overview
-- [LICENSE](../../LICENSE) - MIT License
+- **What's done**: [development/TODO.md](development/TODO.md) (✅ sections)
+- **Current work**: [development/TODO.md](development/TODO.md#-priority-4-oopinheritance-class-improvements)
+- **Future work**: [planning/ROADMAP.md](planning/ROADMAP.md)
+- **Timeline**: [history/CHANGELOG.md](history/CHANGELOG.md)
+- **Recent fixes**: [development/BUG_FIXES_SUMMARY.md](development/BUG_FIXES_SUMMARY.md)
 
 ---
 
 ## 📖 How to Use This Documentation
 
-1. **First Time**: Start with [language/SYNTAX.md](language/SYNTAX.md) to learn l-lang
-2. **Contributing**: Read [COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md) and [IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md)
-3. **Debugging Issues**: Check [COMPILER_ARCHITECTURE.md#critical-context--gotchas](architecture/COMPILER_ARCHITECTURE.md#critical-context--gotchas)
-4. **Adding Features**: Follow patterns in [DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md)
-5. **Project Status**: Check [TODO.md](development/TODO.md) and [CHANGELOG.md](history/CHANGELOG.md)
+**First time here?**
+→ Start with [QUICK_START.md](QUICK_START.md) (5 minutes) then read [language/SYNTAX.md](language/SYNTAX.md)
+
+**Want to contribute?**
+→ Read [architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md) then [development/IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md)
+
+**Looking for something specific?**
+→ Use [SIDEBAR.md](SIDEBAR.md) for organized topic navigation
+
+**Need function docs?**
+→ Check [API_REFERENCE.md](API_REFERENCE.md) for all built-in functions and types
+
+**Debugging a problem?**
+→ See [architecture/COMPILER_ARCHITECTURE.md#critical-context--gotchas](architecture/COMPILER_ARCHITECTURE.md#critical-context--gotchas)
+
+**Want to see what's next?**
+→ Read [planning/ROADMAP.md](planning/ROADMAP.md) for future directions
 
 ---
 
 ## 📋 Documentation Status
 
-**Last Updated**: January 15, 2026
+**Last Updated**: January 16, 2026
 
-All documentation is current and reflects Phase 3.5 of the compiler (architecture refactor complete, type system extended with user-defined types).
+**Coverage**:
+- ✅ Language syntax (complete)
+- ✅ Compiler architecture (6-stage pipeline documented)
+- ✅ Type system (inference & checking)
+- ✅ OOP & inheritance
+- ✅ Module system
+- ✅ REPL & tooling
+- ✅ Type aliases & structs
+- ✅ User-defined modifiers
+- ⚠️ Standard library (in progress)
+- ⚠️ LLVM backend (planned)
+
+**Test Status**: 36/39 passing (92%) - See [development/BUG_FIXES_SUMMARY.md](development/BUG_FIXES_SUMMARY.md)
 
 ---
 
-**Navigation**: [Parent Directory](../../) | [Root README](../../README.md)
+## 🔗 Related Resources
+
+### Source Code Navigation
+- Core compiler: [src/compiler/](../../src/compiler/)
+- Grammar definition: [src/compiler/frontend/grammar/l-lang.pegjs](../../src/compiler/frontend/grammar/l-lang.pegjs)
+- Test suite: [src/test/](../../src/test/)
+
+### Examples
+- Basic syntax: [examples/01-basics/](../../examples/01-basics/)
+- Type system: [examples/04-data-types/](../../examples/04-data-types/)
+- Classes & OOP: [examples/05-oop/](../../examples/05-oop/)
+- Complex algorithms: [examples/10-algorithms/](../../examples/10-algorithms/)
+- User-defined modifiers: [examples/06-modifiers/](../../examples/06-modifiers/)
+
+### Project Files
+- [README.md](../../README.md) - Main project README
+- [LICENSE](../../LICENSE) - MIT License
+- [test_all.sh](../../test_all.sh) - Test runner script
+
+---
+
+**Navigation**: [QUICK_START](QUICK_START.md) | [SIDEBAR](SIDEBAR.md) | [API Reference](API_REFERENCE.md)
