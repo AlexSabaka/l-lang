@@ -2,6 +2,51 @@
 
 ## 🚀 Recent Major Changes (January 2026)
 
+### Generics & Interfaces - Runtime Type Metadata (January 17, 2026)
+**Status**: ✅ Complete
+
+Implemented comprehensive generics and interface support with proper runtime type information (RTTI):
+
+- **Generic Classes**: Full support for single and multiple type parameters (`Class<T>`, `Pair<T U>`)
+- **Generic Interfaces**: Interface definitions can be generic (`Container<T>`) with implementation checking
+- **Runtime Type Metadata**: Fixed critical bugs in `__ll_type_metadata` serialization:
+  - Generics array now shows actual type parameter names instead of `[null]`
+  - Interface implementations properly tracked in metadata
+  - Conditional field inclusion (only add generics/implements when present)
+- **Type System Integration**: Generic type parameters properly scoped in TypeEnvironment with `localIdentifiers` map
+- **Covariance Syntax**: Parser support for variance modifiers (`:out`, `:in`) for future covariance/contravariance
+- **Multiple Interface Implementation**: Classes can implement multiple interfaces with full metadata tracking
+
+**Key Implementation Files**:
+- [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - Fixed generics serialization and added interface tracking in `serializeTypeMetadata()`
+- [src/compiler/analysis/SymbolTable.ts](../../src/compiler/analysis/SymbolTable.ts) - InferredType structure with generics metadata
+- [examples/08-types/](../../examples/08-types/) - Complete test suite: 10_generics_basic, 11_interface_basic, 12-17 (advanced generics features)
+
+**Example**:
+```lisp
+(definterface GenericContainer<T>
+    (fn get [] -> T)
+    (fn set [val <- T] -> Void))
+
+(defclass Box<T> :implements GenericContainer<T>
+    (let :ctor value <- T)
+    (fn get [] -> T (return this.value))
+    (fn set [val <- T] -> Void (this.value := val)))
+
+;; Runtime type info:
+(console.log (type (new Box<Int> 42)))
+;; { name: "Box", generics: ["T"], implements: ["GenericContainer"], ... }
+```
+
+**Test Results**: ✅ 8/8 generics tests passing (58/92 total), zero regressions
+
+**Known Limitations**:
+- Generic type inference from call sites not yet implemented (requires explicit type parameters)
+- Generic constraints (`:where T :extends Base`) parsed but not enforced
+- Variance modifiers syntax-only (runtime checking planned for future)
+
+---
+
 ### Performance Metrics System - Compiler Profiling & Optimization (January 17, 2026)
 **Status**: ✅ Complete
 

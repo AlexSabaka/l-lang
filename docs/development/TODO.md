@@ -61,9 +61,9 @@ Important: **Commit often**
     - [x] Remove legacy extension grammar files: `infix.pegjs`, `js.pegjs`
     - [x] Reorganize examples into semantic folders (`01-basics/`, `02-errors/`, `04-data-types/`, `05-oop/`, `06-import/`, `07-async/`, `10-algorithms/`, `99-p5js/`)
 
-## 🚧 Priority 4: OOP & Inheritance (Class Improvements)
+## ✅ Priority 4: OOP & Inheritance (Class Improvements)
 *Context: Classes need proper inheritance support with constructor parameter passing.*
-**STATUS: IN PROGRESS** 🚧
+**STATUS: COMPLETE** ✅
 
 - [x] **Implement Proper Class Inheritance**
     - [x] Resolve parent class via symbol table lookup
@@ -76,10 +76,12 @@ Important: **Commit often**
     - [x] Exclude control statements (`if`, `while`, `for`, `try`)
     - [x] Exclude explicit return statements and variable declarations
     - [x] Preserve statement context detection
-- [ ] **Complete OOP Feature Set**
-    - [ ] Interface implementation checks
-    - [ ] Abstract class support
-    - [ ] Static methods and properties
+- [x] **Complete OOP Feature Set**
+    - [x] Interface implementation checks (with runtime metadata tracking)
+    - [x] Generic classes and interfaces (single/multiple type parameters)
+    - [x] Runtime Type Information (RTTI) via `type()` function
+    - [ ] Abstract class support (deferred to Priority 9)
+    - [ ] Static methods and properties (deferred to Priority 9)
 
 ## 🏗️ Priority 5: Compiler Architecture Refactor (Desugaring & Cleanup)
 *Context: Separate logic from generation, introduce desugaring pass, reorganize directory structure.*
@@ -217,11 +219,35 @@ Important: **Commit often**
 - [ ] **Unit Tests**
     - [ ] Create a test harness that runs a `.txt` file and asserts the output JS matches a snapshot.
 
+## 🔮 Priority 9: Advanced Generics & Type System (Future)
+*Context: Enhance generics with constraints, inference, and variance.*
+
+- [ ] **Generic Type Inference**
+    - [ ] Infer generic type arguments from function call sites
+    - [ ] Type argument propagation through method chains
+    - [ ] Generic function support (not just classes/interfaces)
+- [ ] **Generic Constraints**
+    - [ ] Enforce `:where T :extends Base` bounds at compile time
+    - [ ] Interface constraint checking (`:where T :implements IComparable`)
+    - [ ] Multiple constraint support (`:where T :extends A :implements B`)
+- [ ] **Variance Checking**
+    - [ ] Runtime covariance validation for `:out` type parameters
+    - [ ] Contravariance enforcement for `:in` type parameters
+    - [ ] Invariance by default with opt-in variance
+- [ ] **Higher-Kinded Types**
+    - [ ] Type constructor parameters (`Container<F>` where F is generic)
+    - [ ] Functor/Monad-like abstractions
+- [ ] **Static Class Members**
+    - [ ] Static methods and properties
+    - [ ] Static constructors
+- [ ] **Abstract Classes**
+    - [ ] Abstract method declarations
+    - [ ] Prevent instantiation of abstract classes
+
 ## 🧠 Backlog (For later)
 - [ ] **Advanced Type Inference**
     - [ ] Implicit Return Type Inference - Infer return types from function body expressions
     - [ ] Bidirectional Type Inference - Propagate expected types from call context to narrow Unknown types
     - [ ] Better error messages with full context
-    - [ ] Full generic type support in type inference
 - [ ] LLVM IR Generation.
 - [ ] Self-hosting (Writing the compiler in l-lang).

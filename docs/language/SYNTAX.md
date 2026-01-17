@@ -415,6 +415,75 @@ Supported operators: `+`, `-`, `*`, `/`, `==`, `!=` etc.
     (async fn GetById [id] -> T))
 ```
 
+### Generics
+
+Generics enable type-safe parameterization of classes, interfaces, and functions (function generics planned for future).
+
+**Generic Classes:**
+
+```lisp
+;; Single type parameter
+(defclass Box<T>
+    (let :ctor value <- T)
+    (fn get [] -> T (return this.value))
+    (fn set [val <- T] -> Void (this.value := val)))
+
+;; Multiple type parameters
+(defclass Pair<T U>
+    (let :ctor first <- T)
+    (let :ctor second <- U)
+    (fn getFirst [] -> T (return this.first))
+    (fn getSecond [] -> U (return this.second)))
+
+;; Usage
+(let box (new Box<Int> 42))
+(let pair (new Pair<String Int> "age" 25))
+```
+
+**Generic Interfaces:**
+
+```lisp
+(definterface Container<T>
+    (fn get [] -> T)
+    (fn set [val <- T] -> Void))
+
+;; Implementation
+(defclass Box<T> :implements Container<T>
+    (let :ctor value <- T)
+    (fn get [] -> T (return this.value))
+    (fn set [val <- T] -> Void (this.value := val)))
+```
+
+**Runtime Type Information (RTTI):**
+
+Generic types expose metadata at runtime via the `type()` function:
+
+```lisp
+(let box (new Box<Int> 42))
+(console.log (type box))
+;; Output: { name: "Box", generics: ["T"], implements: ["Container"], ... }
+```
+
+**Covariance/Contravariance (Syntax-Only, Future Feature):**
+
+```lisp
+;; Covariant type parameter (output positions only)
+(definterface Producer<:out T>
+    (fn produce [] -> T))
+
+;; Contravariant type parameter (input positions only)
+(definterface Consumer<:in T>
+    (fn consume [item <- T] -> Void))
+```
+
+**Generic Constraints (Planned):**
+
+```lisp
+;; Future syntax for bounded type parameters
+(defclass SortedList<T> :where T :extends Comparable
+    (fn add [item <- T] -> Void ...))
+```
+
 ### Enums
 
 ```lisp

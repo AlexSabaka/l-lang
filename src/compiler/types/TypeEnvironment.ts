@@ -31,6 +31,7 @@ export class TypeEnvironment {
     this.scopeStack.push({
       node,
       localTypes: new Map(),
+      localIdentifiers: new Map(),
     });
   }
 
@@ -70,6 +71,16 @@ export class TypeEnvironment {
   }
 
   /**
+   * Bind a generic type parameter to a type in the current scope
+   */
+  bindTypeParameter(name: string, type: InferredType): void {
+    if (this.scopeStack.length === 0) {
+      return;
+    }
+    this.scopeStack[this.scopeStack.length - 1].localIdentifiers.set(name, type);
+  }
+
+  /**
    * Bind an identifier to a type in the symbol table
    */
   bindIdentifier(name: string, type: InferredType, node: ast.ASTNode): void {
@@ -77,9 +88,17 @@ export class TypeEnvironment {
   }
 
   /**
-   * Resolve type for an identifier (primitives or symbol types)
+   * Resolve type for an identifier (generics, primitives, or symbol types)
    */
   resolveIdentifier(name: string): InferredType | undefined {
+    // Check if it's a generic type parameter in current scope
+    for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+      const typeParam = this.scopeStack[i].localIdentifiers.get(name);
+      if (typeParam) {
+        return typeParam;
+      }
+    }
+    
     // Check if it's a built-in primitive
     if (TypeEnvironment.PRIMITIVES.has(name)) {
       return TypeEnvironment.PRIMITIVES.get(name);
@@ -214,4 +233,5 @@ export class TypeEnvironment {
 interface Scope {
   node: ast.ASTNode;
   localTypes: Map<string, InferredType>;
+  localIdentifiers: Map<string, InferredType>;  // For generic type parameters
 }

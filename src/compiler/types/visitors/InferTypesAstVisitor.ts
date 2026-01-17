@@ -651,6 +651,20 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   visitFunction(node: ast.FunctionNode) {
     this.typeEnv.enterScope(node);
     
+    // Bind generic type parameters to the scope
+    if (node.generics && node.generics.length > 0) {
+      for (const generic of node.generics) {
+        const genericName = generic.name.name;
+        const genericType: InferredType = {
+          kind: "generic",
+          name: genericName,
+        };
+        this.typeEnv.bindTypeParameter(genericName, genericType);
+        const funcName = typeof node.name === 'string' ? node.name : ((node.name as any).id || (node.name as any).name);
+        this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitFunction] Bound generic parameter '${genericName}' in function '${funcName}'`);
+      }
+    }
+    
     // Bind parameter types in function scope
     node.params.forEach(param => {
       const paramName = param.name.id;
@@ -675,6 +689,19 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const className = typeof node.name === 'string' ? node.name : ((node.name as any).id || (node.name as any).name);
     this.typeEnv.enterScope(node);
 
+    // Bind generic type parameters to the scope
+    if (node.generics && node.generics.length > 0) {
+      for (const generic of node.generics) {
+        const genericName = generic.name.name;
+        const genericType: InferredType = {
+          kind: "generic",
+          name: genericName,
+        };
+        this.typeEnv.bindTypeParameter(genericName, genericType);
+        this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitClass] Bound generic parameter '${genericName}' in class '${className}'`);
+      }
+    }
+
     // Bind 'this' to the class type instance
     // We look up the class type we registered in pass 1
     const classSymbol = this.typeEnv.resolveIdentifier(className); // or symbolTable directly
@@ -694,7 +721,22 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   }
 
   visitInterface(node: ast.InterfaceNode) {
+    const interfaceName = typeof node.name === 'string' ? node.name : ((node.name as any).id || (node.name as any).name);
     this.typeEnv.enterScope(node);
+
+    // Bind generic type parameters to the scope
+    if (node.generics && node.generics.length > 0) {
+      for (const generic of node.generics) {
+        const genericName = generic.name.name;
+        const genericType: InferredType = {
+          kind: "generic",
+          name: genericName,
+        };
+        this.typeEnv.bindTypeParameter(genericName, genericType);
+        this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitInterface] Bound generic parameter '${genericName}' in interface '${interfaceName}'`);
+      }
+    }
+
     node.body.forEach(member => this.visit(member));
     this.typeEnv.exitScope();
   }
@@ -1121,6 +1163,16 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         name = typeof typeName === 'string' ? typeName : "Unknown";
       } else {
         name = "Unknown";
+      }
+      
+      // Check if this is a generic type parameter in scope
+      const genericParam = this.typeEnv.resolveIdentifier(name);
+      if (genericParam && genericParam.kind === "generic") {
+        const type = genericParam;
+        if (typeNode.array) {
+          return TypeEnvironment.array(type);
+        }
+        return type;
       }
       
       // Special handling for Any type

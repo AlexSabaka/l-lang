@@ -1,5 +1,6 @@
 (
     (import "./p5-bindings.lisp")
+    (import "./../20-stdlib/std/math.lisp")
 
     ;; Game constants
     (let WIDTH 600)
@@ -10,84 +11,54 @@
     (let PLAYER-SIZE 30)
 
     ;; Player state
-    (mut player-x 100)
-    (mut player-y 200)
-    (mut player-vx 0)
-    (mut player-vy 0)
+    (mut player-pos (new Vector3 100 200))
+    (mut player-vel (new Vector3 0 0))
     (mut player-grounded false)
 
-    ;; Platforms (simple rectangles)
-    (let platforms [
-        { :x 0 :y 550 :w 800 :h 50 }
-        { :x 200 :y 450 :w 200 :h 20 }
-        { :x 500 :y 350 :w 200 :h 20 }
-    ])
-
-
-    ;; Helper: Check if player is on ground
-    (fn on-platform [] (
-        (mut on false)
-        (for :each p :from platforms :then (
-            (let py (+ p.y p.h))
-            (let px-min p.x)
-            (let px-max (+ p.x p.w))
-            (let player-bottom (+ player-y PLAYER-SIZE))
-            
-            ;; Check AABB collision
-            (if (&& 
-                    (>= player-bottom (- py 2))
-                    (<= player-bottom (+ py 2))
-                    (>= player-x px-min)
-                    (<= (+ player-x PLAYER-SIZE) px-max))
-                (on := true)
-            )
-        ))
-        (return on)
-    ))
 
     ;; Handle input
     (fn handle-input [] (
         ;; Move left
         (if (key-is-down LEFT-ARROW)
-            (player-vx := (- PLAYER-SPEED))
+            (player-vel.x := (- PLAYER-SPEED))
         )
         ;; Move right
         (if (key-is-down RIGHT-ARROW)
-            (player-vx := PLAYER-SPEED)
+            (player-vel.x := PLAYER-SPEED)
         )
         ;; Jump
         (if (&& (key-is-down SPACE) player-grounded)
-            (player-vy := (- PLAYER-JUMP))
+            (player-vel.y := (- PLAYER-JUMP))
         )
     ))
 
     ;; Update physics
     (fn update-physics [] (
         ;; Apply gravity
-        (player-vy := (+ player-vy GRAVITY))
+        (player-vel.y := (+ player-vel.y GRAVITY))
         
         ;; Update position
-        (player-x := (+ player-x player-vx))
-        (player-y := (+ player-y player-vy))
+        (player-pos.x := (+ player-pos.x player-vel.x))
+        (player-pos.y := (+ player-pos.y player-vel.y))
         
         ;; Reset horizontal velocity
-        (player-vx := 0)
+        (player-vel.x := 0)
         
         ;; Check ground collision
         (player-grounded := (on-platform))
         
         ;; Boundary checks
-        (if (< player-x 0) (player-x := 0))
-        (if (> (+ player-x PLAYER-SIZE) WIDTH)
-            (player-x := (- WIDTH PLAYER-SIZE))
+        (if (< player-pos.x 0) (player-pos.x := 0))
+        (if (> (+ player-pos.x PLAYER-SIZE) WIDTH)
+            (player-pos.x := (- WIDTH PLAYER-SIZE))
         )
         
         ;; Death plane
-        (if (> player-y HEIGHT)
-            (player-y := 200)
+        (if (> player-pos.y HEIGHT)
+            (player-pos.y := 200)
         )
 
-        (console.log "Player X:" player-x "Y:" player-y)
+        (console.log "Player X:" player-pos.x "Y:" player-pos.y)
     ))
 
     ;; Draw everything

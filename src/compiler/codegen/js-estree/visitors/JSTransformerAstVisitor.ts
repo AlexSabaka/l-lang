@@ -414,8 +414,32 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       metadata.alternatives = (inferredType.alternatives || []).map(a => a.name);
     }
 
-    if (inferredType.generics) {
-      metadata.generics = inferredType.generics.map(g => g.name);
+    // Handle generics (only add if non-empty)
+    if (inferredType.generics && inferredType.generics.length > 0) {
+      metadata.generics = inferredType.generics.map(g => {
+        // Generic can be either a string or an object with name property
+        if (typeof g === 'string') return g;
+        return g.name || 'T';
+      }).filter(Boolean);
+    } else if (astNode && (astNode as ast.ClassNode).generics && (astNode as ast.ClassNode).generics.length > 0) {
+      // Fallback to AST node if inferredType doesn't have generics
+      const classNode = astNode as ast.ClassNode;
+      metadata.generics = classNode.generics.map(g => g.name.name).filter(Boolean);
+    }
+    // Don't add empty generics array - only add if present
+
+    // Handle interfaces implementation (only for classes)
+    if (astNode && (astNode as ast.ClassNode).implements) {
+      const classNode = astNode as ast.ClassNode;
+      if (classNode.implements && classNode.implements.length > 0) {
+        metadata.implements = classNode.implements.map(impl => {
+          // Extract interface name from ImplementsNode
+          if (impl.type && impl.type.name) {
+            return impl.type.name;
+          }
+          return null;
+        }).filter(Boolean);
+      }
     }
 
     metadata.nullable = inferredType.nullable ?? false;
