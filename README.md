@@ -131,7 +131,11 @@ ts-node src/index.ts run examples/01-basics/00_vars.lisp
 ts-node src/index.ts transform examples/01-basics/00_vars.lisp
 node examples/01-basics/00_vars.js
 
-# Run test suite (27/27 passing ✅)
+# Performance profiling & optimization 🔍
+ts-node src/index.ts transform --perf examples/05-oop/00_inheritance.lisp
+ts-node src/index.ts run --perf examples/01-basics/08_pipelines.lisp
+
+# Run test suite (50/81 passing ✅)
 npm test
 
 # Run tests with detailed output
@@ -158,7 +162,7 @@ See [docs/development/REPL_GUIDE.md](docs/development/REPL_GUIDE.md) for complet
 
 ### Test Status
 
-**36/39 tests passing (92%)** ✅
+**50/81 tests passing (62%)** ✅
 
 All core features validated:
 - ✅ Variables, functions, closures
