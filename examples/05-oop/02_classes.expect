@@ -1,0 +1,36 @@
+--- Simple Class ---
+10 20
+[Function: to2dstring]
+--- Class with Getters ---
+Radius: 5
+Area: [Function: get2darea]
+Circumference: [Function: get2dcircumference]
+--- Class with Methods ---
+Rectangle: 10x5 (area=get2darea() {
+        return _2a(this.width, this.height);
+      }, perimeter=get2dperimeter() {
+        return _2a(2, _2b(this.width, this.height));
+      })
+After resize: 15x10 (area=get2darea() {
+        return _2a(this.width, this.height);
+      }, perimeter=get2dperimeter() {
+        return _2a(2, _2b(this.width, this.height));
+      })
+--- Class with Helper Methods ---
+[Function: get2dstatement]
+After deposit: [Function: get2dbalance]
+Withdrawal successful: true
+[Function: get2dstatement]
+--- Initialization ---
+After increment: [Function: get2dvalue]
+After reset: [Function: get2dvalue]
+--- Classes in Collections ---
+Points array:
+[Function: to2dstring]
+[Function: to2dstring]
+[Function: to2dstring]
+--- Factory Pattern ---
+Circle 1 area: [Function: get2darea]
+Circle 2 area: [Function: get2darea]
+--- Computed Properties ---
+[Function: get2dinfo]

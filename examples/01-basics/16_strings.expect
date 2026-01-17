@@ -1,0 +1,22 @@
+Basic string: Hello, World!
+Concatenated: John Doe
+Interpolated: Name: Alice, Age: 28
+Length of ' JavaScript ': 10
+First char: h
+Last char: o
+str1 equals str2
+str1 not equals str3
+Upper: [Function: toUpperCase]
+Lower: [Function: toLowerCase]
+Index of 'fox': 16
+Slice [0:4]: Java
+Slice [4:]: Script
+Split by comma: [ 'apple', 'banana', 'orange' ]
+Before: '   hello   ' Length: 9
+After: ' [Function: trim] ' Length: 0
+Valid email format indicator
+Code starts with 'function'
+Is a PDF file
+Personalized: Hello, Charlie!
+Repeated: abababab
+Template: Sum of 10 and 20 is 30

@@ -1,0 +1,30 @@
+Shape Area: 200
+Shape Perim: 60
+Shape Area: 78.53975
+Shape Perim: 31.4159
+{
+  name: 'Rectangle',
+  kind: 'struct',
+  properties: [
+    {
+      name: 'width',
+      type: 'Any',
+      isPublic: true,
+      isPrivate: false,
+      isStatic: false
+    },
+    {
+      name: 'height',
+      type: 'Any',
+      isPublic: true,
+      isPrivate: false,
+      isStatic: false
+    }
+  ],
+  methods: [
+    { name: 'area', params: [], returns: 'Any' },
+    { name: 'perimeter', params: [], returns: 'Any' }
+  ],
+  constructor: { params: [], requiredCount: 0 },
+  nullable: false
+}
