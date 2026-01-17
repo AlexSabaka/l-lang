@@ -17,11 +17,13 @@ cd src && npm install
 # Build compiler & grammar
 npm run parser
 npm run build
+
+npm install -g ./
 ```
 
 **Verify installation:**
 ```bash
-npm test  # Should show: ✅ 36/39 passing
+npm test
 ```
 
 ---
@@ -30,12 +32,12 @@ npm test  # Should show: ✅ 36/39 passing
 
 ### 1. Create `hello.lisp`
 ```lisp
-(println "Hello, l-lang! 👋")
+(console.log "Hello, l-lang! 👋")
 ```
 
 ### 2. Run it
 ```bash
-ts-node src/index.ts run hello.lisp
+l-lang run hello.lisp
 ```
 
 **Output:**
@@ -51,7 +53,7 @@ Hello, l-lang! 👋
 ```lisp
 (mut count 0)           ;; Mutable variable
 (let name "World")      ;; Immutable constant
-(let [Int x] 42)        ;; Type annotation
+(let x <- Int 42)       ;; Type annotation
 ```
 
 ### Functions
@@ -69,9 +71,7 @@ Hello, l-lang! 👋
 (fn double [x] (* x 2))
 
 ;; Instead of: (double (add 5 3))
-(| 5
-   (add 3)
-   double)  ;; Output: 16
+(5 |> (add 3) |> double)  ;; Output: 16
 ```
 
 ### Pattern Matching
@@ -93,12 +93,12 @@ Hello, l-lang! 👋
     (let :ctor name)
     
     (fn speak [] (
-        (+ (. this name) " makes a sound")
+        (+ this.name " makes a sound")
     ))
 )
 
 (let dog (new Animal "Dog"))
-(. dog speak)  ;; Output: "Dog makes a sound"
+(dog.speak)  ;; Output: "Dog makes a sound"
 ```
 
 ---
