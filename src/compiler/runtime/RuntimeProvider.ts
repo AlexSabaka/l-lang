@@ -12,7 +12,7 @@ export class RuntimeProvider {
 let _readline = null;
 try { _readline = require("readline-sync"); } catch (e) { /* optional */ }
 let _util = null;
-try { _util = require("util"); } catch (e) { /* optional */ }
+try { _util = require("util"); } catch (e) { console.log("util module unavailable"); _util = { formatWithOptions: (opts, obj) => obj.toString() }; }
 function __ll_deep_eq(a, b) {
   if (a === b) return true;
   if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;

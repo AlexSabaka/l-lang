@@ -5,16 +5,13 @@
     ;; Game constants
     (let WIDTH 600)
     (let HEIGHT 400)
-    (let GRAVITY 0.6)
     (let PLAYER-SPEED 5)
-    (let PLAYER-JUMP 12)
-    (let PLAYER-SIZE 30)
+    (let PLAYER-SIZE 15)
+    (let PLAYER-DIAMETER (* 2 PLAYER-SIZE))
 
     ;; Player state
-    (mut player-pos (new Vector3 100 200))
-    (mut player-vel (new Vector3 0 0))
-    (mut player-grounded false)
-
+    (mut player-pos (new Vector3 100 200 0))
+    (mut player-vel (new Vector3 0 0 0))
 
     ;; Handle input
     (fn handle-input [] (
@@ -26,59 +23,45 @@
         (if (key-is-down RIGHT-ARROW)
             (player-vel.x := PLAYER-SPEED)
         )
-        ;; Jump
-        (if (&& (key-is-down SPACE) player-grounded)
-            (player-vel.y := (- PLAYER-JUMP))
+        ;; Move up
+        (if (key-is-down UP-ARROW)
+            (player-vel.y := (- PLAYER-SPEED))
+        )
+        ;; Move down
+        (if (key-is-down DOWN-ARROW)
+            (player-vel.y := PLAYER-SPEED)
         )
     ))
 
     ;; Update physics
     (fn update-physics [] (
-        ;; Apply gravity
-        (player-vel.y := (+ player-vel.y GRAVITY))
-        
         ;; Update position
-        (player-pos.x := (+ player-pos.x player-vel.x))
-        (player-pos.y := (+ player-pos.y player-vel.y))
-        
-        ;; Reset horizontal velocity
-        (player-vel.x := 0)
-        
-        ;; Check ground collision
-        (player-grounded := (on-platform))
-        
+        (player-pos := (+ player-pos player-vel))
+        (player-vel := (* player-vel 0.95))
+
         ;; Boundary checks
         (if (< player-pos.x 0) (player-pos.x := 0))
         (if (> (+ player-pos.x PLAYER-SIZE) WIDTH)
             (player-pos.x := (- WIDTH PLAYER-SIZE))
         )
-        
-        ;; Death plane
-        (if (> player-pos.y HEIGHT)
-            (player-pos.y := 200)
-        )
 
-        (console.log "Player X:" player-pos.x "Y:" player-pos.y)
+        (if (< player-pos.y 0) (player-pos.y := 0))
+        (if (> (+ player-pos.y PLAYER-SIZE) HEIGHT)
+            (player-pos.y := (- HEIGHT PLAYER-SIZE))
+        )
     ))
 
     ;; Draw everything
     (fn draw-game [] (
-        ;; Draw platforms
-        (fill 100 100 100)  ;; Dark gray
-        (for :each p :from platforms :then (
-            (rect p.x p.y p.w p.h)
-        ))
-        
         ;; Draw player
         (fill 255 100 100)  ;; Red
-        (rect player-x player-y PLAYER-SIZE PLAYER-SIZE)
+        (ellipse player-pos.x player-pos.y PLAYER-DIAMETER PLAYER-DIAMETER)
         
         ;; Draw debug info
         (fill 0 0 0)  ;; Black
         (text-size 14)
-        (text (+ "X: " player-x) 10 20)
-        (text (+ "Y: " player-y) 10 40)
-        (text (+ "Grounded: " player-grounded) 10 60)
+        (text (player-pos.str) 10 40)
+        (text (player-vel.str) 10 60)
     ))
 
     ;; P5.js setup - runs once
@@ -91,14 +74,13 @@
     (fn draw [] (
         (background 135 206 235)  ;; Sky blue
         (fill 123 200 278)
-        (ellipse 700 100 80 80)  ;; Sun
         (handle-input)
         (update-physics)
         (draw-game)
     ))
 
     (if (!= window nil) (
-        window.setup := setup
-        window.draw := draw
+        (window.setup := setup)
+        (window.draw := draw)
     ))
 )

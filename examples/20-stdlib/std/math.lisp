@@ -1,7 +1,7 @@
 (
   (import "types.lisp")
 
-  (export sqr sqrt sin cos tan log exp E PI TAU Number Complex Vector3)
+  (export sqr sqrt sin cos tan log exp E PI TAU Number Vector3)
 
   (let E 2.718281828459045)
   (let PI 3.141592653589793)
@@ -39,82 +39,92 @@
   (deftype Number Int | Real)
 
   ;; Complex Number Struct and Operations
-
   (defstruct Complex
-      (let :ctor real <- Real 0.0)
-      (let :ctor imag <- Real 0.0)
-  )
+    (let :ctor real <- Real 0.0)
+    (let :ctor imag <- Real 0.0)
 
-  (fn :operator + [c1 <- Complex c2 <- Complex] -> Complex
-      (let result (Complex))
-      (result.real := (+ c1.real c2.real))
-      (result.imag := (+ c1.imag c2.imag))
-      (return result)
-  )
+    (fn str [] -> String
+      '"{(this.real)} + {(this.imag)}i"
+    )
 
-  (fn :operator - [c1 <- Complex c2 <- Complex] -> Complex
-      (let result (Complex))
-      (result.real := (- c1.real c2.real))
-      (result.imag := (- c1.imag c2.imag))
-      (return result)
-  )
+    (fn :operator + [c2 <- Complex] -> Complex
+        (let result (new Complex))
+        (result.real := (+ this.real c2.real))
+        (result.imag := (+ this.imag c2.imag))
+        (return result)
+    )
 
-  (fn :operator * [c1 <- Complex c2 <- Complex] -> Complex
-      (let result (Complex))
-      (result.real := (- (* c1.real c2.real) (* c1.imag c2.imag)))
-      (result.imag := (+ (* c1.real c2.imag) (* c1.imag c2.real)))
-      (return result)
-  )
+    (fn :operator - [c2 <- Complex] -> Complex
+        (let result (new Complex))
+        (result.real := (- this.real c2.real))
+        (result.imag := (- this.imag c2.imag))
+        (return result)
+    )
 
-  (fn :operator / [c1 <- Complex c2 <- Complex] -> Complex
-      (let denom (+ (* c2.real c2.real) (* c2.imag c2.imag)))
-      (let result (Complex))
-      (result.real := (/ (+ (* c1.real c2.real) (* c1.imag c2.imag)) denom))
-      (result.imag := (/ (- (* c1.imag c2.real) (* c1.real c2.imag)) denom))
-      (return result)
+    (fn :operator * [c2 <- Complex] -> Complex
+        (let result (new Complex))
+        (result.real := (- (* this.real c2.real) (* this.imag c2.imag)))
+        (result.imag := (+ (* this.real c2.imag) (* this.imag c2.real)))
+        (return result)
+    )
+
+    (fn :operator / [c2 <- Complex] -> Complex
+        (let denom (+ (* c2.real c2.real) (* c2.imag c2.imag)))
+        (let result (new Complex))
+        (result.real := (/ (+ (* this.real c2.real) (* this.imag c2.imag)) denom))
+        (result.imag := (/ (- (* this.imag c2.real) (* this.real c2.imag)) denom))
+        (return result)
+    )
   )
 
   ;; 3D Vector Struct and Operations
-
   (defstruct Vector3
-      (let :ctor x <- Real 0.0)
-      (let :ctor y <- Real 0.0)
-      (let :ctor z <- Real 0.0)
-  )
+    (let :ctor x <- Real 0.0)
+    (let :ctor y <- Real 0.0)
+    (let :ctor z <- Real 0.0)
 
-  (fn :operator + [v1 <- Vector3 v2 <- Vector3] -> Vector3
-      (let result (Vector3))
-      (result.x := (+ v1.x v2.x))
-      (result.y := (+ v1.y v2.y))
-      (result.z := (+ v1.z v2.z))
-      (return result)
-  )
+    (fn str [] -> String
+      '"(X: {(this.x.toFixed 2)}, Y: {(this.y.toFixed 2)}, Z: {(this.z.toFixed 2)})"
+    )
 
-  (fn :operator - [v1 <- Vector3 v2 <- Vector3] -> Vector3
-      (let result (Vector3))
-      (result.x := (- v1.x v2.x))
-      (result.y := (- v1.y v2.y))
-      (result.z := (- v1.z v2.z))
-      (return result)
-  )
+    (fn mag [] -> Real
+      (sqrt (+ (sqr this.x) (sqr this.y) (sqr this.z)))
+    )
 
-  (fn :operator * [v <- Vector3 scalar <- Real] -> Vector3
-      (let result (Vector3))
-      (result.x := (* v.x scalar))
-      (result.y := (* v.y scalar))
-      (result.z := (* v.z scalar))
-      (return result)
-  )
+    (fn :operator + [v2 <- Vector3] -> Vector3
+        (let result (new Vector3))
+        (result.x := (+ this.x v2.x))
+        (result.y := (+ this.y v2.y))
+        (result.z := (+ this.z v2.z))
+        (return result)
+    )
 
-  (fn :operator / [v <- Vector3 scalar <- Real] -> Vector3
-      (let result (Vector3))
-      (result.x := (/ v.x scalar))
-      (result.y := (/ v.y scalar))
-      (result.z := (/ v.z scalar))
-      (return result)
-  )
+    (fn :operator - [v2 <- Vector3] -> Vector3
+        (let result (new Vector3))
+        (result.x := (- this.x v2.x))
+        (result.y := (- this.y v2.y))
+        (result.z := (- this.z v2.z))
+        (return result)
+    )
 
-  (fn :operator · [v1 <- Vector3 v2 <- Vector3] -> Real
-      (+ (* v1.x v2.x) (+ (* v1.y v2.y) (* v1.z v2.z)))
+    (fn :operator * [scalar <- Real] -> Vector3
+        (let result (new Vector3))
+        (result.x := (* this.x scalar))
+        (result.y := (* this.y scalar))
+        (result.z := (* this.z scalar))
+        (return result)
+    )
+
+    (fn :operator / [scalar <- Real] -> Vector3
+        (let result (new Vector3))
+        (result.x := (/ this.x scalar))
+        (result.y := (/ this.y scalar))
+        (result.z := (/ this.z scalar))
+        (return result)
+    )
+
+    (fn :operator · [v2 <- Vector3] -> Real
+        (+ (* this.x v2.x) (+ (* this.y v2.y) (* this.z v2.z)))
+    )
   )
 )
