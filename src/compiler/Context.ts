@@ -51,6 +51,7 @@ export interface CompilerOptions {
   stage: CompilationStage;
   language: CompilationLanguage;
   noIIFE?: boolean; // For REPL and other use cases
+  perf?: boolean; // Performance tracking flag
 }
 
 export function logCompilationMessages(context: Context) {
@@ -99,6 +100,8 @@ export class Context {
     this.dependencyGraph = new DependencyGraph(mainFile);
     this.mainModule = path.basename(mainFile, ".lisp");
     this.options = options;
+    // Initialize performance metrics with enabled flag from options
+    this.performanceMetrics = new PerformanceMetrics(options.perf || false);
   }
 
   /**
@@ -116,6 +119,52 @@ export class Context {
   cacheModule(filePath: string, ast: ASTNode, symbols: SymbolTable): void {
     const fullPath = path.resolve(filePath);
     this.moduleCache.set(fullPath, { ast, symbols });
+  }
+
+  /**
+   * Helper method to count AST nodes
+   */
+  private countNodes(ast: ASTNode): number {
+    let count = 1;
+    
+    // Count nodes based on AST structure
+    if ('nodes' in ast && Array.isArray(ast.nodes)) {
+      for (const node of ast.nodes) {
+        if (node) count += this.countNodes(node);
+      }
+    }
+    
+    if ('body' in ast && Array.isArray(ast.body)) {
+      for (const node of ast.body) {
+        if (node) count += this.countNodes(node);
+      }
+    }
+
+    // Handle other node properties that contain child nodes
+    const childProps = ['condition', 'then', 'else', 'left', 'right', 'value', 'target', 'args', 'params'];
+    for (const prop of childProps) {
+      if (prop in ast && ast[prop as keyof ASTNode]) {
+        const child = ast[prop as keyof ASTNode];
+        if (Array.isArray(child)) {
+          for (const node of child) {
+            if (node && typeof node === 'object' && '_type' in node) {
+              count += this.countNodes(node);
+            }
+          }
+        } else if (typeof child === 'object' && child !== null && '_type' in child) {
+          count += this.countNodes(child);
+        }
+      }
+    }
+
+    return count;
+  }
+
+  /**
+   * Get performance report
+   */
+  public getPerformanceReport(): string {
+    return this.performanceMetrics.generateReport();
   }
 
   log(level: LogLevel, msg: any, caller?: string) {
@@ -137,15 +186,22 @@ export class Context {
       return cached;
     }
 
+    // PARSE STAGE
+    this.performanceMetrics.startTimer("parse");
     let ast = this.astProvider.getAst(fullPath) as ASTNode;
+    const nodeCount = this.countNodes(ast);
+    this.performanceMetrics.endTimer("parse", nodeCount, undefined, { file: fullPath });
 
     // Store parse stage AST
     if (stopAt === "parse") {
       return { ast: ast as ASTNode };
     }
 
+    // SYNTAX STAGE
+    this.performanceMetrics.startTimer("syntax");
     const syntaxRulesVisitor = new SyntaxRulesAstVisitor(this);
     syntaxRulesVisitor.visit(ast as ASTNode);
+    this.performanceMetrics.endTimer("syntax", nodeCount, (syntaxRulesVisitor as any).getVisitCount?.() || 0);
 
     if (this.results.hasErrors) {
       logCompilationMessages(this);
@@ -157,6 +213,8 @@ export class Context {
       return { ast: ast as ASTNode };
     }
 
+    // SYMBOLS STAGE
+    this.performanceMetrics.startTimer("symbols");
     const buildDependencyGraphVisitor = new BuildDependencyGraphAstVisitor(this);
     buildDependencyGraphVisitor.visit(ast as ASTNode);
 
@@ -166,6 +224,13 @@ export class Context {
     const moduleSymbols = buildSymbolTableVisitor.buildSymbolTable();
     this.symbolTable.join(moduleSymbols);
     
+    const symbolsVisitCount = ((buildDependencyGraphVisitor as any).getVisitCount?.() || 0) + 
+                             ((buildSymbolTableVisitor as any).getVisitCount?.() || 0);
+    this.performanceMetrics.endTimer("symbols", nodeCount, symbolsVisitCount, {
+      symbolsCount: moduleSymbols.size,
+      dependenciesCount: this.dependencyGraph.size
+    });
+    
     // Store symbols stage AST and symbols
     if (stopAt === "symbols") {
       return { ast: ast as ASTNode, symbols: moduleSymbols };
@@ -174,26 +239,43 @@ export class Context {
     // const inlineImportsVisitor = new InlineImportsAstVisitor(this);
     // ast = inlineImportsVisitor.visit(ast) as ASTNode;
 
+    // DESUGAR STAGE
+    this.performanceMetrics.startTimer("desugar");
     const treeShakerVisitor = new TreeShakeAstVisitor(this);
     ast = treeShakerVisitor.visit(ast) as ASTNode;
 
     const comptimeVisitor = new ComptimeEvaluationAstVisitor(this);
     ast = comptimeVisitor.visit(ast) as ASTNode;
     
+    const desugaredNodeCount = this.countNodes(ast);
+    const desugarVisitCount = ((treeShakerVisitor as any).getVisitCount?.() || 0) + 
+                             ((comptimeVisitor as any).getVisitCount?.() || 0);
+    this.performanceMetrics.endTimer("desugar", desugaredNodeCount, desugarVisitCount, {
+      nodesRemoved: nodeCount - desugaredNodeCount
+    });
+    
     // Store desugar stage AST and symbols
     if (stopAt === "desugar") {
       return { ast: ast as ASTNode, symbols: moduleSymbols };
     }
 
-    // Type Inference and Checking
+    // TYPES STAGE - Type Inference and Checking
+    this.performanceMetrics.startTimer("types");
     const inferTypesVisitor = new InferTypesAstVisitor(this, moduleSymbols);
     inferTypesVisitor.inferTypes(ast);
     const typeEnv = inferTypesVisitor.getTypeEnvironment();
 
+    let typesVisitCount = (inferTypesVisitor as any).getVisitCount?.() || 0;
+
     if (typeEnv) {
       const typeCheckingValidator = new TypeCheckingValidatorAstVisitor(this, typeEnv, moduleSymbols);
       typeCheckingValidator.visit(ast);
+      typesVisitCount += (typeCheckingValidator as any).getVisitCount?.() || 0;
     }
+    
+    this.performanceMetrics.endTimer("types", desugaredNodeCount, typesVisitCount, {
+      typesInferred: (moduleSymbols as any).countTypedSymbols?.() || 0
+    });
     
     // Store types stage AST and symbols (types are now part of symbol table)
     if (stopAt === "types") {
@@ -211,6 +293,8 @@ export class Context {
       return { ast: ast as ASTNode, symbols: moduleSymbols };
     }
 
+    // CODEGEN STAGE
+    this.performanceMetrics.startTimer("codegen");
     let transformer = undefined;
     if (this.options.language === "legacy-js") {
       // Use legacy transformer
@@ -224,6 +308,12 @@ export class Context {
     }
 
     const result = transformer.compile(ast);
+    const codegenVisitCount = (transformer as any).getVisitCount?.() || 0;
+    
+    this.performanceMetrics.endTimer("codegen", desugaredNodeCount, codegenVisitCount, {
+      outputSize: result.code?.length || 0,
+      language: this.options.language
+    });
 
     return { ast: ast as ASTNode, symbols: moduleSymbols, code: result.code, map: result.map };
   }

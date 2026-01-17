@@ -22,6 +22,11 @@ export function evalFile(
     return;
   }
 
+  // Output performance report if enabled
+  if (options.perf) {
+    console.log(context.getPerformanceReport());
+  }
+
   if (code) {
     if (options.stdout) {
       context.log(LogLevel.Info, chalk.strikethrough.dim(" ".repeat(stdout.columns)));

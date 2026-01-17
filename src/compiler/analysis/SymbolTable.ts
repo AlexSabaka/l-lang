@@ -224,6 +224,13 @@ export class SymbolTable {
     return addedCount;
   }
 
+  /**
+   * Get the total number of symbols across all scopes
+   */
+  get size(): number {
+    return this.scopes.reduce((total, scope) => total + scope.table.size, 0);
+  }
+
   private findSymbolRecursively(name: string, scope: Scope | undefined) {
     let current: Scope | undefined = scope;
     let symbol: SymbolEntry | undefined = undefined;

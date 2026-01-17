@@ -55,6 +55,13 @@ export class DependencyGraph {
     this.moduleCache.set(this.rootUnit.location.fullName, this.rootUnit);
   }
 
+  /**
+   * Get the total number of cached modules
+   */
+  get size(): number {
+    return this.moduleCache.size;
+  }
+
   add(file: string, parentFile: string, context: Context) {
     const fullParentName = path.resolve(parentFile);
     let parentUnit = this.find(fullParentName);

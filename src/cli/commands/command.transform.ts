@@ -68,6 +68,11 @@ export function transform(file: string, command: Command) {
     return;
   }
 
+  // Output performance report if enabled
+  if (options.perf) {
+    console.log(context.getPerformanceReport());
+  }
+
   // Output based on stage
   if (options.stage === "codegen") {
     // Final stage: output JavaScript

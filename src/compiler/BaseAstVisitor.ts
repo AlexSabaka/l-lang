@@ -4,9 +4,20 @@ import { formatWithOptions } from "util";
 
 export class BaseAstVisitor {
   context: Context;
+  private visitCount: number = 0;
 
   constructor(context: Context) {
     this.context = context;
+  }
+
+  // Add method to get visit count
+  getVisitCount(): number {
+    return this.visitCount;
+  }
+
+  // Reset visit count
+  resetVisitCount(): void {
+    this.visitCount = 0;
   }
 
   // Helper methods
@@ -114,6 +125,10 @@ export class BaseAstVisitor {
       this.context.log(LogLevel.Error, `Cannot process node without type: ${node}`);
       return undefined;
     }
+
+    // Track visit count and record with performance metrics
+    this.visitCount++;
+    this.context.performanceMetrics.recordVisit();
 
     const nodeVisitor = astVisitors[node._type];
     if (nodeVisitor === undefined) {
