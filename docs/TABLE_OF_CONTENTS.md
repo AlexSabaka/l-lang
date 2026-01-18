@@ -61,7 +61,7 @@ Comprehensive index of all l-lang documentation organized by section.
   - Sets
 
 - 4. Functions & Pipelines
-  - Function definition: `fn`, `defn`
+  - Function definition: `fn`
   - Parameters & return types
   - Arrow functions
   - Pipeline operator `|>`
@@ -75,8 +75,6 @@ Comprehensive index of all l-lang documentation organized by section.
   - `match` pattern matching
   - `for` loops
   - `while` loops
-  - `doseq` iteration
-  - `do` blocks
 
 - 6. Pattern Matching
   - Literals matching
@@ -91,7 +89,7 @@ Comprehensive index of all l-lang documentation organized by section.
   - Constructors (`:ctor`)
   - Instance variables
   - Methods
-  - Inheritance (`:inherits`)
+  - Inheritance (`:extends`, `:implements`)
   - Super calls
   - Visibility modifiers (`:public`, `:internal`)
   - Structs (`defstruct`)
@@ -99,7 +97,7 @@ Comprehensive index of all l-lang documentation organized by section.
   - Enums (union types)
 
 - 8. Metaprogramming: The Three Tiers
-  - `comptime` (compile-time evaluation)
+  - `:comptime` (compile-time evaluation)
   - `defmacro` (syntax rewrites)
   - `defsyntax` (DSL building)
   - Quote/unquote
@@ -123,7 +121,7 @@ Comprehensive index of all l-lang documentation organized by section.
   - Circular dependency handling
 
 - 11. Runtime Type Information (RTTI)
-  - `typeof` operator
+  - `type` operator
   - `type-name` function
   - Type predicates
   - Reflection

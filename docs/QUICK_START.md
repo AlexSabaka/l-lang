@@ -138,19 +138,19 @@ ts-node src/index.ts repl
 
 **Example REPL session:**
 ```
-λ> (+ 1 2)
+> (+ 1 2)
 3
 
-λ> (let greet (fn [name] (+ "Hi " name)))
+> (let greet (fn [name] (+ "Hi " name)))
 undefined
 
-λ> (greet "Bob")
+> (greet "Bob")
 "Hi Bob"
 
-λ> .symbols
+> .symbols
 Available symbols: +, -, *, /, greet, ...
 
-λ> .exit
+> .exit
 ```
 
 For detailed REPL docs: [development/REPL_GUIDE.md](development/REPL_GUIDE.md)
@@ -192,41 +192,6 @@ cat examples/01-basics/00_vars.types.json | jq '.symbols'
 # View generated JavaScript
 ts-node src/index.ts transform examples/01-basics/00_vars.lisp
 cat examples/01-basics/00_vars.js
-```
-
----
-
-## 📂 File Structure
-
-```
-l-lang/
-├── README.md                    # Project overview
-├── docs/                        # 📍 All documentation
-│   ├── INDEX.md                # Doc hub
-│   ├── QUICK_START.md          # This file
-│   ├── SIDEBAR.md              # Navigation menu
-│   ├── language/SYNTAX.md      # Complete language reference
-│   ├── architecture/           # Compiler architecture docs
-│   ├── compiler/               # Type system, implementations
-│   ├── development/            # Contributing guides
-│   ├── planning/               # Roadmap
-│   └── history/                # Changelog
-├── src/
-│   ├── compiler/               # Compiler implementation
-│   │   ├── frontend/           # Parsing & AST
-│   │   ├── analysis/           # Symbol resolution
-│   │   ├── types/              # Type inference
-│   │   ├── transformation/     # AST normalization
-│   │   ├── codegen/            # JavaScript generation
-│   │   └── Context.ts          # Orchestrator
-│   ├── cli/                    # CLI & REPL
-│   └── index.ts                # Entry point
-├── examples/                   # Example programs
-│   ├── 01-basics/              # Variables, functions
-│   ├── 04-data-types/          # Type system
-│   ├── 05-oop/                 # Classes & inheritance
-│   └── 10-algorithms/          # Complex examples
-└── test/                       # Test suite (36/39 passing)
 ```
 
 ---
@@ -321,7 +286,6 @@ cat FILE.types.json | jq '.symbols.entries.YOUR_VAR.inferredType'
 ## 📖 Full Documentation
 
 - **[INDEX.md](INDEX.md)** - Complete documentation hub
-- **[SIDEBAR.md](SIDEBAR.md)** - All sections organized by topic
 - **[language/SYNTAX.md](language/SYNTAX.md)** - Complete language reference
 - **[architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md)** - Deep dive into how it works
 

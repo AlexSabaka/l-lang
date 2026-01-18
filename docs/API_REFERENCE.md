@@ -38,9 +38,9 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 | `<=` | `(<= a b)` | Less or equal | `(<= 5 5)` → `true` |
 | `>` | `(> a b)` | Greater than | `(> 5 3)` → `true` |
 | `>=` | `(>= a b)` | Greater or equal | `(>= 5 5)` → `true` |
-| `not` | `(not b)` | Logical NOT | `(not false)` → `true` |
-| `and` | `(and ...bs)` | Logical AND | `(and true true)` → `true` |
-| `or` | `(or ...bs)` | Logical OR | `(or true false)` → `true` |
+| `!` | `(! b)` | Logical NOT | `(! false)` → `true` |
+| `&&` | `(&& ...bs)` | Logical AND | `(&& true true)` → `true` |
+| `` | `( ...bs)` | Logical OR | `( true false)` → `true` |
 
 ### String Operations
 
@@ -85,7 +85,7 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 
 | Function | Signature | Returns | Example |
 |----------|-----------|---------|---------|
-| `typeof` | `(typeof x)` | Type of value | `(typeof 5)` → `Int` |
+| `type` | `(type x)` | Type of value | `(type 5)` → `Int` |
 | `type-name` | `(type-name x)` | Type name as string | `(type-name [])` → `"Array"` |
 | `is-int` | `(is-int x)` | Is integer? | `(is-int 5)` → `true` |
 | `is-string` | `(is-string x)` | Is string? | `(is-string "hi")` → `true` |
@@ -99,7 +99,7 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 | Function | Signature | Returns | Example |
 |----------|-----------|---------|---------|
 | `print` | `(print ...items)` | Print to stdout | `(print "Hello")` → outputs `Hello` |
-| `println` | `(println ...items)` | Print with newline | `(println "Hi")` → outputs `Hi\n` |
+| `console.log` | `(console.log ...items)` | Print with newline | `(console.log "Hi")` → outputs `Hi\n` |
 | `prn` | `(prn x)` | Print debug repr | `(prn [1 2 3])` → outputs `[1 2 3]` |
 | `alert` | `(alert msg)` | Browser alert | `(alert "Warning!")` |
 | `console.log` | `(console.log ...items)` | Console output | `(console.log "Debug")` |
@@ -128,7 +128,7 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 
 ;; when (no else)
 (when (> x 5)
-    (println "Greater!"))
+    (console.log "Greater!"))
 
 ;; cond (multiple branches)
 (cond
@@ -141,18 +141,15 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 
 ```lisp
 ;; for loop
-(for [i 0] (< i 10) (inc i)
-    (println i))
+(for :init (mut i 0) :cond (< i 10) :step (inc i)
+    (console.log i))
 
 ;; while loop
-(while (< count 10)
-    (do
-        (println count)
-        (mut count (inc count))))
+(while (< count 10) (
+    (console.log count)
+    (mut count (inc count))
+))
 
-;; doseq (iterate collection)
-(doseq [item [1 2 3]]
-    (println item))
 ```
 
 ### Pattern Matching
@@ -182,7 +179,7 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 
 ;; Strings
 (let msg "hello")       ;; String
-(let interpolated "value: {x}")
+(let interpolated '"value: {(x)}")
 
 ;; Booleans
 (let flag true)         ;; Bool
@@ -196,16 +193,16 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 
 ```lisp
 ;; Explicit type annotation
-(let [Int x] 5)
-(let [String name] "Alice")
-(let [Array<Int> nums] [1 2 3])
+(let x <- Int 5)
+(let name <- String "Alice")
+(let nums <- Int[] [1 2 3])
 
 ;; Function parameter types
 (fn add [x y] -> Int
     (+ x y))
 
 ;; Generics
-(let [Array<String> names] ["a" "b"])
+(let names <- String[] ["a" "b"])
 ```
 
 ### User-Defined Types
@@ -217,14 +214,15 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 
 ;; Struct
 (defstruct Person
-    name String
-    age Int)
+    (let :stor name <- String)
+    (let :ctor age <- Int)
+)
 
-;; Enum (union type)
-(deftype Status
-    | Active
-    | Inactive
-    | Pending)
+;; Enum
+(defenum Status
+    Active
+    Inactive
+    Pending)
 ```
 
 ---
@@ -243,12 +241,12 @@ Complete API reference for the **l-lang** standard library and compiler introspe
     
     ;; Method
     (fn speak [msg] (
-        (+ (. this name) " says: " msg)
+        (+ this.name " says: " msg)
     ))
     
     ;; Computed property
     (fn :public is-tired [] (
-        (< (. this energy) 50)
+        (< this.energy 50)
     ))
 )
 
@@ -256,10 +254,10 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 (let dog (new Animal "Rex"))
 
 ;; Call method
-(. dog speak "Woof!")
+(dog.speak "Woof!")
 
 ;; Access property
-(. dog energy)
+(console.log dog.energy)
 ```
 
 ### Inheritance
@@ -268,7 +266,7 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 (defclass Dog :inherits Animal
     ;; Override method
     (fn speak [msg] (
-        (+ (. this name) " barks: " msg)
+        (+ this.name " barks: " msg)
     ))
     
     ;; Call parent method
@@ -278,7 +276,7 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 )
 
 (let dog (new Dog "Buddy"))
-(. dog speak "Bark!")  ;; Uses Dog's speak
+(dog.speak "Bark!")  ;; Uses Dog's speak
 ```
 
 ### Visibility
@@ -306,7 +304,7 @@ Complete API reference for the **l-lang** standard library and compiler introspe
     (if (> a b) a b))
 
 ;; Used in types
-(let [Array<Int, (:comptime max 10 20)>] [...])
+(let array <- Int[(max 10 20)] [])
 ```
 
 ### `defmacro` (Simple Rewrites)
@@ -316,8 +314,8 @@ Complete API reference for the **l-lang** standard library and compiler introspe
     (list 'if test body nil))
 
 (when (> x 5)
-    (println "Greater!"))
-;; Expands to: (if (> x 5) (println "Greater!") nil)
+    (console.log "Greater!"))
+;; Expands to: (if (> x 5) (console.log "Greater!") nil)
 ```
 
 ### `defsyntax` (DSL Building)
@@ -344,22 +342,19 @@ The `|>` operator chains function calls left-to-right:
 (double (add 5 (double 3)))
 
 ;; Pipeline (left-to-right)
-(| 3
-   double
-   (add 5)
-   double)
+(3 |> double |> (add 5) |> double)
 
 ;; With method calls
 (let data [1 2 3 4 5])
-(| data
-   (map inc)
-   (filter (fn [x] (> x 2)))
-   (reduce + 0))
+(data
+    |> (map inc)
+    |> (filter (fn [x] (> x 2))) 
+    |> (reduce + 0))
 ```
 
 **Translation**:
 ```lisp
-(| x f1 (f2 arg) f3)
+(x |> f1 |> (f2 arg) |> f3)
 ;; → (f3 (f2 (f1 x) arg))
 ```
 
@@ -371,7 +366,7 @@ The `|>` operator chains function calls left-to-right:
 ;; Async function
 (async fn fetch-data []
     (let result (await (fetch-from-api)))
-    result)
+    (return result))
 
 ;; Promise handling
 (fn async-op []
@@ -379,7 +374,7 @@ The `|>` operator chains function calls left-to-right:
 
 (async fn test []
     (let val (await (async-op)))
-    (println val))
+    (console.log val))
 ```
 
 ---
@@ -390,8 +385,6 @@ The `|>` operator chains function calls left-to-right:
 
 ```lisp
 ;; math-utils.lisp
-(defmodule math-utils)
-
 (fn add [a b] (+ a b))
 (fn multiply [a b] (* a b))
 
@@ -402,8 +395,8 @@ The `|>` operator chains function calls left-to-right:
 
 ```lisp
 ;; main.lisp
-(import math-utils [:as mu])
-(import math-utils [:only (add)])
+(import { M as mu } from math-utils)
+(import { max } math-utils)
 
 (mu.add 5 3)
 (add 5 3)  ;; Direct import
@@ -418,21 +411,19 @@ The `|>` operator chains function calls left-to-right:
 ```lisp
 (try
     (do-something-risky)
-    (catch [e Error]
-        (println "Error:" (. e message))
-    )
-    (finally
-        (cleanup)
-    )
+catch e :of Error
+    (console.log "Error:" (. e message))
+finally
+    (cleanup)
 )
 ```
 
 ### Custom Errors
 
 ```lisp
-(deftype [Error] CustomError
-    message String
-    code Int)
+(defclass Error CustomError
+    (let :ctor message <- String)
+    (let :ctor code <- Int))
 
 (throw (new CustomError "Something failed" 500))
 ```
@@ -458,10 +449,10 @@ The `|>` operator chains function calls left-to-right:
 
 ```lisp
 ;; Parse JSON
-(let data (parse-json "{\"name\": \"Alice\"}"))
+(let data (JSON.parse "{\"name\": \"Alice\"}"))
 
 ;; Stringify JSON
-(let json (stringify-json {:name "Bob"}))
+(let json (JSON.stringify {:name "Bob"}))
 ;; → "{\"name\": \"Bob\"}"
 ```
 
@@ -473,7 +464,7 @@ The `|>` operator chains function calls left-to-right:
 
 ```lisp
 ;; Get type info
-(typeof 42)              ;; → "Int"
+(type 42)               ;; → "Int"
 (type-name [1 2 3])     ;; → "Array"
 
 ;; Check type
@@ -514,10 +505,10 @@ l-lang compiles to JavaScript, enabling direct interop:
 (let result (Math.floor 3.7))
 
 ;; Create JS objects
-(let obj #js {:name "test" :value 42})
+(let obj {:name "test" :value 42})
 
-;; Inline JavaScript (not recommended)
-(js "const x = 42; return x;")
+;; Eval JavaScript (not recommended)
+(let x (js-eval "34 + Math.cos(1)"))
 ```
 
 ---
@@ -542,15 +533,12 @@ l-lang compiles to JavaScript, enabling direct interop:
 ;; Functions
 (fn add [a b] (+ a b))
 (fn no-args [] 42)
-(fn multi-arity
-    ([x] x)
-    ([x y] (+ x y)))
 
 ;; Collections
 (let arr [1 2 3])
 (let map {:key "value"})
-(. arr 0)               ;; Get by index
-(. map :key)            ;; Get by key
+(arr[0])               ;; Get by index
+(map["key"])            ;; Get by key
 
 ;; Control flow
 (if cond true-val false-val)
@@ -558,14 +546,14 @@ l-lang compiles to JavaScript, enabling direct interop:
 (match x {...})
 
 ;; Pipelines
-(| val f1 (f2 arg) f3)
+(val |> f1 |> (f2 arg) |> f3)
 
 ;; Classes
 (defclass Name
     (let :ctor field)
     (fn method [] ...))
 (let obj (new Name val))
-(. obj method)
+(obj.method)
 
 ;; Pattern matching
 (match vec {
