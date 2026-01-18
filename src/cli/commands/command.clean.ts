@@ -42,7 +42,7 @@ export function clean(folder: string, command: Command) {
     const basePath = filePath.replace(".lisp", "");
     const filesToDelete = [
       `${basePath}.js`,
-      `${basePath}.lisp.map`,
+      `${basePath}.js.map`,
       `${basePath}.parsed.json`,
       `${basePath}.symbols.json`,
       `${basePath}.syntax.json`,

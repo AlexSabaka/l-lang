@@ -1697,27 +1697,50 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
             }
           : null;
 
-      let result: ESTree.Expression = ESTreeBuilder.identifier(
-        node,
-        "undefined"
-      );
-
-      for (let i = node.cases.length - 1; i >= 0; i--) {
-        const c = node.cases[i];
-        const condition = this.generateCondition(c.pattern, matchVar);
-        const body = this.visit(c.body) as ESTree.Expression;
-
-        result = {
-          type: "ConditionalExpression",
-          test: condition,
-          consequent: body,
-          alternate: result,
-        };
-      }
-
       const funcBody: ESTree.Statement[] = [];
       if (declarations) funcBody.push(declarations);
-      funcBody.push(ESTreeBuilder.returnStatement(node, result));
+
+      const ensureReturns = (stmt: ESTree.Node): ESTree.Statement[] => {
+        if (this.isExpression(stmt)) {
+          return [ESTreeBuilder.returnStatement(node, stmt as ESTree.Expression)];
+        }
+        if (stmt.type === "ExpressionStatement") {
+          return [
+            ESTreeBuilder.returnStatement(
+              node,
+              (stmt as ESTree.ExpressionStatement).expression
+            ),
+          ];
+        }
+        if (stmt.type === "BlockStatement") {
+          const b = stmt as ESTree.BlockStatement;
+          if (b.body.length === 0) return [b];
+          const last = b.body[b.body.length - 1];
+          const rest = b.body.slice(0, -1);
+          return [...rest, ...ensureReturns(last)];
+        }
+        return [stmt as ESTree.Statement];
+      };
+
+      for (const c of node.cases) {
+        const condition = this.generateCondition(c.pattern, matchVar);
+        const body = this.visit(c.body) as ESTree.Node;
+        const bodyStatements = ensureReturns(body);
+
+        funcBody.push({
+          type: "IfStatement",
+          test: condition,
+          consequent: ESTreeBuilder.blockStatement(c.body, bodyStatements),
+          alternate: null,
+        } as ESTree.IfStatement);
+      }
+      
+      funcBody.push(
+        ESTreeBuilder.returnStatement(
+          node,
+          ESTreeBuilder.identifier(node, "undefined")
+        )
+      );
 
       return ESTreeBuilder.callExpression(
         node,
@@ -2202,7 +2225,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       node.key._type === "simple-identifier"
         ? ESTreeBuilder.identifier(
             node.key,
-            (node.key as ast.SimpleIdentifierNode).id
+            encodeIdentifier((node.key as ast.SimpleIdentifierNode).id)
           )
         : (this.visit(node.key) as ESTree.Expression);
 
