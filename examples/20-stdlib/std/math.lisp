@@ -12,6 +12,19 @@
     (* x x)
   )
 
+  (fn inc [n <- Number] -> Number (+ n 1))
+  (fn dec [n <- Number] -> Number (- n 1))
+
+  (fn abs [n <- Number] -> Number (Math.abs n))
+  (fn floor [n <- Number] -> Number (Math.floor n))
+  (fn ceil [n <- Number] -> Number (Math.ceil n))
+  (fn round [n <- Number] -> Number (Math.round n))
+  
+  (fn pow [base <- Number exp <- Number] -> Number (Math.pow base exp))
+  
+  (fn min [a <- Number b <- Number] -> Number (Math.min a b))
+  (fn max [a <- Number b <- Number] -> Number (Math.max a b))
+
   (fn sqrt [x <- Number] -> Number
     (Math.sqrt x)
   )

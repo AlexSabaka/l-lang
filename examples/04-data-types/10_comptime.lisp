@@ -10,9 +10,9 @@
   (let fact5 (factorial 5))
   (console.log "Comptime factorial(5):" fact5)
 
-  (fn :comptime add [a <- Int, b <- Int] (+ a b))
+  (fn :comptime add [a <- Int b <- Int] (+ a b))
 
-  (let :comptime sum (add 5 7))
+  (let sum (add 5 7))
   (console.log "Comptime add(5, 7):" sum)
 
   (let y 10)

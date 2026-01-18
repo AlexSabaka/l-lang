@@ -1,13 +1,73 @@
 <html>
   <head>
-    <title>l-lang p5.js example</title>
-    <link rel="stylesheet" type="text/css" href="style.css" />
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Doodle Jump - l-lang Edition</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        font-family: "Courier New", monospace;
+      }
+
+      #controls {
+        margin-top: 20px;
+        padding: 15px;
+        background: #f5f5f5;
+        border-radius: 8px;
+        text-align: left;
+      }
+
+      .control-item {
+        margin: 8px 0;
+        color: #333;
+      }
+
+      .key {
+        display: inline-block;
+        background: #667eea;
+        color: white;
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-weight: bold;
+        margin-right: 8px;
+      }
+
+      .color-box {
+        display: inline-block;
+        width: 15px;
+        height: 15px;
+        margin-right: 5px;
+        border-radius: 3px;
+        vertical-align: middle;
+      }
+
+      canvas {
+        border-radius: 5px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      }
+    </style>
   </head>
   <body>
-    <script>var exports = {};</script>
+    <script>
+      var exports = {};
+    </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.3/p5.js"></script>
     <!-- Load the compiled main.js directly -->
     <script src="main.js"></script>
+    <div id="controls">
+      <strong>🎮 Controls:</strong>
+      <div class="control-item"><span class="key">←</span> Move Left</div>
+      <div class="control-item"><span class="key">→</span> Move Right</div>
+      <div class="control-item">
+        <span class="key">SPACE</span> Restart
+      </div>
+    </div>
   </body>
 </html>

@@ -1,6 +1,6 @@
-(import "./types.lisp")
 (import "./math_utils.lisp")
 (import "../std/types.lisp")
+(import "../std/math.lisp")
 
 (fn main []
     (console.log "--- Running Complex Math Test ---")
@@ -29,7 +29,7 @@
     (console.log "--- Complex Number Test ---")
     (let c1 (new Complex 1.0 2.0))
     (let c2 (new Complex 3.0 4.0))
-    (let c3 (complex-add c1 c2))
+    (let c3 (+ c1 c2))
     
     (console.log "Complex Addition Result:" c3.real "+" c3.imag "i")
 )

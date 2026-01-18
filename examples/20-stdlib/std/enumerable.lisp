@@ -16,5 +16,27 @@
     (return result)
   )
 
-  (export range zip)
+  ;; Functional Operations
+  (fn map [op coll] 
+    (coll.map op))
+
+  (fn filter [pred coll] 
+    (coll.filter pred))
+
+  (fn reduce [op init coll] 
+    (coll.reduce op init))
+
+  (fn flatten [coll] 
+    (coll.flat 1))
+
+  (fn reverse [coll] 
+    (coll.reverse))
+
+  (fn sort [coll] 
+    (coll.sort))
+    
+  (fn sort-by [key-fn coll]
+    (coll.sort (fn [a b] (- (key-fn a) (key-fn b)))))
+
+  (export range zip map filter reduce flatten reverse sort sort-by)
 )

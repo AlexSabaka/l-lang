@@ -1,9 +1,6 @@
-(
-    ;; Define a memoization modifier
-    (defmodifier memoized [])
-    
+(   
     ;; Memoized fibonacci function using the modifier
-    (fn :memoized fib [n <- Int] -> Int
+    (fn :comptime fib [n <- Int] -> Int
         (match n {
             0 => 1
             1 => 1
