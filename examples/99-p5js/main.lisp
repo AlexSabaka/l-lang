@@ -65,7 +65,7 @@
 
         (fn update [] (
             (match this.type {
-                1 => (  ;; Moving platform logic
+                PlatformType:Moving => (  ;; Moving platform logic
                     (this.x += this.vel-x)
                     (if (|| (< this.x (- this.origin-x this.move-range))
                             (> this.x (+ this.origin-x this.move-range)))
@@ -79,10 +79,10 @@
             (if (! this.broken) (
                 (call push)
                 (match this.type {
-                    0 => (fill 100 200 100)
-                    1 => (fill 100 150 255)
-                    2 => (fill 200 100 100)
-                    3 => (fill 255 200 50)
+                    PlatformType:Normal => (fill 100 200 100)
+                    PlatformType:Moving => (fill 100 150 255)
+                    PlatformType:Breaking => (fill 200 100 100)
+                    PlatformType:Spring => (fill 255 200 50)
                     _ => (fill 150 150 150)
                 })
                 (rect this.x this.y this.width this.height 5)
@@ -104,8 +104,8 @@
                 (
                     ;; Handle collision based on type
                     (match this.type {
-                        2 => (this.broken := true)
-                        3 => (return (* JUMP-FORCE 1.5))
+                        PlatformType:Breaking => (this.broken := true)
+                        PlatformType:Spring => (return (* JUMP-FORCE 1.5))
                         _ => nil
                     })
                     (return JUMP-FORCE)
@@ -181,12 +181,10 @@
 
     ;; ==================== PLAYER CLASS ====================
     (defclass Player
-        (let :ctor x <- Real (/ WIDTH 2))
-        (let :ctor y <- Real 400)
+        (let :ctor pos <- Vector3)
         (let width <- Real PLAYER-SIZE)
         (let height <- Real PLAYER-SIZE)
-        (let vel-x <- Real 0)
-        (let vel-y <- Real 0)
+        (let vel <- Vector3 (new Vector3 0 0 0))
         (let is-jumping <- Bool false)
         (let jetpack-active <- Bool false)
         (let jetpack-fuel <- Real 0)
@@ -197,101 +195,101 @@
             ;; Apply gravity
             (if this.jetpack-active
                 (
-                    (this.vel-y := -8)
+                    (this.vel.y := -8)
                     (this.jetpack-fuel -= 1)
                     (if (<= this.jetpack-fuel 0)
                         (this.jetpack-active := false))
                 )
-                (this.vel-y += GRAVITY)
+                ;; (this.vel.y += GRAVITY)
             )
 
             ;; Update position
-            (this.x += this.vel-x)
-            (this.y += this.vel-y)
+            (this.pos := (+ this.pos this.vel))
 
             ;; Friction
-            (this.vel-x *= 0.9)
+            (this.vel := (* this.vel 0.9))
 
             ;; Wrap around screen horizontally
-            (if (< this.x (- this.width)) (this.x := WIDTH))
-            (if (> this.x WIDTH) (this.x := (- this.width)))
+            (if (< this.pos.x (- this.width)) (this.pos.x := WIDTH))
+            (if (> this.pos.x WIDTH) (this.pos.x := (- this.width)))
 
             ;; Clamp velocity
-            (this.vel-y := (clamp this.vel-y -20 20))
+            ;; (this.vel.y := (clamp this.vel.y -20 20))
+
         ))
 
         (fn draw [] (
             (call push)
-            
+
             ;; Draw shield effect
             (if this.shield (
                 (no-fill)
                 (stroke 100 200 255)
                 (stroke-weight 3)
-                (ellipse (+ this.x (/ this.width 2)) 
-                        (+ this.y (/ this.height 2)) 
+                (ellipse (+ this.pos.x (/ this.width 2)) 
+                        (+ this.pos.y (/ this.height 2)) 
                         (+ this.width 20) 
                         (+ this.height 20))
             ))
 
             ;; Draw player body
             (fill 255 150 150)
-            (ellipse (+ this.x (/ this.width 2)) 
-                    (+ this.y (/ this.height 2)) 
+            (ellipse (+ this.pos.x (/ this.width 2)) 
+                    (+ this.pos.y (/ this.height 2)) 
                     this.width 
                     this.height)
 
             ;; Draw face
             (fill 50 50 50)
-            (ellipse (+ this.x 12) (+ this.y 15) 5 5)  ;; Left eye
-            (ellipse (+ this.x 28) (+ this.y 15) 5 5)  ;; Right eye
+            (ellipse (+ this.pos.x 12) (+ this.pos.y 15) 5 5)  ;; Left eye
+            (ellipse (+ this.pos.x 28) (+ this.pos.y 15) 5 5)  ;; Right eye
 
             ;; Draw jetpack flames
             (if this.jetpack-active (
                 (fill 255 200 100)
-                (triangle (+ this.x 10) (+ this.y 40)
-                         (+ this.x 20) (+ this.y (+ 50 (rand 0 10)))
-                         (+ this.x 30) (+ this.y 40))
+                (triangle (+ this.pos.x 10) (+ this.pos.y 40)
+                          (+ this.pos.x 20) (+ this.pos.y (+ 50 (rand 0 10)))
+                          (+ this.pos.x 30) (+ this.pos.y 40))
             ))
 
             ;; Draw spring shoes indicator
             (if this.spring-shoes (
                 (fill 100 255 100)
-                (rect (+ this.x 5) (+ this.y 35) 10 8)
-                (rect (+ this.x 25) (+ this.y 35) 10 8)
+                (rect (+ this.pos.x 5) (+ this.pos.y 35) 10 8)
+                (rect (+ this.pos.x 25) (+ this.pos.y 35) 10 8)
             ))
 
             (call pop)
         ))
 
         (fn move-left [] (
-            (this.vel-x := -5)
+            (this.vel.x := -5)
         ))
 
         (fn move-right [] (
-            (this.vel-x := 5)
+            (this.vel.x := 5)
         ))
 
         (fn jump [] (
             (if this.spring-shoes
-                (this.vel-y := (* JUMP-FORCE 1.3))
-                (this.vel-y := JUMP-FORCE))
+                (this.vel.y := (* JUMP-FORCE 1.3))
+                (this.vel.y := JUMP-FORCE))
         ))
 
         (fn activate-booster [type] (
             (match type {
-                0 => (
+                BoosterType:Jetpack => (
                     (this.jetpack-active := true)
                     (this.jetpack-fuel := 120)
                 )
-                1 => (this.spring-shoes := true)
-                2 => (this.shield := true)
+                BoosterType:SpringShoes => (this.spring-shoes := true)
+                BoosterType:Shield => (this.shield := true)
                 _ => nil
             })
         ))
 
         (fn is-falling [] -> Bool (
-            (> this.vel-y 0)
+            (> this.vel.y 0)
         ))
     )
 
@@ -311,11 +309,11 @@
     ;; Generate random platform type with weights
     (fn random-platform-type [] -> Int (
         (let roll (rand 0 100))
-        (cond
+        (return (cond
             ((< roll 60) PlatformType:Normal)
             ((< roll 80) PlatformType:Moving)
             ((< roll 95) PlatformType:Breaking)
-            (true PlatformType:Spring))
+            (true PlatformType:Spring)))
     ))
 
     ;; Create initial platforms using functional approach
@@ -425,11 +423,11 @@
     ;; ==================== INPUT HANDLING ====================
     (fn handle-input [] (
         (let player game-state.player)
-        (if (key-is-down LEFT-ARROW) (player.move-left))
-        (if (key-is-down RIGHT-ARROW) (player.move-right))
+        (if (== keyCode 37) (player.move-left))
+        (if (== keyCode 39) (player.move-right))
         
         ;; Restart on space if game over
-        (if (&& game-state.game-over (key-is-down SPACE))
+        (if (&& game-state.game-over (== keyCode 32))
             (init-game))
     ))
 
@@ -454,7 +452,7 @@
 
     ;; ==================== GAME INITIALIZATION ====================
     (fn init-game [] (
-        (game-state.player := (new Player))
+        (game-state.player := (new Player (new Vector3 (/ WIDTH 2) (/ HEIGHT 2) 0)))
         (game-state.platforms := (generate-initial-platforms))
         (game-state.boosters := [])
         (game-state.camera-y := 0)
@@ -476,6 +474,7 @@
         (if game-state.game-over
             (draw-hud)
             (
+                ;; Handle input
                 (handle-input)
                 
                 ;; Update all entities

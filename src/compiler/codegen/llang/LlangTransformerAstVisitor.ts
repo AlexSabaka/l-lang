@@ -224,11 +224,6 @@ export class LlangTransformerAstVisitor extends BaseAstVisitor {
   }
 
   // --- Operators ---
-
-  visitAwait(node: ast.AwaitNode): any {
-    return `(await ${this.visit(node.expression)})`;
-  }
-
   visitSpread(node: ast.SpreadNode): any {
     return `...${this.visit(node.expression)}`;
   }

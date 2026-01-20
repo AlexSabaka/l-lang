@@ -73,7 +73,6 @@ export type NodeType =
   | "implements"
   | "extends"
   | "type-constraint"
-  | "await"
   | "spread"
   | "simple-assignment"
   | "compound-assignment"
@@ -316,10 +315,6 @@ export interface ExtendsNode extends ASTNode<"extends"> {
 export interface TypeConstraintNode extends ASTNode<"type-constraint"> {
   where: TypeNameNode;
   constraints: { constraint: string; value: ASTNode }[];
-}
-
-export interface AwaitNode extends ASTNode<"await"> {
-  expression: ASTNode;
 }
 
 export interface SpreadNode extends ASTNode<"spread"> {

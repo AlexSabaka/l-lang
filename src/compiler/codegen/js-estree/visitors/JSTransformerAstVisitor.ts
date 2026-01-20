@@ -2284,14 +2284,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return expr as ESTree.MemberExpression;
   }
 
-  visitAwait(node: ast.AwaitNode): ESTree.AwaitExpression {
-    return {
-      type: "AwaitExpression",
-      argument: this.visit(node.expression) as ESTree.Expression,
-      loc: ESTreeBuilder.loc(node),
-    };
-  }
-
   visitSpread(node: ast.SpreadNode): ESTree.SpreadElement {
     return {
       type: "SpreadElement",

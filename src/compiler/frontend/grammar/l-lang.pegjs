@@ -55,9 +55,6 @@ Expression "expression"
   // Custom modifier definitions
   / DefModifier
 
-  // Await operator
-  / Await
-
   // Control flow expressions
   / When
   / If
@@ -67,7 +64,7 @@ Expression "expression"
   / TryCatchFinally
   / Match
 
-  // 
+  // Assignments
   / Assignment
   / Indexer
   / Spread
@@ -341,12 +338,13 @@ LetMutMode
 
 // Function definition
 Function
-  = _ async:(AsyncKw __)? _ FunctionKw __ modifiers:(@Modifier _)*
+  = _ FunctionKw __ modifiers:(@Modifier _)*
     _ name:Identifier? _ "[" _ params:FunctionParameter|.. , ","?| _ "]" _ returns:(RightArrowKw _ @Type)?
     _ body:Expression* _
   {
     const extern = !!modifiers.find(x => x.modifier === "extern");
-    return makeNode("function", { name, async: !!async, extern, modifiers, params, returns, body });
+    const async = !!modifiers.find(x => x.modifier === "async");
+    return makeNode("function", { name, async, extern, modifiers, params, returns, body });
   }
 
 FunctionParameter
@@ -495,14 +493,6 @@ TypeConstraint
   = _ ":" constraint:ConstraintKw _ value:Expression _ {
     return { constraint, value };
   }
-
-
-// Await keyword
-Await
-  = _ AwaitKw __ expression:Expression _ {
-    return makeNode("await", { expression });
-  }
-
 
 // Spread operator
 Spread
@@ -829,7 +819,6 @@ WhenKw = "when"i
 FinallyKw = "finally"i
 CatchKw = "catch"i
 TryKw = "try"i
-AwaitKw = "await"i
 AsyncKw = "async"i
 DefInterfaceKw = "definterface"i
 DefClassKw = "defclass"i

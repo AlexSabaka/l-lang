@@ -697,10 +697,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return createSourceNode(node, id, ...indices);
   }
 
-  visitAwait(node: ast.AwaitNode) {
-    return createSourceNode(node, `await `, this.visit(node.expression));
-  }
-  
   visitComment(node: ast.CommentNode) { return createSourceNode(node, `// ${node.comment}\n`); }
   
   // Handling serialization of quotes for macros/AST access at runtime
