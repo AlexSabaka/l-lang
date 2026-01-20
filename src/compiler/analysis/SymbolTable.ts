@@ -60,6 +60,16 @@ export interface InferredType {
   // Struct support
   members?: StructMember[];  // Struct member information
   ctorInfo?: ConstructorInfo;  // Struct constructor information (renamed to avoid TypeScript 'constructor' conflict)
+  
+  // Enhanced codegen metadata
+  detailedMembers?: DetailedMember[];
+  methodSignatures?: Map<string, MethodSignature>;
+  operatorOverloads?: OperatorOverload[];
+  implementedInterfaces?: InterfaceImplementation[];
+  typeParameters?: TypeParameter[];
+  parentClass?: string;
+  requiresRuntimeMetadata?: boolean;
+  codegenMetadata?: CodegenMetadata;
 }
 
 /**
@@ -74,6 +84,96 @@ export interface StructMember {
   isOperator?: boolean; // True if this is an operator overload
   operatorSymbol?: string; // The operator symbol
   defaultValue?: any;  // Default value if :ctor param has default
+}
+
+/**
+ * Detailed member information for complete codegen metadata
+ */
+export interface DetailedMember {
+  name: string;
+  type: InferredType;
+  visibility: 'public' | 'private' | 'protected' | 'internal';
+  modifiers: Set<string>;
+  defaultValue?: any;
+  isConstructorParam: boolean;
+  parameterIndex?: number; // For constructor ordering
+  isStatic?: boolean;
+  isOperator?: boolean;
+  operatorSymbol?: string;
+  arity?: number;
+}
+
+/**
+ * Parameter information for method signatures
+ */
+export interface ParameterInfo {
+  name: string;
+  type: InferredType;
+  hasDefault: boolean;
+  defaultValue?: any;
+  isRest?: boolean;
+}
+
+/**
+ * Complete method signature information
+ */
+export interface MethodSignature {
+  name: string;
+  parameters: ParameterInfo[];
+  returnType: InferredType;
+  modifiers: Set<string>;
+  isOperatorOverload: boolean;
+  operatorSymbol?: string;
+  arity?: number;
+  visibility: 'public' | 'private' | 'protected' | 'internal';
+}
+
+/**
+ * Operator overload information
+ */
+export interface OperatorOverload {
+  symbol: string;
+  arity: number;
+  parameterTypes: InferredType[];
+  returnType: InferredType;
+  methodName: string;
+}
+
+/**
+ * Interface implementation information
+ */
+export interface InterfaceImplementation {
+  interfaceName: string;
+  interfaceType: InferredType;
+  methodMappings: Map<string, string>; // interface method -> implementation method
+}
+
+/**
+ * Generic type parameter information
+ */
+export interface TypeParameter {
+  name: string;
+  constraints: InferredType[];
+  defaultType?: InferredType;
+}
+
+/**
+ * Complete codegen metadata for a type
+ */
+export interface CodegenMetadata {
+  typeName: string;
+  kind: string;
+  detailedMembers?: DetailedMember[];
+  methodSignatures?: Map<string, MethodSignature>;
+  operatorOverloads?: OperatorOverload[];
+  implementedInterfaces?: InterfaceImplementation[];
+  typeParameters?: TypeParameter[];
+  parentClass?: string;
+  requiresRuntimeMetadata: boolean;
+  constructorSignature?: {
+    parameters: ParameterInfo[];
+    requiredCount: number;
+  };
 }
 
 /**
@@ -139,6 +239,82 @@ export class SymbolTable {
     if (symbol) {
       symbol.inferredType = type;
     }
+  }
+
+  /**
+   * Bind complete type with codegen metadata
+   */
+  bindCompleteType(name: string, type: InferredType, metadata: CodegenMetadata): void {
+    const symbol = this.resolveSymbol(name);
+    if (symbol) {
+      symbol.inferredType = { ...type, codegenMetadata: metadata };
+    }
+  }
+
+  /**
+   * Retrieve codegen-ready metadata for a symbol
+   */
+  getCodegenMetadata(name: string): CodegenMetadata | undefined {
+    const symbol = this.resolveSymbol(name);
+    return symbol?.inferredType?.codegenMetadata;
+  }
+
+  /**
+   * Get all class metadata for codegen
+   */
+  getAllClassMetadata(): Map<string, CodegenMetadata> {
+    const classMetadata = new Map<string, CodegenMetadata>();
+    const allSymbols = this.getAllSymbols();
+    
+    for (const [name, entry] of allSymbols.entries()) {
+      if (entry.inferredType?.kind === 'class' || entry.inferredType?.kind === 'struct') {
+        const metadata = entry.inferredType.codegenMetadata;
+        if (metadata) {
+          classMetadata.set(name, metadata);
+        }
+      }
+    }
+    
+    return classMetadata;
+  }
+
+  /**
+   * Get all function metadata for codegen
+   */
+  getAllFunctionMetadata(): Map<string, CodegenMetadata> {
+    const funcMetadata = new Map<string, CodegenMetadata>();
+    const allSymbols = this.getAllSymbols();
+    
+    for (const [name, entry] of allSymbols.entries()) {
+      if (entry.inferredType?.kind === 'function') {
+        const metadata = entry.inferredType.codegenMetadata;
+        if (metadata) {
+          funcMetadata.set(name, metadata);
+        }
+      }
+    }
+    
+    return funcMetadata;
+  }
+
+  /**
+   * Validate that all symbols have complete codegen metadata
+   */
+  validateCodegenMetadata(): string[] {
+    const missing: string[] = [];
+    const allSymbols = this.getAllSymbols();
+    
+    for (const [name, entry] of allSymbols.entries()) {
+      if (entry.inferredType && 
+          (entry.inferredType.kind === 'class' || 
+           entry.inferredType.kind === 'struct' || 
+           entry.inferredType.kind === 'function') &&
+          !entry.inferredType.codegenMetadata) {
+        missing.push(`${name} (${entry.inferredType.kind})`);
+      }
+    }
+    
+    return missing;
   }
 
   /**
@@ -381,6 +557,38 @@ export class SymbolTableBuilder {
     });
   }
 
+  /**
+   * Define a parameter symbol in the current function scope
+   */
+  defineParameter(param: ast.ParameterNode) {
+    if (this.root === undefined) {
+      throw new Error("No root scope. Cannot define parameter.");
+    }
+
+    if (this.active === undefined) {
+      throw new Error("No active scope. Cannot define parameter.");
+    }
+
+    const name = param.name.id ?? (param.name as any).name;
+    const modifiers = param.modifiers || [];
+    const modifierNames = new Set<string>(getModifierNames(modifiers));
+    const visibility = getVisibility(modifiers);
+    
+    this.active.table.set(name, {
+      name: param.name,
+      nodeType: "parameter", // Special nodeType for parameters
+      scope: this.active,
+      value: param,
+      mutability: modifierNames.has("mut") || modifierNames.has("ref") || modifierNames.has("out"),
+      exportName: undefined,
+      visibility,
+      modifiers: modifierNames,
+      get isOperator() { return false; }, // Parameters can't be operators
+      get isComptime() { return modifierNames.has("comptime"); },
+      // inferredType will be populated during type inference phase
+    });
+  }
+
   resolveSymbol(name: ast.IdentifierNode | ast.TypeNameNode): SymbolEntry | undefined {
     if (this.root === undefined) {
       throw new Error("No root scope. Cannot resolve symbol.");
@@ -408,5 +616,12 @@ export class SymbolTableBuilder {
    */
   getRoot(): Scope | undefined {
     return this.root;
+  }
+
+  /**
+   * Get the current active scope
+   */
+  getActive(): Scope | undefined {
+    return this.active;
   }
 }

@@ -107,15 +107,31 @@ class ResolvePassVisitor extends BaseAstTreeWalker {
   }
 
   visitVariable(node: ast.VariableNode) {
-    // Variable already defined in ScanPass, now resolve its value
-    if (node.value) {
-      super.visit(node.value);
+    // Check if this variable is at the top-level program scope
+    if (this.symbolTableBuilder.getActive()?.node?._type === "program") {
+      // Variable already defined in ScanPass for top-level variables, now resolve its value
+      if (node.value) {
+        super.visit(node.value);
+      }
+    } else {
+      // This is a local variable inside a function/class/etc - define it now
+      this.symbolTableBuilder.defineSymbol(node);
+      if (node.value) {
+        super.visit(node.value);
+      }
     }
   }
 
   visitFunction(node: ast.FunctionNode) {
     // Function already defined in ScanPass, now enter its scope and resolve body
     this.symbolTableBuilder.enterScope(node);
+    
+    // Define parameters as symbols in function scope
+    node.params.forEach(param => {
+      this.symbolTableBuilder.defineParameter(param);
+    });
+    
+    // Visit parameters and body for any nested symbol resolution
     [...node.params, ...node.body].map(x => this.visitIfNotNull(x));
     this.symbolTableBuilder.exitScope();
   }

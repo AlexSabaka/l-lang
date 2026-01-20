@@ -63,5 +63,7 @@ export function getCompilerOptions(
     includeRuntimeShim: opts.runtimeShim !== undefined ? !!opts.runtimeShim : true, // default to true
     stdout: !!opts.stdout,
     perf: !!opts.perf,
+    strictPhases: !!opts.strictPhases,
+    validateMetadata: !!opts.validateMetadata,
   };
 }

@@ -52,6 +52,8 @@ export interface CompilerOptions {
   language: CompilationLanguage;
   noIIFE?: boolean; // For REPL and other use cases
   perf?: boolean; // Performance tracking flag
+  strictPhases?: boolean; // Enforce strict separation between compilation phases
+  validateMetadata?: boolean; // Validate completeness of type metadata before codegen
 }
 
 export function logCompilationMessages(context: Context) {
@@ -285,6 +287,28 @@ export class Context {
     if (this.results.hasErrors) {
       logCompilationMessages(this);
       return { ast: ast as ASTNode };
+    }
+
+    // METADATA VALIDATION (if enabled)
+    if (this.options.validateMetadata) {
+      this.performanceMetrics.startTimer("validate-metadata");
+      const missingMetadata = moduleSymbols.validateCodegenMetadata();
+      
+      if (missingMetadata.length > 0) {
+        this.log(LogLevel.Error, `Missing codegen metadata for symbols: ${missingMetadata.join(', ')}`);
+        if (this.options.strictPhases) {
+          throw new Error(`Codegen metadata validation failed. Missing metadata for ${missingMetadata.length} symbols.`);
+        } else {
+          this.log(LogLevel.Warning, `Codegen will attempt to proceed without complete metadata (non-strict mode)`);
+        }
+      } else {
+        this.log(LogLevel.Debug, `Codegen metadata validation passed for ${moduleSymbols.size} symbols`);
+      }
+      
+      this.performanceMetrics.endTimer("validate-metadata", 0, 0, {
+        symbolsValidated: moduleSymbols.size,
+        missingMetadata: missingMetadata.length
+      });
     }
 
     this.cacheModule(fullPath, ast as ASTNode, moduleSymbols);

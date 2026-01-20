@@ -16,6 +16,139 @@ const { stdout } = process;
 function serializeSymbolTable(scope: Scope | undefined): any {
   if (!scope) return null;
 
+  // Track visited objects to prevent circular references
+  const visited = new WeakSet();
+  
+  const serializeInferredType = (type: any): any => {
+    if (!type) return null;
+    
+    // Handle circular references
+    if (typeof type === 'object' && visited.has(type)) {
+      return { kind: 'circular-reference', name: type.name || 'unknown' };
+    }
+    
+    if (typeof type === 'object') {
+      visited.add(type);
+    }
+    
+    const serialized: any = {};
+    
+    // Copy basic properties while excluding problematic ones
+    for (const [key, value] of Object.entries(type)) {
+      // Skip problematic properties that cause circular references
+      if (key === '_parent' || key === '_location' || key === 'parent' || key === 'node') {
+        continue;
+      }
+      
+      // Handle special properties
+      if (key === 'name' && typeof value === 'object' && value !== null) {
+        // Extract name from identifier objects
+        serialized[key] = (value as any).name || (value as any).id || String(value);
+        continue;
+      }
+      
+      serialized[key] = value;
+    }
+    
+    // Convert Map objects to plain objects
+    if (type.methodSignatures && type.methodSignatures instanceof Map) {
+      serialized.methodSignatures = {};
+      for (const [key, value] of type.methodSignatures) {
+        serialized.methodSignatures[key] = serializeInferredType(value);
+      }
+    }
+    
+    // Convert Set objects in detailed members
+    if (type.detailedMembers) {
+      serialized.detailedMembers = type.detailedMembers.map((member: any) => {
+        const serializedMember = serializeInferredType(member);
+        if (serializedMember.modifiers instanceof Set) {
+          serializedMember.modifiers = Array.from(serializedMember.modifiers);
+        }
+        return serializedMember;
+      });
+    }
+    
+    // Convert interface implementation Map objects
+    if (type.implementedInterfaces) {
+      serialized.implementedInterfaces = type.implementedInterfaces.map((iface: any) => {
+        const serializedIface = serializeInferredType(iface);
+        if (serializedIface.methodMappings instanceof Map) {
+          serializedIface.methodMappings = Object.fromEntries(serializedIface.methodMappings);
+        }
+        return serializedIface;
+      });
+    }
+    
+    // Handle codegen metadata
+    if (type.codegenMetadata) {
+      const metadata = serializeInferredType(type.codegenMetadata);
+      
+      // Convert methodSignatures Map in codegen metadata
+      if (type.codegenMetadata.methodSignatures instanceof Map) {
+        metadata.methodSignatures = {};
+        for (const [key, value] of type.codegenMetadata.methodSignatures) {
+          metadata.methodSignatures[key] = serializeInferredType(value);
+        }
+      }
+      
+      serialized.codegenMetadata = metadata;
+    }
+    
+    // Recursively serialize nested types
+    if (type.generics && Array.isArray(type.generics)) {
+      serialized.generics = type.generics.map(serializeInferredType);
+    }
+    if (type.params && Array.isArray(type.params)) {
+      serialized.params = type.params.map(serializeInferredType);
+    }
+    if (type.returns) {
+      serialized.returns = serializeInferredType(type.returns);
+    }
+    if (type.alternatives && Array.isArray(type.alternatives)) {
+      serialized.alternatives = type.alternatives.map(serializeInferredType);
+    }
+    if (type.keyType) {
+      serialized.keyType = serializeInferredType(type.keyType);
+    }
+    if (type.valueType) {
+      serialized.valueType = serializeInferredType(type.valueType);
+    }
+    if (type.inner) {
+      serialized.inner = serializeInferredType(type.inner);
+    }
+    if (type.aliasedType) {
+      serialized.aliasedType = serializeInferredType(type.aliasedType);
+    }
+    
+    // Handle members array
+    if (type.members && Array.isArray(type.members)) {
+      serialized.members = type.members.map((member: any) => {
+        const serializedMember = serializeInferredType(member);
+        if (member.type) {
+          serializedMember.type = serializeInferredType(member.type);
+        }
+        return serializedMember;
+      });
+    }
+    
+    // Handle constructor info
+    if (type.ctorInfo && type.ctorInfo.params) {
+      serialized.ctorInfo = {
+        requiredCount: type.ctorInfo.requiredCount,
+        params: type.ctorInfo.params.map((param: any) => {
+          const serializedParam = serializeInferredType(param);
+          if (param.type) {
+            serializedParam.type = serializeInferredType(param.type);
+          }
+          return serializedParam;
+        })
+      };
+    }
+    
+    return serialized;
+  };
+
   const serializeScope = (s: Scope): any => {
     const entries: any = {};
     for (const [key, entry] of s.table.entries()) {
@@ -26,8 +159,8 @@ function serializeSymbolTable(scope: Scope | undefined): any {
         visibility: entry.visibility,
         // Convert Set to Array for JSON serialization
         modifiers: Array.from(entry.modifiers || []),
-        // Include inferred type if available
-        ...(entry.inferredType && { inferredType: entry.inferredType }),
+        // Include inferred type if available with proper serialization
+        ...(entry.inferredType && { inferredType: serializeInferredType(entry.inferredType) }),
       };
     }
     return {
@@ -106,7 +239,13 @@ export function transform(file: string, command: Command) {
       }
     }
 
-    const output = JSON.stringify(outputData, null, 2);
+    const output = JSON.stringify(outputData, (k, v) => {
+      // Filter out circular reference properties
+      if (k === "_location" || k === "_parent" || k === "parent" || k === "node") {
+        return undefined;
+      }
+      return v;
+    }, 2);
 
     if (options.stdout) {
       context.log(LogLevel.Info, chalk.strikethrough.dim(" ".repeat(stdout.columns)));

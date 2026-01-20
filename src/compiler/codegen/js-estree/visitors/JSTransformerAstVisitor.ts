@@ -197,28 +197,84 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     // This will be populated as classes, functions, and variables are visited
   }
 
-  private collectMetadataFromSymbolTable(): void {
-    // Collect type metadata for all visited classes and functions
-    for (const className of this.classes) {
-      const entry = this.context.symbolTable.resolveSymbol(className);
-      if (entry && entry.inferredType) {
-        const classNode = entry.value as ast.ClassNode;
-        const metadata = this.serializeTypeMetadata(className, entry, classNode);
-        if (metadata) {
-          this.typesMetadata[className] = metadata;
-        }
+  private populateTypesMetadata(): void {
+    // Populate types metadata from pre-computed symbol table metadata
+    const classMetadata = this.context.symbolTable.getAllClassMetadata();
+    const functionMetadata = this.context.symbolTable.getAllFunctionMetadata();
+    
+    for (const [name, metadata] of classMetadata.entries()) {
+      this.typesMetadata[name] = this.convertCodegenMetadataToRuntimeFormat(metadata);
+    }
+    
+    for (const [name, metadata] of functionMetadata.entries()) {
+      this.typesMetadata[name] = this.convertCodegenMetadataToRuntimeFormat(metadata);
+    }
+    
+    this.context.log(LogLevel.Debug, `Loaded ${Object.keys(this.typesMetadata).length} pre-computed type entries`);
+  }
+  
+  private convertCodegenMetadataToRuntimeFormat(metadata: any): Record<string, any> {
+    const result: any = {
+      name: metadata.typeName,
+      kind: metadata.kind,
+    };
+    
+    if (metadata.kind === 'class' || metadata.kind === 'struct') {
+      result.properties = metadata.detailedMembers?.filter((m: any) => !m.isOperator).map((m: any) => ({
+        name: m.name,
+        type: m.type.name || 'Any',
+        isPublic: m.visibility === 'public',
+        isPrivate: m.visibility === 'private',
+        isStatic: m.isStatic || false
+      })) || [];
+      
+      result.methods = Array.from(metadata.methodSignatures?.values() || []).map((method: any) => ({
+        name: method.name,
+        params: method.parameters.map((p: any) => ({
+          name: p.name,
+          type: p.type.name || 'Any'
+        })),
+        returns: method.returnType.name || 'Any'
+      }));
+      
+      if (metadata.constructorSignature) {
+        result.constructor = {
+          params: metadata.constructorSignature.parameters.map((p: any) => ({
+            name: p.name,
+            type: p.type.name || 'Any',
+            hasDefault: p.hasDefault
+          })),
+          requiredCount: metadata.constructorSignature.requiredCount
+        };
+      }
+      
+      if (metadata.parentClass) {
+        result.extends = metadata.parentClass;
+      }
+      
+      if (metadata.implementedInterfaces?.length > 0) {
+        result.implements = metadata.implementedInterfaces.map((iface: any) => iface.interfaceName);
+      }
+      
+      if (metadata.typeParameters?.length > 0) {
+        result.generics = metadata.typeParameters.map((tp: any) => tp.name);
       }
     }
-
-    for (const funcName of this.functions) {
-      const entry = this.context.symbolTable.resolveSymbol(funcName);
-      if (entry && entry.inferredType) {
-        const metadata = this.serializeTypeMetadata(funcName, entry, entry.value);
-        if (metadata) {
-          this.typesMetadata[funcName] = metadata;
-        }
+    
+    if (metadata.kind === 'function') {
+      const methodSig = Array.from(metadata.methodSignatures?.values() || [])[0] as any;
+      if (methodSig && methodSig.parameters && methodSig.returnType) {
+        result.paramsList = methodSig.parameters.map((p: any) => ({
+          name: p.name,
+          type: p.type.name || 'Any'
+        }));
+        result.returns = methodSig.returnType.name || 'Any';
       }
     }
+    
+    result.nullable = false;
+    
+    return result;
   }
   
   private getTypeName(t: any): string {
@@ -247,205 +303,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
      return 'Any';
   }
 
-  private serializeTypeMetadata(name: any, entry: SymbolEntry, astNode?: ast.ASTNode): Record<string, any> | null {
-    const typeName = typeof name === 'string' ? name : (name as any).id || (name as any).name || String(name);
-    const inferredType = entry.inferredType;
 
-    if (!inferredType) {
-      return null;
-    }
-
-    const metadata: any = {
-      name: typeName,
-      kind: inferredType.kind,
-    };
-
-
-    // Add type-specific metadata
-    if (inferredType.kind === 'class' || inferredType.kind === 'struct') {
-      // Extract properties and methods from the class body if available
-      const classNode = astNode as ast.ClassNode;
-
-      // Add inheritance metadata
-      if (classNode && classNode.extends && classNode.extends.length > 0) {
-        const parentRef = classNode.extends[0];
-        if (parentRef && parentRef.type) {
-             metadata.extends = parentRef.type.name;
-        }
-      }
-
-      if (classNode && classNode.body) {
-        const properties: any[] = [];
-        // Change methods from string[] to object[] for detailed info
-        const methods: any[] = [];
-
-        this.context.log(LogLevel.Debug, `Extracting metadata for class ${typeName}: body has ${classNode.body.length} items`);
-
-        for (const item of classNode.body) {
-          // Check if it's a variable (property)
-          if (item._type === 'variable' || (item._type === 'list' && item.nodes?.[0]?._type === 'variable')) {
-            const varNode = item._type === 'variable' ? item : (item.nodes?.[0] as ast.VariableNode);
-            if (varNode && varNode._type === 'variable') {
-              const propName = typeof varNode.name === 'string' ? varNode.name : (varNode.name as any).id || (varNode.name as any).name;
-              
-              // Extract modifiers
-              let isPublic = true; // Default public in l-lang? Or private? 
-              // According to docs: (let :private age 0)
-              let isPrivate = false;
-              let isStatic = false;
-
-              if (varNode.modifiers) {
-                  const mods = varNode.modifiers.map((m: any) => m.modifier);
-                  if (mods.includes(':private')) { isPrivate = true; isPublic = false; }
-                  if (mods.includes(':public')) { isPublic = true; isPrivate = false; }
-                  if (mods.includes(':static')) isStatic = true;
-                  // Handle constructor explicit modifiers if present on fields
-                  if (mods.includes(':ctor')) { /* standard ctor field */ }
-              }
-
-              // Extract type
-              const typeName = this.getTypeName(varNode.type);
-
-              properties.push({
-                name: propName,
-                type: typeName,
-                isPublic,
-                isPrivate,
-                isStatic
-              });
-            }
-          }
-          // Check if it's a function (method)
-          else if (item._type === 'function') {
-            const funcNode = item as ast.FunctionNode;
-            const methodName = typeof funcNode.name === 'string' ? funcNode.name : (funcNode.name as any)?.id || (funcNode.name as any)?.name;
-            if (methodName) {
-              const params = funcNode.params.map(p => ({
-                 name: (p.name as any).id || (p.name as any).name || 'unknown',
-                 type: this.getTypeName(p.type)
-              }));
-              const returns = this.getTypeName(funcNode.returns);
-              
-              methods.push({
-                  name: methodName,
-                  params,
-                  returns
-              });
-            }
-          }
-          // Check if it's a list containing a function (e.g., wrapped function)
-          else if (item._type === 'list' && item.nodes && item.nodes.length > 0) {
-            const firstNode = item.nodes[0];
-            // If the first node is a function, extract the method name
-            if (firstNode._type === 'function') {
-              const funcNode = firstNode as ast.FunctionNode;
-              const methodName = typeof funcNode.name === 'string' ? funcNode.name : (funcNode.name as any)?.id || (funcNode.name as any)?.name;
-              if (methodName) {
-                  const params = funcNode.params.map(p => ({
-                     name: (p.name as any).id || (p.name as any).name || 'unknown',
-                     type: this.getTypeName(p.type)
-                  }));
-                  const returns = this.getTypeName(funcNode.returns);
-                  
-                  methods.push({
-                      name: methodName,
-                      params,
-                      returns
-                  });
-              }
-            }
-          }
-        }
-
-        metadata.properties = properties;
-        metadata.methods = methods;
-      } else {
-        metadata.properties = (inferredType.members || []).map(m => ({
-          name: m.name,
-          type: m.type.name,
-          isPublic: m.isPublic,
-          isPrivate: m.isPrivate,
-        }));
-        metadata.methods = [];
-      }
-
-      if (inferredType.ctorInfo) {
-        metadata.constructor = {
-          params: inferredType.ctorInfo.params.map(p => ({
-            name: p.name,
-            type: p.type.name,
-            hasDefault: p.hasDefault,
-          })),
-          requiredCount: inferredType.ctorInfo.requiredCount,
-        };
-      }
-    }
-
-    if (inferredType.kind === 'function') {
-      if (astNode && astNode._type === 'function') {
-          const funcNode = astNode as ast.FunctionNode;
-          
-          metadata.paramsList = funcNode.params.map(p => {
-             const n = p.name as any;
-             const rawName = n.id || n.name;
-             const finalName = typeof rawName === 'string' ? rawName : 'unknown';
-             
-             return { 
-               name: finalName,
-               type: this.getTypeName(p.type)
-             };
-          });
-      } else {
-          metadata.paramsList = (inferredType.params || []).map(p => ({ name: p.name }));
-      }
-      metadata.returns = inferredType.returns?.name || 'Any';
-    }
-
-    if (inferredType.kind === 'array') {
-      metadata.elementType = inferredType.inner?.name || 'Any';
-    }
-
-    if (inferredType.kind === 'map') {
-      metadata.keyType = inferredType.keyType?.name || 'String';
-      metadata.valueType = inferredType.valueType?.name || 'Any';
-    }
-
-    if (inferredType.kind === 'union') {
-      metadata.alternatives = (inferredType.alternatives || []).map(a => a.name);
-    }
-
-    // Handle generics (only add if non-empty)
-    if (inferredType.generics && inferredType.generics.length > 0) {
-      metadata.generics = inferredType.generics.map(g => {
-        // Generic can be either a string or an object with name property
-        if (typeof g === 'string') return g;
-        return g.name || 'T';
-      }).filter(Boolean);
-    } else if (astNode && (astNode as ast.ClassNode).generics && (astNode as ast.ClassNode).generics.length > 0) {
-      // Fallback to AST node if inferredType doesn't have generics
-      const classNode = astNode as ast.ClassNode;
-      metadata.generics = classNode.generics.map(g => g.name.name).filter(Boolean);
-    }
-    // Don't add empty generics array - only add if present
-
-    // Handle interfaces implementation (only for classes)
-    if (astNode && (astNode as ast.ClassNode).implements) {
-      const classNode = astNode as ast.ClassNode;
-      if (classNode.implements && classNode.implements.length > 0) {
-        metadata.implements = classNode.implements.map(impl => {
-          // Extract interface name from ImplementsNode
-          if (impl.type && impl.type.name) {
-            return impl.type.name;
-          }
-          return null;
-        }).filter(Boolean);
-      }
-    }
-
-    metadata.nullable = inferredType.nullable ?? false;
-
-    return metadata;
-  }
 
   // =========================================================================
   // Scope Helpers
@@ -490,10 +348,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     this.rootSource = root && root._location && root._location.source ? root._location.source : 'bundle.lisp';
     const program = this.visit(root) as ESTree.Program;
 
-    // Collect types metadata from visited classes and functions
-    this.collectMetadataFromSymbolTable();
+    // Load pre-computed types metadata from symbol table
+    this.populateTypesMetadata();
 
-    this.context.log(LogLevel.Debug, `Passing ${Object.keys(this.typesMetadata).length} type entries to runtime shim`);
+    this.context.log(LogLevel.Debug, `Loaded ${Object.keys(this.typesMetadata).length} pre-computed type entries`);
 
     // Generate runtime shim if needed (we'll prepend it as string later)
     const includeShim = this.context.options.includeRuntimeShim;
@@ -2126,6 +1984,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           loc: ESTreeBuilder.loc(node),
         } as ESTree.NewExpression;
       }
+
+      console.log(
+        (head as ast.CompositeIdentifierNode)?.parts?.at(0),
+        this.context.symbolTable.resolveSymbol((head as ast.CompositeIdentifierNode)?.parts?.at(0) ?? "")?.inferredType
+      )
 
       let memberName = calleeStr;
       if (head._type === "composite-identifier") {

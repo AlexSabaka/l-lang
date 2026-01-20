@@ -23,6 +23,8 @@ program
   .option("--runtime-shim", "include runtime shim in compiled output")
   .option("--stage <stage>", "compilation stage to stop at (parse, syntax, symbols, desugar, types, codegen)")
   .option("--perf", "enable performance metrics and reporting")
+  .option("--strict-phases", "enforce strict separation between compilation phases")
+  .option("--validate-metadata", "validate completeness of type metadata before codegen")
   .version(COMPILER_VERSION);
 
 program

@@ -2,7 +2,16 @@ import * as ast from "../../frontend/ast";
 import { Context, LogLevel } from "../../Context";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { TypeEnvironment } from "../TypeEnvironment";
-import { InferredType } from "../../analysis/SymbolTable";
+import { 
+  InferredType, 
+  DetailedMember, 
+  MethodSignature, 
+  ParameterInfo, 
+  OperatorOverload, 
+  InterfaceImplementation, 
+  TypeParameter, 
+  CodegenMetadata 
+} from "../../analysis/SymbolTable";
 import { TypeChecker } from "../TypeChecker";
 import { SymbolTable } from "../../analysis";
 
@@ -124,8 +133,36 @@ class CollectTypesPass extends BaseAstTreeWalker {
       ? this.convertAstTypeToInferred(node.returns)
       : TypeEnvironment.primitive("Void");
 
+    // Build method signature for complete metadata
+    const methodSignature = this.buildMethodSignature(node);
+    
+    // Build complete codegen metadata for function
+    const codegenMetadata: CodegenMetadata = {
+      typeName: funcName,
+      kind: 'function',
+      methodSignatures: new Map([[funcName, methodSignature]]),
+      operatorOverloads: methodSignature.isOperatorOverload && methodSignature.operatorSymbol && methodSignature.arity !== undefined ? 
+        [{
+          symbol: methodSignature.operatorSymbol,
+          arity: methodSignature.arity,
+          parameterTypes: methodSignature.parameters.map(p => p.type),
+          returnType: methodSignature.returnType,
+          methodName: methodSignature.name
+        }] : [],
+      requiresRuntimeMetadata: methodSignature.isOperatorOverload
+    };
+
     const funcType = TypeEnvironment.function(paramTypes, returnType);
-    this.typeEnv.bindIdentifier(funcName, funcType, node);
+    // Enhance function type with metadata
+    const enhancedFuncType: InferredType = {
+      ...funcType,
+      methodSignatures: new Map([[funcName, methodSignature]]),
+      operatorOverloads: codegenMetadata.operatorOverloads,
+      requiresRuntimeMetadata: codegenMetadata.requiresRuntimeMetadata,
+      codegenMetadata
+    };
+    
+    this.typeEnv.bindIdentifier(funcName, enhancedFuncType, node);
     
     this.context.log(LogLevel.Debug, `Collected function signature '${funcName}': ${TypeChecker.formatType(funcType)}`);
   }
@@ -133,65 +170,162 @@ class CollectTypesPass extends BaseAstTreeWalker {
   visitClass(node: ast.ClassNode) {
     const className = node.name.name;
     const members: any[] = [];
+    const detailedMembers: DetailedMember[] = [];
+    const methodSignatures = new Map<string, MethodSignature>();
+    const operatorOverloads: OperatorOverload[] = [];
     const ctorParams: any[] = [];
     let requiredCount = 0;
 
     if (node.body) {
-        for (const item of node.body) {
-             let target = item;
-             if (item._type === 'list' && item.nodes && item.nodes.length > 0) {
-                 target = item.nodes[0];
-             }
-             
-             if (target._type === 'variable') {
-                 const varNode = target as ast.VariableNode;
-                 const memberType = varNode.type ? this.convertAstTypeToInferred(varNode.type) : TypeEnvironment.unknown();
-                 
-                 const isCtor = (varNode.modifiers ?? []).some((m: any) => m.modifier === ':ctor' || m.modifier === 'ctor');
-                 const isPrivate = (varNode.modifiers ?? []).some((m: any) => m.modifier === ':private' || m.modifier === 'private');
-                 
-                 const name = typeof varNode.name === 'string' ? varNode.name : (varNode.name as any).id || (varNode.name as any).name;
-
-                 members.push({
-                     name: name,
-                     type: memberType,
-                     isCtor: isCtor,
-                     isPublic: !isPrivate, 
-                     isPrivate: isPrivate 
-                 });
-                 
-                 if (isCtor) {
-                     const hasDefault = (varNode as any).value !== undefined; 
-                     ctorParams.push({
-                        name: name,
-                        type: memberType,
-                        hasDefault
-                     });
-                     if (!hasDefault) requiredCount++;
-                 }
-             } else if (target._type === 'function') {
-                 const funcNode = target as ast.FunctionNode;
-                 const paramTypes = funcNode.params.map(p => p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.unknown());
-                 const returnType = funcNode.returns ? this.convertAstTypeToInferred(funcNode.returns) : TypeEnvironment.primitive("Void");
-                 const funcType = TypeEnvironment.function(paramTypes, returnType);
-                 const name = typeof funcNode.name === 'string' ? funcNode.name : (funcNode.name as any).id || (funcNode.name as any).name;
-                 
-                 const isOperator = (funcNode.modifiers ?? []).some((m: any) => m.modifier === 'operator' || m.modifier === ':operator');
-
-                 members.push({
-                     name: name,
-                     type: funcType,
-                     isCtor: false,
-                     isPublic: true,
-                     isPrivate: false,
-                     isOperator: isOperator,
-                     operatorSymbol: isOperator ? name : undefined
-                 });
-             }
+      this.context.log(LogLevel.Debug, `Analyzing class ${className}: body has ${node.body.length} items`);
+      
+      for (let i = 0; i < node.body.length; i++) {
+        const item = node.body[i];
+        let target = item;
+        if (item._type === 'list' && item.nodes && item.nodes.length > 0) {
+          target = item.nodes[0];
         }
+        
+        // Handle variables (properties)
+        if (target._type === 'variable') {
+          const varNode = target as ast.VariableNode;
+          const memberType = varNode.type ? this.convertAstTypeToInferred(varNode.type) : TypeEnvironment.unknown();
+          
+          const isCtor = (varNode.modifiers ?? []).some((m: any) => m.modifier === ':ctor' || m.modifier === 'ctor');
+          const isPrivate = (varNode.modifiers ?? []).some((m: any) => m.modifier === ':private' || m.modifier === 'private');
+          const isOperator = (varNode.modifiers ?? []).some((m: any) => m.modifier === 'operator' || m.modifier === ':operator');
+          
+          const name = typeof varNode.name === 'string' ? varNode.name : (varNode.name as any).id || (varNode.name as any).name;
+
+          // Add to members (legacy format)
+          members.push({
+            name: name,
+            type: memberType,
+            isCtor: isCtor,
+            isPublic: !isPrivate, 
+            isPrivate: isPrivate,
+            isOperator,
+            operatorSymbol: isOperator ? name : undefined,
+            defaultValue: (varNode as any).value
+          });
+          
+          // Add to detailed members (enhanced format)
+          const detailedMember = this.buildDetailedMember(item, i);
+          if (detailedMember) {
+            detailedMembers.push(detailedMember);
+          }
+          
+          // Track constructor parameters
+          if (isCtor) {
+            const hasDefault = (varNode as any).value !== undefined; 
+            ctorParams.push({
+              name: name,
+              type: memberType,
+              hasDefault,
+              defaultValue: hasDefault ? this.extractDefaultValue(varNode) : undefined
+            });
+            if (!hasDefault) requiredCount++;
+          }
+        } 
+        
+        // Handle functions (methods)
+        else if (target._type === 'function') {
+          const funcNode = target as ast.FunctionNode;
+          const paramTypes = funcNode.params.map(p => p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.unknown());
+          const returnType = funcNode.returns ? this.convertAstTypeToInferred(funcNode.returns) : TypeEnvironment.primitive("Void");
+          const funcType = TypeEnvironment.function(paramTypes, returnType);
+          const name = typeof funcNode.name === 'string' ? funcNode.name : (funcNode.name as any).id || (funcNode.name as any).name;
+          
+          const isOperator = (funcNode.modifiers ?? []).some((m: any) => m.modifier === 'operator' || m.modifier === ':operator');
+
+          // Add to members (legacy format)
+          members.push({
+            name: name,
+            type: funcType,
+            isCtor: false,
+            isPublic: true,
+            isPrivate: false,
+            isOperator: isOperator,
+            operatorSymbol: isOperator ? name : undefined
+          });
+          
+          // Build method signature (enhanced format)
+          const methodSignature = this.buildMethodSignature(funcNode);
+          methodSignatures.set(methodSignature.name, methodSignature);
+          
+          // Track operator overloads
+          if (methodSignature.isOperatorOverload && methodSignature.operatorSymbol && methodSignature.arity !== undefined) {
+            operatorOverloads.push({
+              symbol: methodSignature.operatorSymbol,
+              arity: methodSignature.arity,
+              parameterTypes: methodSignature.parameters.map(p => p.type),
+              returnType: methodSignature.returnType,
+              methodName: methodSignature.name
+            });
+          }
+        }
+      }
     }
     
-    // Register class as a type
+    // Extract inheritance information
+    let parentClass: string | undefined;
+    if (node.extends && node.extends.length > 0) {
+      const parentRef = node.extends[0];
+      if (parentRef && parentRef.type) {
+        parentClass = parentRef.type.name;
+      }
+    }
+    
+    // Extract interface implementations
+    const implementedInterfaces: InterfaceImplementation[] = [];
+    if (node.implements && node.implements.length > 0) {
+      for (const impl of node.implements) {
+        if (impl.type && impl.type.name) {
+          implementedInterfaces.push({
+            interfaceName: impl.type.name,
+            interfaceType: { kind: 'interface', name: impl.type.name },
+            methodMappings: new Map() // TODO: Build actual mappings
+          });
+        }
+      }
+    }
+    
+    // Extract generics/type parameters
+    const typeParameters: TypeParameter[] = [];
+    if (node.generics && node.generics.length > 0) {
+      for (const generic of node.generics) {
+        typeParameters.push({
+          name: generic.name.name,
+          constraints: [], // TODO: Extract constraints
+          defaultType: undefined // TODO: Extract default types
+        });
+      }
+    }
+    
+    // Build complete codegen metadata
+    const codegenMetadata: CodegenMetadata = {
+      typeName: className,
+      kind: 'class',
+      detailedMembers,
+      methodSignatures,
+      operatorOverloads,
+      implementedInterfaces,
+      typeParameters,
+      parentClass,
+      requiresRuntimeMetadata: operatorOverloads.length > 0 || implementedInterfaces.length > 0,
+      constructorSignature: ctorParams.length > 0 ? {
+        parameters: ctorParams.map(p => ({
+          name: p.name,
+          type: p.type,
+          hasDefault: p.hasDefault,
+          defaultValue: p.defaultValue,
+          isRest: false
+        })),
+        requiredCount
+      } : undefined
+    };
+    
+    // Register class type with complete metadata
     const classType: InferredType = {
       kind: "class",
       name: className,
@@ -201,13 +335,22 @@ class CollectTypesPass extends BaseAstTreeWalker {
       })),
       members: members,
       ctorInfo: {
-          params: ctorParams,
-          requiredCount: requiredCount
-      }
+        params: ctorParams,
+        requiredCount: requiredCount
+      },
+      // Enhanced metadata
+      detailedMembers,
+      methodSignatures,
+      operatorOverloads,
+      implementedInterfaces,
+      typeParameters,
+      parentClass,
+      requiresRuntimeMetadata: codegenMetadata.requiresRuntimeMetadata,
+      codegenMetadata
     };
     
     this.typeEnv.bindIdentifier(className, classType, node);
-    this.context.log(LogLevel.Debug, `Collected class type '${className}' with ${members.length} members`);
+    this.context.log(LogLevel.Debug, `Collected class type '${className}' with ${members.length} members, ${methodSignatures.size} methods, ${operatorOverloads.length} operator overloads`);
   }
 
   visitInterface(node: ast.InterfaceNode) {
@@ -387,6 +530,180 @@ class CollectTypesPass extends BaseAstTreeWalker {
     
     extract(type);
     return Array.from(refs);
+  }
+
+  /**
+   * Build detailed member information from AST node
+   */
+  private buildDetailedMember(item: ast.ASTNode, index: number): DetailedMember | null {
+    let varNode: ast.VariableNode | undefined;
+    
+    if (item._type === 'variable') {
+      varNode = item as ast.VariableNode;
+    } else if (item._type === 'list' && item.nodes?.[0]?._type === 'variable') {
+      varNode = item.nodes[0] as ast.VariableNode;
+    }
+    
+    if (!varNode) return null;
+    
+    const propName = typeof varNode.name === 'string' ? varNode.name : 
+                    (varNode.name as any).id || (varNode.name as any).name;
+    
+    // Extract modifiers and visibility
+    const modifiers = new Set<string>();
+    let visibility: 'public' | 'private' | 'protected' | 'internal' = 'public';
+    let isConstructorParam = false;
+    let isStatic = false;
+    let isOperator = false;
+    let operatorSymbol: string | undefined;
+    let arity: number | undefined;
+    
+    if (varNode.modifiers) {
+      const mods = varNode.modifiers.map((m: any) => m.modifier || m);
+      
+      for (const mod of mods) {
+        modifiers.add(mod.replace(':', ''));
+        
+        if (mod === ':private') { visibility = 'private'; }
+        else if (mod === ':public') { visibility = 'public'; }
+        else if (mod === ':protected') { visibility = 'protected'; }
+        else if (mod === ':internal') { visibility = 'internal'; }
+        else if (mod === ':ctor') { isConstructorParam = true; }
+        else if (mod === ':static') { isStatic = true; }
+        else if (mod === ':operator') { isOperator = true; }
+      }
+    }
+    
+    // Extract operator information
+    if (isOperator && propName) {
+      // Parse operator symbol and arity from method name
+      // e.g., "_2b_1" -> symbol="+", arity=1
+      const operatorMatch = propName.match(/^_([a-z0-9]+)_([0-9]+)$/);
+      if (operatorMatch) {
+        operatorSymbol = this.decodeOperatorSymbol(operatorMatch[1]);
+        arity = parseInt(operatorMatch[2]);
+      }
+    }
+    
+    const memberType = varNode.type ? this.convertAstTypeToInferred(varNode.type) : TypeEnvironment.unknown();
+    
+    return {
+      name: propName,
+      type: memberType,
+      visibility,
+      modifiers,
+      defaultValue: (varNode as any).value ? this.extractDefaultValue(varNode) : undefined,
+      isConstructorParam,
+      parameterIndex: isConstructorParam ? index : undefined,
+      isStatic,
+      isOperator,
+      operatorSymbol,
+      arity
+    };
+  }
+  
+  /**
+   * Build method signature from function node
+   */
+  private buildMethodSignature(funcNode: ast.FunctionNode): MethodSignature {
+    const methodName = typeof funcNode.name === 'string' ? funcNode.name : 
+                      (funcNode.name as any)?.id || (funcNode.name as any)?.name || 'unknown';
+    
+    const parameters: ParameterInfo[] = funcNode.params.map(p => {
+      const paramName = (p.name as any).id || (p.name as any).name || 'unknown';
+      const paramType = p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.unknown();
+      
+      return {
+        name: paramName,
+        type: paramType,
+        hasDefault: (p as any).defaultValue !== undefined,
+        defaultValue: (p as any).defaultValue,
+        isRest: (p as any).rest || false
+      };
+    });
+    
+    const returnType = funcNode.returns ? 
+      this.convertAstTypeToInferred(funcNode.returns) : 
+      TypeEnvironment.primitive("Void");
+    
+    // Extract modifiers
+    const modifiers = new Set<string>();
+    let visibility: 'public' | 'private' | 'protected' | 'internal' = 'public';
+    let isOperatorOverload = false;
+    let operatorSymbol: string | undefined;
+    let arity: number | undefined;
+    
+    if (funcNode.modifiers) {
+      const mods = funcNode.modifiers.map((m: any) => m.modifier || m);
+      
+      for (const mod of mods) {
+        modifiers.add(mod.replace(':', ''));
+        
+        if (mod === ':private') { visibility = 'private'; }
+        else if (mod === ':public') { visibility = 'public'; }
+        else if (mod === ':protected') { visibility = 'protected'; }
+        else if (mod === ':internal') { visibility = 'internal'; }
+        else if (mod === ':operator') { isOperatorOverload = true; }
+      }
+    }
+    
+    // Extract operator information for operator overloads
+    if (isOperatorOverload) {
+      const operatorMatch = methodName.match(/^_([a-z0-9]+)_([0-9]+)$/);
+      if (operatorMatch) {
+        operatorSymbol = this.decodeOperatorSymbol(operatorMatch[1]);
+        arity = parseInt(operatorMatch[2]);
+      }
+    }
+    
+    return {
+      name: methodName,
+      parameters,
+      returnType,
+      modifiers,
+      isOperatorOverload,
+      operatorSymbol,
+      arity,
+      visibility
+    };
+  }
+  
+  /**
+   * Decode operator symbol from encoded name
+   */
+  private decodeOperatorSymbol(encoded: string): string {
+    const decodingMap: Record<string, string> = {
+      '2b': '+',
+      '2d': '-',
+      '2a': '*',
+      '2f': '/',
+      '3d': '=',
+      '21': '!',
+      '3c': '<',
+      '3e': '>',
+      '26': '&',
+      '7c': '|'
+    };
+    
+    return decodingMap[encoded] || encoded;
+  }
+  
+  /**
+   * Extract default value from variable node
+   */
+  private extractDefaultValue(varNode: ast.VariableNode): any {
+    const valueNode = (varNode as any).value;
+    if (!valueNode) return undefined;
+    
+    // Simple literal extraction
+    if (valueNode._type === 'string') return valueNode.value;
+    if (valueNode._type === 'integer-number') return valueNode.value;
+    if (valueNode._type === 'float-number') return valueNode.value;
+    if (valueNode._type === 'boolean') return valueNode.value;
+    if (valueNode._type === 'null') return null;
+    
+    // For complex expressions, store as string representation
+    return `<expression>`;
   }
 
   /**
