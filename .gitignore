@@ -134,6 +134,6 @@ dist
 
 # Misc
 .tmp/
-examples/*.js*
-examples/*/*.js*
-examples/*/*.map
+examples/**/*.js
+examples/**/*.map
+examples/**/*.json
