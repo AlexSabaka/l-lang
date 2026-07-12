@@ -102,13 +102,14 @@ interface Case {
 
 const CASES: Case[] = [
   {
-    name: "local binding is not hijacked by an imported symbol of the same name",
+    name: "a nested local is not renamed to an imported symbol's inlined name",
     why:
-      "resolveSymbol cannot see nested scopes, so codegen keeps a shadow symbol table " +
-      "(localIdentifiersStack) that registers ONLY parameters. A local `let` of the same name as " +
-      "an imported symbol is therefore rewritten to the import's inlined JS name, collapsing two " +
-      "different symbols into one. Today this dies with `Cannot access '__ll_inlined_counter_1' " +
-      "before initialization`.",
+      "resolveSymbol cannot see nested scopes, so codegen keeps a SHADOW symbol table " +
+      "(localIdentifiersStack) that registers ONLY parameters -- not a `let` in a body. Such a " +
+      "local, sharing a name with an imported symbol, is rewritten to the IMPORT's inlined JS " +
+      "name: two different symbols collapsed into one. JS block-shadowing usually hides the " +
+      "damage, which is why this survived -- so the test asserts the NAME, not just the output. " +
+      "A local must keep its own name.",
     run: () => {
       const entry = fixture(
         "shadow",
@@ -117,20 +118,43 @@ const CASES: Case[] = [
           "main.lisp":
             `(\n` +
             `  (import "lib.lisp")\n` +
-            `  (console.log counter)   ;; the IMPORTED one -> 999\n` +
-            `  (let counter 1)         ;; a LOCAL of the same name\n` +
-            `  (console.log counter)   ;; -> 1\n` +
+            `  (fn compute [] -> Int (\n` +
+            `      (let counter 1)      ;; a LOCAL, in a nested scope\n` +
+            `      (return counter)     ;; -> 1, and must NOT be the import\n` +
+            `  ))\n` +
+            `  (console.log (compute))  ;; 1\n` +
+            `  (console.log counter)    ;; the IMPORT -> 999\n` +
             `)\n`,
         },
         "main.lisp"
       );
       const out = build(entry);
-      const ok = out.compiled && !out.runtimeError && out.stdout === "999\n1";
+
+      if (!out.compiled || out.runtimeError) {
+        return {
+          ok: false,
+          detail: out.runtimeError ? `runtime: ${out.runtimeError}` : "did not compile",
+        };
+      }
+
+      if (out.stdout !== "1\n999") {
+        return { ok: false, detail: `expected "1\\n999", got ${JSON.stringify(out.stdout)}` };
+      }
+
+      // The real assertion: the LOCAL must keep its own name. Output alone does not catch this --
+      // JS block-shadowing rescues the semantics even when the two symbols are conflated into one
+      // name, which is exactly why the bug survived so long.
+      const code = out.code ?? "";
+      const localKeepsItsName = /\bconst counter = 1\b/.test(code);
+      const importIsInlined = /__ll_inlined_counter\w* = 999/.test(code);
+
       return {
-        ok,
-        detail: out.runtimeError
-          ? `runtime: ${out.runtimeError}`
-          : `expected "999\\n1", got ${JSON.stringify(out.stdout ?? "<did not compile>")}`,
+        ok: localKeepsItsName && importIsInlined,
+        detail: !localKeepsItsName
+          ? "the local `counter` did not keep its name -- it was emitted as the import's inlined name"
+          : !importIsInlined
+            ? "the imported `counter` was not inlined"
+            : "local keeps its own name; the import is inlined separately",
       };
     },
   },

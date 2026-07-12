@@ -230,6 +230,9 @@ export class SymbolTable {
   private scopes: Scope[] = [];
   private symbolCache: Map<string, SymbolEntry> = new Map();
   private cacheValid: boolean = true;
+  /** node -> the scope that node OWNS. Built lazily from the scope tree; see scopeOf(). */
+  private nodeScopeIndex: Map<ast.ASTNode, Scope> = new Map();
+  private indexValid: boolean = false;
 
   constructor(root: Scope | undefined) {
     if (root) {
@@ -326,9 +329,68 @@ export class SymbolTable {
   /**
    * Resolve a symbol by identifier or string name
    */
-  resolveSymbol(name: ast.IdentifierNode | ast.TypeNameNode | string): SymbolEntry | undefined {
+  /**
+   * Which scope does this AST node sit in?
+   *
+   * The scope TREE has always existed -- `Scope` has `parent` and `scopes`, and
+   * SymbolTableBuilder genuinely builds it. What was missing is any way to get INTO it: `scopes`
+   * is a flat list of module ROOTS, and every resolution path walked UPWARD from a root (whose
+   * parent is undefined), never reading `scope.scopes`. So a parameter or a local `let` was
+   * written into a child scope and was then unfindable, and codegen had to keep a shadow symbol
+   * table (localIdentifiersStack) to compensate.
+   *
+   * Walking the node's `_parent` chain works even though the symbol table is built on the
+   * PRE-desugar AST while codegen sees the POST-desugar one: BaseAstTreeWalker copies
+   * `_parent: node._parent`, i.e. the ORIGINAL parent object, so one step up from a desugared node
+   * lands back in the pre-desugar tree -- which is the tree that was indexed.
+   */
+  scopeOf(node: ast.ASTNode | undefined): Scope | undefined {
+    if (!node) return undefined;
+    if (!this.indexValid) this.rebuildScopeIndex();
+
+    let current: ast.ASTNode | undefined = node;
+    while (current) {
+      const scope = this.nodeScopeIndex.get(current);
+      if (scope) return scope;
+      current = current._parent;
+    }
+    return undefined;
+  }
+
+  private rebuildScopeIndex(): void {
+    this.nodeScopeIndex = new Map();
+    const walk = (scope: Scope): void => {
+      this.nodeScopeIndex.set(scope.node, scope);
+      scope.scopes.forEach(walk);
+    };
+    this.scopes.forEach(walk);
+    this.indexValid = true;
+  }
+
+  /**
+   * Resolve `name` as seen FROM `from` -- i.e. lexically.
+   *
+   * With `from`, this walks the real scope chain outward from the node's own scope, so a parameter
+   * or a local `let` shadows a module-level or imported symbol of the same name, as it must.
+   * Without it, the old behaviour is preserved: a flat search of the module-root tables. Callers
+   * migrate one at a time rather than in one risky sweep.
+   */
+  resolveSymbol(
+    name: ast.IdentifierNode | ast.TypeNameNode | string,
+    from?: ast.ASTNode
+  ): SymbolEntry | undefined {
     const symbolName = typeof name === "string" ? name : ast.symbolName(name);
-    
+
+    if (from) {
+      const scope = this.scopeOf(from);
+      for (let current = scope; current !== undefined; current = current.parent) {
+        const found = current.table.get(symbolName);
+        if (found) return found;
+      }
+      // Not in the lexical chain. Fall through to the root union below -- that is where symbols
+      // from OTHER modules live, and they are legitimately visible here.
+    }
+
     // Check cache first for O(1) lookup
     if (this.cacheValid && this.symbolCache.has(symbolName)) {
       return this.symbolCache.get(symbolName);
@@ -370,6 +432,7 @@ export class SymbolTable {
     this.scopes = [...this.scopes, ...other.scopes];
     // Invalidate cache after joining symbol tables
     this.cacheValid = false;
+    this.indexValid = false;
     this.symbolCache.clear();
     return this;
   }
@@ -402,6 +465,7 @@ export class SymbolTable {
 
     // Invalidate cache after joining
     this.cacheValid = false;
+    this.indexValid = false;
     this.symbolCache.clear();
     return addedCount;
   }

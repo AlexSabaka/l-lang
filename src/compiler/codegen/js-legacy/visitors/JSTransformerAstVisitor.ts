@@ -52,7 +52,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   public variables: string[] = [];
 
   private enumKeys: Record<string, string> = {};
-  private identifiersCache: Record<string, string> = {};
   private inlineStandardSymbols: string[] = [];
   // Symbols that were inlined from imported modules
   private inlinedSymbols: Record<string, string> = {};
@@ -525,27 +524,28 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // =========================================================================
 
   visitIdentifier(node: ast.IdentifierNode) {
-    // If we've already mapped this identifier to a string, use it
-    if (this.identifiersCache[node.id]) return createSourceNode(node, this.identifiersCache[node.id]);
-
-    // Resolve symbol in the symbol table (if available) to check whether
-    // it originates from another module. If so, inline its definition
-    // into this module under a unique name.
+    // Resolve LEXICALLY -- as seen from this node. The flat `identifiersCache` that used to sit
+    // here was a scopeless, never-cleared name -> jsname map: the FIRST resolution of a name won
+    // forever, so a local sharing a name with an imported symbol was rewritten to the import's
+    // inlined name. This backend never even had the `localIdentifiersStack` workaround the estree
+    // one carried. See the estree backend's visitIdentifier for the full story.
     try {
-      const resolved = this.context?.symbolTable?.resolveSymbol?.(node as any);
-      // debug: log resolution
-      // console.log('visitIdentifier resolve', node.id, resolved ? (resolved.value && (resolved.value as any)._location && (resolved.value as any)._location.source) : undefined);
-      if (resolved && resolved.value && resolved.value._location && this.rootSource && resolved.value._location.source !== this.rootSource) {
-        const uniq = this.ensureSymbolInlined(resolved);
-        this.identifiersCache[node.id] = uniq;
-        return createSourceNode(node, uniq);
+      const resolved = this.context?.symbolTable?.resolveSymbol?.(node as any, node);
+      // Module-level symbol of another file -- see the estree backend's isImportedSymbol.
+      const isImport =
+        resolved?.value?._location &&
+        this.rootSource &&
+        resolved.value._location.source !== this.rootSource &&
+        resolved.scope !== undefined &&
+        resolved.scope.parent === undefined;
+      if (isImport) {
+        return createSourceNode(node, this.ensureSymbolInlined(resolved));
       }
     } catch (e) {
       // If anything goes wrong resolving, fall back to normal encoding
     }
 
     const id = encodeIdentifier(node.id);
-    this.identifiersCache[node.id] = id;
     if (RuntimeProvider.isRuntimeReference(node.id)) {
       if (node._type === "composite-identifier") {
         let aggregate = node.parts[0];

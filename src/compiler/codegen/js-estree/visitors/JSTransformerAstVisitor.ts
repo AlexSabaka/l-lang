@@ -245,8 +245,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   public variables: string[] = [];
 
   private enumKeys: Record<string, string> = {};
-  private identifiersCache: Record<string, string> = {};
-  private localIdentifiersStack: Set<string>[] = [];  // Stack of local variable names per scope
   private inlineStandardSymbols: string[] = [];
   private inlinedSymbols: Record<string, string> = {};
   private inlinedDefinitions: Record<string, ESTree.Statement> = {};
@@ -266,44 +264,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   // =========================================================================
-  // Local Identifier Scope Management
-  // =========================================================================
-
-  /**
-   * Push a new local scope for tracking local variable/parameter names.
-   * Local names shadow the global identifiersCache.
-   */
-  private pushLocalScope(): void {
-    this.localIdentifiersStack.push(new Set());
-  }
-
-  /**
-   * Pop the current local scope.
-   */
-  private popLocalScope(): void {
-    this.localIdentifiersStack.pop();
-  }
-
-  /**
-   * Register a name as local in the current scope.
-   */
-  private registerLocalName(name: string): void {
-    if (this.localIdentifiersStack.length > 0) {
-      this.localIdentifiersStack[this.localIdentifiersStack.length - 1].add(name);
-    }
-  }
-
-  /**
-   * Check if a name is local in any active scope.
-   */
-  private isLocalName(name: string): boolean {
-    for (let i = this.localIdentifiersStack.length - 1; i >= 0; i--) {
-      if (this.localIdentifiersStack[i].has(name)) {
-        return true;
-      }
-    }
-    return false;
-  }
 
   // =========================================================================
   // Types Metadata Collection
@@ -809,18 +769,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       : ScopeType.function;
 
     return this.runInScope(nextScope, () => {
-      // Push a local scope for parameters and local variables
-      this.pushLocalScope();
-
-      // Register parameter names as local BEFORE processing - this prevents
-      // them from being resolved to inlined symbols from imports
-      for (const param of node.params) {
-        const paramName = (param.name as any)?.id ?? (param.name as any)?.name;
-        if (paramName) {
-          this.registerLocalName(paramName);
-        }
-      }
-
+      // No local-name bookkeeping here any more. Parameters used to be registered into a shadow
+      // symbol table (localIdentifiersStack) "BEFORE processing - this prevents them from being
+      // resolved to inlined symbols from imports" -- a workaround for a symbol table that could not
+      // see nested scopes. visitIdentifier now resolves LEXICALLY, so a parameter (or any local)
+      // simply resolves to itself.
       let name = node.name
         ? (this.visit(node.name) as ESTree.Identifier)
         : null;
@@ -972,8 +925,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         }
       }
 
-      // Pop local scope before returning
-      this.popLocalScope();
       return result;
     });
   }
@@ -2050,33 +2001,52 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // Identifiers / Literals
   // =========================================================================
 
+  /**
+   * Is this resolved symbol an IMPORT -- i.e. a module-level symbol belonging to another file?
+   *
+   * "Comes from another file" is not the same question, and using it is a bug. When a library
+   * function is cloned into this module, its BODY is visited too, and the locals inside it resolve
+   * (correctly) to the library's scopes. Those locals are not imports -- they are ordinary locals
+   * in code we happen to be copying -- but a source-only test hoists them to the top level as if
+   * they were, producing things like
+   *
+   *     const __ll_inlined_result_1 = new __ll_inlined_Vector3_1();   // used here...
+   *     const __ll_inlined_Vector3_1 = class Vector3 { ... };         // ...declared after -> TDZ
+   *
+   * Before scope-aware resolution this was hidden: a nested local of another module was simply
+   * unresolvable, so it fell through untouched. Now that it resolves, the test has to be precise.
+   * A symbol is an import only if it is declared at MODULE scope (a root scope, with no parent).
+   */
+  private isImportedSymbol(resolved: any): boolean {
+    if (!resolved?.value?._location || !this.rootSource) return false;
+    if (resolved.value._location.source === this.rootSource) return false;
+    // A root scope has no parent. Anything deeper is a local of the other module, not its export.
+    return resolved.scope !== undefined && resolved.scope.parent === undefined;
+  }
+
   visitIdentifier(node: ast.IdentifierNode): ESTree.Identifier {
-    // Check if this is a local name (parameter or local variable) - these shadow global cache
-    if (this.isLocalName(node.id)) {
-      return ESTreeBuilder.identifier(node, encodeIdentifier(node.id));
-    }
-
-    if (this.identifiersCache[node.id]) {
-      return ESTreeBuilder.identifier(node, this.identifiersCache[node.id]);
-    }
-
+    // Resolve LEXICALLY -- as seen from this node, not from a flat table of module roots.
+    //
+    // This replaces two shims that existed only because the symbol table could not answer that
+    // question: `localIdentifiersStack` (a shadow symbol table the code generator maintained, which
+    // registered ONLY parameters) and `identifiersCache` (a flat, scopeless, never-cleared
+    // name -> jsname map). Between them, a local `let` sharing a name with an imported symbol was
+    // rewritten to the IMPORT's inlined JS name -- two different symbols collapsed into one, which
+    // miscompiled to `ReferenceError: Cannot access '__ll_inlined_counter_1' before initialization`.
+    //
+    // Now: if the name resolves to something declared in THIS module (or in an enclosing scope --
+    // a parameter, a local), it keeps its own encoded name. Only a symbol that genuinely resolves
+    // to ANOTHER module gets inlined.
     try {
-      const resolved = this.context?.symbolTable?.resolveSymbol?.(node as any);
-      if (
-        resolved?.value?._location &&
-        this.rootSource &&
-        resolved.value._location.source !== this.rootSource
-      ) {
-        const uniq = this.ensureSymbolInlined(resolved);
-        this.identifiersCache[node.id] = uniq;
-        return ESTreeBuilder.identifier(node, uniq);
+      const resolved = this.context?.symbolTable?.resolveSymbol?.(node as any, node);
+      if (resolved && this.isImportedSymbol(resolved)) {
+        return ESTreeBuilder.identifier(node, this.ensureSymbolInlined(resolved));
       }
     } catch (e) {
       // Fall through
     }
 
     const id = encodeIdentifier(node.id);
-    this.identifiersCache[node.id] = id;
 
     if (RuntimeProvider.isRuntimeReference(node.id)) {
       if (node._type === "composite-identifier") {
