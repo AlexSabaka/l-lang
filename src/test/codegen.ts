@@ -39,9 +39,25 @@ interface Case {
   name: string;
   /** The program body. Wrapped in the conventional top-level list. */
   source: string;
-  /** Exact expected stdout lines, in order. */
-  expect: string[];
-  /** What was wrong before P5 -- printed on failure, so a regression names its own bug. */
+  /** Exact expected stdout lines, in order. Omit when the case expects a compile diagnostic. */
+  expect?: string[];
+  /**
+   * The case must NOT compile, and must report this diagnostic.
+   *
+   * A silent degradation is the bug class this whole audit exists to kill, so "the compiler refuses,
+   * loudly, and says why" is a behaviour worth asserting -- not merely the absence of a crash.
+   */
+  expectDiagnostic?: RegExp;
+  /**
+   * Assertions on the EMITTED TEXT, not the output.
+   *
+   * Needed for anything whose correctness is invisible at run time. A `:comptime` fold produces the
+   * same number whether it folded or merely ran -- the only proof it FOLDED is that the function is
+   * gone from the emitted JavaScript. Likewise, the only proof a do-nothing modifier is not secretly
+   * a memoizer is that no cache appears in the output.
+   */
+  emitted?: { must?: RegExp[]; mustNot?: RegExp[] };
+  /** What was wrong before -- printed on failure, so a regression names its own bug. */
   wasBroken: string;
 }
 
@@ -159,6 +175,116 @@ const CASES: Case[] = [
     expect: ["Data_42"],
     wasBroken: "LL0100: visitAwait did not exist. `async` was fully wired; the gap was one node type",
   },
+
+  // ===============================================================================================
+  // D3 -- METAPROGRAMMING
+  // ===============================================================================================
+
+  // --- defmodifier. Today `visitModifierDef` never reads the body and emits the SAME hardcoded
+  // memoizer for every modifier, whatever it is called and whatever it says. Nobody noticed because
+  // every defmodifier in the corpus has an EMPTY body, and memoizing a pure function is
+  // observationally identical to leaving it alone. ---
+  {
+    name: "defmodifier: an empty body is a PASS-THROUGH, not a memoizer",
+    source: `(defmodifier identity [])
+(fn :identity greet [name <- String] -> String (+ "Hello, " name))
+(console.log (greet "Alice"))`,
+    expect: ["Hello, Alice"],
+    // The output is IDENTICAL either way -- memoizing a pure function is invisible. The only proof
+    // is in the emitted text. This is the case that catches the fraud.
+    emitted: { mustNot: [/new Map\(\)/, /cache\.set/] },
+    wasBroken:
+      "(defmodifier identity []) -- an explicitly do-nothing modifier -- emitted a memoizing cache",
+  },
+  {
+    name: "defmodifier: a body with SIDE EFFECTS actually runs",
+    source: `(defmodifier logged []
+  (fn [original]
+    (fn [...args]
+      (console.log "calling with" args)
+      (original ...args))))
+(fn :logged add [a <- Int b <- Int] -> Int (+ a b))
+(console.log (add 2 3))`,
+    expect: ["calling with [ 2, 3 ]", "5"],
+    wasBroken:
+      "a defmodifier with a non-empty body CRASHED the compiler: 'Already at the root scope. Cannot exit.'",
+  },
+  {
+    name: "defmodifier: a memoizer memoizes BY DECLARATION, not by accident",
+    source: `(defmodifier memoized []
+  (fn [original]
+    (let cache {})
+    (fn [n]
+      (if (== cache[n] undefined)
+          (cache[n] := (original n)))
+      cache[n])))
+(fn :memoized slow [n <- Int] -> Int ((console.log "computing" n) (* n 2)))
+(console.log (slow 4))
+(console.log (slow 4))`,
+    // "computing 4" must appear ONCE -- the second call is served from the cache.
+    expect: ["computing 4", "8", "8"],
+    wasBroken: "every modifier was a memoizer; this one is a memoizer because its body says so",
+  },
+  {
+    name: "defmodifier: arguments reach the modifier",
+    source: `(defmodifier repeated [n <- Int]
+  (fn [original]
+    (fn [...args]
+      (for :init i 0 :cond (< i n) :step (i := (+ i 1)) :then (original ...args)))))
+(fn :repeated[3] ping [] -> Void (console.log "ping"))
+(ping)`,
+    expect: ["ping", "ping", "ping"],
+    wasBroken:
+      "modifier args parsed and were discarded; getModifierArgs exists in helpers/modifiers.ts and is dead",
+  },
+
+  // --- :comptime. It FOLDS -- see the retraction in DECISIONS.md. The gap is that a fold which
+  // FAILS degrades silently to run time. ---
+  {
+    name: "comptime: a fold really folds (the function is GONE from the output)",
+    source: `(fn :comptime twice [n <- Int] -> Int (* n 2))
+(let six (twice 3))
+(console.log six)`,
+    expect: ["6"],
+    // `6` proves nothing on its own -- a run-time call prints 6 too. The proof of a FOLD is that the
+    // function is not in the emitted JavaScript at all.
+    emitted: { must: [/\b6\b/], mustNot: [/function twice|const twice|twice\s*=/] },
+    wasBroken: "not broken -- a guard, and the case that would have caught my false retraction",
+  },
+  {
+    name: "comptime: a call that CANNOT be folded is an error, not a silent downgrade",
+    source: `(fn :comptime describe [s <- String] -> Int (s.length))
+(let n (describe "abc"))
+(console.log n)`,
+    expectDiagnostic: /LL0099/,
+    wasBroken:
+      "evaluateExpression caught every failure, logged to a discarded logger, returned undefined -- and the call quietly ran at RUN time instead",
+  },
+
+  // --- defmacro: D3 rules macros OUT, and demands a located error, "never a silent call". ---
+  {
+    name: "defmacro is a located error, not a crash",
+    source: `(defmacro my-macro [x] (+ x 1))
+(console.log "unreachable")`,
+    expectDiagnostic: /LL0023/,
+    wasBroken: "a raw parse error under grammar_v2; invalid JS under PEG. D3 wants it located and named",
+  },
+
+  // --- quote: emits the AST as a JSON STRING, so it cannot be indexed or walked. ---
+  {
+    name: "quote is DATA, not a JSON string",
+    source: `(let expr '(+ 1 2))
+(console.log expr.nodes[0].id)`,
+    expect: ["+"],
+    wasBroken: "visitQuote emitted JSON.stringify(node), so `expr` was a STRING and expr.nodes a TypeError",
+  },
+  {
+    name: "string interpolation is NOT a quote and must not regress",
+    source: `(let name "Sloth")
+(console.log '"Hello, {(name)}!")`,
+    expect: ["Hello, Sloth!"],
+    wasBroken: "not broken -- a guard. `'\"` is a formatted-string, split from `'` by a negative lookahead",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------
@@ -185,21 +311,60 @@ function run(c: Case, tmp: string): Outcome {
   };
 
   let code: string;
+  let diagnostics: string[] = [];
   try {
     const context = new Context(lispPath, options);
     const result: any = context.process(lispPath);
 
+    diagnostics = context.results.all
+      .filter((m: any) => String(m.code).startsWith("LL"))
+      .map((m: any) => `${m.code}: ${String(m.message).split("\n").pop()!.trim()}`);
+
+    if (c.expectDiagnostic) {
+      const hit = diagnostics.some((d) => c.expectDiagnostic!.test(d));
+      return hit
+        ? { ok: true, detail: "" }
+        : {
+            ok: false,
+            detail: `expected ${c.expectDiagnostic}, got ${
+              diagnostics.length ? diagnostics.map((d) => d.slice(0, 70)).join(" | ") : "NO diagnostic (it compiled silently)"
+            }`,
+          };
+    }
+
     // A reported error blocks emission -- report it as the failure, with its code, so an LL0100 or
     // LL0101 names itself rather than surfacing as a mystery.
     if (context.results.hasErrors) {
-      const codes = context.results.all
-        .filter((m: any) => String(m.code).startsWith("LL"))
-        .map((m: any) => `${m.code}: ${String(m.message).split("\n").pop()!.trim().slice(0, 88)}`);
-      return { ok: false, detail: `compile reported: ${codes.join(" | ") || "(errors)"}` };
+      return {
+        ok: false,
+        detail: `compile reported: ${diagnostics.map((d) => d.slice(0, 88)).join(" | ") || "(errors)"}`,
+      };
     }
     code = result?.code ?? "";
   } catch (e: any) {
+    if (c.expectDiagnostic) {
+      // A raw parse CRASH is not a located diagnostic. That distinction is the point of D3's
+      // "never a silent call" -- and equally, never an unlocated one.
+      return {
+        ok: false,
+        detail: `expected ${c.expectDiagnostic}, but the compiler THREW: ${String(e.message)
+          .split("\n")[0]
+          .slice(0, 76)}`,
+      };
+    }
     return { ok: false, detail: `compile threw: ${String(e.message).split("\n")[0].slice(0, 96)}` };
+  }
+
+  // Assertions on the emitted TEXT -- for correctness that is invisible at run time.
+  for (const re of c.emitted?.must ?? []) {
+    if (!re.test(code)) {
+      return { ok: false, detail: `emitted JS must match ${re}, and does not`, js: code };
+    }
+  }
+  for (const re of c.emitted?.mustNot ?? []) {
+    if (re.test(code)) {
+      return { ok: false, detail: `emitted JS must NOT match ${re}, but does`, js: code };
+    }
   }
 
   fs.writeFileSync(jsPath, code);
@@ -216,7 +381,7 @@ function run(c: Case, tmp: string): Outcome {
   }
 
   const actual = String(proc.stdout).trim().split("\n").map((l) => l.trim()).filter(Boolean);
-  const expected = c.expect;
+  const expected = c.expect ?? [];
   const ok =
     actual.length === expected.length && actual.every((l, i) => l === expected[i]);
 
