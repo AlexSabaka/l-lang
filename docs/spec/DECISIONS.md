@@ -488,5 +488,68 @@ emission ever needs module-level ordering — but wiring it in today would be ce
   `constructor(x) { this.x = x; }` — no default — so `(new Vec)` leaves `x` undefined. The *type*
   side was fixed in Phase 3 (`hasDefault` was computing `null !== undefined`, i.e. always true); the
   *codegen* side never reads it. **P5.**
-- **P4's unresolved-identifier check is now unblocked** by scope-aware resolution, and remains a
-  pending negative test in `test/type-errors.ts`.
+## LL0210 — an identifier that resolves to nothing
+
+**Armed.** A call to an undefined function no longer "silently degrades" into JavaScript that throws
+if the line is reached; it is a compile error. Reference position only — an identifier is checked
+where it is READ, never where it is BOUND.
+
+Two structural notes, because both were false-positive sources and both are easy to reintroduce:
+
+- **Call heads are checked in the list-dispatch, not in `inferExpressionType`'s identifier case.**
+  A call head never passes through it — the dispatch reads `funcName` directly.
+- **Resolution goes through the CONTEXT's symbol table, not the pass's own.** The type pass is handed
+  the MODULE's table, which holds only that module's scopes. Imports are joined into the context's
+  table, and that is also what codegen resolves against. Asking the module-local table alone flags
+  every imported symbol — `log`, `print`, `double` — as undefined.
+
+Exempt: map/enum keys, operators, special forms, JS globals, runtime-provider references. A member
+expression asserts only that its HEAD exists — `s.indexOf` is a question about `s`.
+
+Map and enum keys are matched by `_location.start.offset`, **not by node identity**: the type pass
+runs on the DESUGARED tree while `_parent` still points into the pre-desugar one.
+
+### `visitList`: a list headed by an identifier is a call, not a block
+
+`visitList` applied that test to each ITEM but not to the list ITSELF, so a call was only inferred
+when it arrived WRAPPED in an enclosing block. True at statement level; false for the
+single-expression body of every control-flow form — a `for :then` body, a match arm. Those were
+walked as blocks, so the callee was visited as a statement and the call was never inferred at all.
+Arity and argument checks now reach loop and match bodies for the first time.
+
+Special forms are excluded: they are headed by an identifier and are not calls. Typing `(return x)`
+as a call to a function named `return` yields Unknown, and a `return` that infers as Unknown stops
+the enclosing function's return type from propagating.
+
+## Open findings
+
+- **`:ctor` defaults are dropped by codegen.** `(defclass Vec (let :ctor x <- Int 7))` emits
+  `constructor(x) { this.x = x; }` — no default — so `(new Vec)` leaves `x` undefined. The *type*
+  side was fixed in Phase 3 (`hasDefault` was computing `null !== undefined`, i.e. always true); the
+  *codegen* side never reads it. **P5.**
+
+- **Generic type parameters are never bound, so every `T` is `Unknown`.** Five sites in
+  `InferAndCheckPass` read `generic.name.name` over a declaration's generics list. But
+  `ClassNode.generics` is *declared* as `GenericTypeNode[]` and both frontends actually emit
+  `TypeNameNode[]` — whose `name` is a plain **string**. So `.name.name` is `undefined`, no type
+  parameter is ever `bindTypeParameter`'d, and `convertAstType` resolves `T` to `Unknown`. Same bug
+  class as `TypeDefNode` being declared `{}` in Phase 2: the declared type is a lie.
+
+  This is why `08-types/10_generics_basic.lisp` has been the suite's one red FAIL (not an xfail)
+  since before this work started — its golden already specifies the correct `type: 'T'`,
+  `generics: ['T']`, `returns: 'T'`.
+
+  **Not a drive-by fix.** An `Unknown` suppresses every check under gradual typing, so binding `T`
+  for real would un-silence the type checker across all generic code at once. It needs its own phase.
+
+- **The frontends disagree on interface generics, and grammar_v2 loses variance.** For
+  `(definterface Producer<:out T>)`:
+
+  ```
+  peg          generics = [{ name: { _type: "type-name", name: "T" }, covariance: null }]
+  grammar_v2   generics = [{ _type: "type-name", name: "T" }]
+  ```
+
+  PEG wraps, grammar_v2 does not — and `InterfaceGenericType` is declared to match PEG. Worse,
+  grammar_v2 **drops the `:in`/`:out` annotation entirely**, so variance is not merely unenforced
+  (which `16_covariance.lisp` says up front) but unparsed. Blocks any future variance work.
