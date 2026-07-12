@@ -14,6 +14,7 @@ import {
 } from "../../analysis/SymbolTable";
 import { TypeChecker } from "../TypeChecker";
 import { createRule, RuleSeverity } from "../../rules/RuleBuilder";
+import { RuntimeProvider } from "../../runtime";
 import { SymbolTable } from "../../analysis";
 
 /**
@@ -1001,6 +1002,32 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   visitList(node: ast.ListNode) {
     if (!node.nodes || node.nodes.length === 0) return;
 
+    // Is this list a CALL rather than a block?
+    //
+    // A block's items are themselves lists or declarations -- `((console.log 1) (console.log 2))`
+    // has a list at nodes[0]. A list with an IDENTIFIER at its head is a call: `(bogus-fn x)`.
+    // That is the same test the statement loop below applies to each item, applied one level up.
+    //
+    // Without it, a call only got checked when it arrived WRAPPED in an enclosing block -- which is
+    // true at statement level, and false for the single-expression bodies of the control-flow forms:
+    // a `for :then` body, a match arm, a `when` branch. Those lists were walked as if they were
+    // blocks, so their head -- the callee -- was visited as if it were a statement, and the call was
+    // never inferred. Calls to undefined functions inside a loop body went unreported.
+    // A SPECIAL FORM is headed by an identifier and is NOT a call: `(return x)`, `(new Box 1)`,
+    // `(throw e)`. Routing one through inferExpressionType types it as a call to a function named
+    // `return`, which is Unknown -- and a `return` that infers as Unknown stops the function's
+    // return type from propagating. Leave them to the statement loop, which walks their children,
+    // so a call NESTED in one -- `(return (bogus-fn x))` -- is still reached and still checked.
+    const listHead = node.nodes[0];
+    if (
+      !this.isDeclaration(listHead) &&
+      (listHead._type === "simple-identifier" || listHead._type === "composite-identifier") &&
+      !InferAndCheckPass.SPECIAL_FORMS.has(ast.symbolName(listHead as ast.IdentifierNode))
+    ) {
+      this.inferExpressionType(node);
+      return;
+    }
+
     // Duplicate declarations in the SAME block. Shadowing in a nested scope is legal and common
     // (`n` as a parameter, then `n` in an inner loop); redeclaring the same name in the same block
     // is not, and nothing anywhere in the compiler checked for it.
@@ -1561,14 +1588,16 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       case "simple-identifier":
       case "composite-identifier": {
         const id = (node as ast.IdentifierNode).id;
+
+        // TYPE comes from the type environment...
         const resolvedType = this.typeEnv.resolveIdentifier(id);
         inferredType = resolvedType ?? TypeEnvironment.unknown();
-        if (!resolvedType) {
-          // Debug: log scope chain and node for missing identifier
-          const chain = this.typeEnv.debugScopeChain();
-          const loc = (node as any)._location ? `${(node as any)._location.start.line}:${(node as any)._location.start.column}` : '?:?';
-          this.context.log(LogLevel.Warning, `Unknown identifier '${id}' at ${node._type} (${loc}) (scope: ${chain})`);
-        }
+
+        // ...but EXISTENCE comes from the symbol table, which is the thing that actually knows
+        // about scopes. The type environment has its own, shallower notion of scope and fails on
+        // 178 identifiers across the corpus -- overwhelmingly parameters and locals -- so a check
+        // built on it would be pure noise. See checkIdentifierResolves.
+        this.checkIdentifierResolves(node as ast.IdentifierNode, id);
         break;
       }
 
@@ -1703,15 +1732,18 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             // `(Box 5)` form above already is: an instance of the named class/struct.
             inferredType = this.inferNewExpression(listNode.nodes.slice(1));
           } else {
-            // A call head we cannot resolve, and which is not an operator: a JS global
+            // A call head we could not resolve, and which is not an operator: a JS global
             // (`Math.log`), a member call (`s.indexOf`), or a genuinely undefined function.
-            // The type is Unknown and we say NOTHING -- routing it through the operator tables
-            // and complaining that it is not a valid operator was the single biggest source of
-            // false positives in this pass.
             //
-            // A genuinely undefined function IS an error, but it is an UNRESOLVED IDENTIFIER
-            // error, not an operator error. That check is P4c; it needs a JS-globals policy
-            // first, or it would flag `console`, `Math` and `JSON` on every file.
+            // Its TYPE is Unknown -- routing it through the operator tables and complaining that it
+            // is not a valid operator was the single biggest source of false positives in this pass.
+            // But its EXISTENCE is exactly the thing worth checking: "silently degrades into a call
+            // to an undefined function" is the audit's headline bug class, and a call head is the
+            // reference position where it bites hardest.
+            //
+            // Checked here rather than in inferExpressionType's identifier case, because a call
+            // head never passes through it -- the list dispatch reads `funcName` directly.
+            this.checkIdentifierResolves(firstNode as ast.IdentifierNode, funcName);
             inferredType = TypeEnvironment.unknown();
           }
         } else {
@@ -1848,6 +1880,98 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    */
   private canJudgeOperator(...types: InferredType[]): boolean {
     return types.every((t) => t.kind === "primitive" && !t.isArray);
+  }
+
+  /**
+   * Every identifier a program can name without declaring it.
+   *
+   * `RuntimeProvider.isRuntimeReference` covers l-lang's own runtime helpers. This list is the JS
+   * ambient environment -- the globals any emitted program may reach for. It is deliberately short
+   * and explicit: a long, speculative list would silently swallow real typos.
+   */
+  private static readonly JS_GLOBALS = new Set([
+    // Standard library
+    "console", "Math", "JSON", "Object", "Array", "String", "Number", "Boolean", "Symbol",
+    "Error", "TypeError", "RangeError", "Date", "RegExp", "Map", "Set", "WeakMap", "WeakSet",
+    "Promise", "Proxy", "Reflect", "BigInt",
+    "parseInt", "parseFloat", "isNaN", "isFinite", "NaN", "Infinity", "undefined", "globalThis",
+    // Host environment. `window` is real: 20-stdlib/std/io.lisp reaches for it behind the
+    // idiomatic `(if (&& (typeof window) (!= window undefined)) (window.alert msg))` guard.
+    "window", "document", "navigator", "process",
+    "setTimeout", "setInterval", "clearTimeout", "clearInterval", "fetch",
+  ]);
+
+  /**
+   * Special forms. These are not functions and are never declared: the parser hands them through
+   * as a plain list whose head is an identifier, exactly as codegen recognises them.
+   */
+  private static readonly SPECIAL_FORMS = new Set([
+    "return", "new", "throw", "quote", "await", "yield",
+    "typeof", "delete", "in", "instanceof",
+    "this", "super",
+  ]);
+
+  /**
+   * LL0210 -- an identifier in REFERENCE position that resolves to nothing.
+   *
+   * The audit's starred finding: no unresolved-identifier check existed anywhere in the compiler,
+   * so `(bogus-fn 1)` compiled clean and became a call to an undefined function at runtime. It
+   * could not be written before P6 made resolution scope-aware -- resolveSymbol was a flat search
+   * of module-root tables and could not see a parameter or a local at all.
+   *
+   * It is asked HERE, in inferExpressionType, and that placement is the whole trick. This is
+   * reference position by construction: an identifier being used as a VALUE. Trying to check every
+   * identifier NODE instead flags map keys (`{:name "x"}`), enum keys (`:GET`), a function's own
+   * name, and generic type parameters -- none of which are references to anything.
+   */
+  private checkIdentifierResolves(node: ast.IdentifierNode, id: string): void {
+    // A map or enum KEY is a literal, not a reference. `{ :name "Alice" :age 30 }` names nothing;
+    // it is the identifier `name` only in the sense that `"name"` is a string. Inference walks into
+    // the key slot, so the guard belongs here rather than in the traversal.
+    // Compared by LOCATION, not identity: this pass runs on the DESUGARED AST while `_parent`
+    // points at the pre-desugar node (BaseAstTreeWalker copies the original parent reference), so
+    // `parent.key === node` is never true. Offsets survive desugar; node identity does not.
+    const parent = node._parent as ast.ASTNode | undefined;
+    const isKeySlot =
+      parent !== undefined &&
+      (parent._type === "key-value" ||
+        parent._type === "enum-key" ||
+        parent._type === "map-pattern-pair") &&
+      (parent as any).key?._location?.start?.offset === node._location?.start?.offset;
+
+    if (isKeySlot) return;
+
+    // A member expression only asserts the existence of its HEAD: `x.foo.bar` says nothing about
+    // `foo` or `bar`, which are JS property lookups on a value we may know nothing about.
+    const head = id.split(".")[0];
+    if (!head) return;
+
+    if (
+      TypeChecker.isOperatorName(head) ||
+      InferAndCheckPass.SPECIAL_FORMS.has(head) ||
+      InferAndCheckPass.JS_GLOBALS.has(head) ||
+      RuntimeProvider.isRuntimeReference(head)
+    ) {
+      return;
+    }
+
+    // The CONTEXT's symbol table, not this pass's `this.symbolTable`.
+    //
+    // The pass is handed the MODULE's own table (buildSymbolTable()'s result), which contains only
+    // that module's root and its nested scopes. Imported modules are joined into the CONTEXT's
+    // table (`this.symbolTable.join(moduleSymbols)` in Context.process), which is also what codegen
+    // resolves against. Asking the module-local table alone flags every imported symbol -- `log`,
+    // `print`, `double`, `dot-product` -- as undefined.
+    const symbols = this.context.symbolTable ?? this.symbolTable;
+    if (symbols.resolveSymbol(head, node)) {
+      return;
+    }
+
+    this.reportTypeError(
+      node,
+      "LL0210",
+      `'${head}' is not defined.`
+    );
   }
 
   private inferOperatorType(op: string, args: ast.ASTNode[]): InferredType {

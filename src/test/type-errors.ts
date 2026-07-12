@@ -167,23 +167,20 @@ const CASES: Case[] = [
   { name: "return type", source: '(fn f [] -> Int (return "str"))', expect: /LL0213/ },
   { name: "duplicate declaration", source: "(let d 1)\n(let d 2)", expect: /LL0212/, pending: true },
 
-  /**
-   * DEFERRED to P6, not merely unimplemented.
-   *
-   * An unresolved-identifier check cannot be built on today's resolution model. Measured across
-   * the corpus, `typeEnv.resolveIdentifier` fails on 165 identifiers -- and they are overwhelmingly
-   * function PARAMETERS and locals (`n` x36, `x`, `a`, `amount`, `idx`), because the type
-   * environment does not track nested scopes. Narrowing to call HEADS does not save it either:
-   * of 357 unresolved heads, 175 are special forms (`return`, `new`, `throw`) and most of the rest
-   * are symbols IMPORTED from 20-stdlib (`print`, `log`, `is-nil`) -- and imports are never
-   * inlined, because InlineImportsAstVisitor is disabled.
-   *
-   * That is the audit's P6 ("symbol resolution is global, name-keyed and top-level-only ...
-   * structurally incapable of seeing a nested scope"). Shipping the check first would mean an
-   * exclusion list so large it caught almost nothing. It belongs after P6, not before.
-   */
-  { name: "unresolved identifier (blocked on P6)", source: "(undefined-fn 1)", expect: /LL0210/, pending: true },
-  { name: "loop bodies visited (blocked on P6)", source: "(let xs [1 2])\n(for :each x :from xs :then (bogus-fn x))", expect: /LL0210/, pending: true },
+  // --- LL0210: unresolved identifiers. Unblocked by P6's scope-aware resolution. ---
+  { name: "unresolved identifier", source: "(undefined-fn 1)", expect: /LL0210/ },
+  { name: "unresolved in a loop body", source: "(let xs [1 2])\n(for :each x :from xs :then (bogus-fn x))", expect: /LL0210/ },
+  { name: "unresolved in a match arm", source: '(let v 1)\n(match v { 1 => (bogus-fn v) _ => 0 })', expect: /LL0210/ },
+
+  // ...and the things it must NOT flag. Each of these was a false positive on the way here.
+  { name: "a parameter resolves", source: "(fn f [n <- Int] -> Int (return (+ n 1)))\n(console.log (f 1))", silent: true },
+  { name: "a local let resolves", source: "(fn f [] -> Int (let k 2) (return k))\n(console.log (f))", silent: true },
+  { name: "a for-each binding resolves", source: "(let xs [1 2])\n(for :each x :from xs :then (console.log x))", silent: true },
+  { name: "a catch binding resolves", source: '(try ((throw (Error "x"))) catch e :of Error ((console.log e)))', silent: true },
+  { name: "a match binding resolves", source: "(let v [1 2])\n(match v { [a b] => (console.log a b) _ => 0 })", silent: true },
+  { name: "map KEYS are not references", source: '(let m { :name "x" :age 1 })\n(console.log m)', silent: true },
+  { name: "JS globals are not flagged", source: '(console.log (Math.max 1 2) (JSON.stringify [1]))', silent: true },
+  { name: "a member call on a local", source: '(let s "a,b")\n(console.log (s.split ","))', silent: true },
 ];
 
 function runCases(): { failed: number; pending: number } {
