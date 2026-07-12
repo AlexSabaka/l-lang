@@ -252,6 +252,96 @@ const CASES: Case[] = [
   },
 
   {
+    name: "inlined definitions are emitted in dependency order",
+    why:
+      "`inlinedDefinitions` is a Record, so Object.values() hands them back in DISCOVERY order -- " +
+      "the order visitIdentifier happened to meet them. A definition can therefore be emitted " +
+      "BEFORE the class it depends on: `const r = new __ll_inlined_Vec_1()` above " +
+      "`const __ll_inlined_Vec_1 = class Vec {...}` is a temporal-dead-zone ReferenceError. " +
+      "DependencyGraph.iterate() computes the right order and is never called from anywhere.",
+    run: () => {
+      const entry = fixture(
+        "order",
+        {
+          // In SOURCE order the class comes first, then the top-level binding that uses it --
+          // which is why the library compiles standalone. Emission must preserve that.
+          "lib.lisp":
+            `(\n` +
+            `  (defclass Vec (let :ctor x <- Int 0))\n` +
+            `  (let origin (new Vec 7))   ;; explicit arg: :ctor DEFAULTS are dropped by codegen (a\n` +
+            `                             ;; separate P5 bug -- do not conflate it with ordering)\n` +
+            `  (fn origin-x [] -> Int (return origin.x))\n` +
+            `  (export origin-x)\n` +
+            `)\n`,
+          // main touches `origin-x` first; visiting its body then discovers `origin`, and only
+          // then `Vec`. Emitted in discovery order that is `const origin = new Vec()` ABOVE
+          // `const Vec = class ...` -- a temporal-dead-zone ReferenceError.
+          "main.lisp": `(\n  (import "lib.lisp")\n  (console.log (origin-x))\n)\n`,
+        },
+        "main.lisp"
+      );
+      const out = build(entry);
+      const ok = out.compiled && !out.runtimeError && out.stdout === "7";
+      return {
+        ok,
+        detail: out.runtimeError
+          ? `runtime: ${out.runtimeError}`
+          : `expected "7", got ${JSON.stringify(out.stdout ?? "<did not compile>")}` +
+            (out.diagnostics.length ? ` [${out.diagnostics.join(" | ")}]` : ""),
+      };
+    },
+  },
+
+  {
+    name: "a deep cross-module chain emits in dependency order",
+    why:
+      "main -> f -> g -> h -> a top-level const -> a class, all in another module, with `f` " +
+      "written FIRST in the library. Emission must still put the class before the const before h " +
+      "before g before f. This pins down the post-order insertion invariant in ensureSymbolInlined.",
+    run: () => {
+      const entry = fixture(
+        "chain",
+        {
+          "lib.lisp":
+            `(\n` +
+            `  (fn f [] -> Int (return (g)))     ;; written first, depends on g\n` +
+            `  (fn g [] -> Int (return (h)))\n` +
+            `  (fn h [] -> Int (return base.v))  ;; depends on a const...\n` +
+            `  (defclass Holder (let :ctor v <- Int 0))\n` +
+            `  (let base (new Holder 42))        ;; ...which depends on a class\n` +
+            `  (export f)\n` +
+            `)\n`,
+          "main.lisp": `(\n  (import "lib.lisp")\n  (console.log (f))\n)\n`,
+        },
+        "main.lisp"
+      );
+      const out = build(entry);
+      if (!out.compiled || out.runtimeError) {
+        return { ok: false, detail: out.runtimeError ? `runtime: ${out.runtimeError}` : "did not compile" };
+      }
+      if (out.stdout !== "42") {
+        return { ok: false, detail: `expected "42", got ${JSON.stringify(out.stdout)}` };
+      }
+
+      // And assert the ORDER, not just that it runs -- function declarations hoist, so a wrong
+      // order can still work by accident for some shapes.
+      const code = out.code ?? "";
+      const at = (re: RegExp) => code.search(re);
+      const holder = at(/class __ll_inlined_Holder/);
+      const base = at(/const __ll_inlined_base/);
+      const h = at(/const __ll_inlined_h_/);
+      const ordered = holder >= 0 && base > holder && h > base;
+
+      return {
+        ok: ordered,
+        detail: ordered
+          ? "class -> const -> function, deepest dependency first"
+          : `wrong order: Holder@${holder} base@${base} h@${h}`,
+      };
+    },
+  },
+
+  {
     name: "the dependency graph is keyed by paths that exist",
     why:
       "DependencyGraph.add re-resolves an already-absolute path with path.join, which (unlike " +

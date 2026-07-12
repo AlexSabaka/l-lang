@@ -2080,10 +2080,24 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   ): ESTree.MemberExpression {
     const parts = node.parts;
     const startPartId = node.headless ? 1 : 0;
-    let expr: ESTree.Expression = ESTreeBuilder.identifier(
-      node,
-      encodeIdentifier(parts[startPartId])
-    );
+
+    // Resolve the HEAD, exactly as visitIdentifier does for a simple identifier.
+    //
+    // Nothing did this: every part was just encodeIdentifier'd, so member access on an IMPORTED
+    // symbol -- `origin.x` where `origin` comes from another module -- emitted a bare `origin`
+    // that was never defined anywhere. `this.foo`, `console.log` and `Math.log` are unaffected:
+    // their heads resolve to nothing and keep their encoded names.
+    let head = encodeIdentifier(parts[startPartId]);
+    try {
+      const resolved = this.context?.symbolTable?.resolveSymbol?.(parts[startPartId], node);
+      if (resolved && this.isImportedSymbol(resolved)) {
+        head = this.ensureSymbolInlined(resolved);
+      }
+    } catch (e) {
+      // Fall through to the encoded name.
+    }
+
+    let expr: ESTree.Expression = ESTreeBuilder.identifier(node, head);
 
     for (let i = startPartId + 1; i < parts.length; i++) {
       expr = ESTreeBuilder.memberExpression(
@@ -2627,6 +2641,25 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         };
       }
 
+      // INSERTED AFTER the recursive visit above -- and that ordering is load-bearing, not
+      // incidental.
+      //
+      // `inlinedSymbols[key]` is claimed BEFORE we descend (so a cycle terminates), but the
+      // DEFINITION lands here, once every symbol it references has already landed. Insertion into
+      // `inlinedDefinitions` is therefore POST-ORDER, and Object.values() preserves insertion
+      // order -- so dependencies are always emitted before their dependents. That is exactly a
+      // topological sort of the definition DAG, which is why
+      //
+      //     class __ll_inlined_Holder_1 { ... }
+      //     const __ll_inlined_base_1 = new __ll_inlined_Holder_1(42);
+      //     const __ll_inlined_h_1 = () => __ll_inlined_base_1.v;
+      //
+      // comes out in that order even though `h` is what main referenced first.
+      //
+      // Do NOT "fix" this by collecting definitions eagerly per module and emitting them in
+      // DependencyGraph.iterate() order: that would emit unreachable definitions, and it would not
+      // order definitions WITHIN a module any better than this already does. The test
+      // "inlined definitions are emitted in dependency order" (test/imports.ts) pins this down.
       this.inlinedDefinitions[uniq] = defStmt;
       return uniq;
     } catch (ex) {
