@@ -95,6 +95,23 @@ function convertAstType(
       return withArray({ kind: "unknown", name });
     }
 
+    // A name that is none of the above -- not a generic parameter, not a declared type, not a
+    // built-in primitive -- is a type we do not know. Stamping it `{kind:"primitive", name}` (the
+    // old fallback) invented a type that is equal to nothing, so anything annotated with it became
+    // unassignable from everything.
+    //
+    // The corpus has a live example: `Bool`. Annotations use it 6 times and `Boolean` 15 times,
+    // and the type system only knows `Boolean` -- so `(fn withdraw [...] -> Bool (return true))`
+    // "returns Boolean but declares Bool". Nobody noticed, because nothing was ever checked.
+    // Whether `Bool` is a legal spelling of `Boolean` is a LANGUAGE decision (a D-ruling), not one
+    // to make silently inside a type converter, so this reports nothing and defers.
+    //
+    // Unknown TYPE names deserve their own diagnostic, the type-level analogue of the unresolved
+    // IDENTIFIER check -- and it is blocked on the same thing: scope-and-import resolution (P6).
+    if (!TypeEnvironment.isKnownPrimitive(name)) {
+      return withArray(TypeEnvironment.unknown());
+    }
+
     return withArray({ kind: "primitive", name });
   }
 
@@ -977,6 +994,54 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   visitList(node: ast.ListNode) {
     if (!node.nodes || node.nodes.length === 0) return;
 
+    // Duplicate declarations in the SAME block. Shadowing in a nested scope is legal and common
+    // (`n` as a parameter, then `n` in an inner loop); redeclaring the same name in the same block
+    // is not, and nothing anywhere in the compiler checked for it.
+    //
+    // Done syntactically, per-list, rather than through the symbol table -- deliberately. Symbol
+    // resolution is top-level-only and cannot see nested scopes (the audit's P6), so asking it
+    // "was this name already declared HERE" would get an answer about the wrong scope.
+    const declaredHere = new Map<string, ast.ASTNode>();
+
+    for (const item of node.nodes) {
+      const decl = this.isDeclaration(item)
+        ? item
+        : ast.isListNode(item) && this.isDeclaration(item.nodes[0])
+          ? item.nodes[0]
+          : undefined;
+
+      if (decl) {
+        const declName = (decl as any).name;
+        const name =
+          typeof declName === "string"
+            ? declName
+            : declName && !ast.isBindingPattern(declName)
+              ? ast.symbolName(declName)
+              : undefined;
+
+        // Operator declarations OVERLOAD -- that is the point of them. 09_operators.lisp declares
+        // `-` twice on purpose: binary `(fn :operator - [c1 c2])` and unary `(fn :operator - [c1])`.
+        // They share a name and are distinguished by arity, so they are not duplicates.
+        const isOperatorDecl =
+          decl._type === "function" &&
+          ((decl as ast.FunctionNode).modifiers ?? []).some(
+            (m) => m.modifier === "operator" || m.modifier === ":operator"
+          );
+
+        if (name && !isOperatorDecl) {
+          if (declaredHere.has(name)) {
+            this.reportTypeError(
+              decl,
+              "LL0212",
+              `'${name}' is already declared in this scope.`
+            );
+          } else {
+            declaredHere.set(name, decl);
+          }
+        }
+      }
+    }
+
     for (const item of node.nodes) {
       if (this.isDeclaration(item)) {
         this.visit(item);
@@ -1112,10 +1177,81 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     
     // Infer types in function body
     node.body.forEach(stmt => this.visit(stmt));
-    
-    // TODO: Check that all return statements match declared return type
-    
+
+    this.checkReturns(node);
+
     this.typeEnv.exitScope();
+  }
+
+  /**
+   * Every explicit `(return x)` in a function body must match its declared return type.
+   *
+   * This was a `// TODO` -- return types were collected and used to type CALL expressions, but no
+   * one ever compared a body's actual returns against the declaration.
+   *
+   * `return` has no AST node: `(return x)` is a plain list whose head is the identifier `return`,
+   * which is exactly how codegen recognises it (JSTransformerAstVisitor's `headId === "return"`).
+   *
+   * Only EXPLICIT returns are checked. l-lang also allows an expression body with no `return` at
+   * all (`(fn add [a b] (+ a b))`), and deciding whether that implicitly returns -- and therefore
+   * whether a missing return is an error -- is a language question, not a checking one. Silence
+   * there is deliberate, not an oversight.
+   */
+  private checkReturns(node: ast.FunctionNode): void {
+    if (!node.returns) return;
+
+    const declared = this.convertAstTypeToInferred(node.returns);
+    if (TypeChecker.isUnknown(declared)) return;
+
+    // A Void/nil declaration says nothing useful about the value's type here.
+    if (declared.name === "Void" || declared.name === "Nil" || declared.name === "Null") return;
+
+    const funcName = node.name ? ast.symbolName(node.name) : "<anonymous>";
+
+    for (const ret of this.collectReturns(node.body)) {
+      if (!ret.value) continue;
+
+      const valueType = this.inferExpressionType(ret.value);
+      if (TypeChecker.isUnknown(valueType)) continue;
+
+      if (!TypeChecker.isAssignable(valueType, declared, this.symbolTable)) {
+        this.reportTypeError(
+          ret.node,
+          "LL0213",
+          `'${funcName}' declares it returns ${TypeChecker.formatType(declared)}, but returns ${TypeChecker.formatType(valueType)}.`
+        );
+      }
+    }
+  }
+
+  /** The `(return x)` forms belonging to THIS function -- a nested function owns its own. */
+  private collectReturns(body: ast.ASTNode[]): { node: ast.ASTNode; value?: ast.ASTNode }[] {
+    const found: { node: ast.ASTNode; value?: ast.ASTNode }[] = [];
+
+    const walk = (n: any): void => {
+      if (!n || typeof n !== "object") return;
+      if (Array.isArray(n)) {
+        n.forEach(walk);
+        return;
+      }
+      if (!n._type) return;
+
+      // Do not descend into a nested function: its returns are checked against ITS declaration.
+      if (n._type === "function") return;
+
+      if (ast.isListNode(n) && n.nodes.length > 0) {
+        const head = n.nodes[0];
+        if (head?._type === "simple-identifier" && (head as ast.SimpleIdentifierNode).id === "return") {
+          found.push({ node: n, value: n.nodes[1] });
+          return;
+        }
+      }
+
+      for (const key of ast.getNodeIterableKeys(n)) walk((n as any)[key]);
+    };
+
+    body.forEach(walk);
+    return found;
   }
 
   visitClass(node: ast.ClassNode) {
@@ -1302,10 +1438,74 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     }
   }
 
+  /**
+   * `(x := 5)` and `(x += 1)` -- the ONLY assignment form grammar_v2 produces.
+   *
+   * There was no visitor for it in either type pass, so it fell through to the onUnhandled stub:
+   * `(x := "str")` on an Int was completely invisible to the type system. (`visitSimpleAssignment`
+   * below does check -- but grammar_v2's assignmentOp always builds a compound-assignment node, so
+   * the checked form is the one that is never produced.)
+   *
+   * Immutability -- rejecting an assignment to a non-`mut` binding -- is D10, and D10 is
+   * explicitly P8. Not smuggled in here.
+   */
+  visitCompoundAssignment(node: ast.CompoundAssignmentNode) {
+    const targetType = this.inferExpressionType(node.assignable);
+    const valueType = this.inferExpressionType(node.value);
+
+    if (TypeChecker.isUnknown(targetType) || TypeChecker.isUnknown(valueType)) {
+      return node;
+    }
+
+    if (node.operator === ":=") {
+      if (!TypeChecker.isAssignable(valueType, targetType, this.symbolTable)) {
+        this.reportTypeError(
+          node,
+          "LL0202",
+          `Type mismatch in assignment: cannot assign ${TypeChecker.formatType(valueType)} to ${TypeChecker.formatType(targetType)}.`
+        );
+      }
+      return node;
+    }
+
+    // `x += y` means `x = x + y`: the underlying binary operator has to be defined for the pair,
+    // and its result has to be assignable back to the target.
+    const op = node.operator.replace(/=$/, "");
+    const resultType = TypeChecker.getBinaryOpType(op, targetType, valueType);
+
+    if (!resultType) {
+      // Same rule as inferOperatorType: only judge operands we actually model.
+      if (this.canJudgeOperator(targetType, valueType)) {
+        this.reportTypeError(
+          node,
+          "LL0204",
+          `Operator '${node.operator}' is not defined for ${TypeChecker.formatType(targetType)} and ${TypeChecker.formatType(valueType)}.`
+        );
+      }
+      return node;
+    }
+
+    if (!TypeChecker.isAssignable(resultType, targetType, this.symbolTable)) {
+      this.reportTypeError(
+        node,
+        "LL0202",
+        `'${node.operator}' produces ${TypeChecker.formatType(resultType)}, which cannot be assigned back to ${TypeChecker.formatType(targetType)}.`
+      );
+    }
+
+    return node;
+  }
+
   visitSimpleAssignment(node: ast.SimpleAssignmentNode) {
     const targetType = this.inferExpressionType(node.assignable);
     const valueType = this.inferExpressionType(node.value);
-    
+
+    // Gradual typing, as everywhere else. (This form is only reachable via the PEG frontend --
+    // grammar_v2 always builds a compound-assignment.)
+    if (TypeChecker.isUnknown(targetType) || TypeChecker.isUnknown(valueType)) {
+      return;
+    }
+
     if (!TypeChecker.isAssignable(valueType, targetType, this.symbolTable)) {
       this.reportTypeError(
         node,

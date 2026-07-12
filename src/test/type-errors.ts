@@ -159,10 +159,31 @@ const CASES: Case[] = [
   { name: "type mismatch on let", source: '(let x <- Int "str")', expect: /Type mismatch|LL0200/ },
   { name: "if condition not Boolean", source: '(if "str" 1 2)', expect: /If condition|LL0201/ },
 
-  // --- P4c, not yet implemented. Tracked, not failed. ---
-  { name: "unresolved identifier", source: "(undefined-fn 1)", expect: /LL0210|nresolved|ndefined/, pending: true },
-  { name: "arity: too many args", source: "(fn f [a <- Int] -> Int a)\n(f 1 2 3)", expect: /LL0211|rity|rgument/, pending: true },
-  { name: "loop bodies are visited", source: "(let xs [1 2])\n(for :each x :from xs :then (bogus-fn x))", expect: /LL0210|nresolved|ndefined/, pending: true },
+  // --- P4c ---
+  { name: "arity: too many args", source: "(fn f [a <- Int] -> Int a)\n(f 1 2 3)", expect: /LL0211/ },
+  { name: "arity: too few args", source: "(fn f [a <- Int b <- Int] -> Int a)\n(f 1)", expect: /LL0211/ },
+  { name: "variadic call is NOT flagged", source: '(fn p [m <- String ...rest] -> Void (console.log m))\n(p "a" 1 2 3)', silent: true },
+  { name: "compound assignment", source: '(mut x <- Int 1)\n(x := "str")', expect: /LL0202/ },
+  { name: "return type", source: '(fn f [] -> Int (return "str"))', expect: /LL0213/ },
+  { name: "duplicate declaration", source: "(let d 1)\n(let d 2)", expect: /LL0212/, pending: true },
+
+  /**
+   * DEFERRED to P6, not merely unimplemented.
+   *
+   * An unresolved-identifier check cannot be built on today's resolution model. Measured across
+   * the corpus, `typeEnv.resolveIdentifier` fails on 165 identifiers -- and they are overwhelmingly
+   * function PARAMETERS and locals (`n` x36, `x`, `a`, `amount`, `idx`), because the type
+   * environment does not track nested scopes. Narrowing to call HEADS does not save it either:
+   * of 357 unresolved heads, 175 are special forms (`return`, `new`, `throw`) and most of the rest
+   * are symbols IMPORTED from 20-stdlib (`print`, `log`, `is-nil`) -- and imports are never
+   * inlined, because InlineImportsAstVisitor is disabled.
+   *
+   * That is the audit's P6 ("symbol resolution is global, name-keyed and top-level-only ...
+   * structurally incapable of seeing a nested scope"). Shipping the check first would mean an
+   * exclusion list so large it caught almost nothing. It belongs after P6, not before.
+   */
+  { name: "unresolved identifier (blocked on P6)", source: "(undefined-fn 1)", expect: /LL0210/, pending: true },
+  { name: "loop bodies visited (blocked on P6)", source: "(let xs [1 2])\n(for :each x :from xs :then (bogus-fn x))", expect: /LL0210/, pending: true },
 ];
 
 function runCases(): { failed: number; pending: number } {

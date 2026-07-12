@@ -20,6 +20,11 @@ export class TypeEnvironment {
     ["Any", { kind: "unknown", name: "Any" }],
   ]);
 
+  /** Is `name` one of the language's built-in primitive types? */
+  static isKnownPrimitive(name: string): boolean {
+    return TypeEnvironment.PRIMITIVES.has(name);
+  }
+
   constructor(symbolTable: SymbolTable) {
     this.symbolTable = symbolTable;
   }
