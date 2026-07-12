@@ -15,11 +15,24 @@ import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
+import { Context, CompilerOptions, LogLevel } from '../compiler/Context';
 
 // Configuration
 const EXAMPLES_DIR = path.join(__dirname, '../../examples');
 const SKIP_DIRS = ['p5js', 'node_modules'];
 const VERBOSE = process.argv.includes('--verbose') || process.argv.includes('-v');
+
+// Mirrors the CLI's defaults for `transform <file>` with no flags (see getCompilerOptions.ts).
+// logger is a no-op: the old execSync-based runner discarded the compile step's own stdout/stderr
+// entirely (stdio: ['ignore','pipe','pipe']), so warnings never surfaced through the test suite.
+const COMPILE_OPTIONS: CompilerOptions = {
+  minimumLogLevel: LogLevel.Warning,
+  logger: () => {},
+  includeRuntimeShim: true,
+  stdout: false,
+  stage: 'codegen',
+  language: 'js',
+};
 
 interface TestResult {
   name: string;
@@ -69,13 +82,22 @@ function runTest(lispPath: string): TestResult {
   }
   
   try {
-    // Step 1: Compile the .lisp file
+    // Step 1: Compile the .lisp file in-process (was: spawning `ts-node src/index.ts
+    // transform` per file, the bulk of the suite's wall-clock time).
     try {
-      execSync(`ts-node src/index.ts transform "${lispPath}"`, {
-        cwd: path.join(__dirname, '../..'),
-        encoding: 'utf-8',
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
+      const context = new Context(lispPath, COMPILE_OPTIONS);
+      const result = context.process(lispPath);
+
+      if (context.results.hasErrors) {
+        return {
+          name: fileName,
+          status: 'error',
+          message: 'Compilation error: type/syntax errors reported'
+        };
+      }
+
+      fs.writeFileSync(jsPath, result.code || '');
+      fs.writeFileSync(jsPath + '.map', (result.map || '').toString());
     } catch (compileError: any) {
       return {
         name: fileName,
@@ -83,7 +105,7 @@ function runTest(lispPath: string): TestResult {
         message: `Compilation error: ${compileError.message}`
       };
     }
-    
+
     // Step 2: Check if .js file was generated
     if (!fs.existsSync(jsPath)) {
       return {
@@ -92,7 +114,7 @@ function runTest(lispPath: string): TestResult {
         message: 'No .js file generated'
       };
     }
-    
+
     // Step 3: Execute the generated JavaScript
     let stdout: string;
     try {
