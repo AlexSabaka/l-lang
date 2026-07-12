@@ -4,10 +4,29 @@ import { Context } from "../../Context";
 import { encodeIdentifier } from "../../utils";
 
 /**
+ * A constructor parameter: its name, and the AST node of its DEFAULT, if it declared one.
+ *
+ * This used to be a bare `string[]`, and that was the whole `:ctor` default bug -- the parameter was
+ * reduced to a name before the parameter list was ever built, so `(let :ctor x <- Int 7)` had nowhere
+ * to put the `7` and emitted `constructor(x)`. `(Vec)` then produced `{ x: undefined }`, silently.
+ *
+ * The default is carried as the raw AST NODE, deliberately. The type system also records a
+ * `defaultValue` (on `constructorSignature` / `DetailedMember`), but that one goes through
+ * `extractDefaultValue`, which is a lossy REFLECTION artifact: it flattens a literal to a JS scalar
+ * and returns the string `"<expression>"` for anything else. It cannot be turned back into code. The
+ * AST node can -- `buildFields` already emits one with `this.visitor.visit(v.value)`.
+ */
+interface CtorParam {
+  name: string;
+  /** The default's AST node. Emitted as an ESTree AssignmentPattern. */
+  defaultValue?: ast.ASTNode;
+}
+
+/**
  * Helper function to extract constructor parameters from a class node
  */
-function getCtorParamsFromClassNode(classNode: ast.ClassNode): string[] {
-  const result: string[] = [];
+function getCtorParamsFromClassNode(classNode: ast.ClassNode): CtorParam[] {
+  const result: CtorParam[] = [];
 
   const bodyNodes = classNode.body
     .map((x: any) => (x.nodes ? x.nodes : [x]))
@@ -20,7 +39,7 @@ function getCtorParamsFromClassNode(classNode: ast.ClassNode): string[] {
 
       if (fieldModifiers.includes("ctor")) {
         const paramName = (variable.name as any).id ?? (variable.name as any).name;
-        result.push(paramName);
+        result.push({ name: paramName, defaultValue: (variable as any).value ?? undefined });
       }
     }
   }
@@ -126,7 +145,7 @@ export class ClassBuilder {
   private buildConstructor(): ESTree.MethodDefinition | null {
     // 1. Resolve Parent Class Logic
     let parentClassName: string | null = null;
-    let parentArgs: string[] = [];
+    let parentArgs: CtorParam[] = [];
 
     if (this.node.extends && this.node.extends.length > 0) {
       const parentTypeNode = this.node.extends[0];
@@ -143,28 +162,31 @@ export class ClassBuilder {
       }
     }
 
-    // 2. Identify Local Constructor Variables
-    const localCtorArgNames = this.ctorVars.map(
-      (v) => (v.name as any).id ?? (v.name as any).name
-    );
+    // 2. Identify Local Constructor Variables -- as PARAMETERS, carrying their defaults, not names.
+    const localCtorParams: CtorParam[] = this.ctorVars.map((v) => ({
+      name: (v.name as any).id ?? (v.name as any).name,
+      defaultValue: (v as any).value ?? undefined,
+    }));
+    const localCtorArgNames = localCtorParams.map((p) => p.name);
 
     // 3. Calculate Final Constructor Parameters & Super Arguments
-    const finalConstructorParams: string[] = [];
+    const finalConstructorParams: CtorParam[] = [];
     const superCallArgs: string[] = [];
 
-    // A. Handle Parent Requirements (Pass-through)
+    // A. Handle Parent Requirements (Pass-through). The parent's default travels with it -- a
+    // pass-through param used to be pushed by name, so an inherited default was dropped as well.
     for (const pArg of parentArgs) {
-      if (localCtorArgNames.includes(pArg)) {
-        superCallArgs.push(pArg);
+      if (localCtorArgNames.includes(pArg.name)) {
+        superCallArgs.push(pArg.name);
       } else {
         finalConstructorParams.push(pArg);
-        superCallArgs.push(pArg);
+        superCallArgs.push(pArg.name);
       }
     }
 
     // B. Handle Local Requirements
-    for (const localArg of localCtorArgNames) {
-      finalConstructorParams.push(localArg);
+    for (const localParam of localCtorParams) {
+      finalConstructorParams.push(localParam);
     }
 
     // If implicit constructor is empty, skip generating it
@@ -176,12 +198,49 @@ export class ClassBuilder {
       return null;
     }
 
+    // A defaulted parameter followed by a required one is legal JavaScript and a trap: the default
+    // can never be taken without also passing every parameter after it. `constructor(a = 1, b)` can
+    // only be called as `new C(1, 2)`. Report it rather than silently reordering -- the parameter
+    // ORDER is the source's, and a code generator that shuffles it is worse than one that complains.
+    //
+    // It can arise from inheritance without either class looking wrong on its own: parent
+    // pass-through params come first, so a defaulted parent field ahead of a required local one
+    // produces it.
+    const firstDefaulted = finalConstructorParams.findIndex((p) => p.defaultValue != null);
+    if (firstDefaulted !== -1) {
+      const required = finalConstructorParams
+        .slice(firstDefaulted + 1)
+        .filter((p) => p.defaultValue == null);
+      if (required.length > 0) {
+        this.visitor.reportCodegenError(
+          this.node,
+          "LL0102",
+          `Constructor of '${this.node.name.name}': parameter ` +
+            `'${finalConstructorParams[firstDefaulted].name}' has a default but is followed by ` +
+            `required parameter${required.length > 1 ? "s" : ""} ` +
+            `${required.map((p) => `'${p.name}'`).join(", ")}. The default can never be used -- ` +
+            `every parameter after it must still be supplied. Move the defaulted parameters last.`
+        );
+      }
+    }
+
     // --- Code Generation ---
-    const params: ESTree.Identifier[] = finalConstructorParams.map(p => ({
-      type: "Identifier",
-      name: encodeIdentifier(p),
-      loc: loc(this.node)
-    }));
+    const params: ESTree.Pattern[] = finalConstructorParams.map((p) => {
+      const id: ESTree.Identifier = {
+        type: "Identifier",
+        name: encodeIdentifier(p.name),
+        loc: loc(this.node),
+      };
+      if (p.defaultValue == null) {
+        return id;
+      }
+      return {
+        type: "AssignmentPattern",
+        left: id,
+        right: this.visitor.visit(p.defaultValue) as ESTree.Expression,
+        loc: loc(this.node),
+      } as ESTree.AssignmentPattern;
+    });
 
     const bodyStatements: ESTree.Statement[] = [];
 

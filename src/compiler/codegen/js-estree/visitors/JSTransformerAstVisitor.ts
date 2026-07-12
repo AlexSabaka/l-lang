@@ -186,8 +186,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   /**
    * Same mechanism the rest of the compiler uses (createRule -> results.add -> hasErrors ->
    * codegen blocked -> CLI exit 1). Deliberately not a new error path.
+   *
+   * Public because ClassBuilder needs it (LL0102): it is the only other thing that emits ESTree.
    */
-  private reportCodegenError(node: ast.ASTNode, code: string, message: string): void {
+  public reportCodegenError(node: ast.ASTNode, code: string, message: string): void {
     const rule = createRule<ast.ASTNode>()
       .addSeverity(RuleSeverity.Error)
       .addCode(code)
@@ -1490,16 +1492,40 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     };
   }
 
+  /**
+   * The catch-all case of a `cond`: `(cond ((> n 0) ...) (else ...))`.
+   *
+   * Both frontends hand `else` through as an ordinary identifier -- `{_type:"simple-identifier",
+   * id:"else"}` -- so visiting it as a condition ran it through `encodeIdentifier`, which encodes it
+   * (`else` is a JS reserved word) and produced
+   *
+   *     case _else:
+   *
+   * `_else` is bound to nothing. The switch evaluates its case expressions in order, so the moment
+   * no earlier case matched, `_else` was evaluated and threw `ReferenceError: _else is not defined`.
+   * Valid JavaScript, so the acorn guard passed it; the only reason it was never seen is that not
+   * one example in the corpus uses `(else ...)`.
+   */
+  private isElseCase(node: ast.CondCaseNode): boolean {
+    const cond = node.condition as any;
+    return cond?._type === "simple-identifier" && cond.id === "else";
+  }
+
   visitCondCase(
     node: ast.CondCaseNode
-  ): ESTree.ConditionalExpression | ESTree.SwitchCase {
-    const cond = this.visit(node.condition) as ESTree.Expression;
+  ): ESTree.ConditionalExpression | ESTree.SwitchCase | ESTree.Expression {
+    const isElse = this.isElseCase(node);
     const body = this.visit(node.body);
 
     if (this.isExpressionContext()) {
+      // The `else` IS the alternate. Returning it bare lets visitCond's chain terminate on it --
+      // a ternary whose test is `_else` would have thrown before it could choose anything.
+      if (isElse) {
+        return body as ESTree.Expression;
+      }
       return {
         type: "ConditionalExpression",
-        test: cond,
+        test: this.visit(node.condition) as ESTree.Expression,
         consequent: body as ESTree.Expression,
         alternate: ESTreeBuilder.identifier(node, "undefined"),
         loc: ESTreeBuilder.loc(node),
@@ -1518,7 +1544,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     return {
       type: "SwitchCase",
-      test: cond,
+      // `test: null` IS `default:` in ESTree. Taken only when no case matched -- exactly `else`.
+      test: isElse ? null : (this.visit(node.condition) as ESTree.Expression),
       consequent: bodyStmt,
       loc: ESTreeBuilder.loc(node),
     } as ESTree.SwitchCase;
@@ -2375,13 +2402,20 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     };
   }
 
+  /**
+   * D13: map keys are STRINGS, and are never mangled. `{ :my-key 1 }` emits `{ "my-key": 1 }`.
+   *
+   * The key used to be emitted as an `Identifier` run through `encodeIdentifier`, so `:my-key`
+   * became `{ my2dkey: 1 }` -- and then `m["my-key"]`, `(get m "my-key")` and every external JSON
+   * consumer saw `undefined`. A map key is data, not a program symbol; encoding it is a category
+   * error, and it is the one thing that makes `get`, `[]` and JSON interop cohere at once.
+   *
+   * The cost, accepted in the ruling: dot-access cannot reach such a key. Use `m["my-key"]`.
+   */
   visitKeyValue(node: ast.KeyValueNode): ESTree.Property {
     const key =
       node.key._type === "simple-identifier"
-        ? ESTreeBuilder.identifier(
-            node.key,
-            encodeIdentifier((node.key as ast.SimpleIdentifierNode).id)
-          )
+        ? ESTreeBuilder.literal(node.key, (node.key as ast.SimpleIdentifierNode).id)
         : (this.visit(node.key) as ESTree.Expression);
 
     const value = this.visit(node.value) as ESTree.Expression;
