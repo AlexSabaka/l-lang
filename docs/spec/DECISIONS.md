@@ -300,3 +300,98 @@ This is a known, documented hole, not an oversight.
   destructuring on line 112.
 
 Both now fail on a *different, correctly-named* blocker than they did before, which is the point.
+
+---
+
+# P4 addendum — what arming the type checker actually found
+
+The audit's P4 said "today l-lang is a statically-ANNOTATED language; this phase makes it a
+statically-TYPED one." That was right. The specifics were not always, and the measurements below
+are all from running the code, not from reading it.
+
+## The type system could not fail a build — and the reason was one missing capital letter
+
+Its *only* `context.results.add` — the sole route to `hasErrors`, and therefore the only way any
+type error could block codegen — lived in `TypeCheckingValidatorAstVisitor`. That class dispatched:
+
+```ts
+return (this as any)[`visit${node._type}`]?.(node) ?? node;
+```
+
+with **no capitalisation at all**. Not "kebab-case", as the audit framed it: even the single-word
+`"variable"` builds `visitvariable`. Not one of its four visitors could ever be reached, and because
+that same `visit()` override suppressed the inherited child-walk, it never recursed either. It ran
+on every compile and did nothing, for 360 lines. Deleted; its error path moved to the pass that
+actually runs.
+
+Meanwhile the six checks that *did* run all reported through `context.log(LogLevel.Error, …)`, which
+touches the logger and nothing else. The gating plumbing (`results.add` → `hasErrors` → codegen
+blocked → exit 1) was fully built and correct the entire time. **It was simply never fed.**
+
+## Measure before you arm
+
+Armed as-is, those six checks emitted **54 diagnostics across 17 currently-passing tests**. The
+suite would have gone 58 → ~39 and the phase would have looked unshippable. Every one was a false
+positive. The measurement harness (`npm run test:type-errors`) was built *first*, before any type
+code was touched, which is the only reason the cleanup was falsifiable — and it caught a regression
+mid-phase that would otherwise have shipped (`!!a.generics !== !!b.generics` looks right and is not:
+a non-generic class carries `generics: []`, its type-ref carries `undefined`, and the two are the
+same type).
+
+## The false positives were structural, not subtle
+
+- **`inferOperatorType` had become the fallback for any unresolvable call head.** So every JS global
+  and member call was run through the operator tables and reported as an invalid operator —
+  *"Invalid unary operator `Math.log` for type Int"*. The type system had no model of JS interop,
+  and its fallback was *assume it's an operator, then complain it isn't a valid one*.
+- **A user-defined `:operator +` is registered as an ordinary symbol named `+`.** Resolving the head
+  as a function therefore made *every* `+` in a file resolve to the Complex overload, so
+  `(+ c1.real c2.real)` — adding two Reals — reported *"Expected Complex, got Real"*. Operators must
+  dispatch before functions; which overload applies depends on the operand types.
+- **`convertAstTypeToInferred` was declared three times and the copies disagreed**, each knowing
+  something the others didn't. Only one consulted the symbol table; the others made every
+  user-defined type a *primitive of the same name*, so a `<- Complex` annotation produced
+  `{kind:"primitive", name:"Complex"}` and reported *"Cannot assign Complex to Complex"*.
+- **`typesEqual` returned `true` for any two map types** — `Map<String,Int>` equalled
+  `Map<String,Boolean>`, and `isAssignable` short-circuits on it.
+
+## The checker had never seen most of the program
+
+Not mentioned anywhere in the audit. Both passes override `visit()` with manual dispatch and no
+child walk, and `visitList` **skipped everything that was not a declaration** ("*Skip comments and
+other non-declaration items*"). So no loop body, match arm, try block — or even a call at statement
+level — had ever been type-checked. `(if "str" 1 2)` produced **nothing**: `visitIf` existed and had
+simply never been reached.
+
+## Live language inconsistency: `Bool` vs `Boolean`
+
+The corpus annotates with `Bool` 6 times and `Boolean` 15 times. The type system knows only
+`Boolean`. Nobody noticed, because nothing was ever checked. **This needs a ruling** — is `Bool` a
+legal spelling, or should the six uses be corrected? Until then, an unrecognised type name is
+`Unknown` (gradual), not an invented primitive that equals nothing.
+
+## Open: the unresolved-identifier check is blocked on P6, not on effort
+
+The audit's ★ finding ("no unresolved-identifier check exists anywhere") is real, and it stays real.
+It cannot be built on the current resolution model:
+
+- `typeEnv.resolveIdentifier` fails on **165 identifiers** across the corpus, overwhelmingly
+  function **parameters and locals** (`n` ×36, `x`, `a`, `amount`, `idx`) — the type environment does
+  not track nested scopes.
+- Narrowing to call *heads* doesn't rescue it: of **357** unresolved heads, 175 are special forms
+  (`return`, `new`, `throw`) and most of the rest are symbols **imported** from `20-stdlib`
+  (`print`, `log`, `is-nil`) — and imports are never inlined, because `InlineImportsAstVisitor` is
+  disabled.
+
+Both facts are the audit's own **P6** ("symbol resolution is global, name-keyed, and top-level-only
+… structurally incapable of seeing a nested scope"). The check belongs *after* P6. It is recorded as
+a pending negative test with its reason, not quietly dropped. The same constraint is why
+duplicate-declaration is checked syntactically per-block rather than through the symbol table.
+
+## Status
+
+`LL0200` type mismatch · `LL0201` if-condition · `LL0202` assignment · `LL0203` argument ·
+`LL0204` operator · `LL0211` arity · `LL0212` duplicate declaration · `LL0213` return type.
+
+A type error now blocks codegen and exits 1. Zero false positives on the corpus; 58 tests pass under
+both frontends.
