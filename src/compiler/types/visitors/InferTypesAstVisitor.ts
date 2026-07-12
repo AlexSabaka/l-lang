@@ -1037,9 +1037,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         if (!unknownEither && !TypeChecker.isAssignable(valueType, declaredType, this.symbolTable)) {
           // For recursive types with array/union structure, skip the error since the structure is correct
           if (!isLikelyRecursive) {
-            this.context.log(
-              LogLevel.Error,
-              `Type mismatch: Cannot assign ${TypeChecker.formatType(valueType)} to ${TypeChecker.formatType(declaredType)} for variable '${varName}'`
+            this.reportTypeError(
+              node,
+              "LL0200",
+              `Type mismatch: cannot assign ${TypeChecker.formatType(valueType)} to ${TypeChecker.formatType(declaredType)} for variable '${varName}'.`
             );
           } else {
             // Log as warning instead for recursive types
@@ -1283,9 +1284,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // can call wrong. (This check only started firing once visitList stopped skipping non-
     // declarations -- it had never run before, so it had never needed the guard.)
     if (!TypeChecker.isUnknown(condType) && condType.name !== "Boolean") {
-      this.context.log(
-        LogLevel.Error,
-        `If condition must be Boolean, got ${TypeChecker.formatType(condType)}`
+      this.reportTypeError(
+        node,
+        "LL0201",
+        `'if' condition must be Boolean, got ${TypeChecker.formatType(condType)}.`
       );
     }
     
@@ -1300,9 +1302,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const valueType = this.inferExpressionType(node.value);
     
     if (!TypeChecker.isAssignable(valueType, targetType, this.symbolTable)) {
-      this.context.log(
-        LogLevel.Error,
-        `Type mismatch in assignment: Cannot assign ${TypeChecker.formatType(valueType)} to ${TypeChecker.formatType(targetType)}`
+      this.reportTypeError(
+        node,
+        "LL0202",
+        `Type mismatch in assignment: cannot assign ${TypeChecker.formatType(valueType)} to ${TypeChecker.formatType(targetType)}.`
       );
     }
   }
@@ -1425,9 +1428,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
                     return;
                   }
                   if (!TypeChecker.isAssignable(argType, expectedType, this.symbolTable)) {
-                    this.context.log(
-                      LogLevel.Error,
-                      `Argument ${i + 1} type mismatch: Expected ${TypeChecker.formatType(expectedType)}, got ${TypeChecker.formatType(argType)}`
+                    this.reportTypeError(
+                      args[i] ?? listNode,
+                      "LL0203",
+                      `Argument ${i + 1} of '${funcName}': expected ${TypeChecker.formatType(expectedType)}, got ${TypeChecker.formatType(argType)}.`
                     );
                   }
                 }
@@ -1633,9 +1637,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       }
 
       if (!resultType) {
-        this.context.log(
-          LogLevel.Error,
-          `Invalid unary operator '${op}' for type ${TypeChecker.formatType(operandType)}`
+        this.reportTypeError(
+          args[0],
+          "LL0204",
+          `Operator '${op}' is not defined for ${TypeChecker.formatType(operandType)}.`
         );
         return TypeEnvironment.unknown();
       }
@@ -1668,9 +1673,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       }
 
       if (!resultType) {
-        this.context.log(
-          LogLevel.Error,
-          `Invalid binary operator '${op}' for types ${TypeChecker.formatType(leftType)} and ${TypeChecker.formatType(rightType)}`
+        this.reportTypeError(
+          args[0],
+          "LL0204",
+          `Operator '${op}' is not defined for ${TypeChecker.formatType(leftType)} and ${TypeChecker.formatType(rightType)}.`
         );
         return TypeEnvironment.unknown();
       }
