@@ -130,6 +130,51 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
     checkRules(node, [r.ClassMustHaveName], this.context);
   }
 
+  /**
+   * D12: unknown, duplicate, or missing-required `for` clauses are hard errors.
+   *
+   * Unknown clauses are already impossible -- the parser's clause bag simply has no alternative
+   * for `:i` or `:of`, so it errors at parse time naming the clauses it does accept. What survives
+   * to here is duplication (`:then` twice) and omission.
+   */
+  visitFor(node: ast.ForNode) {
+    this.checkForClauses(node, node.duplicateClauses, [
+      [node.condition, ":cond", "a `for` with no condition would never terminate"],
+    ]);
+    return node;
+  }
+
+  visitForEach(node: ast.ForEachNode) {
+    this.checkForClauses(node, node.duplicateClauses, [
+      [node.collection, ":from", "a `for :each` has nothing to iterate over without it"],
+    ]);
+    return node;
+  }
+
+  private checkForClauses(
+    node: ast.ASTNode,
+    duplicates: string[] | undefined,
+    required: [unknown, string, string][]
+  ): void {
+    for (const kind of duplicates ?? []) {
+      this.reportModifierError(
+        node,
+        "LL0017",
+        `Duplicate '${kind}' clause. Each 'for' clause may appear at most once; the first wins.`
+      );
+    }
+
+    for (const [slot, name, why] of required) {
+      if (slot === null || slot === undefined) {
+        this.reportModifierError(
+          node,
+          "LL0018",
+          `'for' is missing its required '${name}' clause -- ${why}.`
+        );
+      }
+    }
+  }
+
   visitWhen(node: ast.WhenNode) {
     checkRules(
       node,

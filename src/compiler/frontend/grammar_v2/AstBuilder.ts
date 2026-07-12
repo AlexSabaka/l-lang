@@ -839,68 +839,69 @@ export class LLangAstBuilder extends BaseCstVisitor {
     return this.makeNode("cond-case", ctx, { condition, body });
   }
 
+  /**
+   * D12: `for` clauses are a NAMED, ORDER-FREE bag.
+   *
+   * The old builder walked a flat `expressions` array with a moving index and guessed each
+   * clause's role from its POSITION -- `initial = expressions[i++]`, `condition = expressions[i++]`
+   * -- so reordering the clauses silently reassigned them. That positional shuffle is exactly the
+   * bug the audit meant by "the for-each feature and the for-each bug are the same code". Roles
+   * now come from the keyword, so order cannot change meaning.
+   */
   forExpr(ctx: any): ast.ForNode | ast.ForEachNode {
-    // Check if this is a for-each loop
-    const isForEach = !!ctx.EachModKw;
-    const expressions = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
+    const clauses: { kind: string; value: any }[] = (ctx.forClause ?? []).map((c: any) =>
+      this.visit(c)
+    );
 
-    if (isForEach) {
-      const variable = ctx.identifier ? this.visit(ctx.identifier[0]) : null;
-      // For for-each: expressions are [collection, then, else]
-      let collection = null;
-      let then = null;
-      let elseThen = null;
-      // The expression after :from is the collection
-      // The expression after :then is the body
-      // The expression after :else is the else clause
-      let exprIdx = 0;
-      if (ctx.FromModKw && exprIdx < expressions.length) {
-        collection = expressions[exprIdx++];
-      }
-      if (exprIdx < expressions.length) {
-        then = expressions[exprIdx++];
-      }
-      if (ctx.ElseModKw && exprIdx < expressions.length) {
-        elseThen = expressions[exprIdx];
-      }
+    const kinds = clauses.map((c) => c.kind);
+    const seen = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const kind of kinds) {
+      if (seen.has(kind)) duplicates.add(kind);
+      seen.add(kind);
+    }
+
+    // First occurrence wins; the duplicate is reported by SyntaxRulesAstVisitor, not silently
+    // merged. Recorded only when malformed, so a well-formed `for` carries no extra field.
+    const first = (kind: string) => clauses.find((c) => c.kind === kind)?.value ?? null;
+    const duplicateClauses = duplicates.size > 0 ? [...duplicates] : undefined;
+
+    if (seen.has("each")) {
       return this.makeNode("for-each", ctx, {
-        variable,
-        collection,
-        then,
-        else: elseThen,
+        variable: first("each"),
+        collection: first("from"),
+        then: first("then"),
+        else: first("else"),
+        ...(duplicateClauses ? { duplicateClauses } : {}),
       });
     }
 
-    // Regular for loop
-    let initial = null;
-    let condition = null;
-    let step = null;
-    let then = null;
-    let elseThen = null;
-    // Map expressions to their roles based on modifiers present
-    let exprIdx = 0;
-    if (exprIdx < expressions.length) {
-      initial = expressions[exprIdx++];
-    }
-    if (exprIdx < expressions.length) {
-      condition = expressions[exprIdx++];
-    }
-    if (ctx.StepModKw && exprIdx < expressions.length) {
-      step = expressions[exprIdx++];
-    }
-    if (exprIdx < expressions.length) {
-      then = expressions[exprIdx++];
-    }
-    if (ctx.ElseModKw && exprIdx < expressions.length) {
-      elseThen = expressions[exprIdx];
-    }
     return this.makeNode("for", ctx, {
-      initial,
-      condition,
-      step,
-      then,
-      else: elseThen,
+      initial: first("init"),
+      condition: first("cond"),
+      step: first("step"),
+      then: first("then"),
+      else: first("else"),
+      ...(duplicateClauses ? { duplicateClauses } : {}),
     });
+  }
+
+  forClause(ctx: any): { kind: string; value: any } {
+    if (ctx.EachModKw) return { kind: "each", value: this.visit(ctx.forEachBinding[0]) };
+
+    const value = ctx.expression ? this.visit(ctx.expression[0]) : null;
+    if (ctx.InitModKw) return { kind: "init", value };
+    if (ctx.CondModKw) return { kind: "cond", value };
+    if (ctx.FromModKw) return { kind: "from", value };
+    if (ctx.StepModKw) return { kind: "step", value };
+    if (ctx.ThenModKw) return { kind: "then", value };
+    if (ctx.ElseModKw) return { kind: "else", value };
+
+    throw new Error(`Unknown for clause: ${Object.keys(ctx)}`);
+  }
+
+  forEachBinding(ctx: any): any {
+    return this.bindingTarget(ctx);
   }
 
   whileExpr(ctx: any): ast.WhileNode {

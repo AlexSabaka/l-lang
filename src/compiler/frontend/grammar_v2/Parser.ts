@@ -73,6 +73,8 @@ class LLangParser extends CstParser {
   condExpr: ParserMethod<[], CstNode>;
   condCase: ParserMethod<[], CstNode>;
   forExpr: ParserMethod<[], CstNode>;
+  forClause: ParserMethod<[], CstNode>;
+  forEachBinding: ParserMethod<[], CstNode>;
   whileExpr: ParserMethod<[], CstNode>;
   tryCatchExpr: ParserMethod<[], CstNode>;
   catchClause: ParserMethod<[], CstNode>;
@@ -991,51 +993,57 @@ class LLangParser extends CstParser {
       this.CONSUME(t.RParen);
     });
 
-    // for :init init :each var :cond cond :from collection :step step :then then :else else
+    /**
+     * D12: `for` is NAMED-ONLY and ORDER-FREE -- a bag of `:keyword expression` clauses.
+     *
+     *   (for :each x :from xs :then body)                 ; for-each
+     *   (for :init i :cond c :step s :then body :else e)  ; classic
+     *
+     * The old rule was a fixed sequence of positional OPTION slots whose keywords were themselves
+     * optional, so a bare expression silently fell into whatever slot came next and the clause
+     * order was load-bearing. That is what the audit meant by "the for-each feature and the
+     * for-each bug are currently the same code": for-each worked *because* of the slot drift.
+     *
+     * As a bag, an unknown clause (`:i`, `:of`) can no longer slide into a slot -- it simply is
+     * not one of the alternatives, and the parser says so with a located error naming the clauses
+     * it does accept. Duplicate and missing-required clauses are checked on the AST; see
+     * SyntaxRulesAstVisitor.visitFor.
+     *
+     * It also retires the OPTION-index pressure that made the previous rule unfinishable:
+     * Chevrotain defines only OPTION..OPTION9, the old rule had used nine of the ten, and that
+     * is very likely why `:else` sat commented out rather than finished.
+     */
     this.forExpr = this.RULE("forExpr", () => {
       this.CONSUME(t.ForKw);
-      // :init expression (for regular for)
-      this.OPTION(() => {
-        this.OPTION2(() => this.CONSUME(t.InitModKw));
-        this.SUBRULE(this.expression);
-      });
-      // :each identifier (for for-each)
-      this.OPTION3(() => {
-        this.CONSUME(t.EachModKw);
-        this.SUBRULE(this.identifier);
-      });
-      // :cond expression
-      this.OPTION4(() => {
-        this.OPTION5(() => this.CONSUME(t.CondModKw));
-        this.SUBRULE2(this.expression);
-      });
-      // :from expression (collection for for-each)
-      this.OPTION6(() => {
-        this.CONSUME(t.FromModKw);
-        this.SUBRULE3(this.expression);
-      });
-      // :step expression
-      this.OPTION7(() => {
-        this.CONSUME(t.StepModKw);
-        this.SUBRULE4(this.expression);
-      });
-      // :then expression
-      this.OPTION8(() => {
-        this.OPTION9(() => this.CONSUME(t.ThenModKw));
-        this.SUBRULE5(this.expression);
-      });
-      // :else expression -- was commented out in the recovered source, but both the PEG
-      // (`elseFor:((ElseModKw __)? @Expression)?`) and this frontend's own AstBuilder (which
-      // already branches on `ctx.ElseModKw`) expect it. Left disabled, `(for ... :else ...)`
-      // could not parse at all.
-      //
-      // OPTION1, not OPTION10: Chevrotain only defines OPTION and OPTION1..OPTION9. The clauses
-      // above already use OPTION and OPTION2..OPTION9 -- nine of the ten -- which is very likely
-      // why this clause was commented out rather than finished. OPTION1 is the one still free.
-      this.OPTION1(() => {
-        this.CONSUME(t.ElseModKw);
-        this.SUBRULE6(this.expression);
-      });
+      this.AT_LEAST_ONE(() => this.SUBRULE(this.forClause));
+    });
+
+    this.forClause = this.RULE("forClause", () => {
+      this.OR([
+        { ALT: () => { this.CONSUME(t.InitModKw); this.SUBRULE(this.expression); } },
+        { ALT: () => { this.CONSUME(t.EachModKw); this.SUBRULE(this.forEachBinding); } },
+        { ALT: () => { this.CONSUME(t.CondModKw); this.SUBRULE2(this.expression); } },
+        { ALT: () => { this.CONSUME(t.FromModKw); this.SUBRULE3(this.expression); } },
+        { ALT: () => { this.CONSUME(t.StepModKw); this.SUBRULE4(this.expression); } },
+        { ALT: () => { this.CONSUME(t.ThenModKw); this.SUBRULE5(this.expression); } },
+        { ALT: () => { this.CONSUME(t.ElseModKw); this.SUBRULE6(this.expression); } },
+      ]);
+    });
+
+    // The `:each` binding is a full binding target (D16), not just a name -- the corpus already
+    // relies on it: `(for :each [key val] :from settings.entries ...)`.
+    this.forEachBinding = this.RULE("forEachBinding", () => {
+      this.OR([
+        {
+          GATE: () => this.LA(1)?.tokenType === t.LBracket,
+          ALT: () => this.SUBRULE(this.vectorPattern),
+        },
+        {
+          GATE: () => this.LA(1)?.tokenType === t.LBrace,
+          ALT: () => this.SUBRULE(this.mapPattern),
+        },
+        { ALT: () => this.SUBRULE(this.identifier) },
+      ]);
     });
 
     // while :cond? condition :then? then*

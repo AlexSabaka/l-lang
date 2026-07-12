@@ -402,13 +402,21 @@ export interface ForNode extends ASTNode<"for"> {
   step: ASTNode;
   then: ASTNode;
   else: ASTNode;
+  /**
+   * D12: clause kinds that appeared more than once. Present ONLY when the form is malformed, so
+   * a well-formed `for` carries no extra field. Missing-required clauses need no bookkeeping --
+   * they are visible as a null slot.
+   */
+  duplicateClauses?: string[];
 }
 
 export interface ForEachNode extends ASTNode<"for-each"> {
-  variable: IdentifierNode;
+  /** D16: `(for :each [key val] :from settings.entries ...)` destructures. */
+  variable: BindingTarget;
   collection: ASTNode;
   then: ASTNode;
   else: ASTNode;
+  duplicateClauses?: string[];
 }
 
 export interface WhileNode extends ASTNode<"while"> {

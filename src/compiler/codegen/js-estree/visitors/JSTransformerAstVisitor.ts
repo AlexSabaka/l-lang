@@ -1636,23 +1636,43 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   visitForEach(node: ast.ForEachNode): ESTree.BlockStatement {
-    const variable = this.visit(node.variable) as ESTree.Identifier;
+    // D16: `(for :each [key val] :from settings.entries ...)` destructures the loop variable.
+    const variable = (
+      ast.isBindingPattern(node.variable)
+        ? this.bindingPatternToESTree(node.variable as ast.ASTNode)
+        : this.visit(node.variable)
+    ) as ESTree.Identifier;
     const collection = this.visit(node.collection) as ESTree.Expression;
     const body = this.visit(node.then);
     const elseFor =
       node.else !== null ? (this.visit(node.else) as ESTree.Statement) : null;
 
+    // The loop variable is declared OUTSIDE the for-of, not in its head, and deliberately so:
+    // the `:else` clause runs after the loop and may reference the final value (11_foreach.lisp
+    // does exactly that). That means an uninitialised declaration -- fine for a name, but
+    // `let [x, y];` is not legal JavaScript: a destructuring declarator requires an initialiser.
+    // (The acorn check added in 3a caught this, rather than shipping invalid JS.)
+    //
+    // So for a destructuring :each, declare the bound NAMES and let the for-of head use the
+    // pattern as a plain assignment target -- `let x, y; for ([x, y] of pts)` -- which is valid
+    // and keeps the names live for :else.
+    const destructuring = ast.isBindingPattern(node.variable);
+    const declaredNames = destructuring
+      ? ast.bindingNames(node.variable)
+      : [(variable as ESTree.Identifier).name];
+
     const varDeclaration: ESTree.VariableDeclaration = {
       type: "VariableDeclaration",
       kind: "let",
-      declarations: [
-        {
-          type: "VariableDeclarator",
-          id: variable,
-          init: null,
-        },
-      ],
-      loc: ESTreeBuilder.loc(node.variable),
+      declarations: declaredNames.map((n) => ({
+        type: "VariableDeclarator" as const,
+        id: ESTreeBuilder.identifier(
+          node.variable as ast.ASTNode,
+          destructuring ? encodeIdentifier(n) : n
+        ),
+        init: null,
+      })),
+      loc: ESTreeBuilder.loc(node.variable as ast.ASTNode),
     };
 
     const bodyStmt = this.isStatement(body)

@@ -49,7 +49,10 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "01-basics/04_when.lisp": {
     status: "xfail",
-    reason: "D12: when/control-form semantics not yet enforced",
+    reason:
+      "D12 landed and this now PARSES. It is blocked one stage later: codegen emits invalid " +
+      "JavaScript for it (LL0101), which the acorn check now catches instead of writing to disk. " +
+      "A codegen bug (P5), not a form-layer one.",
   },
   "01-basics/05_pattern_matching.lisp": {
     status: "xfail",
@@ -61,7 +64,10 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "01-basics/09_more_for_loops.lisp": {
     status: "xfail",
-    reason: "D12: for-loop slot semantics",
+    reason:
+      "D12 landed and the for-loops now PARSE. Blocked instead on ':inline' (LL0015) -- an " +
+      "undeclared modifier that appears nowhere else in the corpus and has no (defmodifier " +
+      "inline ...). The example is at fault, not the compiler.",
   },
   "01-basics/17_higher_order_functions.lisp": {
     status: "xfail",
@@ -82,9 +88,10 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "01-basics/20_scope.lisp": {
     status: "xfail",
     reason:
-      "destructuring itself now works (D16). Blocked earlier in the file instead, at :68 " +
-      "`(for :i 0 :< 3 :step 1 :then ...)` -- D12's for-clause syntax -- which it hits long " +
-      "before its destructuring on :112.",
+      "destructuring itself now works (D16). Blocked earlier in the file, at :68 " +
+      "`(for :i 0 :< 3 :step 1 :then ...)`: `:i` and `:<` are not `for` clauses, and under D12 " +
+      "`for` is named-clause-only, so this is now a located parse error rather than a silent " +
+      "slot-drift misparse. The example is at fault; it never reaches its destructuring on :112.",
   },
   "01-basics/21_nil_handling.lisp": {
     status: "xfail",
@@ -136,7 +143,11 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "10-algorithms/02_game_of_life.lisp": {
     status: "xfail",
-    reason: "D12: for-loop codegen crash",
+    reason:
+      "uses `(for (let dy :of offsets) ...)`, a for-OF form that D12 does not have: `for` takes " +
+      "named clauses (:init/:each/:cond/:from/:step/:then/:else) and nothing else. Neither " +
+      "frontend ever supported it -- the PEG's For rule has no :of either. Aspirational syntax; " +
+      "either add a :of clause to D12 or rewrite the example.",
   },
   "20-stdlib/test_stdlib.lisp": {
     status: "xfail",
