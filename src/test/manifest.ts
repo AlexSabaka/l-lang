@@ -45,8 +45,7 @@ export const MANIFEST: Record<string, ManifestEntry> = {
 
   // --- xfail: real examples, no golden authored yet ---
   "00-tests/00_tree_shake.lisp": {
-    status: "xfail",
-    reason: "no known blocker -- needs a golden authored",
+    status: "test",
   },
   "01-basics/04_when.lisp": {
     status: "xfail",
@@ -86,7 +85,12 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "02-errors/01_try_catch.lisp": {
     status: "xfail",
-    reason: "no known blocker -- needs a golden authored",
+    reason:
+      "not goldenable as written: it does `(console.log \"Caught error:\" err)` on raw Error " +
+      "objects, so node prints a full stack trace with ABSOLUTE paths and line numbers into the " +
+      "generated .js -- a golden would bake one machine's filesystem into the repo. (Its old " +
+      "reason, 'needs a golden authored', was wrong: it compiles and runs fine.) Fix is to print " +
+      "err.message, but that edits the corpus and needs a call.",
   },
   "03-types/00_type_basics.lisp": {
     status: "xfail",
@@ -110,7 +114,10 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "07-async/00.lisp": {
     status: "xfail",
-    reason: "D14: await is unwritable -- no AwaitKw in the current grammar",
+    reason:
+      "await has no codegen (LL0100: visitAwait is not implemented in the JS backend). The old " +
+      "reason -- 'D14: await is unwritable, no AwaitKw in the current grammar' -- is stale: D14 " +
+      "landed and it now parses. Blocked on the codegen phase, not the frontend.",
   },
   "08-types/01_arguments.lisp": {
     status: "xfail",
