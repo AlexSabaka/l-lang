@@ -1,8 +1,14 @@
 import fs from "node:fs";
 import { Command } from "commander";
-import { CompilerOptions, CompilationLanguage, LogLevel } from "../compiler/Context";
+import {
+  CompilerOptions,
+  CompilationLanguage,
+  CompilationFrontend,
+  LogLevel,
+} from "../compiler/Context";
 
 const VALID_LANGUAGES: CompilationLanguage[] = ["js", "legacy-js"];
+const VALID_FRONTENDS: CompilationFrontend[] = ["grammar_v2", "peg"];
 
 function createFileLogger(file: string) {
   const stream = fs.createWriteStream(file, { flags: "a" });
@@ -64,10 +70,18 @@ export function getCompilerOptions(
     );
   }
 
+  const frontend: CompilationFrontend = opts.frontend || "grammar_v2";
+  if (!VALID_FRONTENDS.includes(frontend)) {
+    throw new Error(
+      `Invalid --frontend '${opts.frontend}'. Valid values are: ${VALID_FRONTENDS.join(", ")}`
+    );
+  }
+
   return {
     minimumLogLevel: logLevel,
     logger: opts.logFile ? createFileLogger(opts.logFile) : console.log,
     language,
+    frontend,
     stage: opts.stage || "codegen",
     includeRuntimeShim: opts.runtimeShim !== undefined ? !!opts.runtimeShim : true, // default to true
     stdout: !!opts.stdout,

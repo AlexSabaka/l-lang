@@ -43,6 +43,17 @@ export type CompilationStage = "parse" | "syntax" | "symbols" | "desugar" | "typ
 
 export type CompilationLanguage = "llang" | "js" | "legacy-js";
 
+/**
+ * Which parser turns .lisp source into an AST.
+ *
+ * `grammar_v2` (default) is the Chevrotain lexer/parser. `peg` is the original scannerless
+ * peggy grammar, kept selectable for one cycle so the cutover is reversible with a single flag.
+ * The PEG has no separate lexer, so whitespace alone decides token boundaries -- which is the
+ * root cause of the silent misparses grammar_v2 exists to fix (`(let nullable 1)` binding a
+ * variable named `able`; `(defclass Pair<T U>)` dropping its generics). See docs/spec/DECISIONS.md D14.
+ */
+export type CompilationFrontend = "grammar_v2" | "peg";
+
 export interface CompilerOptions {
   logger?: (msg: any, ...args: any[]) => void;
   minimumLogLevel: LogLevel;
@@ -50,6 +61,7 @@ export interface CompilerOptions {
   stdout: boolean;
   stage: CompilationStage;
   language: CompilationLanguage;
+  frontend: CompilationFrontend;
   noIIFE?: boolean; // For REPL and other use cases
   perf?: boolean; // Performance tracking flag
   strictPhases?: boolean; // Enforce strict separation between compilation phases
@@ -89,7 +101,7 @@ export class Context {
   public mainModule: string;
   public options: CompilerOptions;
   public dependencyGraph: DependencyGraph;
-  public astProvider: AstProvider = new AstProvider();
+  public astProvider: AstProvider;
   public symbolTable: SymbolTable = new SymbolTable(undefined);
   public performanceMetrics: PerformanceMetrics =
     new PerformanceMetrics();
@@ -102,6 +114,7 @@ export class Context {
     this.dependencyGraph = new DependencyGraph(mainFile);
     this.mainModule = path.basename(mainFile, ".lisp");
     this.options = options;
+    this.astProvider = new AstProvider(options.frontend ?? "grammar_v2");
     // Initialize performance metrics with enabled flag from options
     this.performanceMetrics = new PerformanceMetrics(options.perf || false);
   }

@@ -3,6 +3,10 @@ import fs from "node:fs";
 import { parse } from "./grammar/l-lang"
 import * as ast from "./ast";
 import path from "node:path";
+import type { CompilationFrontend } from "../Context";
+import { LLangLexer } from "./grammar_v2/tokens";
+import { parser as v2Parser } from "./grammar_v2/Parser";
+import { LLangAstBuilder } from "./grammar_v2/AstBuilder";
 
 // const grammar = fs.readFileSync("./compiler/grammar/l-lang.pegjs", {
 //   encoding: "utf-8",
@@ -56,6 +60,47 @@ export class AstProvider {
   private cache: Map<string, CacheEntry> = new Map<string, CacheEntry>();
   // private parser: peggy.Parser = peggy.generate(grammar);
 
+  constructor(private frontend: CompilationFrontend = "grammar_v2") {}
+
+  /**
+   * grammar_v2 (Chevrotain): tokenize, parse to a CST, then build the AST.
+   *
+   * Deliberately produces the same node shapes the PEG does, so every pass downstream of here
+   * is frontend-agnostic. `_location` carries the same {source, start/end {offset,line,column}}
+   * that `getSource()` and the source-map emitter read.
+   */
+  private parseWithGrammarV2(source: string, filePath: string): ast.ProgramNode {
+    const lexResult = LLangLexer.tokenize(source);
+    if (lexResult.errors.length > 0) {
+      const e = lexResult.errors[0];
+      throw new Error(
+        `${filePath}:${e.line}:${e.column}: cannot tokenize: ${e.message}`
+      );
+    }
+
+    v2Parser.input = lexResult.tokens;
+    const cst = v2Parser.program();
+    if (v2Parser.errors.length > 0) {
+      const e = v2Parser.errors[0];
+      const tok = (e as any).token;
+      const where = tok?.startLine ? `${tok.startLine}:${tok.startColumn}` : "?";
+      throw new Error(`${filePath}:${where}: ${e.message}`);
+    }
+
+    return new LLangAstBuilder(filePath).visit(cst) as ast.ProgramNode;
+  }
+
+  private parseSource(source: string, filePath: string): ast.ProgramNode {
+    if (this.frontend === "peg") {
+      return parse(source, {
+        startRule: "Program",
+        grammarSource: filePath, // Good: helps source maps map back to absolute path
+        cache: true,
+      });
+    }
+    return this.parseWithGrammarV2(source, filePath);
+  }
+
   /**
    * Loads a file, parses it, and stores it in the cache using the Absolute Path as the key.
    */
@@ -66,12 +111,8 @@ export class AstProvider {
 
     // 2. Read from the resolved path
     const source = fs.readFileSync(filePath, { encoding: "utf-8" });
-    
-    const ast = parse(source, {
-      startRule: "Program",
-      grammarSource: filePath, // Good: helps source maps map back to absolute path
-      cache: true,
-    });
+
+    const ast = this.parseSource(source, filePath);
 
     assignParentNodeReferences(ast);
 
