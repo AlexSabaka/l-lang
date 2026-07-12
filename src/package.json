@@ -13,7 +13,8 @@
     "test": "ts-node test/runner.ts",
     "test:verbose": "ts-node test/runner.ts --verbose",
     "test:grammar-v2-smoke": "ts-node test/smoke-grammar-v2.ts",
-    "test:diff-frontends": "ts-node test/diff-frontends.ts"
+    "test:diff-frontends": "ts-node test/diff-frontends.ts",
+    "test:type-errors": "ts-node test/type-errors.ts"
   },
   "author": "Alex Sabaka",
   "license": "MIT",
