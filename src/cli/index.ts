@@ -6,6 +6,7 @@ import { transform } from "./commands/command.transform";
 import { evalFile } from "./commands/command.run";
 import { repl } from "./commands/command.repl";
 import { clean } from "./commands/command.clean";
+import { parseV2 } from "./commands/command.parseV2";
 
 const program = new Command();
 
@@ -60,6 +61,12 @@ program
   .description("run a l-lang file")
   .argument("<file>", "the l-lang file to run")
   .action((file) => evalFile(file, program));
+
+program
+  .command("parse-v2")
+  .description("parse a l-lang file with the grammar_v2 (Chevrotain) frontend -- not the default parser, for inspection only")
+  .argument("<file>", "l-lang file to parse")
+  .action((file) => parseV2(file));
 
 program
   .command("repl")
