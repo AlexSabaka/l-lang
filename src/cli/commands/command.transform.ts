@@ -11,6 +11,7 @@ import {
   logCompilationMessages,
 } from "../../compiler/Context";
 import { Scope } from "../../compiler/analysis/SymbolTable";
+import { symbolName } from "../../compiler/frontend/ast";
 import { getCompilerOptions } from "../getCompilerOptions";
 
 const { stdout } = process;
@@ -158,7 +159,7 @@ function serializeSymbolTable(scope: Scope | undefined): any {
     const entries: any = {};
     for (const [key, entry] of s.table.entries()) {
       entries[key] = {
-        name: entry.name.name ?? entry.name.id,
+        name: symbolName(entry.name),
         nodeType: entry.nodeType,
         mutability: entry.mutability,
         visibility: entry.visibility,

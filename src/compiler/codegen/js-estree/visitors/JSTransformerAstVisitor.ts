@@ -720,7 +720,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     const declarations: ESTree.VariableDeclarator[] = [];
 
     node.body.forEach((keyNode, keyIndex) => {
-      const key = `${enumName}:${keyNode.key.id ?? keyNode.key.value}`;
+      const key = `${enumName}:${ast.keyName(keyNode.key)}`;
       const value =
         keyNode.value !== null
           ? (this.visit(keyNode.value) as ESTree.Expression)
@@ -2150,7 +2150,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     for (let i = 0; i < node.value.length; i++) {
       const v = node.value[i];
-      if (v._type === "string") {
+      if (ast.isStringNode(v)) {
         currentString += v.value;
       } else {
         quasis.push({

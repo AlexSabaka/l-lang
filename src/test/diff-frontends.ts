@@ -92,7 +92,7 @@ function diff(a: any, b: any, p: string, out: string[], depth = 0): void {
     for (const k of new Set([...ka, ...kb])) {
       if (!ka.includes(k as any)) { out.push(`${p}.${String(k)}: missing in peg (v2 has it)`); continue; }
       if (!kb.includes(k as any)) { out.push(`${p}.${String(k)}: missing in v2 (peg has it)`); continue; }
-      diff(a[k as any], b[k as any], `${p}.${String(k)}`, out, depth + 1);
+      diff((a as any)[k], (b as any)[k], `${p}.${String(k)}`, out, depth + 1);
     }
     return;
   }

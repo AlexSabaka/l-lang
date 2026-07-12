@@ -191,7 +191,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
    * Desugars the function body only.
    */
   visitFunction(node: ast.FunctionNode): ast.FunctionNode {
-    this.context.log(LogLevel.Info, `Desugaring function: ${node.name?.id || node.name?.value || "anonymous"}`);
+    this.context.log(LogLevel.Info, `Desugaring function: ${node.name ? ast.symbolName(node.name) : "anonymous"}`);
     // Transform body: inject implicit returns
     if (node.body.length === 0) return node;
 

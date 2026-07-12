@@ -178,7 +178,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   visitEnum(node: ast.EnumNode) {
     const enumName = node.name.name;
     const enumKeys = node.body.map((keyNode, keyIndex) => {
-      const key = `${enumName}:${keyNode.key.id ?? keyNode.key.value}`;
+      const key = `${enumName}:${ast.keyName(keyNode.key)}`;
       const value = keyNode.value !== null ? this.visit(keyNode.value) : keyIndex.toString();
       this.enumKeys[key] = value;
       return createSourceNode(keyNode, `const `, encodeIdentifier(key), ` = `, value, `;`);
@@ -570,8 +570,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   visitFloatNumber(node: ast.FloatNumberNode) { return createSourceNode(node, node.value.toString()); }
 
   visitFormattedString(node: ast.FormattedStringNode) {
-    const value = node.value.map((x) =>
-      x._type === "string" ? x.value : this.visit(x)
+    const value = node.value.map((x: ast.ASTNode) =>
+      ast.isStringNode(x) ? x.value : this.visit(x)
     );
     return createSourceNode(node, "`", ...value, "`");
   }

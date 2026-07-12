@@ -32,7 +32,10 @@ export class TypeCheckingValidatorAstVisitor extends BaseAstTreeWalker {
   }
 
   visitVariable(node: ast.VariableNode) {
-    const varName = node.name.id;
+    // Destructuring bindings declare N names; this validator is dead code anyway (its visit()
+    // dispatch interpolates the kebab _type, so `visit${'simple-identifier'}` never resolves).
+    if (ast.isBindingPattern(node.name)) return;
+    const varName = (node.name as ast.IdentifierNode).id;
 
     if (node.value) {
       const valueType = this.inferExpressionType(node.value);

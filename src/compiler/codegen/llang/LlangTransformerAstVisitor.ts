@@ -57,7 +57,7 @@ export class LlangTransformerAstVisitor extends BaseAstVisitor {
 
   visitExport(node: ast.ExportNode): any {
     const exports = node.exports.map(e => {
-      const as = e.as ? ` :as ${e.as.id || e.as.name}` : '';
+      const as = e.as ? ` :as ${ast.symbolName(e.as)}` : '';
       const symbol = e.symbol._type === 'type-name' ? (e.symbol as any).name : (e.symbol as any).id;
       return `${symbol}${as}`;
     }).join(' ');
@@ -73,7 +73,7 @@ export class LlangTransformerAstVisitor extends BaseAstVisitor {
       if (imp.symbols) {
         // { a, b :as c } from "file"
         const syms = imp.symbols.map((s: ast.ImportExportAlias) => 
-          `${s.symbol.name}${s.as ? ' :as ' + s.as.name : ''}`
+          `${ast.symbolName(s.symbol)}${s.as ? ' :as ' + ast.symbolName(s.as) : ''}`
         ).join(' ');
         
         return `{ ${syms} } from ${mapSource(imp.source)}`;
@@ -220,7 +220,10 @@ export class LlangTransformerAstVisitor extends BaseAstVisitor {
   }
 
   visitTypeConstraint(node: ast.TypeConstraintNode): any {
-    return `(:where ${this.visit(node.where)} :${node.constraint} ${this.visit(node.value)})`;
+    const parts = (node.constraints ?? [])
+      .map((c) => `:${c.constraint} ${this.visit(c.value)}`)
+      .join(' ');
+    return `(:where ${this.visit(node.where)} ${parts})`;
   }
 
   // --- Operators ---

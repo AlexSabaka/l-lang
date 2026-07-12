@@ -321,7 +321,7 @@ export class SymbolTable {
    * Resolve a symbol by identifier or string name
    */
   resolveSymbol(name: ast.IdentifierNode | ast.TypeNameNode | string): SymbolEntry | undefined {
-    const symbolName = typeof name === "string" ? name : (name.name ?? name.id);
+    const symbolName = typeof name === "string" ? name : ast.symbolName(name);
     
     // Check cache first for O(1) lookup
     if (this.cacheValid && this.symbolCache.has(symbolName)) {
@@ -618,7 +618,7 @@ export class SymbolTableBuilder {
       throw new Error("No active scope. Cannot resolve symbol.");
     }
 
-    return this.findSymbolRecursively(name.name ?? name.id, this.active);
+    return this.findSymbolRecursively(ast.symbolName(name), this.active);
   }
 
   private findSymbolRecursively(name: string, scope: Scope) {

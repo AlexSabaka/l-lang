@@ -145,7 +145,7 @@ class ResolvePassVisitor extends BaseAstTreeWalker {
         this.symbolTableBuilder.defineSymbol(member as any);
       }
       // Check for members wrapped in lists (e.g., constructor parameters)
-      else if (member._type === "list" && member.nodes && member.nodes.length > 0) {
+      else if (ast.isListNode(member) && member.nodes.length > 0) {
         const innerFirst = member.nodes[0];
         if (innerFirst._type === "variable" || innerFirst._type === "function") {
           this.symbolTableBuilder.defineSymbol(innerFirst as any);
@@ -210,7 +210,7 @@ class ResolvePassVisitor extends BaseAstTreeWalker {
     node.exports.forEach(x => {
       const symbol = this.symbolTableBuilder.resolveSymbol(x.symbol);
       if (symbol === undefined) {
-        this.context.log(LogLevel.Error, `Cannot export undefined symbol: ${x.symbol.name ?? x.symbol.id}`);
+        this.context.log(LogLevel.Error, `Cannot export undefined symbol: ${ast.symbolName(x.symbol)}`);
         throw new Error(`Export error: symbol not found`);
       }
       symbol.exportName = x.as ?? x.symbol;

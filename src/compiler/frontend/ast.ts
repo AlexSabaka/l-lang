@@ -22,6 +22,24 @@ export function isAstNode(node: any): node is ASTNode {
   return node && typeof node === "object" && "_type" in node;
 }
 
+/**
+ * Narrow an ASTNode to a ListNode.
+ *
+ * `ASTNode<T>` is a generic interface, not a discriminated union, so a bare `node._type === "list"`
+ * check does NOT narrow it -- `.nodes` was only reachable because of the `[key: string]: any`
+ * index signature. Six separate sites open-coded that check while unwrapping the
+ * "list-wrapped declaration" shape (a `(let :ctor x 0)` in a class body arrives as
+ * `list{nodes:[variable]}`), and every one of them was leaning on the escape hatch.
+ */
+export function isListNode(node: ASTNode | undefined): node is ListNode {
+  return node?._type === "list";
+}
+
+/** Same reason as isListNode: `_type === "string"` does not narrow a generic ASTNode. */
+export function isStringNode(node: ASTNode | undefined): node is StringNode {
+  return node?._type === "string";
+}
+
 export function isIterableAstNode(node: any): node is ASTNode[] {
   return Array.isArray(node); 
 }
@@ -116,7 +134,6 @@ export type NodeType =
   ;
 
 export interface ASTNode<T extends NodeType = NodeType> {
-  [key: string]: any;
   _type: T;
   _location: Location;
   _parent: ASTNode | undefined;
@@ -221,7 +238,7 @@ export interface MapKeyTypeNode extends ASTNode<"map-key-type"> {
 }
 
 export interface MappedTypeNode extends ASTNode<"mapped-type"> {
-  // mapping;
+  mapping: ASTNode[];
 }
 
 export interface ModifierNode extends ASTNode<"modifier"> {
@@ -246,6 +263,14 @@ export interface FunctionNode extends ASTNode<"function"> {
   params: ParameterNode[];
   returns: TypeNode;
   body: ASTNode[];
+  /**
+   * Optional, and NEVER populated by either frontend: a generic function declaration
+   * (`(fn identity<T> [x <- T] -> T ...)`) is not parseable -- only classes and interfaces have a
+   * generics slot. InferTypesAstVisitor.visitFunction binds these, so the code exists and is
+   * inert; it is kept, and typed honestly, rather than deleted, so that it works the day the
+   * grammar grows generic functions.
+   */
+  generics?: GenericTypeNode[];
 }
 
 export interface ParameterNode extends ASTNode<"parameter"> {
@@ -282,7 +307,11 @@ export interface StructNode extends ASTNode<"struct"> {
   body: ASTNode[];
 }
 
-export interface TypeDefNode extends ASTNode<"type-def"> {}
+export interface TypeDefNode extends ASTNode<"type-def"> {
+  name: IdentifierNode;
+  type: TypeNode;
+  modifiers: ModifierNode[];
+}
 
 export interface ModifierDefNode extends ASTNode<"modifier-def"> {
   name: string;
@@ -511,6 +540,23 @@ export function bindingIdentifiers(target: BindingTarget | undefined): Identifie
 /** Convenience: the bound names as strings. */
 export function bindingNames(target: BindingTarget | undefined): string[] {
   return bindingIdentifiers(target).map((i) => (i as any).id).filter(Boolean);
+}
+
+/**
+ * The textual name of a symbol, whichever node kind carries it: identifiers keep it in `id`,
+ * type names in `name`.
+ *
+ * Call sites used to write `node.name ?? node.id`, which only compiled because ASTNode carried an
+ * `[key: string]: any` index signature. That made the wrong field silently yield `undefined`
+ * rather than fail to typecheck -- which is the whole reason the index signature is gone.
+ */
+export function symbolName(node: IdentifierNode | TypeNameNode): string {
+  return node._type === "type-name" ? node.name : node.id;
+}
+
+/** The textual key of a map/enum key node: a string literal's `value`, an identifier's `id`. */
+export function keyName(node: StringNode | IdentifierNode): string {
+  return node._type === "string" ? node.value : node.id;
 }
 
 export interface AnyPatternNode extends ASTNode<"any-pattern"> {}

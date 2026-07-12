@@ -72,14 +72,14 @@ class CollectTypesPass extends BaseAstTreeWalker {
     // 2. Lists containing declarations (e.g., (var x 10))
     // 3. Nested lists of expressions containing declarations
     for (const item of node.program) {
-      if (item._type === "list" && item.nodes && item.nodes.length > 0) {
+      if (ast.isListNode(item) && item.nodes.length > 0) {
         // Scan through all items in the list
         for (const subItem of item.nodes) {
           if (subItem._type === "variable" || subItem._type === "function" ||
               subItem._type === "class" || subItem._type === "interface" ||
               subItem._type === "type-def" || subItem._type === "struct") {
             this.visit(subItem);
-          } else if (subItem._type === "list" && subItem.nodes && subItem.nodes.length > 0) {
+          } else if (ast.isListNode(subItem) && subItem.nodes.length > 0) {
             // Check nested lists for declarations
             const nestedFirst = subItem.nodes[0];
             if (nestedFirst._type === "variable" || nestedFirst._type === "function" ||
@@ -190,7 +190,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
       for (let i = 0; i < node.body.length; i++) {
         const item = node.body[i];
         let target = item;
-        if (item._type === 'list' && item.nodes && item.nodes.length > 0) {
+        if (ast.isListNode(item) && item.nodes.length > 0) {
           target = item.nodes[0];
         }
         
@@ -214,7 +214,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
             isPrivate: isPrivate,
             isOperator,
             operatorSymbol: isOperator ? name : undefined,
-            defaultValue: (varNode as any).value
+            defaultValue: varNode.value ?? undefined
           });
           
           // Add to detailed members (enhanced format)
@@ -225,7 +225,11 @@ class CollectTypesPass extends BaseAstTreeWalker {
           
           // Track constructor parameters
           if (isCtor) {
-            const hasDefault = (varNode as any).value !== undefined; 
+            // `value` is null (not undefined) when a member has no default -- the AST
+            // builder writes `ctx.expression ? ... : null`. `!== undefined` was therefore
+            // true for EVERY member, so requiredCount never incremented and every ctor
+            // parameter looked optional. Use a null-safe test.
+            const hasDefault = varNode.value != null;
             ctorParams.push({
               name: name,
               type: memberType,
@@ -378,7 +382,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
   }
 
   visitTypeDef(node: ast.TypeDefNode) {
-    const typeName = typeof node.name === 'string' ? node.name : (node.name?.id || node.name?.name);
+    const typeName = ast.symbolName(node.name);
     
     // Phase 1: Register placeholder to allow forward/recursive references
     const placeholderType: InferredType = {
@@ -408,7 +412,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
   }
 
   visitStruct(node: ast.StructNode) {
-    const structName = typeof node.name === 'string' ? node.name : (node.name?.id || node.name?.name);
+    const structName = ast.symbolName(node.name);
     
     // Extract constructor parameters and member fields
     const members: any[] = [];
@@ -418,7 +422,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     if (node.body && node.body.length > 0) {
       for (const item of node.body) {
         let target = item;
-        if (item._type === 'list' && item.nodes && item.nodes.length > 0) {
+        if (ast.isListNode(item) && item.nodes.length > 0) {
           target = item.nodes[0];
         }
 
@@ -441,16 +445,19 @@ class CollectTypesPass extends BaseAstTreeWalker {
           };
           
           if (isCtor) {
-            const hasDefault = varNode.init !== undefined;
+            // VariableNode has no `init` -- the field is `value`. Reading `.init` meant this
+            // was `undefined !== undefined`, i.e. ALWAYS false: struct ctor defaults were
+            // silently dropped. (visitClass above had the mirror-image bug, always true.)
+            const hasDefault = varNode.value != null;
             if (hasDefault) {
-              member.defaultValue = varNode.init;
+              member.defaultValue = varNode.value;
             }
-            
+
             ctorParams.push({
               name: name,
               type: memberType,
               hasDefault: hasDefault,
-              defaultValue: varNode.init,
+              defaultValue: varNode.value ?? undefined,
             });
             
             if (!hasDefault) {
@@ -548,7 +555,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     
     if (item._type === 'variable') {
       varNode = item as ast.VariableNode;
-    } else if (item._type === 'list' && item.nodes?.[0]?._type === 'variable') {
+    } else if (ast.isListNode(item) && item.nodes[0]?._type === 'variable') {
       varNode = item.nodes[0] as ast.VariableNode;
     }
     
@@ -901,7 +908,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           this.visit(item);
         }
         // Check for lists that contain declarations
-        else if (item._type === "list" && item.nodes && item.nodes.length > 0) {
+        else if (ast.isListNode(item) && item.nodes.length > 0) {
           const innerFirst = item.nodes[0];
           if (innerFirst._type === "variable" || innerFirst._type === "function" ||
               innerFirst._type === "class" || innerFirst._type === "interface" ||
@@ -1077,7 +1084,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // In the second pass, we need to resolve type references
     // Type-aliases are already registered in pass 1, 
     // but we need to convert type-refs to point to actual types
-    const typeName = typeof node.name === 'string' ? node.name : (node.name?.id || node.name?.name);
+    const typeName = ast.symbolName(node.name);
     
     // Get the registered type from pass 1
     const registeredType = this.typeEnv.resolveIdentifier(typeName);
@@ -1099,7 +1106,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
   visitStruct(node: ast.StructNode) {
     // Similar to visitTypeDef, resolve any type references in struct members
-    const structName = typeof node.name === 'string' ? node.name : (node.name?.id || node.name?.name);
+    const structName = ast.symbolName(node.name);
     
     const registeredType = this.typeEnv.resolveIdentifier(structName);
     
