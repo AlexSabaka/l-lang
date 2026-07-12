@@ -14,13 +14,14 @@
 import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { Context, CompilerOptions, LogLevel } from '../compiler/Context';
 
 // Configuration
 const EXAMPLES_DIR = path.join(__dirname, '../../examples');
 const SKIP_DIRS = ['p5js', 'node_modules'];
 const VERBOSE = process.argv.includes('--verbose') || process.argv.includes('-v');
+const RUN_TIMEOUT_MS = 5000;
 
 // Mirrors the CLI's defaults for `transform <file>` with no flags (see getCompilerOptions.ts).
 // logger is a no-op: the old execSync-based runner discarded the compile step's own stdout/stderr
@@ -40,6 +41,7 @@ interface TestResult {
   message?: string;
   expected?: string;
   actual?: string;
+  stderr?: string;
 }
 
 function walkDir(dir: string, callback: (filePath: string) => void) {
@@ -115,31 +117,48 @@ function runTest(lispPath: string): TestResult {
       };
     }
 
-    // Step 3: Execute the generated JavaScript
-    let stdout: string;
-    try {
-      stdout = execSync(`node "${jsPath}"`, {
-        encoding: 'utf-8',
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
-    } catch (runError: any) {
+    // Step 3: Execute the generated JavaScript. spawnSync (not execSync) so a nonzero exit
+    // doesn't depend on throwing, stderr is captured even when the process succeeds, and a
+    // hung process (e.g. an infinite loop in generated code) is killed instead of hanging
+    // the whole suite forever.
+    const run = spawnSync('node', [jsPath], {
+      encoding: 'utf-8',
+      timeout: RUN_TIMEOUT_MS
+    });
+
+    if (run.error) {
+      const timedOut = (run.error as any).code === 'ETIMEDOUT';
       return {
         name: fileName,
         status: 'error',
-        message: `Runtime error: ${runError.message}`,
-        actual: runError.stdout || runError.stderr
+        message: timedOut
+          ? `Timeout: process did not exit within ${RUN_TIMEOUT_MS}ms`
+          : `Runtime error: ${run.error.message}`,
+        actual: run.stdout,
+        stderr: run.stderr
       };
     }
-    
+
+    if (run.status !== 0) {
+      return {
+        name: fileName,
+        status: 'error',
+        message: `Runtime error: process exited with code ${run.status}`,
+        actual: run.stdout,
+        stderr: run.stderr
+      };
+    }
+
     // Step 4: Compare output
     const expected = fs.readFileSync(expectPath, 'utf-8');
-    const actual = normalizeOutput(stdout);
+    const actual = normalizeOutput(run.stdout);
     const normalizedExpected = normalizeOutput(expected);
-    
+
     if (actual === normalizedExpected) {
       return {
         name: fileName,
-        status: 'pass'
+        status: 'pass',
+        stderr: run.stderr
       };
     } else {
       return {
@@ -147,6 +166,7 @@ function runTest(lispPath: string): TestResult {
         status: 'fail',
         message: 'Output mismatch',
         expected: normalizedExpected,
+        stderr: run.stderr,
         actual: actual
       };
     }
@@ -168,6 +188,9 @@ function printTestResult(result: TestResult, index: number, total: number) {
   switch (result.status) {
     case 'pass':
       console.log(chalk.green('✅ PASS'));
+      if (VERBOSE && result.stderr) {
+        console.log(chalk.gray(`  stderr: ${result.stderr.trim()}\n`));
+      }
       break;
     case 'fail':
       console.log(chalk.red('❌ FAIL'));
@@ -176,6 +199,10 @@ function printTestResult(result: TestResult, index: number, total: number) {
         console.log(chalk.yellow(result.expected.split('\n').map(l => `    ${l}`).join('\n')));
         console.log(chalk.gray('  Actual:'));
         console.log(chalk.cyan(result.actual.split('\n').map(l => `    ${l}`).join('\n')));
+        if (result.stderr) {
+          console.log(chalk.gray('  stderr:'));
+          console.log(chalk.gray(result.stderr.trim().split('\n').map(l => `    ${l}`).join('\n')));
+        }
         console.log();
       }
       break;
@@ -189,6 +216,9 @@ function printTestResult(result: TestResult, index: number, total: number) {
       console.log(chalk.red('💥 ERROR'));
       if (result.message) {
         console.log(chalk.red(`  ${result.message}\n`));
+      }
+      if (VERBOSE && result.stderr) {
+        console.log(chalk.gray(`  stderr: ${result.stderr.trim()}\n`));
       }
       break;
   }
