@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { RuleSeverity, RuleValidationResultsCollection } from "./rules";
+import { createRule } from "./rules/RuleBuilder";
 
 import {
   BaseAstTreeWalker,
@@ -109,6 +110,17 @@ export class Context {
   
   private moduleCache: Map<string, { ast: ASTNode; symbols: SymbolTable }> = new Map();
 
+  /**
+   * Modules whose `process()` is currently on the stack.
+   *
+   * The only re-entry guard used to be `moduleCache`, but `cacheModule` runs at the END of
+   * process() -- long after the symbols stage, which is where imports recurse
+   * (BuildDependencyGraphAstVisitor.processFileImport -> context.process). So for A -> B -> A,
+   * A was not yet cached when B re-entered it, and the recursion never terminated:
+   * `RangeError: Maximum call stack size exceeded`, on every import cycle.
+   */
+  private processing: Set<string> = new Set();
+
   constructor(mainFile: string, options: CompilerOptions) {
     this.dependencyGraph = new DependencyGraph(mainFile);
     this.mainModule = path.basename(mainFile, ".lisp");
@@ -200,6 +212,49 @@ export class Context {
       return cached;
     }
 
+    // An import cycle: this module is already being processed further up the stack. Break the
+    // recursion and hand back the parsed AST.
+    //
+    // A cycle is NOT fatal under the module-init ruling (imports bring in definitions, not
+    // execution -- see DECISIONS.md), so there is no initialisation-order hazard to guard against.
+    // It is reported as a warning rather than an error: the code compiles and runs correctly, but a
+    // cycle is usually a design smell and should be visible rather than silent.
+    if (this.processing.has(fullPath)) {
+      this.reportImportCycle(fullPath);
+      return { ast: this.astProvider.getAst(fullPath) as ASTNode };
+    }
+
+    this.processing.add(fullPath);
+    try {
+      return this.processModule(file, fullPath, stopAt);
+    } finally {
+      this.processing.delete(fullPath);
+    }
+  }
+
+  /** Report an import cycle. See the guard in process(). */
+  private reportImportCycle(fullPath: string): void {
+    const ast = this.astProvider.getAst(fullPath) as ASTNode;
+    const rule = createRule<ASTNode>()
+      .addSeverity(RuleSeverity.Warning)
+      .addCode("LL0300")
+      .addMessage(
+        `Import cycle: '${path.basename(fullPath)}' is imported while it is still being loaded. ` +
+          `This compiles -- an import brings in definitions, not execution -- but a cycle is ` +
+          `usually a sign the modules want splitting.`
+      )
+      .addTest(() => true)
+      .build();
+
+    this.results.add(ast, rule, this);
+  }
+
+  private processModule(
+    file: string,
+    fullPath: string,
+    stopAt: CompilationStage
+  ): { ast: ASTNode; symbols?: SymbolTable, code?: string, map?: any } {
+
     // PARSE STAGE
     this.performanceMetrics.startTimer("parse");
     let ast = this.astProvider.getAst(fullPath) as ASTNode;
@@ -247,6 +302,14 @@ export class Context {
       dependenciesCount: this.dependencyGraph.size
     });
     
+    // Cache HERE, as soon as the symbols exist -- not at the end of the method.
+    //
+    // The cache is what stops a diamond (A -> B,C -> D) from re-processing D, and what makes the
+    // `getModule` early-return work. Caching only at the very end meant any stopAt short of
+    // "codegen" left the module uncached, which is why imported modules were compiled all the way
+    // through codegen and had their output thrown away: it was the only path that cached them.
+    this.cacheModule(fullPath, ast as ASTNode, moduleSymbols);
+
     // Store symbols stage AST and symbols
     if (stopAt === "symbols") {
       return { ast: ast as ASTNode, symbols: moduleSymbols };
@@ -327,8 +390,6 @@ export class Context {
         missingMetadata: missingMetadata.length
       });
     }
-
-    this.cacheModule(fullPath, ast as ASTNode, moduleSymbols);
 
     if (stopAt !== "codegen") {
       return { ast: ast as ASTNode, symbols: moduleSymbols };

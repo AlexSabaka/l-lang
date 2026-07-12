@@ -73,8 +73,13 @@ export class DependencyGraph {
       this.moduleCache.set(fullParentName, parentUnit);
     }
 
-    const resolvedFile = path.join(path.dirname(fullParentName), file);
-    const fullName = path.resolve(resolvedFile);
+    // path.resolve, NOT path.join. The caller (BuildDependencyGraphAstVisitor.processFileImport)
+    // has already resolved `file` against the importing file's directory, so it arrives ABSOLUTE.
+    // path.join does not treat an absolute second argument as a reset, so joining it to the parent
+    // directory produced `/a/b/c/a/b/c/lib.lisp` -- a path that does not exist. Every non-root node
+    // in the graph was keyed by garbage. path.resolve handles both the absolute and relative cases:
+    // an absolute argument resets, a relative one resolves against the parent's directory.
+    const fullName = path.resolve(path.dirname(fullParentName), file);
 
     // First, check whether the Context already has the module cached
     // (Context keeps parsed AST + symbol table for processed modules).
@@ -117,14 +122,25 @@ export class DependencyGraph {
       return this.moduleCache.get(fullName);
     }
 
-    // Fallback: search tree (for backwards compatibility)
-    const searchImportUnit = (unit: ImportUnit): ImportUnit | undefined => {
-      return unit.location.fullName !== fullName
-        ? unit.dependencies.find(searchImportUnit)
-        : unit;
+    // Fallback: search the tree.
+    //
+    // This used `unit.dependencies.find(searchImportUnit)` -- but Array.find takes a BOOLEAN
+    // predicate, and searchImportUnit returns an ImportUnit|undefined. Any truthy unit satisfied
+    // it, so `find` returned the first DIRECT CHILD rather than the matching descendant. Wrong at
+    // any depth beyond one. Also guards against cycles, which the graph now permits.
+    const seen = new Set<ImportUnit>();
+    const search = (unit: ImportUnit): ImportUnit | undefined => {
+      if (seen.has(unit)) return undefined;
+      seen.add(unit);
+      if (unit.location.fullName === fullName) return unit;
+      for (const dep of unit.dependencies) {
+        const hit = search(dep);
+        if (hit) return hit;
+      }
+      return undefined;
     };
 
-    return searchImportUnit(this.rootUnit);
+    return search(this.rootUnit);
   }
 
   /**
@@ -135,10 +151,12 @@ export class DependencyGraph {
     return [...new Set(this.iterateRec(this.rootUnit).reverse())];
   }
 
-  private iterateRec(dep: ImportUnit): string[] {
+  private iterateRec(dep: ImportUnit, seen: Set<ImportUnit> = new Set()): string[] {
+    if (seen.has(dep)) return [];
+    seen.add(dep);
     const files: string[] = [ dep.location.fullName ];
     for (let d of dep.dependencies) {
-      files.push(...this.iterateRec(d));
+      files.push(...this.iterateRec(d, seen));
     }
     return files;
   }

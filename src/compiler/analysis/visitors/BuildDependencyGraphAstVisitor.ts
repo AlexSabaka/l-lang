@@ -20,7 +20,10 @@ export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
   private processFileImport(file: string, currentFile: string) {
     const currentUnit = this.context.dependencyGraph.find(currentFile);
     const resolvedFile = path.resolve(path.dirname(currentFile), file);
-    this.context.process(resolvedFile);
+    // Stop at `types`, not `codegen`. An imported module is compiled for its SYMBOLS and their
+    // inferred types; its emitted JavaScript was generated in full and then thrown away, because
+    // process() defaults stopAt to "codegen".
+    this.context.process(resolvedFile, "types");
     this.context.dependencyGraph.add(resolvedFile, currentFile, this.context);
   }
 
