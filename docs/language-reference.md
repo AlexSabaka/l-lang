@@ -364,7 +364,7 @@ The `|>` operator chains function calls left-to-right:
 
 ```lisp
 ;; Async function
-(async fn fetch-data []
+(fn :async fetch-data []
     (let result (await (fetch-from-api)))
     (return result))
 
@@ -372,7 +372,7 @@ The `|>` operator chains function calls left-to-right:
 (fn async-op []
     (Promise.resolve 42))
 
-(async fn test []
+(fn :async test []
     (let val (await (async-op)))
     (console.log val))
 ```

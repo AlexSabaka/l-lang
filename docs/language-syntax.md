@@ -164,7 +164,7 @@ Functions can accept variable numbers of arguments using spread syntax:
 ### Async / Await
 
 ```lisp
-(async fn fetch-data [id] (
+(fn :async fetch-data [id] (
     (let result (await (db.get id)))
     (return result)
 ))
@@ -411,8 +411,8 @@ Supported operators: `+`, `-`, `*`, `/`, `==`, `!=` etc.
 
 ```lisp
 (definterface IRepository<T>
-    (async fn GetAll [] -> List<T>)
-    (async fn GetById [id] -> T))
+    (fn :async GetAll [] -> List<T>)
+    (fn :async GetById [id] -> T))
 ```
 
 ### Generics

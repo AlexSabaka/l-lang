@@ -43,8 +43,8 @@
 )
 
 (definterface :internal IRepository<TEntity> :where TEntity :is class new()
-    (async fn GetAll [query-params] -> IQueryable<TEntity>)
-    (async fn GetById [query-params] -> TEntity
+    (fn :async GetAll [query-params] -> IQueryable<TEntity>)
+    (fn :async GetById [query-params] -> TEntity
 ))
 
 (definterface :internal IFoodsRepository :implements IRepository<Food>)
@@ -158,19 +158,19 @@
 )
 
 
-(async fn sql<T> [query <- ASTQuote] -> T[] ())
+(fn :async sql<T> [query <- ASTQuote] -> T[] ())
     ; ...
 
 
 
-(async fn searchWarehouse [searchQuery <- string] -> Product[] (return
+(fn :async searchWarehouse [searchQuery <- string] -> Product[] (return
     (sql<Product> '(
         SELECT p.Id, p.Price, p.Title, p.Description, p.Quantity
         FROM dbo.Warehouse
         WHERE p.Quantity > 0 AND p.Title LIKE searchQuery
         ORDER BY p.Price DESC))))
 
-(async fn is-all-odd [x <- IEnumerable<int>] -> bool (do
+(fn :async is-all-odd [x <- IEnumerable<int>] -> bool (do
 (return (match (callHttpService x) {
 { :Status TaskStatus.Completed :Result res } => (match res {
 { :error err :data null } => (throw Exception $"Something happened {err}")
@@ -243,7 +243,7 @@
     (let :ctor _foodRepo <- IFoodsRepositroy<Food>)
     (let :ctor _logger <- ILogger<FoodsController>)
 
-    (async fn :public GetAll [version <- String query-params :with FromQuery <- Any]
+    (fn :async :public GetAll [version <- String query-params :with FromQuery <- Any]
         :with HttpGet -> IActionResult<FoodDto[]>
             (mut foods-query (_foodRepo.GetAll query-params))
             (mut paged-food foods-query |>

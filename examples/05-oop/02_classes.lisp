@@ -171,11 +171,35 @@
         
         (fn get-info [] -> String (
             (let name (this.get-full-name))
-            (let age (this.get-age 2024))
+            (let age (this.get-age 2026))
             (return (+ name " (" age " years old)"))
+        ))
+    )
+
+    (defclass Person2
+        (let :ctor first-name <- String)
+        (let :ctor last-name <- String)
+        (let :ctor birth-year <- Int)
+
+        (let :private full-name <- String nil)
+        (let :private age <- Int nil)
+        
+        (fn :private :ctor initialize-person [] -> Void (
+            (this.full-name := (+ this.first-name " " this.last-name))
+        ))
+        
+        (fn :private :ctor initialize-age [] -> Void (
+            (this.age := (- 2026 this.birth-year))
+        ))
+        
+        (fn get-info [] -> String (
+            (+ this.full-name " (" this.age " years old)")
         ))
     )
     
     (let person (Person "John" "Doe" 1990))
     (console.log (person.get-info))
+
+    (let person2 (Person2 "John" "Doe" 1990))
+    (console.log (person2.get-info))
 )

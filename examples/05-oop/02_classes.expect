@@ -1,36 +1,28 @@
 --- Simple Class ---
 10 20
-[Function: to2dstring]
+Point(10, 20)
 --- Class with Getters ---
 Radius: 5
-Area: [Function: get2darea]
-Circumference: [Function: get2dcircumference]
+Area: 78.53975
+Circumference: 31.4159
 --- Class with Methods ---
-Rectangle: 10x5 (area=get2darea() {
-        return _2a(this.width, this.height);
-      }, perimeter=get2dperimeter() {
-        return _2a(2, _2b(this.width, this.height));
-      })
-After resize: 15x10 (area=get2darea() {
-        return _2a(this.width, this.height);
-      }, perimeter=get2dperimeter() {
-        return _2a(2, _2b(this.width, this.height));
-      })
+Rectangle: 10x5 (area=50, perimeter=30)
+After resize: 15x10 (area=150, perimeter=50)
 --- Class with Helper Methods ---
-[Function: get2dstatement]
-After deposit: [Function: get2dbalance]
+Account: ACC123 Balance: $1000
+After deposit: 1500
 Withdrawal successful: true
-[Function: get2dstatement]
+Account: ACC123 Balance: $1200
 --- Initialization ---
-After increment: [Function: get2dvalue]
-After reset: [Function: get2dvalue]
+After increment: 1
+After reset: 0
 --- Classes in Collections ---
 Points array:
-[Function: to2dstring]
-[Function: to2dstring]
-[Function: to2dstring]
+Point(0, 0)
+Point(10, 20)
+Point(5, 15)
 --- Factory Pattern ---
-Circle 1 area: [Function: get2darea]
-Circle 2 area: [Function: get2darea]
+Circle 1 area: 28.27431
+Circle 2 area: 153.93791
 --- Computed Properties ---
-[Function: get2dinfo]
+John Doe (34 years old)

@@ -235,6 +235,26 @@ export class ClassBuilder {
       });
     }
 
+    const ctorMethods = this.methods.filter(x => x.modifiers.some(m => m.modifier === "ctor"));
+    for (const m of ctorMethods) {
+      // Insert a method call to the constructor body
+      bodyStatements.push({
+        type: "ExpressionStatement",
+        expression: {
+          type: "CallExpression",
+          callee: {
+            type: "MemberExpression",
+            object: { type: "ThisExpression" },
+            property: this.visitor.visit(m.name) as ESTree.Identifier,
+            computed: false,
+            optional: false
+          },
+          arguments: [],
+          optional: false
+        }
+      });
+    }
+
     return {
       type: "MethodDefinition",
       key: { type: "Identifier", name: "constructor" },

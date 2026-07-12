@@ -1,12 +1,12 @@
 (
     ;; 1. Async Function Definition
-    (async fn fetch-fake-data [id] (
+    (fn :async fetch-fake-data [id] (
         ;; Simulate network delay (assuming a sleep function exists or just returning)
         (return (+ "Data_for_" id))
     ))
 
     ;; 2. Async Consumer
-    (async fn main-task [] (
+    (fn :async main-task [] (
         (console.log "Fetching...")
         
         ;; Await Expression

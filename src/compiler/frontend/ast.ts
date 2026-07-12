@@ -548,18 +548,3 @@ export interface CompositeIdentifierNode extends ASTNode<"composite-identifier">
 export interface CommentNode extends ASTNode<"comment"> {
   comment: string;
 }
-
-export type ControlCommentCommand =
-  | "compiler-attribute"
-  | "performance-optimization"
-  | "linter-option"
-  | "linker-option"
-  | "warning"
-  | "define"
-  | "conditional"
-  ;
-
-export type ControlCommentMode =
-  | "enable"
-  | "disable"
-  ;

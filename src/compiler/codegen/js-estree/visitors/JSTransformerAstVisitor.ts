@@ -163,6 +163,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
   private enumKeys: Record<string, string> = {};
   private identifiersCache: Record<string, string> = {};
+  private localIdentifiersStack: Set<string>[] = [];  // Stack of local variable names per scope
   private inlineStandardSymbols: string[] = [];
   private inlinedSymbols: Record<string, string> = {};
   private inlinedDefinitions: Record<string, ESTree.Statement> = {};
@@ -179,6 +180,46 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   constructor(context: Context) {
     super(context);
     this.collectTypesMetadata();
+  }
+
+  // =========================================================================
+  // Local Identifier Scope Management
+  // =========================================================================
+
+  /**
+   * Push a new local scope for tracking local variable/parameter names.
+   * Local names shadow the global identifiersCache.
+   */
+  private pushLocalScope(): void {
+    this.localIdentifiersStack.push(new Set());
+  }
+
+  /**
+   * Pop the current local scope.
+   */
+  private popLocalScope(): void {
+    this.localIdentifiersStack.pop();
+  }
+
+  /**
+   * Register a name as local in the current scope.
+   */
+  private registerLocalName(name: string): void {
+    if (this.localIdentifiersStack.length > 0) {
+      this.localIdentifiersStack[this.localIdentifiersStack.length - 1].add(name);
+    }
+  }
+
+  /**
+   * Check if a name is local in any active scope.
+   */
+  private isLocalName(name: string): boolean {
+    for (let i = this.localIdentifiersStack.length - 1; i >= 0; i--) {
+      if (this.localIdentifiersStack[i].has(name)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // =========================================================================
@@ -679,6 +720,18 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       : ScopeType.function;
 
     return this.runInScope(nextScope, () => {
+      // Push a local scope for parameters and local variables
+      this.pushLocalScope();
+
+      // Register parameter names as local BEFORE processing - this prevents
+      // them from being resolved to inlined symbols from imports
+      for (const param of node.params) {
+        const paramName = (param.name as any)?.id ?? (param.name as any)?.name;
+        if (paramName) {
+          this.registerLocalName(paramName);
+        }
+      }
+
       let name = node.name
         ? (this.visit(node.name) as ESTree.Identifier)
         : null;
@@ -698,7 +751,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         if (this.scope.length === 2 && this.scope[1] === ScopeType.program) {
           const overloadName = `__ll_overload_${name.name}_${this.overloadCounter++}`;
           const paramTypes = node.params.map(p => this.getTypeName(p.type));
-          
+
           this.operatorRegistrations.push({
             type: 'ExpressionStatement',
             expression: {
@@ -765,8 +818,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       const body = ESTreeBuilder.blockStatement(node, bodyStatements);
 
       // Determine function form based on scope
+      let result: ESTree.FunctionDeclaration | ESTree.VariableDeclaration | ESTree.MethodDefinition | ESTree.ArrowFunctionExpression;
+
       if (this.currentScope() === ScopeType.method) {
-        return {
+        result = {
           type: "MethodDefinition",
           key: name!,
           value: {
@@ -794,7 +849,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         } as ESTree.FunctionDeclaration;
 
         // Apply custom modifiers if present
-        return this.applyModifiersToDeclaration(node, declaration, originalName);
+        result = this.applyModifiersToDeclaration(node, declaration, originalName);
       } else {
         const funcExpr: ESTree.ArrowFunctionExpression = {
           type: "ArrowFunctionExpression",
@@ -821,12 +876,16 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           };
 
           // Apply custom modifiers if present
-          return this.applyModifiersToDeclaration(node, variableDecl, originalName);
+          result = this.applyModifiersToDeclaration(node, variableDecl, originalName);
+        } else {
+          this.context.log(LogLevel.Debug, this.context.astProvider.getSource(node._location));
+          result = funcExpr as any;
         }
-
-        this.context.log(LogLevel.Debug, this.context.astProvider.getSource(node._location));
-        return funcExpr as any;
       }
+
+      // Pop local scope before returning
+      this.popLocalScope();
+      return result;
     });
   }
 
@@ -1167,8 +1226,12 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   visitParameter(node: ast.ParameterNode): ESTree.Identifier | ESTree.RestElement {
-    const identifier = this.visit(node.name) as ESTree.Identifier;
-    
+    // Parameters are declarations, not references to potentially inlined symbols.
+    // Directly encode the name to avoid cache pollution from inlined imports.
+    const paramName = (node.name as any).id ?? (node.name as any).name;
+    const encodedName = encodeIdentifier(paramName);
+    const identifier = ESTreeBuilder.identifier(node.name, encodedName);
+
     // If this is a spread parameter, create a RestElement
     if (node.spread) {
       return {
@@ -1177,7 +1240,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         loc: ESTreeBuilder.loc(node),
       };
     }
-    
+
     return identifier;
   }
 
@@ -1781,6 +1844,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // =========================================================================
 
   visitIdentifier(node: ast.IdentifierNode): ESTree.Identifier {
+    // Check if this is a local name (parameter or local variable) - these shadow global cache
+    if (this.isLocalName(node.id)) {
+      return ESTreeBuilder.identifier(node, encodeIdentifier(node.id));
+    }
+
     if (this.identifiersCache[node.id]) {
       return ESTreeBuilder.identifier(node, this.identifiersCache[node.id]);
     }
@@ -1985,44 +2053,64 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         } as ESTree.NewExpression;
       }
 
-      console.log(
-        (head as ast.CompositeIdentifierNode)?.parts?.at(0),
-        this.context.symbolTable.resolveSymbol((head as ast.CompositeIdentifierNode)?.parts?.at(0) ?? "")?.inferredType
-      )
-
       let memberName = calleeStr;
+      let objectName: string | null = null;
       if (head._type === "composite-identifier") {
         const parts = calleeStr.split(".");
         memberName = parts[parts.length - 1];
+        if (parts.length >= 2) {
+          objectName = parts[0];  // For type lookup
+        }
       }
 
       const isKnownFunction =
         this.functions.includes((head as any).id) ||
         this.functions.includes(memberName);
 
+      // Check if this is a method call using type information from symbol table
+      let isMethodCall = false;
+      if (head._type === "composite-identifier" && objectName) {
+        isMethodCall = this.isMethodOnType(objectName, memberName);
+      }
+
       // L-lang semantics: (expr) is a call, expr is a reference
       // - (func) = call func with zero args
       // - (obj.method) = call method with zero args
       // - (obj.prop) = also a call in strict interpretation, but often means access
       //
-      // Heuristic: if it has args OR is a known function/method name, call it
-      if (args.length > 0 || isKnownFunction) {
+      // Use type info when available, fall back to heuristics
+      if (args.length > 0 || isKnownFunction || isMethodCall) {
         return ESTreeBuilder.callExpression(node, callee, args);
       }
 
-      // For composite identifiers with no args, if it ends with common method names, call it
-      // This is a heuristic - ideally we'd have type information
-      const methodLikeNames = [
-        'speak', 'toString', 'valueOf', 'toJSON', 'then', 'catch', 'finally',
-        // String methods
-        'toUpperCase', 'toLowerCase', 'trim', 'trimStart', 'trimEnd',
-        // Array methods  
-        'push', 'pop', 'shift', 'unshift', 'reverse', 'sort',
-        // Common object methods
-        'keys', 'values', 'entries'
-      ];
-      if (head._type === "composite-identifier" && methodLikeNames.includes(memberName)) {
-        return ESTreeBuilder.callExpression(node, callee, args);
+      // For composite identifiers with no args:
+      // Per l-lang semantics, (obj.member) should typically be a call.
+      // However, some JS properties like 'length', 'name' should NOT be called.
+      // Use a blacklist of known property names that shouldn't be invoked.
+      if (head._type === "composite-identifier") {
+        // Known JS properties that are NOT methods
+        const knownPropertyNames = [
+          // Array/String properties
+          'length',
+          // Object identity properties
+          'name', 'constructor', 'prototype', '__proto__',
+          // Common data fields
+          'value', 'key', 'index', 'id', 'type', 'kind',
+          'x', 'y', 'z', 'w', 'r', 'g', 'b', 'a',
+          'width', 'height', 'size', 'count',
+          'data', 'result', 'error', 'message',
+          'first', 'last', 'next', 'prev', 'parent', 'children',
+          // Balance and other state properties
+          'balance', 'age', 'score', 'status', 'state',
+          // Math/complex number properties
+          'real', 'imag', 'magnitude', 'angle',
+          // Animal/entity properties
+          'breed', 'species', 'color', 'weight'
+        ];
+
+        if (!knownPropertyNames.includes(memberName)) {
+          return ESTreeBuilder.callExpression(node, callee, args);
+        }
       }
 
       return callee;
@@ -2215,6 +2303,49 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       type === "ForOfStatement" ||
       type === "TryStatement"
     );
+  }
+
+  /**
+   * Check if a member name is a method on the given object type.
+   * Uses symbol table type metadata for accurate detection.
+   */
+  private isMethodOnType(objectName: string, memberName: string): boolean {
+    try {
+      const symbol = this.context.symbolTable?.resolveSymbol(objectName);
+      if (!symbol?.inferredType) return false;
+
+      let typeInfo = symbol.inferredType;
+
+      // Follow type-ref to actual class definition
+      if (typeInfo.kind === 'type-ref' && typeInfo.refName) {
+        const typeSymbol = this.context.symbolTable?.resolveSymbol(typeInfo.refName);
+        if (typeSymbol?.inferredType) {
+          typeInfo = typeSymbol.inferredType;
+        }
+      }
+
+      // Also check if this is a class instance by looking up the type name
+      if (typeInfo.name && (typeInfo.kind === 'class' || typeInfo.kind === 'struct' || typeInfo.kind === 'unknown')) {
+        const classSymbol = this.context.symbolTable?.resolveSymbol(typeInfo.name);
+        if (classSymbol?.inferredType) {
+          typeInfo = classSymbol.inferredType;
+        }
+      }
+
+      // Check methodSignatures map (populated by InferTypesAstVisitor)
+      if (typeInfo.methodSignatures?.has(memberName)) return true;
+      if (typeInfo.codegenMetadata?.methodSignatures?.has(memberName)) return true;
+
+      // Fallback: check members array for function types
+      if (typeInfo.members) {
+        const member = typeInfo.members.find((m: any) => m.name === memberName);
+        if (member?.type?.kind === 'function') return true;
+      }
+
+      return false;
+    } catch (e) {
+      return false;
+    }
   }
 
   private expressionToString(expr: ESTree.Expression): string {

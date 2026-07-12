@@ -29,7 +29,7 @@ It's a general-purpose language currently transpiling to JavaScript (LLVM backen
     (let :ctor _repo <- IFoodsRepository<Food>)
 
     ;; Async + strict typing + pipelines
-    (async fn :public GetAll [query] -> IActionResult (
+    (fn :async :public GetAll [query] -> IActionResult (
         (query
             |> _repo.GetAll
             |> .Skip (* query.Page query.PageSize)
