@@ -11,7 +11,8 @@
     "parser": "peggy --cache -o ./compiler/frontend/grammar/l-lang.js --format es ./compiler/frontend/grammar/l-lang.pegjs",
     "build": "tsc",
     "test": "ts-node test/runner.ts",
-    "test:verbose": "ts-node test/runner.ts --verbose"
+    "test:verbose": "ts-node test/runner.ts --verbose",
+    "test:grammar-v2-smoke": "ts-node test/smoke-grammar-v2.ts"
   },
   "author": "Alex Sabaka",
   "license": "MIT",
