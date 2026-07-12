@@ -142,369 +142,309 @@ export class BaseAstVisitor {
     return nodeVisitor(node);
   }
 
-  visitProgram(node: ast.ProgramNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitProgram skipped");
+  /**
+   * Called when a visitor subclass does NOT override the `visitX` for a node type it was handed.
+   *
+   * The default is the historical behaviour, and it is correct for the analysis and type passes:
+   * they legitimately care about only a few node types, and returning the node unchanged is how
+   * they ignore the rest.
+   *
+   * It is NOT correct for codegen. A backend that "skips" a node silently returns an *AST node*
+   * where an ESTree node was expected; that AST node gets spliced into the tree and the failure
+   * surfaces much later as a crash inside `astring` (e.g. `this[node.init.type] is not a
+   * function`), naming a third-party library instead of the construct the compiler cannot emit.
+   * `JSTransformerAstVisitor` therefore overrides this to raise a located LL0100 -- see there.
+   */
+  protected onUnhandled(node: ast.ASTNode, method: string): any {
+    this.context.log(LogLevel.Verbose, `Method ${method} skipped`);
     return node;
+  }
+
+  visitProgram(node: ast.ProgramNode): any {
+    return this.onUnhandled(node, "visitProgram");
   }
 
   visitList(node: ast.ListNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitList skipped");
-    return node;
+    return this.onUnhandled(node, "visitList");
   }
 
   visitQuote(node: ast.QuoteNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitQuote skipped");
-    return node;
+    return this.onUnhandled(node, "visitQuote");
   }
 
   visitVector(node: ast.VectorNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitVector skipped");
-    return node;
+    return this.onUnhandled(node, "visitVector");
   }
 
   visitMatrix(node: ast.MatrixNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitMatrix skipped");
-    return node;
+    return this.onUnhandled(node, "visitMatrix");
   }
 
   visitMap(node: ast.MapNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitMap skipped");
-    return node;
+    return this.onUnhandled(node, "visitMap");
   }
 
   visitKeyValue(node: ast.KeyValueNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitKeyValue skipped");
-    return node;
+    return this.onUnhandled(node, "visitKeyValue");
   }
 
   visitExport(node: ast.ExportNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitExport skipped");
-    return node;
+    return this.onUnhandled(node, "visitExport");
   }
 
   visitImport(node: ast.ImportNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitImport skipped");
-    return node;
+    return this.onUnhandled(node, "visitImport");
   }
 
   visitTypeName(node: ast.TypeNameNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitTypeName skipped");
-    return node;
+    return this.onUnhandled(node, "visitTypeName");
   }
 
   visitType(node: ast.TypeNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitType skipped");
-    return node;
+    return this.onUnhandled(node, "visitType");
   }
 
   visitUnionType(node: ast.UnionTypeNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitUnionType skipped");
-    return node;
+    return this.onUnhandled(node, "visitUnionType");
   }
 
   visitIntersectionType(node: ast.IntersectionTypeNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitIntersectionType skipped");
-    return node;
+    return this.onUnhandled(node, "visitIntersectionType");
   }
 
   visitFunctionType(node: ast.FunctionTypeNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitFunctionType skipped");
-    return node;
+    return this.onUnhandled(node, "visitFunctionType");
   }
 
   visitSimpleType(node: ast.SimpleTypeNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitSimpleType skipped");
-    return node;
+    return this.onUnhandled(node, "visitSimpleType");
   }
 
   visitGenericType(node: ast.GenericTypeNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitGenericType skipped");
-    return node;
+    return this.onUnhandled(node, "visitGenericType");
   }
 
   visitMapType(node: ast.MapTypeNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitMapType skipped");
-    return node;
+    return this.onUnhandled(node, "visitMapType");
   }
 
   visitMapKeyType(node: ast.MapKeyTypeNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitMapKeyType skipped");
-    return node;
+    return this.onUnhandled(node, "visitMapKeyType");
   }
 
   visitMappedType(node: ast.MappedTypeNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitMappedType skipped");
-    return node;
+    return this.onUnhandled(node, "visitMappedType");
   }
 
   visitModifier(node: ast.ModifierNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitModifier skipped");
-    return node;
+    return this.onUnhandled(node, "visitModifier");
   }
 
   visitModifierDef?(node: ast.ModifierDefNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitModifierDef skipped");
-    return node;
+    return this.onUnhandled(node, "visitModifierDef");
   }
 
   visitVariable(node: ast.VariableNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitVariable skipped");
-    return node;
+    return this.onUnhandled(node, "visitVariable");
   }
 
   visitFunction(node: ast.FunctionNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitFunction skipped");
-    return node;
+    return this.onUnhandled(node, "visitFunction");
   }
 
   visitParameter(node: ast.ParameterNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitParameter skipped");
-    return node;
+    return this.onUnhandled(node, "visitParameter");
   }
 
   visitClass(node: ast.ClassNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitClass skipped");
-    return node;
+    return this.onUnhandled(node, "visitClass");
   }
 
   visitEnum(node: ast.EnumNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitEnum skipped");
-    return node;
+    return this.onUnhandled(node, "visitEnum");
   }
 
   visitEnumKey(node: ast.EnumKeyNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitEnumKey skipped");
-    return node;
+    return this.onUnhandled(node, "visitEnumKey");
   }
 
   visitStruct(node: ast.StructNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitStruct skipped");
-    return node;
+    return this.onUnhandled(node, "visitStruct");
   }
 
   visitTypeDef(node: ast.TypeDefNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitTypeDef skipped");
-    return node;
+    return this.onUnhandled(node, "visitTypeDef");
   }
 
   visitInterface(node: ast.InterfaceNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitInterface skipped");
-    return node;
+    return this.onUnhandled(node, "visitInterface");
   }
 
   visitImplements(node: ast.ImplementsNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitImplements skipped");
-    return node;
+    return this.onUnhandled(node, "visitImplements");
   }
 
   visitExtends(node: ast.ExtendsNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitExtends skipped");
-    return node;
+    return this.onUnhandled(node, "visitExtends");
   }
 
   visitTypeConstraint(node: ast.TypeConstraintNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitTypeConstraint skipped");
-    return node;
+    return this.onUnhandled(node, "visitTypeConstraint");
   }
 
   visitSpread(node: ast.SpreadNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitSpread skipped");
-    return node;
+    return this.onUnhandled(node, "visitSpread");
   }
 
   visitAwait(node: ast.AwaitNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitAwait skipped");
-    return node;
+    return this.onUnhandled(node, "visitAwait");
   }
 
   visitSimpleAssignment(node: ast.SimpleAssignmentNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitSimpleAssignment skipped");
-    return node;
+    return this.onUnhandled(node, "visitSimpleAssignment");
   }
 
   visitCompoundAssignment(node: ast.CompoundAssignmentNode): any {
-    this.context.log(
-      LogLevel.Verbose,
-      "Method visitCompoundAssignment skipped"
-    );
-    return node;
+    return this.onUnhandled(node, "visitCompoundAssignment");
   }
 
   visitIndexer(node: ast.IndexerNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitIndexer skipped");
-    return node;
+    return this.onUnhandled(node, "visitIndexer");
   }
 
   visitTryCatch(node: ast.TryCatchNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitTryCatch skipped");
-    return node;
+    return this.onUnhandled(node, "visitTryCatch");
   }
 
   visitWhen(node: ast.WhenNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitWhen skipped");
-    return node;
+    return this.onUnhandled(node, "visitWhen");
   }
 
   visitIf(node: ast.IfNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitIf skipped");
-    return node;
+    return this.onUnhandled(node, "visitIf");
   }
 
   visitCond(node: ast.CondNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitCond skipped");
-    return node;
+    return this.onUnhandled(node, "visitCond");
   }
 
   visitCondCase(node: ast.CondCaseNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitCondCase skipped");
-    return node;
+    return this.onUnhandled(node, "visitCondCase");
   }
 
   visitFor(node: ast.ForNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitFor skipped");
-    return node;
+    return this.onUnhandled(node, "visitFor");
   }
 
   visitForEach(node: ast.ForEachNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitForEach skipped");
-    return node;
+    return this.onUnhandled(node, "visitForEach");
   }
 
   visitWhile(node: ast.WhileNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitWhile skipped");
-    return node;
+    return this.onUnhandled(node, "visitWhile");
   }
 
   visitMatch(node: ast.MatchNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitMatch skipped");
-    return node;
+    return this.onUnhandled(node, "visitMatch");
   }
 
   visitMatchCase(node: ast.MatchCaseNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitMatchCase skipped");
-    return node;
+    return this.onUnhandled(node, "visitMatchCase");
   }
 
   visitAnyPattern(node: ast.AnyPatternNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitAnyPattern skipped");
-    return node;
+    return this.onUnhandled(node, "visitAnyPattern");
   }
 
   visitFunctionalPattern(node: ast.FunctionalPatternNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitFunctionalPattern skipped");
-    return node;
+    return this.onUnhandled(node, "visitFunctionalPattern");
   }
 
   visitTypePattern(node: ast.TypePatternNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitTypePattern skipped");
-    return node;
+    return this.onUnhandled(node, "visitTypePattern");
   }
 
   visitListPattern(node: ast.ListPatternNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitListPattern skipped");
-    return node;
+    return this.onUnhandled(node, "visitListPattern");
   }
 
   visitVectorPattern(node: ast.VectorPatternNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitVectorPattern skipped");
-    return node;
+    return this.onUnhandled(node, "visitVectorPattern");
   }
 
   visitMapPattern(node: ast.MapPatternNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitMapPattern skipped");
-    return node;
+    return this.onUnhandled(node, "visitMapPattern");
   }
 
   visitMapPatternPair(node: ast.MapPatternPairNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitMapPatternPair skipped");
-    return node;
+    return this.onUnhandled(node, "visitMapPatternPair");
   }
 
   visitIdentifierPattern(node: ast.IdentifierPatternNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitIdentifierPattern skipped");
-    return node;
+    return this.onUnhandled(node, "visitIdentifierPattern");
   }
 
   visitConstantPattern(node: ast.ConstantPatternNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitConstantPattern skipped");
-    return node;
+    return this.onUnhandled(node, "visitConstantPattern");
   }
 
   visitString(node: ast.StringNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitString skipped");
-    return node;
+    return this.onUnhandled(node, "visitString");
   }
 
   visitFormattedString(node: ast.FormattedStringNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitFormattedString skipped");
-    return node;
+    return this.onUnhandled(node, "visitFormattedString");
   }
 
   visitFormatExpression(node: ast.FormatExpressionNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitFormatExpression skipped");
-    return node;
+    return this.onUnhandled(node, "visitFormatExpression");
   }
 
   visitBoolean(node: ast.BooleanNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitBoolean skipped");
-    return node;
+    return this.onUnhandled(node, "visitBoolean");
   }
 
   visitNull(node: ast.NullNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitNull skipped");
-    return node;
+    return this.onUnhandled(node, "visitNull");
   }
 
   visitOctalNumber(node: ast.OctalNumberNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitOctalNumber skipped");
-    return node;
+    return this.onUnhandled(node, "visitOctalNumber");
   }
 
   visitBinaryNumber(node: ast.BinaryNumberNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitBinaryNumber skipped");
-    return node;
+    return this.onUnhandled(node, "visitBinaryNumber");
   }
 
   visitHexNumber(node: ast.HexNumberNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitHexNumber skipped");
-    return node;
+    return this.onUnhandled(node, "visitHexNumber");
   }
 
   visitComplexNumber(node: ast.ComplexNumberNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitComplexNumber skipped");
-    return node;
+    return this.onUnhandled(node, "visitComplexNumber");
   }
 
   visitFractionNumber(node: ast.FractionNumberNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitFractionNumber skipped");
-    return node;
+    return this.onUnhandled(node, "visitFractionNumber");
   }
 
   visitIntegerNumber(node: ast.IntegerNumberNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitIntegerNumber skipped");
-    return node;
+    return this.onUnhandled(node, "visitIntegerNumber");
   }
 
   visitFloatNumber(node: ast.FloatNumberNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitFloatNumber skipped");
-    return node;
+    return this.onUnhandled(node, "visitFloatNumber");
   }
 
   visitSimpleIdentifier(node: ast.SimpleIdentifierNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitSimpleIdentifier skipped");
-    return node;
+    return this.onUnhandled(node, "visitSimpleIdentifier");
   }
 
   visitCompositeIdentifier(node: ast.CompositeIdentifierNode): any {
-    this.context.log(
-      LogLevel.Verbose,
-      "Method visitCompositeIdentifier skipped"
-    );
-    return node;
+    return this.onUnhandled(node, "visitCompositeIdentifier");
   }
 
   visitComment(node: ast.CommentNode): any {
-    this.context.log(LogLevel.Verbose, "Method visitComment skipped");
-    return node;
+    return this.onUnhandled(node, "visitComment");
   }
 }

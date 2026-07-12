@@ -10,6 +10,8 @@ import {
   uniqueIdentifier,
   encodeIdentifier,
 } from "../../../utils";
+import { createRule, RuleSeverity } from "../../../rules/RuleBuilder";
+import * as acorn from "acorn";
 import { ClassBuilder } from "../JSClassBuilder";
 import { SourceMapGenerator } from "source-map";
 import path from "path";
@@ -155,6 +157,87 @@ class ESTreeBuilder {
 }
 
 export class JSTransformerAstVisitor extends BaseAstVisitor {
+  /**
+   * Codegen is the one pass that must be TOTAL: every node type it is handed either has a
+   * `visitX` that emits ESTree, or it is a compiler bug we have to say out loud.
+   *
+   * The inherited default returns the node unchanged -- correct for the analysis and type passes,
+   * which legitimately ignore most node types, but poison here: an l-lang AST node gets spliced
+   * into the ESTree and the failure surfaces frames later inside astring as
+   * `this[node.init.type] is not a function`, blaming a third-party library for a construct this
+   * compiler simply cannot emit. (Live example before this existed: `examples/07-async/00.lisp`,
+   * whose only real problem is that `await` has no codegen.)
+   *
+   * We report and CONTINUE rather than throw: `hasErrors` already blocks codegen and exits 1, so
+   * nothing invalid is ever written, and finishing the pass means one run reports EVERY unhandled
+   * construct instead of dying on the first.
+   */
+  protected onUnhandled(node: ast.ASTNode, method: string): any {
+    this.reportCodegenError(
+      node,
+      "LL0100",
+      `Cannot generate JavaScript for '${node._type}': ${method} is not implemented in the ` +
+        `JS backend. The construct parses, but there is no code generator for it.`
+    );
+    return ESTreeBuilder.identifier(node, "undefined");
+  }
+
+  /**
+   * Same mechanism the rest of the compiler uses (createRule -> results.add -> hasErrors ->
+   * codegen blocked -> CLI exit 1). Deliberately not a new error path.
+   */
+  private reportCodegenError(node: ast.ASTNode, code: string, message: string): void {
+    const rule = createRule<ast.ASTNode>()
+      .addSeverity(RuleSeverity.Error)
+      .addCode(code)
+      .addMessage(message)
+      .addTest(() => true)
+      .build();
+
+    this.context.results.add(node, rule, this.context);
+  }
+
+  /**
+   * The backend must never emit JavaScript that JavaScript cannot parse.
+   *
+   * astring will happily serialise a malformed ESTree into a string; nothing downstream checks it,
+   * so the first thing that notices is `node` at runtime -- or, worse, nothing does. Parsing our
+   * own output closes that gap at the single point where code leaves the compiler.
+   *
+   * Tried as a script first, then as a module: the emitted bundle is normally an IIFE (a script),
+   * but accepting either is what "JavaScript can parse this" actually means, and avoids
+   * false-positives from module-only or script-only syntax.
+   */
+  private validateEmittedJs(code: string, node: ast.ASTNode): void {
+    const opts = { ecmaVersion: "latest" as const, allowReturnOutsideFunction: true };
+    try {
+      acorn.parse(code, { ...opts, sourceType: "script" });
+      return;
+    } catch (scriptErr: any) {
+      try {
+        acorn.parse(code, { ...opts, sourceType: "module" });
+        return;
+      } catch {
+        // Report the script-mode error: that is the mode the output actually runs in.
+        // Quote the offending line -- without it the reader gets a line number into a file that
+        // was never written to disk, which is close to useless.
+        const line = scriptErr?.loc?.line;
+        const offending =
+          typeof line === "number" ? (code.split("\n")[line - 1] ?? "").trim() : "";
+        const at = typeof line === "number"
+          ? ` at emitted line ${line}:${scriptErr.loc.column}` +
+            (offending ? ` -> ${JSON.stringify(offending.slice(0, 80))}` : "")
+          : "";
+        this.reportCodegenError(
+          node,
+          "LL0101",
+          `The JS backend emitted code that is not valid JavaScript${at}. ` +
+            `${scriptErr?.message ?? scriptErr}. This is a bug in the code generator, not in the source.`
+        );
+      }
+    }
+  }
+
   private scope: ScopeType[] = [ScopeType.program];
 
   public functions: string[] = [];
@@ -571,6 +654,12 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     // Add source map URL comment
     finalCode += `\n\n//# sourceMappingURL=${path.basename(this.rootSource, path.extname(this.rootSource))}.js.map`;
+
+    // Parse what we are about to hand back. This is the last point at which code leaves the
+    // compiler, so it is the only place a "never emit unparseable JS" invariant can be enforced.
+    // Checks finalCode, not generatedCode: the runtime shim is prepended by then, so this is
+    // exactly the text that gets written to disk and run.
+    this.validateEmittedJs(finalCode, root);
 
     return {
       code: finalCode,
