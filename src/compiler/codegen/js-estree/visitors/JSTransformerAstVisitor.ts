@@ -2067,6 +2067,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         this.functions.includes((head as any).id) ||
         this.functions.includes(memberName);
 
+      // D1 (docs/spec/DECISIONS.md#d1) rules that (obj.m) is ALWAYS a call — once that
+      // lands (Phase 3), this heuristic and the knownPropertyNames blacklist below both
+      // become dead code and should be deleted, not migrated.
       // Check if this is a method call using type information from symbol table
       let isMethodCall = false;
       if (head._type === "composite-identifier" && objectName) {
