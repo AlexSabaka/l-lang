@@ -181,3 +181,79 @@ Today these are documented, parsed, and silently ignored — pure fiction on a J
 - Operators are a closed, enumerated, longest-match token set.
 - Keywords get `longer_alt: Identifier` and lose the case-insensitive flag (today `DEFCLASS` and
   `Let` both parse as keywords; they won't after D14).
+
+---
+
+# D14 addendum — what reviving grammar_v2 actually found
+
+D14 predicted the scannerless PEG was the root cause of the silent-misparse class. Executing it
+(Phases 2a–2d) confirmed that, but the specifics differed enough from the audit's guesses to be
+worth recording. All of the below is measured, not inferred.
+
+## The lexer contradicted its own parser
+
+`Colon`'s pattern was `/:(?![a-zA-Z=])/` — it could never be emitted before a letter. But
+`Parser.ts` already implemented generic modifiers (`modifier := Colon Identifier args?`) and map
+keys (`keyValue := Colon key`) in exactly the PEG's shape. Both rules were therefore
+**structurally unreachable**, and **44 of 95 examples could not even tokenize**.
+
+The 13 hardcoded `*ModKw` tokens were a workaround, and one that cannot work even in principle:
+`defmodifier` lets users define modifier names *in l-lang source* (`:identity`, `:logged`,
+`:timed`, `:retry` in `examples/06-modifiers/`). A fixed token list can never enumerate them.
+Generic `Colon Identifier` is the only design that works — which is presumably why the parser was
+written that way in the first place. The `*ModKw` tokens survive only for the names the grammar
+genuinely reserves for structural slots.
+
+## The 4-minute parser construction was maxLookahead, not validation
+
+`new LLangParser()` took **~347 seconds**, paid fresh by every process. Chevrotain's docs
+recommend `skipValidations` for constructor time. Measured, that takes **349s — no better**:
+
+```
+Grammar Recording               6 ms
+Grammar Validations           275 ms   <-- all skipValidations saves
+ComputeLookaheadFunctions 347,071 ms   <-- 99.92% of it
+```
+
+Lookahead-automaton construction is superlinear in k, and k is the only real lever:
+**k=3 → ~347s | k=2 → 283ms | k=1 → 25ms**. Settled at `maxLookahead: 2`, which keeps validations
+**on** — Chevrotain still reports zero ambiguities, i.e. its own static analysis says two tokens
+suffice for every alternation here. If a future rule genuinely needs three, override it on that one
+alternation (`OR({ MAX_LOOKAHEAD: 3, ... })`); do not raise the global.
+
+## Adjacency is load-bearing, and the token stream loses it
+
+The PEG distinguishes `arr[i]` (indexer) and `Expr[]` (array type) from `arr [i]` / `Expr [1 2]`
+(a value) purely by **adjacency** — it puts no whitespace production between them. Chevrotain's
+lexer discards whitespace, so that information survives only in token offsets and has to be
+recovered explicitly (`isAdjacentLBracket`). The same applies to `HttpMethod:GET`. This is the one
+place where "just use a real lexer" costs something the scannerless grammar got for free.
+
+## Confirmed live PEG misparses (deliberately NOT reproduced)
+
+- `(defclass Pair<T U>)` → generics **silently dropped** (`generics: []`), with `<T` and `U>` left
+  as junk *identifiers in the class body* — `<` and `>` are in the PEG's `Control` char class, so
+  they glue onto identifiers. Its `.expect` golden encodes this. grammar_v2 parses
+  `generics: [T, U]`.
+- `(defstruct Rectangle :implements Shape)` → dropped the same way, `:implements` and `Shape`
+  becoming junk identifiers in the struct body.
+
+## Open: `defstruct :implements` is an unimplemented feature, not a parser gap
+
+`StructNode` has no `implements`/`extends` field at all (`ClassNode` does), and no pass downstream
+consumes one. `examples/05-oop/01_interfacses.lisp` is aspirational and passes under neither
+frontend: the PEG misparses it into junk and emits wrong output (FAIL); grammar_v2 rejects it at
+parse time (ERROR). Belongs with whatever settles `defstruct` value-type semantics (**D11**).
+
+## Not a PEG bug: `(let nullable 1)`
+
+The audit cites this as the poster-child misparse. It is not — the **PEG parses it correctly**.
+The bug was in grammar_v2's own recovered token definitions (all 28 keywords had
+`longer_alt: undefined`), fixed in Phase 2a. Worth stating plainly so the claim stops being
+repeated.
+
+## Status after Phase 2d
+
+`AstProvider` defaults to `grammar_v2`; `--frontend peg` still selects the old parser. Same 57
+examples pass under both. `l-lang.pegjs`, `l-lang.js`, `peggy` and the `parser` script are
+**not deleted yet** — that is a separate step, once dev has run on grammar_v2 for a cycle.
