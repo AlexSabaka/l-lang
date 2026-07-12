@@ -198,6 +198,7 @@ export function transform(file: string, command: Command) {
   const map = result.map || '';
 
   if (context.results.hasErrors) {
+    process.exitCode = 1;
     return;
   }
 

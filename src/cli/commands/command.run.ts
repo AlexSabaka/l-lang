@@ -19,6 +19,7 @@ export function evalFile(
   const { code } = context.process(file, "codegen");
 
   if (context.results.hasErrors) {
+    process.exitCode = 1;
     return;
   }
 
