@@ -357,9 +357,22 @@ export class TypeChecker {
     return name.length > 0 && !/\w/.test(name);
   }
 
-  /** Nothing is known about this type. Never report an error against it. */
+  /**
+   * Nothing is known about this type. Never report an error against it.
+   *
+   * This has to be STRUCTURAL, not just a check on the top-level kind. `(let result [])` -- an
+   * empty vector -- is `Unknown[]`, and an array whose element type we could not infer tells us
+   * exactly as little as a bare Unknown does. Treating it as a known type made the stdlib's
+   *     (fn range [...] -> Int[] (let result []) ... (return result))
+   * report "declares it returns Int[], but returns Unknown[]" -- which is not a defect in `range`,
+   * it is the checker complaining about its own ignorance.
+   */
   static isUnknown(type: InferredType | undefined): boolean {
-    return !type || type.kind === "unknown" || type.name === "Unknown";
+    if (!type) return true;
+    if (type.kind === "unknown" || type.name === "Unknown") return true;
+    // A generic (including an array) whose every argument is unknown is itself uninformative.
+    if (type.generics?.length && type.generics.every((g) => this.isUnknown(g))) return true;
+    return false;
   }
 
   /**

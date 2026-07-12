@@ -11,6 +11,7 @@ import {
   encodeIdentifier,
 } from "../../../utils";
 import { createRule, RuleSeverity } from "../../../rules/RuleBuilder";
+import { TypeChecker } from "../../../types/TypeChecker";
 import * as acorn from "acorn";
 import { ClassBuilder } from "../JSClassBuilder";
 import { SourceMapGenerator } from "source-map";
@@ -348,11 +349,17 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     if (metadata.kind === 'function') {
       const methodSig = Array.from(metadata.methodSignatures?.values() || [])[0] as any;
       if (methodSig && methodSig.parameters && methodSig.returnType) {
+        // formatType, not `.name`. An array type's `name` is the bare string "Array" -- it drops
+        // the element type entirely -- whereas formatType already renders it as `Int[]`. (Until
+        // the type converter was fixed, `Int[]` degraded to `Int` before it ever got here, so this
+        // reported a scalar and the golden recorded it.)
         result.paramsList = methodSig.parameters.map((p: any) => ({
           name: p.name,
-          type: p.type.name || 'Any'
+          type: p.type ? TypeChecker.formatType(p.type) : 'Any'
         }));
-        result.returns = methodSig.returnType.name || 'Any';
+        result.returns = methodSig.returnType
+          ? TypeChecker.formatType(methodSig.returnType)
+          : 'Any';
       }
     }
     

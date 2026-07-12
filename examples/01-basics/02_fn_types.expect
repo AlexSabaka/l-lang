@@ -11,7 +11,7 @@ Type of is-null: {
 Type of n-th: {
   name: 'n-th',
   kind: 'function',
-  paramsList: [ { name: 'a', type: 'Int' }, { name: 'n', type: 'Int' } ],
+  paramsList: [ { name: 'a', type: 'Int[]' }, { name: 'n', type: 'Int' } ],
   returns: 'Real',
   nullable: false
 }

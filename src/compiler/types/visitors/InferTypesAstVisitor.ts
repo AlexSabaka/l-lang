@@ -76,7 +76,14 @@ function convertAstType(
       name = "Unknown";
     }
 
-    const withArray = (t: InferredType) => (typeNode.array ? TypeEnvironment.array(t) : t);
+    // The array flag can sit on EITHER node. `Int[]` parses as
+    //   { _type:"type", array:false, type:{ _type:"simple-type", name:"Int", array:TRUE } }
+    // because the grammar's inner `basicType` rule consumes the `[]` before the outer `type` rule
+    // gets a chance. Reading only `typeNode.array` therefore dropped the array-ness of EVERY `T[]`
+    // annotation, silently degrading it to a scalar `T` -- which is why the stdlib's
+    // `(fn range [...] -> Int[])` was reported as "declares it returns Int".
+    const isArray = !!typeNode.array || !!(typeNode as any).type?.array;
+    const withArray = (t: InferredType) => (isArray ? TypeEnvironment.array(t) : t);
 
     // A generic type PARAMETER in scope (the `T` of a generic class) -- was only in copy 2.
     const genericParam = typeEnv.resolveIdentifier(name);

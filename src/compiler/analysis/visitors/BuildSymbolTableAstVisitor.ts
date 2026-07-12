@@ -91,9 +91,35 @@ class ScanPassVisitor extends BaseAstTreeWalker {
 class ResolvePassVisitor extends BaseAstTreeWalker {
   private symbolTableBuilder: SymbolTableBuilder;
 
+  /**
+   * Nodes already visited. Without this, every node is visited TWICE -- and the second time is in
+   * the WRONG SCOPE.
+   *
+   * BaseAstTreeWalker.visit() dispatches to visitX and THEN does a generic child walk. But
+   * visitFunction (and visitClass, visitInterface, ...) already walk their own children, inside the
+   * scope they just entered. So the generic walk revisits those same children AFTER exitScope --
+   * i.e. with the PARENT scope active. Any definition made on that second pass lands in the wrong
+   * table: a `let` inside a function body, or a for-each's loop variable, ends up in the module
+   * ROOT, where codegen sees a module-level symbol of another file and inlines it as an export:
+   *
+   *     const __ll_inlined_arg_1 = { let arg; for (arg of ...) { ... } };   // not valid JS either
+   *
+   * This was previously masked: visitVariable simply refused to define anything while the program
+   * scope was active. That hid the double-walk at the cost of never declaring a `let` nested inside
+   * a top-level loop. Visiting each node once fixes the cause instead of the symptom.
+   */
+  private visited: Set<ast.ASTNode> = new Set();
+
   constructor(context: any, builder: SymbolTableBuilder) {
     super(context);
     this.symbolTableBuilder = builder;
+  }
+
+  visit(node: ast.ASTNode, defaultVisitor?: (node?: ast.ASTNode) => any): any {
+    if (!node) return node;
+    if (this.visited.has(node)) return node;
+    this.visited.add(node);
+    return super.visit(node, defaultVisitor);
   }
 
   getBuilder(): SymbolTableBuilder {
@@ -107,19 +133,54 @@ class ResolvePassVisitor extends BaseAstTreeWalker {
   }
 
   visitVariable(node: ast.VariableNode) {
-    // Check if this variable is at the top-level program scope
-    if (this.symbolTableBuilder.getActive()?.node?._type === "program") {
-      // Variable already defined in ScanPass for top-level variables, now resolve its value
-      if (node.value) {
-        super.visit(node.value);
-      }
-    } else {
-      // This is a local variable inside a function/class/etc - define it now
+    // This used to SKIP defining whenever the active scope was `program`, on the assumption that
+    // ScanPass had already covered it. ScanPass only scans TOP-LEVEL items though (it unwraps the
+    // wrapper list, but does not recurse into a `for` or an `if` body) -- so a `let` nested inside
+    // a top-level loop was defined by nobody, and was unresolvable.
+    //
+    // Ask instead of assume: define it unless this scope already has every name it binds.
+    const active = this.symbolTableBuilder.getActive();
+    const names = ast.bindingNames(node.name);
+    const alreadyDefined =
+      names.length > 0 && names.every((n) => active?.table.has(n));
+
+    if (!alreadyDefined) {
       this.symbolTableBuilder.defineSymbol(node);
-      if (node.value) {
-        super.visit(node.value);
-      }
     }
+
+    if (node.value) {
+      super.visit(node.value);
+    }
+  }
+
+  /**
+   * Loop, catch and match bindings were NEVER declared -- there was no visitor for any of these
+   * node types, so `(for :each item :from xs ...)` put `item` nowhere at all.
+   *
+   * They are defined into the CURRENT scope rather than a fresh one. That is deliberately modest:
+   * introducing real per-loop scopes interacts with the tree walker's generic child-walk (which
+   * runs AFTER the visitor and would descend in the parent scope), and the only cost of the simpler
+   * choice is that a loop variable stays resolvable after its loop -- a false NEGATIVE for the
+   * unresolved-identifier check, never a false positive.
+   */
+  visitForEach(node: ast.ForEachNode) {
+    this.symbolTableBuilder.defineBinding(node.variable, node);
+    return node;
+  }
+
+  visitTryCatch(node: ast.TryCatchNode) {
+    for (const clause of node.catch ?? []) {
+      const name = clause?.filter?.name;
+      if (name) this.symbolTableBuilder.defineBinding(name as any, node);
+    }
+    return node;
+  }
+
+  visitMatchCase(node: ast.MatchCaseNode) {
+    // A pattern binds names: `[op _ _]`, `{:name n}`, a bare identifier. bindingIdentifiers walks
+    // patterns already (it was written for destructuring, D16).
+    this.symbolTableBuilder.defineBinding(node.pattern as any, node);
+    return node;
   }
 
   visitFunction(node: ast.FunctionNode) {

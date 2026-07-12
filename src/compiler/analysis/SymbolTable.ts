@@ -643,6 +643,39 @@ export class SymbolTableBuilder {
   /**
    * Define a parameter symbol in the current function scope
    */
+  /**
+   * Define a binding that is not a `let`, a `fn`, or a parameter: a loop variable, a `catch`
+   * clause's error, a name bound by a match pattern.
+   *
+   * None of these were EVER declared. `for`, `for-each`, `while`, `try-catch` and `match-case` have
+   * no visitor in the symbol-table builder, so `(for :each item :from xs ...)` never put `item`
+   * anywhere -- which is a large part of why an unresolved-identifier check could not be built.
+   */
+  defineBinding(target: ast.BindingTarget | undefined, owner: ast.ASTNode): void {
+    if (this.active === undefined) {
+      throw new Error("No active scope. Cannot define binding.");
+    }
+    if (!target) return;
+
+    for (const id of ast.bindingIdentifiers(target)) {
+      const name = (id as any).id ?? (id as any).name;
+      if (!name) continue;
+
+      this.active.table.set(name, {
+        name: id,
+        nodeType: owner._type,
+        scope: this.active,
+        value: owner,
+        mutability: true, // a loop variable is rebound each iteration
+        exportName: undefined,
+        visibility: "internal",
+        modifiers: new Set<string>(),
+        get isOperator() { return false; },
+        get isComptime() { return false; },
+      });
+    }
+  }
+
   defineParameter(param: ast.ParameterNode) {
     if (this.root === undefined) {
       throw new Error("No root scope. Cannot define parameter.");
