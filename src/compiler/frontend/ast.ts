@@ -196,9 +196,22 @@ export interface NamespaceImportSource {
   namespace: IdentifierNode;
 }
 
+/**
+ * A type NAME -- `Int`, `Container`, `T`. Note `name` is a plain STRING, not a nested node.
+ *
+ * In a declaration's generics list a type-name IS the type PARAMETER, and may carry variance:
+ * `(definterface Producer<:out T>)`. Everywhere else `variance` is absent. Both frontends emit a
+ * type-name here; the AST used to declare these lists as `GenericTypeNode[]` (whose `name` is a
+ * nested TypeNameNode), so every consumer read `generic.name.name` and got `undefined`.
+ */
 export interface TypeNameNode extends ASTNode<"type-name"> {
   name: string;
+  /** Declaration-site variance. Only ever set on an element of a `generics` list. */
+  variance?: TypeVariance;
 }
+
+/** Declaration-site variance: `:out` is covariant, `:in` contravariant, absent is invariant. */
+export type TypeVariance = "in" | "out";
 
 export interface TypeNode extends ASTNode<"type"> {
   type: TypeNameNode;
@@ -270,7 +283,7 @@ export interface FunctionNode extends ASTNode<"function"> {
    * inert; it is kept, and typed honestly, rather than deleted, so that it works the day the
    * grammar grows generic functions.
    */
-  generics?: GenericTypeNode[];
+  generics?: TypeNameNode[];
 }
 
 export interface ParameterNode extends ASTNode<"parameter"> {
@@ -286,7 +299,8 @@ export interface ClassNode extends ASTNode<"class"> {
   modifiers: ModifierNode[];
   implements: ImplementsNode[];
   extends: ExtendsNode[];
-  generics: GenericTypeNode[];
+  /** The declared type PARAMETERS: the `T` of `(defclass Container<T>)`. See TypeNameNode. */
+  generics: TypeNameNode[];
   body: ASTNode[];
 }
 
@@ -321,28 +335,29 @@ export interface ModifierDefNode extends ASTNode<"modifier-def"> {
 
 export interface InterfaceNode extends ASTNode<"interface"> {
   name: TypeNameNode;
-  generics: InterfaceGenericType[];
+  /** Same shape as ClassNode.generics -- an interface's `T` may carry `:in`/`:out` variance. */
+  generics: TypeNameNode[];
   modifiers: ModifierNode[];
   implements: ImplementsNode;
   body: ASTNode[];
 }
 
-export type InterfaceGenericTypeCovariance =
-  | "in"
-  | "out"
-  ;
-
-export interface InterfaceGenericType {
-  name: TypeNameNode;
-  covariance: InterfaceGenericTypeCovariance;
-}
-
+/**
+ * `:implements Producer<Animal>` / `:extends Container<Int>`.
+ *
+ * `generics` are the type ARGUMENTS -- the `<Animal>`. Both frontends used to consume only the bare
+ * `TypeName` and drop them, which made `16_covariance.lisp` (whose every line is
+ * `:implements Producer<Animal>` / `:implements Producer<Dog>`) unrepresentable, and use-site
+ * variance impossible to check.
+ */
 export interface ImplementsNode extends ASTNode<"implements"> {
   type: TypeNameNode;
+  generics?: TypeNode[];
 }
 
 export interface ExtendsNode extends ASTNode<"extends"> {
   type: TypeNameNode;
+  generics?: TypeNode[];
 }
 
 export interface TypeConstraintNode extends ASTNode<"type-constraint"> {

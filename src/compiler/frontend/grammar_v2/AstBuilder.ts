@@ -642,35 +642,28 @@ export class LLangAstBuilder extends BaseCstVisitor {
       generics = nameData.generics || [];
     }
 
-    // Collect extends and implements
+    // Pair each `:extends` / `:implements` keyword with the type reference that FOLLOWS it, by
+    // source offset.
+    //
+    // The CST hands back `ExtendsModKw`, `ImplementsModKw` and `typeRef` as three flat arrays with
+    // no linkage between them. The old code walked them by index, assuming every `:extends` came
+    // before every `:implements` -- so `(defclass D :implements I :extends B)` assigned `I` to the
+    // extends clause and `B` to the implements clause. Offsets have no such assumption.
     const extendsNodes: any[] = [];
     const implementsNodes: any[] = [];
-    if (ctx.ExtendsModKw && ctx.typeName) {
-      // Find typeName that follows ExtendsModKw
-      let typeNameIndex = 0;
-      for (let i = 0; i < (ctx.ExtendsModKw?.length || 0); i++) {
-        if (typeNameIndex < ctx.typeName.length) {
-          extendsNodes.push(
-            this.makeNode("extends", ctx, {
-              type: this.visit(ctx.typeName[typeNameIndex]),
-            })
-          );
-          typeNameIndex++;
-        }
-      }
-    }
-    if (ctx.ImplementsModKw && ctx.typeName) {
-      let typeNameIndex = ctx.ExtendsModKw?.length || 0;
-      for (let i = 0; i < (ctx.ImplementsModKw?.length || 0); i++) {
-        if (typeNameIndex < ctx.typeName.length) {
-          implementsNodes.push(
-            this.makeNode("implements", ctx, {
-              type: this.visit(ctx.typeName[typeNameIndex]),
-            })
-          );
-          typeNameIndex++;
-        }
-      }
+    const clauses = [
+      ...(ctx.ExtendsModKw ?? []).map((k: any) => ({ kind: "extends", at: k.startOffset })),
+      ...(ctx.ImplementsModKw ?? []).map((k: any) => ({ kind: "implements", at: k.startOffset })),
+    ].sort((a, b) => a.at - b.at);
+
+    const refs = [...(ctx.typeRef ?? [])].sort(
+      (a: any, b: any) => a.location.startOffset - b.location.startOffset
+    );
+
+    for (let i = 0; i < clauses.length && i < refs.length; i++) {
+      const ref = this.visit(refs[i]);
+      const node = this.makeNode(clauses[i].kind, ctx, { type: ref.type, generics: ref.generics });
+      (clauses[i].kind === "extends" ? extendsNodes : implementsNodes).push(node);
     }
 
     const body = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
@@ -686,10 +679,34 @@ export class LLangAstBuilder extends BaseCstVisitor {
   }
 
   classOrInterfaceName(ctx: any): { name: ast.TypeNameNode; generics: ast.TypeNameNode[] } {
-    const typeNames = ctx.typeName ? ctx.typeName.map((t: any) => this.visit(t)) : [];
-    const name = typeNames[0] || null;
-    const generics = typeNames.slice(1);
+    // The type parameters are `genericParam` nodes now, so the class NAME is the only typeName here
+    // -- no more `typeNames.slice(1)`.
+    const name = ctx.typeName ? this.visit(ctx.typeName[0]) : null;
+    const generics = ctx.genericParam
+      ? ctx.genericParam.map((g: any) => this.visit(g))
+      : [];
     return { name, generics };
+  }
+
+  /** A declared type PARAMETER: `T`, or `:out T` / `:in T`. Variance rides on the type-name. */
+  genericParam(ctx: any): ast.TypeNameNode {
+    const typeName = this.visit(ctx.typeName[0]) as ast.TypeNameNode;
+    const modifier = ctx.modifier ? this.visit(ctx.modifier[0]) : undefined;
+    const variance = modifier?.modifier;
+    // Anything other than :in / :out in this position is not variance. Ignore it rather than
+    // recording nonsense; a dedicated diagnostic belongs with the variance rules, not here.
+    if (variance === "in" || variance === "out") {
+      typeName.variance = variance;
+    }
+    return typeName;
+  }
+
+  /** `Animal`, or `Producer<Animal>` -- an `:extends` / `:implements` target with its arguments. */
+  typeRef(ctx: any): { type: ast.TypeNameNode; generics: ast.TypeNode[] } {
+    return {
+      type: this.visit(ctx.typeName[0]),
+      generics: ctx.type ? ctx.type.map((t: any) => this.visit(t)) : [],
+    };
   }
 
   structDecl(ctx: any): ast.StructNode {
@@ -717,13 +734,22 @@ export class LLangAstBuilder extends BaseCstVisitor {
   interfaceDecl(ctx: any): ast.InterfaceNode {
     const modifiers = ctx.modifier ? ctx.modifier.map((m: any) => this.visit(m)) : [];
     let name = null;
-    let generics = null;
+    // `[]`, not `null`, when there are none -- classDecl already emitted `[]` and every consumer
+    // does `node.generics && node.generics.length`, so the two frontends and the two declaration
+    // forms may as well agree on one empty value.
+    let generics: ast.TypeNameNode[] = [];
     if (ctx.classOrInterfaceName) {
       const nameData = this.visit(ctx.classOrInterfaceName[0]);
       name = nameData.name;
-      generics = nameData.generics.length > 0 ? nameData.generics : null;
+      generics = nameData.generics ?? [];
     }
-    const implementsType = ctx.typeName ? this.visit(ctx.typeName[0]) : null;
+    const implementsRef = ctx.typeRef ? this.visit(ctx.typeRef[0]) : null;
+    const implementsType = implementsRef
+      ? this.makeNode("implements", ctx, {
+          type: implementsRef.type,
+          generics: implementsRef.generics,
+        })
+      : null;
     const body = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
     return this.makeNode("interface", ctx, {
       name,

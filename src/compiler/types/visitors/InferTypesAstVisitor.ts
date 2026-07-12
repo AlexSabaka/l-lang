@@ -430,7 +430,8 @@ class CollectTypesPass extends BaseAstTreeWalker {
     if (node.generics && node.generics.length > 0) {
       for (const generic of node.generics) {
         typeParameters.push({
-          name: generic.name.name,
+          name: generic.name,
+          variance: generic.variance,
           constraints: [], // TODO: Extract constraints
           defaultType: undefined // TODO: Extract default types
         });
@@ -466,7 +467,8 @@ class CollectTypesPass extends BaseAstTreeWalker {
       name: className,
       generics: node.generics?.map(g => ({
         kind: "generic",
-        name: g.name.name,
+        name: g.name,
+        variance: g.variance,
       })),
       members: members,
       ctorInfo: {
@@ -496,7 +498,8 @@ class CollectTypesPass extends BaseAstTreeWalker {
       name: interfaceName,
       generics: node.generics?.map(g => ({
         kind: "generic",
-        name: g.name.name,
+        name: g.name,
+        variance: g.variance,
       })),
     };
     
@@ -1184,7 +1187,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // Bind generic type parameters to the scope
     if (node.generics && node.generics.length > 0) {
       for (const generic of node.generics) {
-        const genericName = generic.name.name;
+        const genericName = generic.name;
         const genericType: InferredType = {
           kind: "generic",
           name: genericName,
@@ -1295,7 +1298,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // Bind generic type parameters to the scope
     if (node.generics && node.generics.length > 0) {
       for (const generic of node.generics) {
-        const genericName = generic.name.name;
+        const genericName = generic.name;
         const genericType: InferredType = {
           kind: "generic",
           name: genericName,
@@ -1330,7 +1333,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // Bind generic type parameters to the scope
     if (node.generics && node.generics.length > 0) {
       for (const generic of node.generics) {
-        const genericName = generic.name.name;
+        const genericName = generic.name;
         const genericType: InferredType = {
           kind: "generic",
           name: genericName,

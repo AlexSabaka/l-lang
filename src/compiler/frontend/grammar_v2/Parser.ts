@@ -55,6 +55,8 @@ class LLangParser extends CstParser {
   parameter: ParserMethod<[], CstNode>;
   classDecl: ParserMethod<[], CstNode>;
   classOrInterfaceName: ParserMethod<[], CstNode>;
+  genericParam: ParserMethod<[], CstNode>;
+  typeRef: ParserMethod<[], CstNode>;
   structDecl: ParserMethod<[], CstNode>;
   enumDecl: ParserMethod<[], CstNode>;
   enumKey: ParserMethod<[], CstNode>;
@@ -737,13 +739,13 @@ class LLangParser extends CstParser {
           {
             ALT: () => {
               this.CONSUME(t.ExtendsModKw);
-              this.SUBRULE(this.typeName);
+              this.SUBRULE(this.typeRef);
             },
           },
           {
             ALT: () => {
               this.CONSUME(t.ImplementsModKw);
-              this.SUBRULE2(this.typeName);
+              this.SUBRULE2(this.typeRef);
             },
           },
         ]);
@@ -758,12 +760,37 @@ class LLangParser extends CstParser {
       this.OPTION(() => {
         this.CONSUME(t.LAngle);
         this.AT_LEAST_ONE(() => {
-          // Variance annotation: `(definterface Producer<:out T>`. Parsed so the declaration is
-          // accepted, but deliberately not recorded: the AST has no field for variance, and
-          // neither frontend has ever preserved it. Representing it is a separate decision.
-          this.OPTION2(() => this.SUBRULE(this.modifier));
-          this.SUBRULE2(this.typeName);
-          this.OPTION3(() => this.CONSUME(t.Comma));
+          this.SUBRULE(this.genericParam);
+          this.OPTION2(() => this.CONSUME(t.Comma));
+        });
+        this.CONSUME(t.RAngle);
+      });
+    });
+
+    /**
+     * A declared type PARAMETER: `T`, or `:out T` / `:in T`.
+     *
+     * Its own rule, rather than `OPTION(modifier) typeName` inlined into the list above, because a
+     * Chevrotain CST hands back `ctx.modifier` and `ctx.typeName` as two FLAT arrays -- so in
+     * `Producer<:out T, U>` there is no way to tell which parameter the `:out` belonged to. One CST
+     * node per parameter keeps them paired.
+     */
+    this.genericParam = this.RULE("genericParam", () => {
+      this.OPTION(() => this.SUBRULE(this.modifier));
+      this.SUBRULE(this.typeName);
+    });
+
+    /**
+     * A type reference in an `:extends` / `:implements` clause: `Animal`, or `Producer<Animal>`.
+     * Both clauses used to consume a bare `typeName`, silently dropping the type ARGUMENTS.
+     */
+    this.typeRef = this.RULE("typeRef", () => {
+      this.SUBRULE(this.typeName);
+      this.OPTION(() => {
+        this.CONSUME(t.LAngle);
+        this.AT_LEAST_ONE(() => {
+          this.SUBRULE(this.type);
+          this.OPTION2(() => this.CONSUME(t.Comma));
         });
         this.CONSUME(t.RAngle);
       });
@@ -823,7 +850,7 @@ class LLangParser extends CstParser {
       });
       this.OPTION2(() => {
         this.CONSUME(t.ImplementsModKw);
-        this.SUBRULE(this.typeName);
+        this.SUBRULE(this.typeRef);
       });
       this.MANY2(() => {
         this.SUBRULE(this.expression);

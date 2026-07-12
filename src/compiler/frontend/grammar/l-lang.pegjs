@@ -353,9 +353,25 @@ FunctionParameter
   }
 
 
+// A declared type PARAMETER: `T`, or `:out T` / `:in T`.
+//
+// One rule for classes AND interfaces. They used to have two, emitting two different shapes:
+// a class parameter was a bare TypeName, an interface parameter was `{name, covariance}` -- and
+// grammar_v2 emitted a bare TypeName for both, so the frontends disagreed and every consumer that
+// read `generic.name.name` got `undefined`. The variance now rides ON the type-name.
+GenericVariance
+  = _ ":" variance:("in" / "out") _ {
+    return variance;
+  }
+
+GenericParam
+  = _ variance:(@GenericVariance _)? name:TypeName _ {
+    return variance ? { ...name, variance } : name;
+  }
+
 // Class
 ClassGenerics
-  = _ "<" head:TypeName _ tail:("," _ @TypeName)* ">" _ {
+  = _ "<" head:GenericParam _ tail:("," _ @GenericParam)* ">" _ {
     return [head, ...tail];
   }
 
@@ -370,12 +386,15 @@ ClassName
 Class
   = _ DefClassKw __ modifiers:(@Modifier _)* _ className:ClassName? _ ext:(Implements / Extends)* constraints:GenericTypeConstraints* _ body:ClassBodyDefinition* {
     const { name, generics } = className;
+    // NOT makeNode("generic-type", ...): `x` is already a `type-name` node, and makeNode spreads
+    // `rest` LAST -- so `{...x}` overwrote `_type` straight back to "type-name" anyway. The node it
+    // claimed to build was never built. A type parameter IS a type-name; say so.
     const genericsWithConstraints = (generics ?? []).map(x => {
       const genericConstraints = (constraints ?? [])
         .filter(c => c.where.name === x.name)
         .map(c => c.clause);
 
-      return makeNode("generic-type", { ...x, constraints: genericConstraints });
+      return { ...x, constraints: genericConstraints };
     });
 
     const _implements = ext.filter(x => x._type === "implements").map(x => { return x });
@@ -430,22 +449,9 @@ DefModifier
   }
 
 
-// Interface
-InterfaceGenericCovariance
-  = _ ":" covariant:("in" / "out") _ {
-    return covariant;
-  }
-
-InterfaceGenericTypeName
-  = _ covariance:(@InterfaceGenericCovariance _)? name:TypeName _ {
-    return {
-      name,
-      covariance,
-    };
-  }
-
+// Interface -- same GenericParam as a class, so the two declaration forms agree on one shape.
 InterfaceGenerics
-  = _ "<" head:InterfaceGenericTypeName _ tail:("," _ @InterfaceGenericTypeName)* ">" _ {
+  = _ "<" head:GenericParam _ tail:("," _ @GenericParam)* ">" _ {
     return [head, ...tail];
   }
 
@@ -459,21 +465,38 @@ InterfaceName
 
 Interface
   = _ DefInterfaceKw _ modifiers:(@Modifier _)* _ name:InterfaceName? _ impl:Implements? _ body:InterfaceBody* {
-    return makeNode("interface", { ...name, modifiers, implements: impl, body });
+    // `generics: []` rather than null when there are none -- grammar_v2 emits `[]` too, and every
+    // consumer tests `node.generics && node.generics.length`.
+    return makeNode("interface", {
+      name: name?.name ?? null,
+      generics: name?.generics ?? [],
+      modifiers,
+      implements: impl,
+      body
+    });
   }
 
 InterfaceBody
   = Expression
 
 
+// The type ARGUMENTS of an `:extends` / `:implements` clause: the `<Animal>` of
+// `:implements Producer<Animal>`. Both clauses used to consume a bare TypeName and drop them, so
+// `16_covariance.lisp` -- whose every line is `:implements Producer<Animal>` -- lost every type
+// argument it had, and use-site variance had nothing to check.
+TypeRefGenerics
+  = _ "<" generics:Type|1.., ","?| ">" _ {
+    return generics;
+  }
+
 Implements
-  = _ ImplementsModKw _ type:TypeName _ {
-    return makeNode("implements", { type });
+  = _ ImplementsModKw _ type:TypeName _ generics:TypeRefGenerics? _ {
+    return makeNode("implements", { type, generics: generics ?? [] });
   }
 
 Extends
-  = _ ExtendsModKw _ type:TypeName _ {
-    return makeNode("extends", { type });
+  = _ ExtendsModKw _ type:TypeName _ generics:TypeRefGenerics? _ {
+    return makeNode("extends", { type, generics: generics ?? [] });
   }
 
 

@@ -56,6 +56,11 @@ export interface InferredType {
   inner?: InferredType;     // For array element type (alternative to generics[0])
   isArray?: boolean;
   nullable?: boolean;
+  /**
+   * Declaration-site variance, on a `generic` that is a type PARAMETER: the `:out` of
+   * `(definterface Producer<:out T>)`. Absent means invariant.
+   */
+  variance?: ast.TypeVariance;
   // Type alias support
   aliasedType?: InferredType;  // What this type-alias points to
   isRecursive?: boolean;  // True if type-alias references itself
@@ -161,6 +166,8 @@ export interface TypeParameter {
   name: string;
   constraints: InferredType[];
   defaultType?: InferredType;
+  /** `:out` / `:in`. Absent means invariant. */
+  variance?: ast.TypeVariance;
 }
 
 /**
