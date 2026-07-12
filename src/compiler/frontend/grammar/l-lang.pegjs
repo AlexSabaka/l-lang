@@ -67,6 +67,7 @@ Expression "expression"
   // Assignments
   / Assignment
   / Indexer
+  / Await
   / Spread
 
   // Data structures
@@ -517,6 +518,16 @@ TypeConstraint
     return { constraint, value };
   }
 
+// Await. `(await (fetch-data 42))`.
+//
+// PEG had no rule for it at all, so `(await X)` parsed as a CALL to an identifier named `await`
+// and emitted `_await(...)` -> ReferenceError. grammar_v2 has had an awaitExpr since D14; this is
+// the frontend divergence that gap left behind.
+Await
+  = _ AwaitKw __ expression:Expression _ {
+    return makeNode("await", { expression });
+  }
+
 // Spread operator
 Spread
   = _ SpreadKw expression:Expression _ {
@@ -843,6 +854,7 @@ FinallyKw = "finally"i
 CatchKw = "catch"i
 TryKw = "try"i
 AsyncKw = "async"i
+AwaitKw = "await"i
 DefInterfaceKw = "definterface"i
 DefClassKw = "defclass"i
 DefTypeKw = "deftype"i

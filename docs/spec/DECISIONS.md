@@ -575,7 +575,95 @@ by fixing the *compiler*, and no other golden moved.
 
 Suite: **58 → 59. The one red FAIL is closed.**
 
+## P5 — the code generator emitted wrong JavaScript
+
+The last untouched layer, and the only one still producing **wrong answers** rather than missing
+features. Its diagnostic count was small (3 corpus-wide) and that number was a lie: **acorn validates
+syntax, not behaviour**, so every bug that emits *valid JavaScript which does the wrong thing* is
+invisible to `LL0101` by construction. Two of them sat in the stdlib.
+
+Hence `npm run test:codegen` (P5a): each case compiles a small program, **runs** the emitted
+JavaScript, and asserts its stdout. Committed RED, before any fix — a case that passes on its first
+run proves nothing about the bug it claims to cover. It went 8/11 failing → 0.
+
+**It immediately falsified a claim in P5's own plan.** The plan asserted that `when`'s emitted comma
+operator, `("a", "b")`, "discards the earlier values". It does not: `(a, b)` evaluates `a`, then `b`,
+and yields `b` — last-value semantics with every side effect intact. The case passed on its first
+run. The claim was retracted, not quietly carried.
+
+### The silent ones (P5b) — valid JS, wrong behaviour
+
+- **`:ctor` defaults were dropped.** `JSClassBuilder` reduced its parameters to a `string[]` *before*
+  building the parameter list, so the default was structurally unreachable; `AssignmentPattern`
+  occurred nowhere in the compiler. Carried as the raw AST **node** now — *not* via
+  `extractDefaultValue`, which is a lossy reflection artifact returning the string `"<expression>"`
+  for anything but a scalar literal. Live in `std/math.lisp` (`Complex`, `Vector3`).
+- **`cond`'s `else` emitted `case _else:`** — an identifier bound to nothing, so a `cond` threw
+  `ReferenceError` the moment its else was reached. `test: null` **is** `default:` in ESTree.
+- **Map keys were mangled**, against D13's own ruling: `{ :my-key 1 }` emitted `{ my2dkey: 1 }`.
+
+**`LL0102`** (new): a defaulted constructor parameter followed by a required one. Legal JavaScript
+and a trap — `constructor(a = 1, b)` can only be called as `new C(1, 2)`, so the default is
+unreachable. **Reported, never silently reordered**: the parameter order is the source's.
+
+### The invalid ones (P5c)
+
+- **A block cannot stand where JavaScript wants an expression.** `visitWhen` emitted a
+  ConditionalExpression in every context; `visitIf` had the same bug in its *expression* path. Two
+  shared helpers (`asExpression` — an IIFE whose tail is returned — and `asStatement`), lifted from
+  `visitMatch`'s local `ensureReturns`, which had always done exactly this.
+- **A type is erased.** `visitTypeDef` emitted `const Number = undefined;` for
+  `(deftype Number Int | Real)` — *shadowing the JS global*, while `std/types.lisp` calls
+  `(Number.isInteger x)` seventeen lines below. A type alias emits nothing unless it names a value.
+- **The inliner bound by assertion rather than by fact**, casting any emission to an Expression. That
+  survived a `ClassDeclaration` only by accident (`const X = class Y {}` is valid) and produced
+  `const __ll_inlined_Number_1 = const Number = undefined;`.
+
+### Async (P5d)
+
+`visitAwait` did not exist — the only *reachable* node type with no emitter. `async` itself was
+already fully wired.
+
+- **A built-in modifier is not a user-defined one.** Codegen's "custom modifier" filter excluded only
+  `operator`, so every other builtin was wrapped in a call to a `__ll_modifier_<name>` transformer
+  that does not exist — `(fn :async main [])` emitted `__ll_modifier_async()(...)`. `isBuiltinModifier`
+  had existed in `helpers/modifiers.ts` all along; codegen never asked it.
+- **PEG could not parse `await` at all** — it read `(await X)` as a *call* to an identifier named
+  `await` and emitted `_await(...)`. grammar_v2 has had an `awaitExpr` since D14. Added to the PEG
+  grammar; the frontends agree again.
+
+### `when` has no else
+
+`WhenNode { condition, then[] }`, and the reference calls it "a simple if without else". A false
+condition yields `undefined`. **`04_when.lisp` was at fault, not the compiler** — its `category`
+else-chain was aspirational. Rewritten to use `if`, which does have an else. Same call as
+`09_more_for_loops` and `20_scope`.
+
+Goldens **authored** for `04_when` and `07-async/00`, which had none. No existing golden moved.
+
+Suite: **59 → 63**, zero FAILs, under both frontends.
+
 ## Open findings
+
+- **`:comptime` is accepted and IGNORED.** P5d stopped it emitting a call to a nonexistent
+  `__ll_modifier_comptime` transformer (it is a *built-in* modifier, not a user-defined one), and
+  `06-modifiers/00_memoization.lisp` and `10_comptime.lisp` now pass as a result. **They do not prove
+  comptime works.** Their goldens assert only *values* — `30`, `120`, `28657` — which are identical
+  whether the expression is folded at compile time or simply evaluated at run time. Nothing in the
+  corpus can tell the difference, and today it is the latter. D3 (metaprogramming) stands. A
+  `:comptime` that is silently ignored is the "silently degrades" class the audit exists to kill;
+  it deserves a diagnostic, or an implementation.
+
+- **`fn` parameter defaults are unrepresentable.** `ast.ParameterNode` has no default slot at all, so
+  `(fn f [x 5])` is not merely unemitted. Grammar + AST + codegen. The `AssignmentPattern` support
+  P5b added to the class builder is what it will need.
+
+- **String keys in map literals do not parse.** `{"host" "localhost"}` — the `keyValue` rule requires
+  a leading colon. This, not codegen, is what actually blocks `04-data-types/02_maps.lisp`; its old
+  xfail reason ("D13: map-key codegen crash") was stale, and D13's codegen half is now fixed.
+
+- **The numeric tower (D8).** `octal-number`, `binary-number`, `hex-number`, `fraction-number`,
+  `complex-number` all lex but have no emitter — five latent `LL0100`s. None appear in the corpus.
 
 - **`:ctor` defaults are dropped by codegen.** `(defclass Vec (let :ctor x <- Int 7))` emits
   `constructor(x) { this.x = x; }` — no default — so `(new Vec)` leaves `x` undefined. The *type*

@@ -12,6 +12,7 @@ import {
 } from "../../../utils";
 import { createRule, RuleSeverity } from "../../../rules/RuleBuilder";
 import { TypeChecker } from "../../../types/TypeChecker";
+import { isBuiltinModifier } from "../../../helpers/modifiers";
 import * as acorn from "acorn";
 import { ClassBuilder } from "../JSClassBuilder";
 import { SourceMapGenerator } from "source-map";
@@ -974,9 +975,22 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     declaration: ESTree.FunctionDeclaration | ESTree.VariableDeclaration, 
     originalName: string
   ): ESTree.FunctionDeclaration | ESTree.VariableDeclaration {
-    // Get custom modifiers (non-operator modifiers)
-    const customModifiers = node.modifiers?.filter(m => m.modifier !== 'operator') || [];
-    
+    // A CUSTOM modifier is one declared with `defmodifier` -- something that has a runtime
+    // `__ll_modifier_<name>` transformer to apply. A BUILT-IN modifier has no such thing: it is a
+    // fact about the declaration, consumed by the compiler.
+    //
+    // This filter excluded only `operator`, so every other builtin was wrapped as a call to a
+    // transformer that does not exist. `(fn :async main [] ...)` emitted
+    //
+    //     const main = __ll_modifier_async()(...)
+    //
+    // -> ReferenceError. `async` was already handled properly (visitFunction propagates node.async
+    // to all three emission forms); applying it a SECOND time, as if it were user-defined, is what
+    // broke. `isBuiltinModifier` has existed in helpers/modifiers.ts all along -- codegen simply
+    // never asked it.
+    const customModifiers =
+      node.modifiers?.filter((m) => !isBuiltinModifier(m.modifier)) || [];
+
     if (customModifiers.length === 0) {
       return declaration;
     }
@@ -2622,6 +2636,23 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   visitSpread(node: ast.SpreadNode): ESTree.SpreadElement {
     return {
       type: "SpreadElement",
+      argument: this.visit(node.expression) as ESTree.Expression,
+      loc: ESTreeBuilder.loc(node),
+    };
+  }
+
+  /**
+   * `(await (fetch-data 42))`.
+   *
+   * The only reachable node type in the language with no emitter -- it reported LL0100 ("the
+   * construct parses, but there is no code generator for it") and blocked the whole async example.
+   *
+   * `async` itself was never missing: visitFunction already propagates `node.async` to all three of
+   * its emission forms (method, declaration, arrow). The gap was exactly this one node.
+   */
+  visitAwait(node: ast.AwaitNode): ESTree.AwaitExpression {
+    return {
+      type: "AwaitExpression",
       argument: this.visit(node.expression) as ESTree.Expression,
       loc: ESTreeBuilder.loc(node),
     };

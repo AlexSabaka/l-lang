@@ -14,14 +14,19 @@
     (let message (when (== value 42) :then '"The answer to everything"))
     (console.log "Result 2:" message)
 
-    ;; 3. When in condition chain
+    ;; 3. When has NO else -- a false condition yields nil.
     (let x 10)
-    (let category (when (< x 0)
-        :then "negative"
-        (when (== x 0)
-            :then "zero"
+    (let nothing (when (< x 0) :then "negative"))
+    (console.log "Nothing:" nothing)
+
+    ;; So a condition CHAIN wants `if`, which does have an else. (This is what `when` is for:
+    ;; a guard you run when a condition holds, not a way to pick between branches.)
+    (let category (if (< x 0)
+        "negative"
+        (if (== x 0)
+            "zero"
             "positive")))
-    
+
     (console.log "Category:" category)
 
     ;; 4. When for side effects

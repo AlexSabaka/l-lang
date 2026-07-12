@@ -47,13 +47,6 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "00-tests/00_tree_shake.lisp": {
     status: "test",
   },
-  "01-basics/04_when.lisp": {
-    status: "xfail",
-    reason:
-      "D12 landed and this now PARSES. It is blocked one stage later: codegen emits invalid " +
-      "JavaScript for it (LL0101), which the acorn check now catches instead of writing to disk. " +
-      "A codegen bug (P5), not a form-layer one.",
-  },
   "01-basics/05_pattern_matching.lisp": {
     status: "xfail",
     reason: "match-guard misparse, see Phase 3 (form layer)",
@@ -116,7 +109,11 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "04-data-types/02_maps.lisp": {
     status: "xfail",
-    reason: "D13: map-key codegen crash",
+    reason:
+      "NOT a codegen crash -- the old reason ('D13: map-key codegen crash') was stale. D13's codegen " +
+      "half is fixed (P5b: `{ :my-key 1 }` now emits `{ \"my-key\": 1 }`, unmangled). This file " +
+      "never REACHES codegen: it fails at parse, :17, on `{\"host\" \"localhost\"}` -- the grammar's " +
+      "`keyValue` rule requires a leading colon, so a bare STRING key is unparseable. A grammar gap.",
   },
   "04-data-types/06_structs.lisp": {
     status: "xfail",
@@ -125,13 +122,6 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "04-data-types/07_structs.lisp": {
     status: "xfail",
     reason: "D11: defstruct value-type semantics (parse failure)",
-  },
-  "07-async/00.lisp": {
-    status: "xfail",
-    reason:
-      "await has no codegen (LL0100: visitAwait is not implemented in the JS backend). The old " +
-      "reason -- 'D14: await is unwritable, no AwaitKw in the current grammar' -- is stale: D14 " +
-      "landed and it now parses. Blocked on the codegen phase, not the frontend.",
   },
   "08-types/01_arguments.lisp": {
     status: "xfail",
@@ -151,7 +141,10 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "20-stdlib/test_stdlib.lisp": {
     status: "xfail",
-    reason: "D7: real stdlib not yet implemented",
+    reason:
+      "D7: real stdlib not yet implemented. (Its LL0101 -- the inliner splicing a type-def's " +
+      "`const Number = undefined;` into an initializer -- is fixed in P5c, and it now compiles " +
+      "clean. It is blocked on the stdlib's own behaviour, not on codegen.)",
   },
   "modifiers_demo.lisp": {
     status: "xfail",
