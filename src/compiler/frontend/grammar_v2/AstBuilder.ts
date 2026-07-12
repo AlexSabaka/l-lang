@@ -565,10 +565,26 @@ export class LLangAstBuilder extends BaseCstVisitor {
   // ========================================================================
   // DECLARATIONS
   // ========================================================================
+  /**
+   * A `let`/`mut` or a parameter binds either a NAME or a destructuring PATTERN. Chevrotain keys
+   * CST children by rule name, so exactly one of identifier / vectorPattern / mapPattern is present.
+   */
+  private bindingTarget(ctx: any): any {
+    if (ctx.vectorPattern) return this.visit(ctx.vectorPattern[0]);
+    if (ctx.mapPattern) return this.visit(ctx.mapPattern[0]);
+    return ctx.identifier ? this.visit(ctx.identifier[0]) : null;
+  }
+
+  restPattern(ctx: any): ast.RestPatternNode {
+    const id = this.visit(ctx.identifier[0]);
+    return this.makeNode("rest-pattern", ctx, { id });
+  }
+
   variable(ctx: any): ast.VariableNode {
     const mutable = !!ctx.MutKw;
     const modifiers = ctx.modifier ? ctx.modifier.map((m: any) => this.visit(m)) : [];
-    const name = ctx.identifier ? this.visit(ctx.identifier[0]) : null;
+    // The binding target: an identifier, or a destructuring pattern.
+    const name = this.bindingTarget(ctx);
     const type = ctx.type ? this.visit(ctx.type[0]) : null;
     const value = ctx.expression ? this.visit(ctx.expression[0]) : null;
     return this.makeNode("variable", ctx, {
@@ -605,7 +621,7 @@ export class LLangAstBuilder extends BaseCstVisitor {
 
   parameter(ctx: any): ast.ParameterNode {
     const spread = !!ctx.Spread;
-    const name = this.visit(ctx.identifier[0]);
+    const name = this.bindingTarget(ctx);
     const modifiers = ctx.modifier ? ctx.modifier.map((m: any) => this.visit(m)) : [];
     const type = ctx.type ? this.visit(ctx.type[0]) : null;
     return this.makeNode("parameter", ctx, {
@@ -952,7 +968,7 @@ export class LLangAstBuilder extends BaseCstVisitor {
   // ========================================================================
   pattern(ctx: any): ast.PatternNode {
     const alternatives = [
-      "anyPattern", "functionalPattern", "listPattern", "vectorPattern",
+      "anyPattern", "restPattern", "functionalPattern", "listPattern", "vectorPattern",
       "mapPattern", "typePattern", "constantPattern", "identifierPattern",
     ];
     for (const alt of alternatives) {
@@ -997,7 +1013,12 @@ export class LLangAstBuilder extends BaseCstVisitor {
 
   mapPatternPair(ctx: any): ast.MapPatternPairNode {
     const key = this.visit(ctx.key[0]);
-    const pattern = this.visit(ctx.pattern[0]);
+    // Shorthand: `{:name :age}` binds each key under its own name. Normalise it into an explicit
+    // identifier-pattern right here, so no consumer downstream -- match codegen, destructuring
+    // codegen, the symbol table -- has to special-case a missing pattern.
+    const pattern = ctx.pattern
+      ? this.visit(ctx.pattern[0])
+      : this.makeNode("identifier-pattern", ctx, { id: key });
     return this.makeNode("map-pattern-pair", ctx, { key, pattern });
   }
 

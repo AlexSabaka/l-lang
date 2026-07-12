@@ -525,6 +525,35 @@ export class SymbolTableBuilder {
       throw new Error("No active scope. Cannot define symbol.");
     }
 
+    const modifiers = (node as any).modifiers || [];
+    const modifierNames = new Set<string>(getModifierNames(modifiers));
+    const visibility = getVisibility(modifiers);
+
+    const entryFor = (entryName: string, nameNode: any) => {
+      this.active!.table.set(entryName, {
+        name: nameNode,
+        nodeType: node._type,
+        scope: this.active!,
+        value: node,
+        mutability: (node as any).mutable ?? false,
+        exportName: undefined,
+        visibility,
+        modifiers: modifierNames,
+        get isOperator() { return modifierNames.has("operator"); },
+        get isComptime() { return modifierNames.has("comptime"); },
+        // inferredType will be populated during type inference phase
+      });
+    };
+
+    // A destructuring `let` declares N names, not one: `(let [x y] point)` binds both x and y.
+    // Each gets its own entry, pointing back at the same variable node.
+    if (node._type === "variable" && ast.isBindingPattern((node as ast.VariableNode).name)) {
+      for (const id of ast.bindingIdentifiers((node as ast.VariableNode).name)) {
+        entryFor((id as any).id, id);
+      }
+      return;
+    }
+
     // Get the name from the node (different types have different name structures)
     let name: string;
     if (node._type === "type-def" || node._type === "struct") {
@@ -535,26 +564,10 @@ export class SymbolTableBuilder {
       name = (node as ast.ModifierDefNode).name;
     } else {
       // Other node types (variable, function, class, interface)
-      name = node.name?.id ?? node.name?.name;
+      name = (node as any).name?.id ?? (node as any).name?.name;
     }
 
-    const modifiers = (node as any).modifiers || [];
-    const modifierNames = new Set<string>(getModifierNames(modifiers));
-    const visibility = getVisibility(modifiers);
-    
-    this.active.table.set(name, {
-      name: (node as any).name,
-      nodeType: node._type,
-      scope: this.active,
-      value: node,
-      mutability: (node as any).mutable ?? false,
-      exportName: undefined,
-      visibility,
-      modifiers: modifierNames,
-      get isOperator() { return modifierNames.has("operator"); },
-      get isComptime() { return modifierNames.has("comptime"); },
-      // inferredType will be populated during type inference phase
-    });
+    entryFor(name, (node as any).name);
   }
 
   /**
@@ -569,24 +582,31 @@ export class SymbolTableBuilder {
       throw new Error("No active scope. Cannot define parameter.");
     }
 
-    const name = param.name.id ?? (param.name as any).name;
     const modifiers = param.modifiers || [];
     const modifierNames = new Set<string>(getModifierNames(modifiers));
     const visibility = getVisibility(modifiers);
-    
-    this.active.table.set(name, {
-      name: param.name,
-      nodeType: "parameter", // Special nodeType for parameters
-      scope: this.active,
-      value: param,
-      mutability: modifierNames.has("mut") || modifierNames.has("ref") || modifierNames.has("out"),
-      exportName: undefined,
-      visibility,
-      modifiers: modifierNames,
-      get isOperator() { return false; }, // Parameters can't be operators
-      get isComptime() { return modifierNames.has("comptime"); },
-      // inferredType will be populated during type inference phase
-    });
+
+    // A destructuring parameter binds N names: `(fn print-point [[x y]] ...)` binds x and y.
+    const bound = ast.isBindingPattern(param.name)
+      ? ast.bindingIdentifiers(param.name)
+      : [param.name as ast.IdentifierNode];
+
+    for (const id of bound) {
+      const name = (id as any).id ?? (id as any).name;
+      this.active.table.set(name, {
+        name: id,
+        nodeType: "parameter", // Special nodeType for parameters
+        scope: this.active,
+        value: param,
+        mutability: modifierNames.has("mut") || modifierNames.has("ref") || modifierNames.has("out"),
+        exportName: undefined,
+        visibility,
+        modifiers: modifierNames,
+        get isOperator() { return false; }, // Parameters can't be operators
+        get isComptime() { return modifierNames.has("comptime"); },
+        // inferredType will be populated during type inference phase
+      });
+    }
   }
 
   resolveSymbol(name: ast.IdentifierNode | ast.TypeNameNode): SymbolEntry | undefined {

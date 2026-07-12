@@ -257,3 +257,46 @@ repeated.
 `AstProvider` defaults to `grammar_v2`; `--frontend peg` still selects the old parser. Same 57
 examples pass under both. `l-lang.pegjs`, `l-lang.js`, `peggy` and the `parser` script are
 **not deleted yet** — that is a separate step, once dev has run on grammar_v2 for a cycle.
+
+---
+
+## D16 — Destructuring bindings
+
+**Ruling:** `let`/`mut` and function parameters bind either a NAME or a destructuring PATTERN.
+
+```lisp
+(let [x y] point)                      ; vector
+(let [first second ...rest] numbers)   ; with a rest element
+(let {:name :age} person)              ; map, shorthand -- binds `name` and `age`
+(let {:city home-town} person)         ; map, renamed
+(let {:user {:name :id}} profile)      ; nested
+(fn print-point [[x y]] ...)           ; parameters too
+```
+
+This was a genuine **spec gap**: destructuring appears in the corpus
+(`examples/01-basics/18_destructuring.lisp`, `20_scope.lisp`) and in the docs, but no ruling
+D1–D15 covered it, and neither frontend parsed it. Written down now because it is implemented.
+
+**Semantics.** JavaScript has all of it natively, so a binding pattern lowers directly to an
+ESTree `ArrayPattern` / `ObjectPattern` — no temporaries, no lowering pass. `_` binds nothing (an
+array hole). The shorthand `{:name}` is normalised in the AST builder into an explicit
+identifier-pattern, so every consumer (match codegen, destructuring codegen, the symbol table)
+sees one uniform shape rather than special-casing an absent pattern.
+
+A destructuring binding declares **N names, not one**. `SymbolTable.defineSymbol` and
+`defineParameter` emit one entry per bound name (`ast.bindingIdentifiers`), all pointing back at
+the same node. Any pass that reaches for `node.name.id` on a `variable` or `parameter` is wrong,
+and must ask `bindingIdentifiers` instead.
+
+**Not typed yet.** The type passes skip destructuring bindings. Typing `(let [x y] point)`
+properly needs tuple/element types, which is **D5 / P8** — and the type passes report nothing at
+all today (zero `results.add` calls, see P4), so skipping costs nothing that is not already lost.
+This is a known, documented hole, not an oversight.
+
+**Still out of reach, and why** — the two examples that motivated this are not fully unblocked:
+- `18_destructuring.lisp:48` — `(fn print-point [[x y] <- [Int Int]])` needs a **tuple type**
+  (`[Int Int]`), which neither frontend has ever supported. That is D5/P8, not the form layer.
+- `20_scope.lisp:68` — blocked on **D12**'s `for` clause syntax, before it ever reaches its
+  destructuring on line 112.
+
+Both now fail on a *different, correctly-named* blocker than they did before, which is the point.

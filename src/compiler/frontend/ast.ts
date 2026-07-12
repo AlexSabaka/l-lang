@@ -96,6 +96,7 @@ export type NodeType =
   | "map-pattern"
   | "map-pattern-pair"
   | "identifier-pattern"
+  | "rest-pattern"
   | "constant-pattern"
   | "string"
   | "formatted-string"
@@ -229,7 +230,8 @@ export interface ModifierNode extends ASTNode<"modifier"> {
 }
 
 export interface VariableNode extends ASTNode<"variable"> {
-  name: IdentifierNode;
+  /** A name, or a destructuring pattern: `(let [x y] point)`, `(let {:name :age} person)`. */
+  name: BindingTarget;
   mutable: boolean;
   modifiers: ModifierNode[];
   type: TypeNode;
@@ -247,7 +249,8 @@ export interface FunctionNode extends ASTNode<"function"> {
 }
 
 export interface ParameterNode extends ASTNode<"parameter"> {
-  name: IdentifierNode;
+  /** A name, or a destructuring pattern: `(fn f [[x y]] ...)`. */
+  name: BindingTarget;
   modifiers: ModifierNode[];
   type: TypeNode;
   spread?: boolean;
@@ -431,8 +434,76 @@ export type PatternNode =
   | MapPatternNode
   | TypePatternNode
   | IdentifierPatternNode
+  | RestPatternNode
   | ConstantPatternNode
   ;
+
+/**
+ * What a `let`/`mut` or a parameter may bind: a plain name, or a destructuring pattern.
+ * `(let x 5)` / `(let [x y] point)` / `(let {:name :age} person)`.
+ */
+export type BindingTarget = IdentifierNode | VectorPatternNode | MapPatternNode;
+
+/** `...rest` -- only meaningful as the final element of a vector pattern. */
+export interface RestPatternNode extends ASTNode<"rest-pattern"> {
+  id: IdentifierNode;
+}
+
+/** Is this binding target a destructuring pattern rather than a plain name? */
+export function isBindingPattern(
+  target: BindingTarget | undefined
+): target is VectorPatternNode | MapPatternNode {
+  return target?._type === "vector-pattern" || target?._type === "map-pattern";
+}
+
+/**
+ * Every identifier a binding target introduces into scope.
+ *
+ * `x` -> [x]; `[x y]` -> [x, y]; `{:name :age}` -> [name, age];
+ * `[a ...rest]` -> [a, rest]; nested patterns flatten.
+ *
+ * The symbol table and codegen both need this: a destructuring `let` declares N names, not one,
+ * so every pass that used to read `node.name.id` has to ask this instead.
+ */
+export function bindingIdentifiers(target: BindingTarget | undefined): IdentifierNode[] {
+  const ids: IdentifierNode[] = [];
+
+  const walk = (n: any): void => {
+    if (!n) return;
+    switch (n._type) {
+      case "simple-identifier":
+      case "composite-identifier":
+        ids.push(n as IdentifierNode);
+        return;
+      case "identifier-pattern":
+      case "rest-pattern":
+        walk(n.id);
+        return;
+      case "vector-pattern":
+      case "list-pattern":
+        (n.elements ?? []).forEach(walk);
+        return;
+      case "map-pattern":
+        // The bound name is the PATTERN side, not the key: `{:firstName first-name}` binds
+        // `first-name`. The shorthand `{:name}` is normalised to an identifier-pattern on the key
+        // by the AST builder, so this stays uniform.
+        (n.pairs ?? []).forEach((pair: any) => walk(pair.pattern));
+        return;
+      case "any-pattern":
+        return; // `_` binds nothing
+      default:
+        return;
+    }
+  };
+
+  walk(target);
+  return ids;
+}
+
+/** Convenience: the bound names as strings. */
+export function bindingNames(target: BindingTarget | undefined): string[] {
+  return bindingIdentifiers(target).map((i) => (i as any).id).filter(Boolean);
+}
 
 export interface AnyPatternNode extends ASTNode<"any-pattern"> {}
 
@@ -460,6 +531,11 @@ export interface MapPatternNode extends ASTNode<"map-pattern"> {
 
 export interface MapPatternPairNode extends ASTNode<"map-pattern-pair"> {
   key: SimpleIdentifierNode | StringNode;
+  /**
+   * Always present. The shorthand `{:name :age}` -- which binds each key under its own name --
+   * is normalised by the AST builder into an explicit identifier-pattern, so every consumer
+   * (match codegen, destructuring codegen) sees one uniform shape.
+   */
   pattern: PatternNode;
 }
 

@@ -69,7 +69,11 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "01-basics/18_destructuring.lisp": {
     status: "xfail",
-    reason: "destructuring let-binding syntax unparsed (ELL0005), see Phase 3",
+    reason:
+      "destructuring itself now works (D16) -- every binding line in this file parses and runs. " +
+      "It is now blocked one line further on, at :48 `(fn print-point [[x y] <- [Int Int]])`, " +
+      "which needs a TUPLE TYPE. Neither frontend has ever supported `[Int Int]` as a type; that " +
+      "is D5/P8 type-system work, not the form layer.",
   },
   "01-basics/19_optional_and_mutability.lisp": {
     status: "xfail",
@@ -77,7 +81,10 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "01-basics/20_scope.lisp": {
     status: "xfail",
-    reason: "destructuring let-binding syntax unparsed (ELL0005), see Phase 3",
+    reason:
+      "destructuring itself now works (D16). Blocked earlier in the file instead, at :68 " +
+      "`(for :i 0 :< 3 :step 1 :then ...)` -- D12's for-clause syntax -- which it hits long " +
+      "before its destructuring on :112.",
   },
   "01-basics/21_nil_handling.lisp": {
     status: "xfail",

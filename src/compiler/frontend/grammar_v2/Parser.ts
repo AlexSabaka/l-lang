@@ -89,6 +89,7 @@ class LLangParser extends CstParser {
   mapPattern: ParserMethod<[], CstNode>;
   mapPatternPair: ParserMethod<[], CstNode>;
   identifierPattern: ParserMethod<[], CstNode>;
+  restPattern: ParserMethod<[], CstNode>;
   constantPattern: ParserMethod<[], CstNode>;
   awaitExpr: ParserMethod<[], CstNode>;
   spreadExpr: ParserMethod<[], CstNode>;
@@ -640,8 +641,23 @@ class LLangParser extends CstParser {
       this.MANY(() => {
         this.SUBRULE(this.modifier);
       });
+      // The binding target: a plain name, or a destructuring pattern.
+      //   (let x 5) | (let [x y] point) | (let {:name :age} person)
+      // A `[` or `{` in the NAME slot -- i.e. immediately after let/mut and its modifiers, before
+      // any value -- can only be a destructuring pattern. A vector or map VALUE always follows a
+      // name (`(let resources [])`), so there is nothing to be ambiguous with.
       this.OPTION(() => {
-        this.SUBRULE(this.identifier);
+        this.OR2([
+          {
+            GATE: () => this.LA(1)?.tokenType === t.LBracket,
+            ALT: () => this.SUBRULE(this.vectorPattern),
+          },
+          {
+            GATE: () => this.LA(1)?.tokenType === t.LBrace,
+            ALT: () => this.SUBRULE(this.mapPattern),
+          },
+          { ALT: () => this.SUBRULE(this.identifier) },
+        ]);
       });
       this.OPTION2(() => {
         this.CONSUME(t.LeftArrow);
@@ -683,7 +699,19 @@ class LLangParser extends CstParser {
       this.OPTION(() => {
         this.CONSUME(t.Spread);
       });
-      this.SUBRULE(this.identifier);
+      // Same binding target as `variable`: a name, or a destructuring pattern.
+      //   (fn f [x] ...) | (fn print-point [[x y]] ...) | (fn greet [{:name}] ...)
+      this.OR([
+        {
+          GATE: () => this.LA(1)?.tokenType === t.LBracket,
+          ALT: () => this.SUBRULE(this.vectorPattern),
+        },
+        {
+          GATE: () => this.LA(1)?.tokenType === t.LBrace,
+          ALT: () => this.SUBRULE(this.mapPattern),
+        },
+        { ALT: () => this.SUBRULE(this.identifier) },
+      ]);
       this.MANY(() => {
         this.SUBRULE(this.modifier);
       });
@@ -1085,6 +1113,7 @@ class LLangParser extends CstParser {
     this.pattern = this.RULE("pattern", () => {
       this.OR([
         { ALT: () => this.SUBRULE(this.anyPattern) },
+        { ALT: () => this.SUBRULE(this.restPattern), GATE: () => this.LA(1)?.tokenType === t.Spread },
         { ALT: () => this.SUBRULE(this.functionalPattern), GATE: () => this.isFunctionalPattern() },
         { ALT: () => this.SUBRULE(this.listPattern) },
         { ALT: () => this.SUBRULE(this.vectorPattern) },
@@ -1140,10 +1169,20 @@ class LLangParser extends CstParser {
       this.CONSUME(t.RBrace);
     });
 
+    // The pattern is OPTIONAL: `{:name :age}` is the shorthand form, binding `name` and `age`
+    // under their own names. A pattern appears only when the binding is renamed
+    // (`{:firstName first-name}`) or nested (`{:user {:name :id}}`). No pattern alternative can
+    // begin with a Colon, so the next pair's `:key` never gets mistaken for this pair's value.
     this.mapPatternPair = this.RULE("mapPatternPair", () => {
       this.CONSUME(t.Colon);
       this.SUBRULE(this.key);
-      this.SUBRULE(this.pattern);
+      this.OPTION(() => this.SUBRULE(this.pattern));
+    });
+
+    // `...rest`, as the tail of a vector pattern: `(let [first second ...rest] numbers)`.
+    this.restPattern = this.RULE("restPattern", () => {
+      this.CONSUME(t.Spread);
+      this.SUBRULE(this.identifier);
     });
 
     this.identifierPattern = this.RULE("identifierPattern", () => {

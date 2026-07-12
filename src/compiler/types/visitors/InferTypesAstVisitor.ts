@@ -100,7 +100,15 @@ class CollectTypesPass extends BaseAstTreeWalker {
   }
 
   visitVariable(node: ast.VariableNode) {
-    const varName = node.name.id;
+    // A destructuring binding declares N names, and the type system has no notion of one yet:
+    // typing `(let [x y] point)` needs tuple/element types, which is D5/P8 work. Skipping is
+    // honest -- this pass reports nothing today anyway (zero results.add calls) -- and it beats
+    // crashing on `node.name.id`, which is undefined for a pattern.
+    if (ast.isBindingPattern(node.name)) {
+      if (node.value) this.visit(node.value);
+      return;
+    }
+    const varName = (node.name as ast.IdentifierNode).id;
     
     // If explicit type annotation exists, bind it
     if (node.type) {
@@ -907,7 +915,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   }
 
   visitVariable(node: ast.VariableNode) {
-    const varName = node.name.id;
+    // See CollectTypesPass.visitVariable: destructuring bindings are not typed yet (D5/P8).
+    if (ast.isBindingPattern(node.name)) {
+      if (node.value) this.inferExpressionType(node.value);
+      return;
+    }
+    const varName = (node.name as ast.IdentifierNode).id;
     this.context.log(LogLevel.Info, `[InferAndCheckPass.visitVariable] Processing variable: ${varName}`);
 
     
@@ -984,7 +997,9 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     
     // Bind parameter types in function scope
     node.params.forEach(param => {
-      const paramName = param.name.id;
+      // Destructuring parameters bind N names; not typed yet (D5/P8).
+      if (ast.isBindingPattern(param.name)) return;
+      const paramName = (param.name as ast.IdentifierNode).id;
       const paramType = param.type 
         ? this.convertAstTypeToInferred(param.type)
         : TypeEnvironment.unknown();

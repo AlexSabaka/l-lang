@@ -1137,15 +1137,105 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return current;
   }
 
+  /**
+   * A destructuring binding target -> a real ESTree Pattern.
+   *
+   * JavaScript already has all of this natively, so the mapping is direct and no lowering or
+   * temporaries are needed:
+   *   [x y]                  -> ArrayPattern  [x, y]
+   *   [a ...rest]            -> ArrayPattern  [a, ...rest]
+   *   {:name :age}           -> ObjectPattern { name, age }          (shorthand)
+   *   {:firstName first}     -> ObjectPattern { firstName: first }   (renamed)
+   *   {:user {:name :id}}    -> ObjectPattern { user: { name, id } } (nested)
+   */
+  private bindingPatternToESTree(target: ast.ASTNode): ESTree.Pattern {
+    switch (target._type) {
+      case "simple-identifier":
+      case "composite-identifier": {
+        const raw = (target as any).id ?? (target as any).name;
+        return ESTreeBuilder.identifier(target, encodeIdentifier(raw));
+      }
+
+      case "identifier-pattern":
+        return this.bindingPatternToESTree((target as ast.IdentifierPatternNode).id);
+
+      case "rest-pattern":
+        return {
+          type: "RestElement",
+          argument: this.bindingPatternToESTree((target as ast.RestPatternNode).id),
+          loc: ESTreeBuilder.loc(target),
+        };
+
+      case "any-pattern":
+        // `_` binds nothing -- an elision, i.e. a hole in the ArrayPattern.
+        return null as unknown as ESTree.Pattern;
+
+      case "list-pattern":
+      case "vector-pattern":
+        return {
+          type: "ArrayPattern",
+          elements: (target as ast.VectorPatternNode).elements.map((e) =>
+            this.bindingPatternToESTree(e)
+          ),
+          loc: ESTreeBuilder.loc(target),
+        };
+
+      case "map-pattern":
+        return {
+          type: "ObjectPattern",
+          properties: (target as ast.MapPatternNode).pairs.map((pair) => {
+            const keyRaw = (pair.key as any).id ?? (pair.key as any).value;
+            const value = this.bindingPatternToESTree(pair.pattern);
+            // D13 keeps map keys as written; the KEY is not encoded, only the bound NAME is.
+            const key = ESTreeBuilder.identifier(pair.key, keyRaw);
+            return {
+              type: "Property",
+              key,
+              value,
+              kind: "init",
+              method: false,
+              computed: false,
+              // `{ name }` rather than `{ name: name }` when the binding keeps the key's name.
+              shorthand:
+                value.type === "Identifier" &&
+                (value as ESTree.Identifier).name === encodeIdentifier(keyRaw),
+              loc: ESTreeBuilder.loc(pair),
+            } as ESTree.AssignmentProperty;
+          }),
+          loc: ESTreeBuilder.loc(target),
+        };
+
+      default:
+        this.reportCodegenError(
+          target,
+          "LL0102",
+          `'${target._type}' cannot appear in a binding position. A destructuring binding may ` +
+            `only contain names, nested [..] / {..} patterns, '...rest', or '_'.`
+        );
+        return ESTreeBuilder.identifier(target, "undefined");
+    }
+  }
+
   visitVariable(node: ast.VariableNode): ESTree.VariableDeclaration {
     this.pushScope(ScopeType.variable);
-    const name = this.visit(node.name) as ESTree.Identifier;
+    const destructuring = ast.isBindingPattern(node.name);
+    const id: ESTree.Pattern = destructuring
+      ? this.bindingPatternToESTree(node.name as ast.ASTNode)
+      : (this.visit(node.name) as ESTree.Identifier);
     const value = node.value
       ? (this.visit(node.value) as ESTree.Expression)
       : null;
     this.popScope();
 
-    this.variables.push(name.name);
+    if (destructuring) {
+      // A destructuring binding introduces N names, not one.
+      for (const bound of ast.bindingNames(node.name)) {
+        this.variables.push(encodeIdentifier(bound));
+      }
+    } else {
+      // Unchanged path: visit() may resolve/inline the symbol, so take the name it produced.
+      this.variables.push((id as ESTree.Identifier).name);
+    }
 
     return {
       type: "VariableDeclaration",
@@ -1153,7 +1243,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       declarations: [
         {
           type: "VariableDeclarator",
-          id: name,
+          id,
           init: value,
         },
       ],
@@ -1314,7 +1404,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     };
   }
 
-  visitParameter(node: ast.ParameterNode): ESTree.Identifier | ESTree.RestElement {
+  visitParameter(node: ast.ParameterNode): ESTree.Pattern {
+    // A destructuring parameter: (fn print-point [[x y]] ...) -> function (_p([x, y])) {}
+    if (ast.isBindingPattern(node.name)) {
+      const pattern = this.bindingPatternToESTree(node.name as ast.ASTNode);
+      return node.spread
+        ? ({ type: "RestElement", argument: pattern, loc: ESTreeBuilder.loc(node) } as ESTree.RestElement)
+        : pattern;
+    }
+
     // Parameters are declarations, not references to potentially inlined symbols.
     // Directly encode the name to avoid cache pollution from inlined imports.
     const paramName = (node.name as any).id ?? (node.name as any).name;

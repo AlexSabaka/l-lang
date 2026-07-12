@@ -98,6 +98,7 @@ export class BaseAstVisitor {
         "map-pattern": this.visitMapPattern.bind(this),
         "map-pattern-pair": this.visitMapPatternPair.bind(this),
         "identifier-pattern": this.visitIdentifierPattern.bind(this),
+        "rest-pattern": this.visitRestPattern.bind(this),
         "constant-pattern": this.visitConstantPattern.bind(this),
         "string": this.visitString.bind(this),
         "formatted-string": this.visitFormattedString.bind(this),
@@ -382,6 +383,10 @@ export class BaseAstVisitor {
 
   visitIdentifierPattern(node: ast.IdentifierPatternNode): any {
     return this.onUnhandled(node, "visitIdentifierPattern");
+  }
+
+  visitRestPattern(node: ast.RestPatternNode): any {
+    return this.onUnhandled(node, "visitRestPattern");
   }
 
   visitConstantPattern(node: ast.ConstantPatternNode): any {
