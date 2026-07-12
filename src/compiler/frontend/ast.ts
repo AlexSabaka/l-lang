@@ -74,6 +74,7 @@ export type NodeType =
   | "extends"
   | "type-constraint"
   | "spread"
+  | "await"
   | "simple-assignment"
   | "compound-assignment"
   | "indexer"
@@ -318,6 +319,13 @@ export interface TypeConstraintNode extends ASTNode<"type-constraint"> {
 }
 
 export interface SpreadNode extends ASTNode<"spread"> {
+  expression: ASTNode;
+}
+
+// D14 (docs/spec/DECISIONS.md#d14): grammar_v2 is the first frontend that can lex/parse
+// `await` at all (AwaitKw doesn't exist in the current PEG grammar). No pass downstream
+// reads this node type yet -- await semantics (type-checking, codegen) land in a later phase.
+export interface AwaitNode extends ASTNode<"await"> {
   expression: ASTNode;
 }
 

@@ -76,6 +76,7 @@ export class BaseAstVisitor {
         "extends": this.visitExtends.bind(this),
         "type-constraint": this.visitTypeConstraint.bind(this),
         "spread": this.visitSpread.bind(this),
+        "await": this.visitAwait.bind(this),
         "simple-assignment": this.visitSimpleAssignment.bind(this),
         "compound-assignment": this.visitCompoundAssignment.bind(this),
         "indexer": this.visitIndexer.bind(this),
@@ -308,6 +309,11 @@ export class BaseAstVisitor {
 
   visitSpread(node: ast.SpreadNode): any {
     this.context.log(LogLevel.Verbose, "Method visitSpread skipped");
+    return node;
+  }
+
+  visitAwait(node: ast.AwaitNode): any {
+    this.context.log(LogLevel.Verbose, "Method visitAwait skipped");
     return node;
   }
 
