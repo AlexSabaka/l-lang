@@ -724,25 +724,53 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     }));
   }
 
-  visitTypeDef(node: ast.TypeDefNode) {
-    // For aliases to classes/structs, generate a const binding at runtime
-    // e.g., (deftype Vector Vector3) -> const Vector = Vector3;
-    const aliasName = encodeIdentifier(node.name.id);
-    
-    // Extract the target name from the type node
-    let targetName = "undefined";
-    if (node.type && (node.type as any).type && (node.type as any).type.name) {
-      targetName = encodeIdentifier((node.type as any).type.name.name);
+  /**
+   * Is this type-def an alias for something that EXISTS AT RUNTIME?
+   *
+   * `(deftype Vector Vector3)` aliases a class, and a class is a value -- `const Vector = Vector3;`
+   * is real and useful. `(deftype Number Int | Real)` aliases a TYPE: a union of primitives, which
+   * has no runtime existence whatsoever.
+   */
+  private typeDefTarget(node: ast.TypeDefNode): string | undefined {
+    const targetName = (node.type as any)?.type?.name?.name;
+    if (typeof targetName !== "string") return undefined;
+
+    const symbol = this.context.symbolTable.resolveSymbol(targetName);
+    const isRuntimeValue =
+      symbol?.nodeType === "class" || symbol?.nodeType === "struct";
+
+    return isRuntimeValue ? targetName : undefined;
+  }
+
+  /**
+   * A TYPE IS ERASED. It emits nothing -- unless it aliases a value.
+   *
+   * This used to emit `const <alias> = <target>;` unconditionally, and when the target was not a
+   * plain type NAME -- a union, an array, a generic -- the extraction fell through to the literal
+   * string "undefined" and it emitted
+   *
+   *     const Number = undefined;
+   *
+   * for `(deftype Number Int | Real)`. That is worse than useless: it SHADOWS the JS global
+   * `Number`, and `std/types.lisp` calls `(Number.isInteger x)` seventeen lines further down -- on
+   * `undefined`. It also gave the import inliner a Statement to splice into an initializer slot,
+   * which is where `const __ll_inlined_Number_1 = const Number = undefined;` came from (LL0101).
+   */
+  visitTypeDef(node: ast.TypeDefNode): ESTree.Statement {
+    const target = this.typeDefTarget(node);
+
+    if (!target) {
+      return { type: "EmptyStatement", loc: ESTreeBuilder.loc(node) } as ESTree.EmptyStatement;
     }
-    
+
     return {
       type: "VariableDeclaration",
       kind: "const",
       declarations: [
         {
           type: "VariableDeclarator",
-          id: { type: "Identifier", name: aliasName },
-          init: { type: "Identifier", name: targetName },
+          id: { type: "Identifier", name: encodeIdentifier(node.name.id) },
+          init: { type: "Identifier", name: encodeIdentifier(target) },
         },
       ],
       loc: ESTreeBuilder.loc(node),
@@ -1398,6 +1426,81 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // Control Flow
   // =========================================================================
 
+  /**
+   * The last statement of a block becomes its VALUE -- the block's tail is turned into a `return`.
+   *
+   * Lifted out of visitMatch's local `ensureReturns`, unchanged in behaviour, so `if` and `when` can
+   * use it too. Recursive, because the tail may itself be a block.
+   */
+  private withTrailingReturn(
+    statements: ESTree.Statement[],
+    node: ast.ASTNode
+  ): ESTree.Statement[] {
+    if (statements.length === 0) return statements;
+
+    const last = statements[statements.length - 1];
+    const rest = statements.slice(0, -1);
+
+    if (last.type === "ExpressionStatement") {
+      return [...rest, ESTreeBuilder.returnStatement(node, last.expression)];
+    }
+    if (last.type === "BlockStatement") {
+      return [...rest, ...this.withTrailingReturn(last.body as ESTree.Statement[], node)];
+    }
+    // A `return`, an `if`, a loop -- nothing to convert. Leave it; the block's value is undefined.
+    return statements;
+  }
+
+  /**
+   * Force an emitted node into EXPRESSION position.
+   *
+   * A body of more than one statement emits a `BlockStatement`, and a BlockStatement cannot stand
+   * where JavaScript wants an expression -- `cond ? { a(); b(); } : undefined` is not valid JS at
+   * all. `visitIf` and `visitWhen` both simply CAST to Expression and hoped; astring serialised the
+   * result happily, and only the acorn re-parse (LL0101) noticed.
+   *
+   * Wrap it in an IIFE whose tail is returned, so the block's value is its last expression:
+   *
+   *     (() => { a(); return b(); })()
+   *
+   * This is precisely what visitMatch already does for a multi-statement match arm. Nothing new is
+   * invented here; the pattern is simply shared.
+   */
+  private asExpression(emitted: ESTree.Node, node: ast.ASTNode): ESTree.Expression {
+    if (this.isExpression(emitted)) {
+      return emitted as ESTree.Expression;
+    }
+
+    const statements =
+      emitted.type === "BlockStatement"
+        ? ((emitted as ESTree.BlockStatement).body as ESTree.Statement[])
+        : [emitted as ESTree.Statement];
+
+    return {
+      type: "CallExpression",
+      callee: {
+        type: "ArrowFunctionExpression",
+        params: [],
+        body: ESTreeBuilder.blockStatement(
+          node,
+          this.withTrailingReturn(statements, node)
+        ),
+        expression: false,
+        async: false,
+      } as ESTree.ArrowFunctionExpression,
+      arguments: [],
+      optional: false,
+      loc: ESTreeBuilder.loc(node),
+    } as ESTree.CallExpression;
+  }
+
+  /** Force an emitted node into STATEMENT position. */
+  private asStatement(emitted: ESTree.Node, node: ast.ASTNode): ESTree.Statement {
+    return this.isStatement(emitted)
+      ? (emitted as ESTree.Statement)
+      : ESTreeBuilder.expressionStatement(node, emitted as ESTree.Expression);
+  }
+
   visitIf(node: ast.IfNode): ESTree.IfStatement | ESTree.ConditionalExpression {
     return this.runInScope(ScopeType.if, () => {
       const condition = this.visit(node.condition!) as ESTree.Expression;
@@ -1405,13 +1508,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       const elseBranch = node.else ? this.visit(node.else) : null;
 
       if (this.isExpressionContext()) {
+        // asExpression, not a cast: a multi-statement branch is a BlockStatement, and
+        // `c ? { log(); "v"; } : "z"` is not JavaScript. It emitted LL0101.
         return {
           type: "ConditionalExpression",
           test: condition,
-          consequent: thenBranch as ESTree.Expression,
-          alternate:
-            (elseBranch as ESTree.Expression) ||
-            ESTreeBuilder.identifier(node, "undefined"),
+          consequent: this.asExpression(thenBranch, node.then!),
+          alternate: elseBranch
+            ? this.asExpression(elseBranch, node.else!)
+            : ESTreeBuilder.identifier(node, "undefined"),
           loc: ESTreeBuilder.loc(node),
         } as ESTree.ConditionalExpression;
       }
@@ -1446,23 +1551,64 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     });
   }
 
-  visitWhen(node: ast.WhenNode): ESTree.ConditionalExpression {
+  /**
+   * `when` is an `if` WITHOUT an else -- `WhenNode { condition, then[] }`, and the reference calls it
+   * "a simple if without else". A false condition therefore yields `undefined`.
+   *
+   * It used to emit a ConditionalExpression unconditionally, in every context, and cast each body
+   * element to an Expression. Two consequences:
+   *
+   *   - In STATEMENT position, a multi-statement body emitted `cond ? { log(); n = 1; } : undefined`
+   *     -- a BlockStatement inside a ternary, which is not JavaScript (LL0101). `visitIf` has always
+   *     consulted `isExpressionContext()`; `when` never did, and that asymmetry was the whole bug.
+   *   - In EXPRESSION position, a multi-statement body has to become a value, which needs an IIFE.
+   *
+   * A multi-EXPRESSION body (`:then "a" "b"`) still emits a sequence expression. That was never
+   * broken: `("a", "b")` evaluates both and yields the last, which is exactly the semantics wanted,
+   * and it is cheaper than an IIFE.
+   */
+  visitWhen(node: ast.WhenNode): ESTree.IfStatement | ESTree.ConditionalExpression {
     return this.runInScope(ScopeType.when, () => {
       const condition = this.visit(node.condition!) as ESTree.Expression;
-      const whenExprs = node.then!.map(
-        (x) => this.visit(x) as ESTree.Expression
-      );
+      const body = (node.then ?? []).map((x) => this.visit(x));
+
+      if (!this.isExpressionContext()) {
+        return {
+          type: "IfStatement",
+          test: condition,
+          consequent: ESTreeBuilder.blockStatement(
+            node,
+            body.map((b, i) => this.asStatement(b, node.then![i]))
+          ),
+          alternate: null,
+          loc: ESTreeBuilder.loc(node),
+        } as ESTree.IfStatement;
+      }
+
+      let consequent: ESTree.Expression;
+      if (body.length === 0) {
+        consequent = ESTreeBuilder.identifier(node, "undefined");
+      } else if (body.length === 1) {
+        consequent = this.asExpression(body[0], node.then![0]);
+      } else if (body.every((b) => this.isExpression(b))) {
+        consequent = ESTreeBuilder.sequenceExpression(node, body as ESTree.Expression[]);
+      } else {
+        consequent = this.asExpression(
+          ESTreeBuilder.blockStatement(
+            node,
+            body.map((b, i) => this.asStatement(b, node.then![i]))
+          ),
+          node
+        );
+      }
 
       return {
         type: "ConditionalExpression",
         test: condition,
-        consequent:
-          whenExprs.length === 1
-            ? whenExprs[0]
-            : ESTreeBuilder.sequenceExpression(node, whenExprs),
+        consequent,
         alternate: ESTreeBuilder.identifier(node, "undefined"),
         loc: ESTreeBuilder.loc(node),
-      };
+      } as ESTree.ConditionalExpression;
     });
   }
 
@@ -2642,7 +2788,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           ? ({ ...fn.name, id: uniq } as any)
           : ({ _type: "simple-identifier", id: uniq } as any);
         defStmt = this.visit(fn) as ESTree.Statement;
-      } else if (symbol.nodeType === "class") {
+      } else if (symbol.nodeType === "class" || symbol.nodeType === "struct") {
+        // A struct emits through visitClass (visitStruct delegates to it), so it is renamed exactly
+        // like a class. It used to fall into the catch-all below and be cast to an Expression, which
+        // survived only because `const X = class Vector3 {...}` -- a class EXPRESSION -- is valid JS.
         const cls = this.cloneNode(
           symbol.value as ast.ClassNode
         ) as ast.ClassNode;
@@ -2669,20 +2818,50 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           ],
         };
       } else {
-        const val = (symbol.value as any)
-          ? (this.visit(symbol.value as any) as ESTree.Expression)
-          : ESTreeBuilder.identifier(symbol.value as any, "undefined");
-        defStmt = {
+        // Anything else: a type-def, an interface, an enum. The old code CAST whatever came back to
+        // an Expression and dropped it straight into `init`. That survived a ClassDeclaration only
+        // by accident (`const X = class Y {}` is a class expression, and valid) -- and produced
+        //
+        //     const __ll_inlined_Number_1 = const Number = undefined;;
+        //
+        // for `(deftype Number Int | Real)`: a VariableDeclaration spliced into an initializer slot.
+        // Not JavaScript at all (LL0101).
+        //
+        // Bind by what the emission actually IS, rather than asserting it is an expression.
+        const emitted = symbol.value
+          ? (this.visit(symbol.value as any) as ESTree.Node)
+          : null;
+
+        const bindTo = (init: ESTree.Expression): ESTree.VariableDeclaration => ({
           type: "VariableDeclaration",
           kind: "const",
           declarations: [
             {
               type: "VariableDeclarator",
               id: ESTreeBuilder.identifier(symbol.value as any, uniq),
-              init: val,
+              init,
             },
           ],
-        };
+        });
+
+        if (!emitted || emitted.type === "EmptyStatement") {
+          // A TYPE -- erased. It has no runtime value, so there is nothing to bind: contribute no
+          // code. See visitTypeDef.
+          defStmt = { type: "EmptyStatement" } as ESTree.EmptyStatement;
+        } else if (this.isExpression(emitted)) {
+          defStmt = bindTo(emitted as ESTree.Expression);
+        } else if (emitted.type === "VariableDeclaration") {
+          // It DECLARES its own name (an enum; a type alias to a class). Re-bind its INITIALISER to
+          // our unique name -- emitting its own declaration would collide with the importing
+          // module's scope and leave `uniq` unbound.
+          const init = (emitted as ESTree.VariableDeclaration).declarations[0]?.init;
+          defStmt = bindTo(
+            (init as ESTree.Expression) ??
+              ESTreeBuilder.identifier(symbol.value as any, "undefined")
+          );
+        } else {
+          defStmt = emitted as ESTree.Statement;
+        }
       }
 
       // INSERTED AFTER the recursive visit above -- and that ordering is load-bearing, not
