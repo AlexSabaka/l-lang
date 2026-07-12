@@ -395,3 +395,98 @@ duplicate-declaration is checked syntactically per-block rather than through the
 
 A type error now blocks codegen and exits 1. Zero false positives on the corpus; 58 tests pass under
 both frontends.
+
+---
+
+# P6 addendum — scope-aware resolution, and a bundler we did not need
+
+## The symbol table could not answer "what does `x` mean *here*"
+
+`Scope` has always been a tree — it has `parent` and `scopes`, and `SymbolTableBuilder` genuinely
+builds it. But `SymbolTable.scopes` was a flat list of module **roots**, and every resolution path
+walked **upward** via `.parent` (which from a root is `undefined`). **Neither path ever read
+`scope.scopes`.** So a function parameter, or a `let` in a body, was written into a child scope by
+`defineSymbol` and was then unfindable.
+
+That single gap explains a remarkable amount:
+
+- **Codegen kept a shadow symbol table.** `localIdentifiersStack` registered parameters, in its own
+  words, *"BEFORE processing - this prevents them from being resolved to inlined symbols from
+  imports"*. It registered **only** parameters — so a `let` in a body sharing a name with an
+  imported symbol was rewritten to **the import's** JS name. Two different symbols, one name.
+- **`identifiersCache`** was a flat, scopeless, never-cleared name→jsname map. First resolution won,
+  forever.
+- **P4's unresolved-identifier check was unbuildable**, because `resolveIdentifier` failed on 165
+  identifiers that were really just parameters and locals.
+
+`resolveSymbol(name, from)` now walks the real scope chain outward from the node's own scope. Both
+shims are deleted — `grep -c` in `codegen/` returns **0** for each, which is the audit's own success
+criterion for this phase.
+
+**A subtlety worth recording:** the symbol table is built on the *pre-desugar* AST while codegen sees
+the *post-desugar* one. This works because `BaseAstTreeWalker` copies `_parent: node._parent` — the
+**original** parent object — so one step up from a desugared node lands back in the tree that was
+indexed.
+
+## "Comes from another file" is not "is an import"
+
+Deleting the shims took the suite 58 → 57, and the regression was the fix doing its job:
+
+```js
+const __ll_inlined_result_1 = new __ll_inlined_Vector3_1();   // used here...
+const __ll_inlined_Vector3_1 = class Vector3 { ... };          // ...declared after -> TDZ
+```
+
+When a library function is cloned into a module, its **body** is visited too — and the locals inside
+it now resolve (correctly) to the library's scopes. A source-only test therefore hoisted those
+locals to the top level as if they were exports. `isImportedSymbol` now requires a **root scope**.
+Before scope-awareness this was invisible: a nested local of another module was simply
+*unresolvable*, so it fell through untouched.
+
+## The bundler was not needed, and the measurement is why
+
+P6c was planned as "emit definitions in `DependencyGraph.iterate()` order". The premise was wrong.
+**Emission is already topological, and always was.** `ensureSymbolInlined` claims its name *before*
+descending (so cycles terminate) but writes the *definition* **after**, once everything it
+references has been written. Insertion is post-order; `Object.values()` preserves it. A deep chain
+(`main → f → g → h → const → class`, with `f` written first in the library) still emits the class,
+then the const, then `h`, then `g`, then `f`.
+
+The TDZ crash that motivated the ordering theory was **not an ordering bug** — it was the
+locals-hoisted-as-imports bug above. Rewriting emission to walk modules would have produced the same
+order, additionally emitted unreachable definitions, and added risk for nothing. The invariant is now
+documented at the insertion point and pinned by tests that assert the emitted **order**, not merely
+the output — function declarations hoist, so a wrong order can still pass by accident.
+
+`DependencyGraph.iterate()` remains uncalled. It is *correct* now, and it is the right tool if
+emission ever needs module-level ordering — but wiring it in today would be ceremony.
+
+## Module graph: three bugs, all silent
+
+- **An import cycle was `RangeError: Maximum call stack size exceeded`.** The only re-entry guard
+  (`cacheModule`) ran *after* the recursion. Now an in-progress set, and `LL0300` — a **warning**,
+  because under the module-init ruling a cycle is benign.
+- **Every non-root graph node was keyed by a path that does not exist** (`path.join` on an
+  already-absolute path). Harmless only because nothing consumed the graph.
+- **Imported modules were compiled through full codegen and the output discarded** — `stopAt`
+  defaulted to `"codegen"`. Now `"types"`.
+
+## Rulings
+
+- **Module init (audit 6.8): definitions only — an imported module's body never runs.** Previously
+  true by accident (the inliner only cloned referenced definitions); now deliberate, and pinned by a
+  test. No goldens moved.
+- **`export` enforcement is deferred.** It is decorative today: `exportName` is written in one place
+  and **read nowhere**, so you can import a symbol that was never exported. Enforcing it is a
+  corpus-wide change — `20-stdlib/std/types.lisp` defines 8 functions and exports **zero**, and the
+  stdlib has 6 `(export …)` forms against 53 `(fn …)` definitions. It needs its own phase and its own
+  ruling, and must not be mistaken for an oversight.
+
+## Open findings
+
+- **`:ctor` defaults are dropped by codegen.** `(defclass Vec (let :ctor x <- Int 7))` emits
+  `constructor(x) { this.x = x; }` — no default — so `(new Vec)` leaves `x` undefined. The *type*
+  side was fixed in Phase 3 (`hasDefault` was computing `null !== undefined`, i.e. always true); the
+  *codegen* side never reads it. **P5.**
+- **P4's unresolved-identifier check is now unblocked** by scope-aware resolution, and remains a
+  pending negative test in `test/type-errors.ts`.
