@@ -38,6 +38,98 @@ function getVisitMethodName(nodeType: string): string {
  * - Records variable declarations with explicit types
  * - Does NOT enter function bodies yet
  */
+/**
+ * The ONE conversion from a syntactic type annotation to an InferredType.
+ *
+ * This used to be declared THREE times -- CollectTypesPass, InferAndCheckPass, and the (now
+ * deleted) TypeCheckingValidator -- and the copies disagreed:
+ *
+ *   - Only the CollectTypesPass copy consulted the SYMBOL TABLE. The others made every
+ *     user-defined type a *primitive with the same name*, so `(let c <- Complex (Complex 1 2))`
+ *     compared `{kind:"primitive", name:"Complex"}` against `{kind:"type-ref", name:"Complex"}`
+ *     and reported `Cannot assign Complex to Complex`.
+ *   - Only the InferAndCheckPass copy knew about generic type PARAMETERS (`T` inside a generic
+ *     class), via the type environment.
+ *   - Only the CollectTypesPass copy handled function types, and only it kept array-ness on a
+ *     union -- so `(Int | String)[]` silently became a bare union in pass 2.
+ *
+ * Each copy therefore knew something the others didn't; deleting either one alone would have lost
+ * information. This is the union of all three, and the only one left.
+ */
+function convertAstType(
+  typeNode: ast.TypeNode,
+  symbolTable: SymbolTable,
+  typeEnv: TypeEnvironment
+): InferredType {
+  const recur = (t: ast.TypeNode) => convertAstType(t, symbolTable, typeEnv);
+
+  // Simple types
+  if (typeNode._type === "type" || typeNode._type === "simple-type") {
+    let name: string;
+    if ((typeNode as any).type?.name) {
+      const typeName = (typeNode as any).type.name;
+      name = typeof typeName === "string" ? typeName : typeName.name || "Unknown";
+    } else if ((typeNode as any).name?.name) {
+      const typeName = (typeNode as any).name.name;
+      name = typeof typeName === "string" ? typeName : "Unknown";
+    } else {
+      name = "Unknown";
+    }
+
+    const withArray = (t: InferredType) => (typeNode.array ? TypeEnvironment.array(t) : t);
+
+    // A generic type PARAMETER in scope (the `T` of a generic class) -- was only in copy 2.
+    const genericParam = typeEnv.resolveIdentifier(name);
+    if (genericParam && genericParam.kind === "generic") {
+      return withArray(genericParam);
+    }
+
+    // A user-defined type (class/struct/interface/alias) -- was only in copy 1. Without this,
+    // every class annotation degraded into a primitive of the same name.
+    const userType = symbolTable.resolveSymbol(name);
+    if (userType && userType.inferredType) {
+      return withArray({ kind: "type-ref", name, refName: name, resolved: true });
+    }
+
+    if (name === "Any") {
+      return withArray({ kind: "unknown", name });
+    }
+
+    return withArray({ kind: "primitive", name });
+  }
+
+  // Generic types (Array<Int>, Map<String,Int>)
+  if (typeNode._type === "generic-type") {
+    const genericNode = typeNode as unknown as ast.GenericTypeNode;
+    const baseType = genericNode.name.name;
+    const genericParams =
+      genericNode.generics?.map((g) =>
+        recur({ _type: "simple-type", name: g, array: false } as any)
+      ) ?? [];
+
+    const generic: InferredType = { kind: "generic", name: baseType, generics: genericParams };
+    return typeNode.array ? TypeEnvironment.array(generic) : generic;
+  }
+
+  // Union types
+  if (typeNode._type === "union-type") {
+    const unionNode = typeNode as unknown as ast.UnionTypeNode;
+    const unionType = TypeEnvironment.union(unionNode.types.map(recur));
+    return typeNode.array ? TypeEnvironment.array(unionType) : unionType;
+  }
+
+  // Function types
+  if (typeNode._type === "function-type") {
+    const funcTypeNode = typeNode as unknown as ast.FunctionTypeNode;
+    const params = funcTypeNode.params.map(recur);
+    const returns =
+      funcTypeNode.ret.length > 0 ? recur(funcTypeNode.ret[0]) : TypeEnvironment.primitive("Void");
+    return TypeEnvironment.function(params, returns);
+  }
+
+  return TypeEnvironment.unknown();
+}
+
 class CollectTypesPass extends BaseAstTreeWalker {
   private typeEnv: TypeEnvironment;
   private symbolTable: SymbolTable;
@@ -726,108 +818,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
    * Convert AST type node to InferredType
    */
   private convertAstTypeToInferred(typeNode: ast.TypeNode): InferredType {
-    // Handle simple types
-    if (typeNode._type === "type" || typeNode._type === "simple-type") {
-      let name: string;
-      
-      // TypeNode has a .type property that is TypeNameNode with a .name string property
-      if ((typeNode as any).type?.name) {
-        // typeNode.type is TypeNameNode, typeNode.type.name is the string
-        const typeName = (typeNode as any).type.name;
-        name = typeof typeName === 'string' ? typeName : typeName.name || "Unknown";
-      }
-      // SimpleTypeNode has a .name property that is TypeNameNode
-      else if ((typeNode as any).name?.name) {
-        const typeName = (typeNode as any).name.name;
-        name = typeof typeName === 'string' ? typeName : "Unknown";
-      }
-      // Fallback
-      else {
-        name = "Unknown";
-      }
-      
-      // Check if this is a user-defined type (type-alias, struct, etc.)
-      const userType = this.symbolTable.resolveSymbol(name);
-      if (userType && userType.inferredType) {
-        // It's a user-defined type, use the type-ref
-        const type: InferredType = {
-          kind: "type-ref",
-          name: name,
-          refName: name,
-          resolved: true,
-        };
-        
-        if (typeNode.array) {
-          return TypeEnvironment.array(type);
-        }
-        return type;
-      }
-      
-      // Special handling for Any type
-      if (name === "Any") {
-        const type: InferredType = { kind: "unknown", name };
-        if (typeNode.array) {
-          return TypeEnvironment.array(type);
-        }
-        return type;
-      }
-      
-      // It's a built-in primitive type
-      const type: InferredType = { kind: "primitive", name };
-      
-      if (typeNode.array) {
-        return TypeEnvironment.array(type);
-      }
-      
-      return type;
-    }
-
-    // Handle generic types (e.g., Array<Int>, Map<String, Int>)
-    if (typeNode._type === "generic-type") {
-      const genericNode = typeNode as unknown as ast.GenericTypeNode;
-      const baseType = genericNode.name.name;
-      const genericParams = genericNode.generics?.map(g => 
-        this.convertAstTypeToInferred({ 
-          _type: "simple-type", 
-          name: g, 
-          array: false 
-        } as any)
-      ) ?? [];
-      
-      return {
-        kind: "generic",
-        name: baseType,
-        generics: genericParams,
-      };
-    }
-
-    // Handle union types (e.g., Int | String)
-    if (typeNode._type === "union-type") {
-      const unionNode = typeNode as unknown as ast.UnionTypeNode;
-      const alternatives = unionNode.types.map(t => this.convertAstTypeToInferred(t));
-      const unionType = TypeEnvironment.union(alternatives);
-      
-      // Check if the union itself is an array (e.g., (Int | String | Expr)[])
-      if (typeNode.array) {
-        return TypeEnvironment.array(unionType);
-      }
-      
-      return unionType;
-    }
-
-    // Handle function types
-    if (typeNode._type === "function-type") {
-      const funcTypeNode = typeNode as unknown as ast.FunctionTypeNode;
-      const params = funcTypeNode.params.map(p => this.convertAstTypeToInferred(p));
-      const returns = funcTypeNode.ret.length > 0 
-        ? this.convertAstTypeToInferred(funcTypeNode.ret[0])
-        : TypeEnvironment.primitive("Void");
-      
-      return TypeEnvironment.function(params, returns);
-    }
-
-    // Fallback
-    return TypeEnvironment.unknown();
+    return convertAstType(typeNode, this.symbolTable, this.typeEnv);
   }
 
   visitModifierDef(node: ast.ModifierDefNode) {
@@ -971,7 +962,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           valueType.kind === "generic" && valueType.name === "Array" &&
           valueType.generics?.[0]?.kind === "union";
         
-        if (!TypeChecker.isAssignable(valueType, declaredType, this.symbolTable)) {
+        // Gradual typing: if we could not type the value, or the declaration resolved to nothing
+        // we understand, we have no basis to call the assignment wrong.
+        const unknownEither =
+          TypeChecker.isUnknown(valueType) || TypeChecker.isUnknown(declaredType);
+
+        if (!unknownEither && !TypeChecker.isAssignable(valueType, declaredType, this.symbolTable)) {
           // For recursive types with array/union structure, skip the error since the structure is correct
           if (!isLikelyRecursive) {
             this.context.log(
@@ -1329,9 +1325,21 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         if (firstNode._type === "simple-identifier" || firstNode._type === "composite-identifier") {
           const funcName = (firstNode as ast.IdentifierNode).id;
           const funcType = this.typeEnv.resolveIdentifier(funcName);
-          
+
+          // OPERATORS FIRST -- before the plain-function branch below.
+          //
+          // A user-defined overload (`(fn :operator + [c1 <- Complex, c2 <- Complex] -> Complex)`)
+          // is registered in the type environment as an ordinary symbol NAMED "+". So resolving the
+          // head as a function made every `+` in the file resolve to the Complex overload, and
+          // `(+ c1.real c2.real)` -- adding two Reals -- reported
+          //     Argument 1 type mismatch: Expected Complex, got Real
+          // An operator is not a function you can shadow; which overload applies depends on the
+          // OPERAND types, which is exactly what inferOperatorType/TypeChecker.findOperator does.
+          if (TypeChecker.isOperatorName(funcName)) {
+            inferredType = this.inferOperatorType(funcName, listNode.nodes.slice(1));
+          }
           // Handle function calls
-          if (funcType && funcType.kind === "function") {
+          else if (funcType && funcType.kind === "function") {
             // Check argument types
             const args = listNode.nodes.slice(1);
             const argTypes = args.map(arg => this.inferExpressionType(arg));
@@ -1340,6 +1348,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
               argTypes.forEach((argType, i) => {
                 if (i < funcType.params!.length) {
                   const expectedType = funcType.params![i];
+                  // Gradual typing: an unannotated parameter accepts anything, and an argument we
+                  // could not type tells us nothing. Reporting either way is noise -- this fired as
+                  // "Expected Unknown, got ..." on every call to an unannotated function.
+                  if (TypeChecker.isUnknown(expectedType) || TypeChecker.isUnknown(argType)) {
+                    return;
+                  }
                   if (!TypeChecker.isAssignable(argType, expectedType, this.symbolTable)) {
                     this.context.log(
                       LogLevel.Error,
@@ -1371,9 +1385,23 @@ class InferAndCheckPass extends BaseAstTreeWalker {
               refName: funcName,
               resolved: true,
             };
+          } else if (funcName === "new") {
+            // `(new Box 5)` -- there is no `new` AST node; the head is just the identifier `new`,
+            // which resolves to nothing. It used to fall into inferOperatorType and emit a
+            // spurious "Invalid binary operator 'new' for types ...". Model it the way the bare
+            // `(Box 5)` form above already is: an instance of the named class/struct.
+            inferredType = this.inferNewExpression(listNode.nodes.slice(1));
           } else {
-            // Check for operators
-            inferredType = this.inferOperatorType(funcName, listNode.nodes.slice(1));
+            // A call head we cannot resolve, and which is not an operator: a JS global
+            // (`Math.log`), a member call (`s.indexOf`), or a genuinely undefined function.
+            // The type is Unknown and we say NOTHING -- routing it through the operator tables
+            // and complaining that it is not a valid operator was the single biggest source of
+            // false positives in this pass.
+            //
+            // A genuinely undefined function IS an error, but it is an UNRESOLVED IDENTIFIER
+            // error, not an operator error. That check is P4c; it needs a JS-globals policy
+            // first, or it would flag `console`, `Math` and `JSON` on every file.
+            inferredType = TypeEnvironment.unknown();
           }
         } else {
           inferredType = TypeEnvironment.unknown();
@@ -1459,6 +1487,58 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   /**
    * Infer type for operator expressions
    */
+  /**
+   * `(new Box 5)` -> an instance of Box.
+   *
+   * There is no `new` AST node: the form is a plain list whose head is the identifier `new`
+   * (codegen recognises it the same way, JSTransformerAstVisitor's `headId === "new"`). Its first
+   * argument names the class or struct.
+   */
+  private inferNewExpression(args: ast.ASTNode[]): InferredType {
+    const target = args[0];
+    if (!target || (target._type !== "simple-identifier" && target._type !== "composite-identifier")) {
+      return TypeEnvironment.unknown();
+    }
+
+    const name = (target as ast.IdentifierNode).id;
+    const resolved = this.typeEnv.resolveIdentifier(name);
+
+    if (resolved && (resolved.kind === "class" || resolved.kind === "struct")) {
+      return { kind: "type-ref", name, refName: name, resolved: true };
+    }
+
+    // An unknown class is not an operator error; it is an unresolved identifier (P4c).
+    return TypeEnvironment.unknown();
+  }
+
+  /**
+   * May we say an operator is INVALID for these operands?
+   *
+   * Only if we fully understand them. TypeChecker's operator tables model PRIMITIVES (Int, Real,
+   * Char, Boolean, String) and nothing else, so a user-defined type reaching them proves only that
+   * our overload model came up empty -- not that the code is wrong.
+   *
+   * And it does come up empty, for a real reason. `TypeChecker.findOperator` looks for a MEMBER
+   * method of the class/struct with arity 1 (`this` plus one operand), which is how
+   * 20-stdlib/std/math.lisp declares them:
+   *
+   *     (defclass Complex ... (fn :operator + [c2 <- Complex] -> Complex ...))
+   *
+   * But examples/04-data-types/09_operators.lisp declares the same operators as FREE FUNCTIONS
+   * taking both operands:
+   *
+   *     (defstruct Complex ...)
+   *     (fn :operator + [c1 <- Complex c2 <- Complex] -> Complex ...)
+   *
+   * Both conventions are in the corpus; findOperator models only the first. Deciding which is
+   * canonical -- and resolving overloads properly -- is D5/P8 type-system work. Until then,
+   * reporting "Invalid binary operator '+' for types Complex and Complex" on code that runs
+   * correctly is a false positive, and this is the guard that stops it.
+   */
+  private canJudgeOperator(...types: InferredType[]): boolean {
+    return types.every((t) => t.kind === "primitive" && !t.isArray);
+  }
+
   private inferOperatorType(op: string, args: ast.ASTNode[]): InferredType {
     if (args.length === 1) {
       // Unary operator
@@ -1470,8 +1550,18 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         return userOpType.returns || TypeEnvironment.unknown();
       }
 
+      // Gradual typing: if we do not know the operand's type, we cannot know the operator is
+      // wrong. Reporting against Unknown is how a checker becomes a noise generator.
+      if (TypeChecker.isUnknown(operandType)) {
+        return TypeEnvironment.unknown();
+      }
+
       const resultType = TypeChecker.getUnaryOpType(op, operandType);
-      
+
+      if (!resultType && !this.canJudgeOperator(operandType)) {
+        return TypeEnvironment.unknown();
+      }
+
       if (!resultType) {
         this.context.log(
           LogLevel.Error,
@@ -1496,8 +1586,17 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         }
       }
 
+      // Gradual typing -- see the unary case above.
+      if (TypeChecker.isUnknown(leftType) || TypeChecker.isUnknown(rightType)) {
+        return TypeEnvironment.unknown();
+      }
+
       const resultType = TypeChecker.getBinaryOpType(op, leftType, rightType);
-      
+
+      if (!resultType && !this.canJudgeOperator(leftType, rightType)) {
+        return TypeEnvironment.unknown();
+      }
+
       if (!resultType) {
         this.context.log(
           LogLevel.Error,
@@ -1516,72 +1615,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    * Convert AST type to InferredType (same as CollectTypesPass)
    */
   private convertAstTypeToInferred(typeNode: ast.TypeNode): InferredType {
-    if (typeNode._type === "type" || typeNode._type === "simple-type") {
-      let name: string;
-      
-      if ((typeNode as any).type?.name) {
-        const typeName = (typeNode as any).type.name;
-        name = typeof typeName === 'string' ? typeName : typeName.name || "Unknown";
-      } else if ((typeNode as any).name?.name) {
-        const typeName = (typeNode as any).name.name;
-        name = typeof typeName === 'string' ? typeName : "Unknown";
-      } else {
-        name = "Unknown";
-      }
-      
-      // Check if this is a generic type parameter in scope
-      const genericParam = this.typeEnv.resolveIdentifier(name);
-      if (genericParam && genericParam.kind === "generic") {
-        const type = genericParam;
-        if (typeNode.array) {
-          return TypeEnvironment.array(type);
-        }
-        return type;
-      }
-      
-      // Special handling for Any type
-      if (name === "Any") {
-        const type: InferredType = { kind: "unknown", name };
-        if (typeNode.array) {
-          return TypeEnvironment.array(type);
-        }
-        return type;
-      }
-      
-      const type: InferredType = { kind: "primitive", name };
-      
-      if (typeNode.array) {
-        return TypeEnvironment.array(type);
-      }
-      
-      return type;
-    }
-
-    if (typeNode._type === "generic-type") {
-      const genericNode = typeNode as unknown as ast.GenericTypeNode;
-      const baseType = genericNode.name.name;
-      const genericParams = genericNode.generics?.map(g => 
-        this.convertAstTypeToInferred({ 
-          _type: "simple-type", 
-          name: g, 
-          array: false 
-        } as any)
-      ) ?? [];
-      
-      return {
-        kind: "generic",
-        name: baseType,
-        generics: genericParams,
-      };
-    }
-
-    if (typeNode._type === "union-type") {
-      const unionNode = typeNode as unknown as ast.UnionTypeNode;
-      const alternatives = unionNode.types.map(t => this.convertAstTypeToInferred(t));
-      return TypeEnvironment.union(alternatives);
-    }
-
-    return TypeEnvironment.unknown();
+    return convertAstType(typeNode, this.symbolTable, this.typeEnv);
   }
 
   visitModifierDef(node: ast.ModifierDefNode) {

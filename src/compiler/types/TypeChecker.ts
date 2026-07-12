@@ -137,12 +137,37 @@ export class TypeChecker {
       return false;
     }
 
-    // Check generics (e.g., Array<Int> vs Array<String>)
-    if (a.generics && b.generics) {
-      if (a.generics.length !== b.generics.length) {
-        return false;
-      }
-      return a.generics.every((g: InferredType, i: number) => this.typesEqual(g, b.generics![i]));
+    // Generic ARGUMENTS must match. The old guard was `if (a.generics && b.generics)`, so a type
+    // with generics compared EQUAL to the same type without them -- `Box<Int>` === bare `Box` --
+    // by falling through to the `return true` at the end.
+    //
+    // Compare by LENGTH, treating absent and empty as the same thing: a non-generic class carries
+    // `generics: []` while its unwrapped type-ref carries `undefined`, and those are the same type.
+    // (Testing `!!a.generics !== !!b.generics` instead looks right and is not -- it makes `Complex`
+    // unassignable to `Complex`.)
+    const aGenerics = a.generics ?? [];
+    const bGenerics = b.generics ?? [];
+    if (aGenerics.length !== bGenerics.length) {
+      return false;
+    }
+    if (!aGenerics.every((g: InferredType, i: number) => this.typesEqual(g, bGenerics[i]))) {
+      return false;
+    }
+
+    // Map types carry keyType/valueType, NOT generics -- so the guard above never saw them and
+    // NOTHING compared them. `Map<String,Int>` compared equal to `Map<String,Boolean>`, and
+    // isAssignable short-circuits on typesEqual, so the assignment type-checked.
+    if (a.kind === "map" || b.kind === "map") {
+      if (a.kind !== b.kind) return false;
+      const keyOk =
+        !a.keyType && !b.keyType
+          ? true
+          : !!a.keyType && !!b.keyType && this.typesEqual(a.keyType, b.keyType);
+      const valueOk =
+        !a.valueType && !b.valueType
+          ? true
+          : !!a.valueType && !!b.valueType && this.typesEqual(a.valueType, b.valueType);
+      if (!keyOk || !valueOk) return false;
     }
 
     // Check function signatures
@@ -312,6 +337,29 @@ export class TypeChecker {
     }
 
     return undefined;
+  }
+
+  /**
+   * Is this call head an OPERATOR, rather than a function or method name?
+   *
+   * Load-bearing. `inferOperatorType` had quietly become the fallback for any call head the type
+   * system could not resolve, so every JS global and every member call was run through the
+   * operator tables and then reported as an invalid operator:
+   *
+   *     Invalid unary operator 'Math.log' for type Int
+   *     Invalid binary operator 'template.replace' for types String and String
+   *
+   * Tested by SHAPE, not against a fixed list, because operators are user-extensible: l-lang has
+   * `(fn :operator · [v2 <- Vector3] ...)` in the stdlib. An operator name is punctuation -- it
+   * contains no word characters -- while `Math.log`, `indexOf` and `new` all do.
+   */
+  static isOperatorName(name: string): boolean {
+    return name.length > 0 && !/\w/.test(name);
+  }
+
+  /** Nothing is known about this type. Never report an error against it. */
+  static isUnknown(type: InferredType | undefined): boolean {
+    return !type || type.kind === "unknown" || type.name === "Unknown";
   }
 
   /**
