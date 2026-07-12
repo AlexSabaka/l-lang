@@ -6,14 +6,14 @@
  * proves the ported lexer/parser/AST-builder are internally consistent on a handful of
  * hand-written snippets covering the constructs the port touches.
  *
- * Cost warning: constructing the Chevrotain parser (`new LLangParser()`, which happens once
- * at module load via `grammar_v2/Parser.ts`'s `export const parser = new LLangParser()`)
- * takes ~4 minutes. This is inherent to the recovered grammar (maxLookahead: 3 over ~90
- * heavily mutually-recursive rules) -- confirmed present in the original recovered
- * Parser.js/tokens.js, not introduced by the TypeScript port. Chevrotain does not persist
- * this computation across process boundaries, so every fresh process pays it once. This
- * script pays that cost exactly once for all 8 snippets below, not per snippet -- do not
- * restructure this into one-process-per-snippet.
+ * Parser construction used to take ~4 minutes here (maxLookahead: 3 over ~90 mutually-recursive
+ * rules -- Chevrotain's lookahead-automaton construction is superlinear in k, and it does not
+ * persist across process boundaries, so every process paid it fresh). Phase 2c dropped the
+ * grammar to maxLookahead: 2, which is ~1200x cheaper and still validates clean; see the comment
+ * on the `super(...)` config in grammar_v2/Parser.ts. The whole script now runs in ~1s.
+ *
+ * It still pays construction exactly once for all 8 snippets rather than per snippet -- keep it
+ * that way if k ever has to go back up.
  *
  * Usage: npm run test:grammar-v2-smoke
  */
@@ -170,7 +170,7 @@ const CASES: SmokeCase[] = [
 ];
 
 function main() {
-  console.log(`Constructing grammar_v2 parser (this takes ~4 minutes, see file header)...`);
+  console.log(`Constructing grammar_v2 parser...`);
   const constructStart = Date.now();
   ({ parser } = require("../compiler/frontend/grammar_v2/Parser"));
   ({ LLangAstBuilder } = require("../compiler/frontend/grammar_v2/AstBuilder"));

@@ -97,7 +97,24 @@ class LLangParser extends CstParser {
     super(t.allTokens, {
       recoveryEnabled: false,
       nodeLocationTracking: "full",
-      maxLookahead: 3,
+      // Was 3, which made `new LLangParser()` take ~347 SECONDS -- paid fresh by every process,
+      // since Chevrotain does not cache this across process boundaries. Measured with
+      // `traceInitPerf` at maxLookahead 3:
+      //
+      //   Grammar Recording               6 ms
+      //   Grammar Validations           275 ms
+      //   ComputeLookaheadFunctions 347,071 ms   <-- 99.92% of it
+      //
+      // So it is NOT the grammar validations: `skipValidations: true` was measured at 349s, no
+      // better, and it would have cost us the ambiguity detection that caught the quoteExpr and
+      // exportAlias defects. Lookahead-automaton construction is superlinear in k, and k is the
+      // only real lever here:  k=3 -> ~347s | k=2 -> 283ms | k=1 -> 25ms.
+      //
+      // k=2 keeps validations ON and Chevrotain still reports zero ambiguities, i.e. its own
+      // static analysis says two tokens suffice for every alternation in this grammar.
+      // If some future rule genuinely needs 3, override it on that ONE alternation
+      // (`this.OR({ MAX_LOOKAHEAD: 3, DEF: [...] })`) rather than raising this global back to 3.
+      maxLookahead: 2,
     });
 
     // ========================================================================
