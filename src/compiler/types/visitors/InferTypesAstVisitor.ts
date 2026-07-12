@@ -57,12 +57,62 @@ function getVisitMethodName(nodeType: string): string {
  * Each copy therefore knew something the others didn't; deleting either one alone would have lost
  * information. This is the union of all three, and the only one left.
  */
+/**
+ * Every type NAME a type annotation mentions, at any depth.
+ *
+ * `T` mentions T. So do `T[]`, `Box<T>`, `T | Int`, `Map<String, T>` and `(Int) -> T`. The variance
+ * check needs all of them: a covariant `T` is just as illegal buried inside `Box<T>` in a parameter
+ * as it is standing alone, because the parameter still consumes a T either way.
+ */
+function collectTypeNames(typeNode: ast.ASTNode | undefined): Set<string> {
+  const names = new Set<string>();
+  const walk = (n: any): void => {
+    if (!n || typeof n !== "object") return;
+    if (n._type === "type-name" && typeof n.name === "string") {
+      names.add(n.name);
+      return;
+    }
+    for (const key of Object.keys(n)) {
+      if (key === "_parent" || key === "_location") continue;
+      const value = n[key];
+      if (Array.isArray(value)) value.forEach(walk);
+      else if (value && typeof value === "object") walk(value);
+    }
+  };
+  walk(typeNode);
+  return names;
+}
+
 function convertAstType(
   typeNode: ast.TypeNode,
   symbolTable: SymbolTable,
   typeEnv: TypeEnvironment
 ): InferredType {
   const recur = (t: ast.TypeNode) => convertAstType(t, symbolTable, typeEnv);
+
+  // A COMPOUND type nested inside the `type` wrapper.
+  //
+  // `Box<Animal>` parses as
+  //   { _type:"type", array:false, type:{ _type:"generic-type", name:Box, generics:[Animal] } }
+  // -- the generic-type is INSIDE the wrapper. The "type"/"simple-type" branch below reads only
+  // `typeNode.type.name`, so it saw `Box`, resolved it, and threw the `<Animal>` away. The
+  // `generic-type` branch further down was therefore unreachable from any ANNOTATION, and every
+  // `Box<Dog>` / `Producer<Animal>` in the language collapsed to a bare `Box` / `Producer`.
+  //
+  // Exactly the shape bug the array flag has (see `isArray` below): the outer node is a wrapper and
+  // the inner node carries the information. Unwrap first, and the branches below get what they were
+  // written to handle.
+  if (typeNode._type === "type") {
+    const inner = (typeNode as any).type;
+    const isCompound =
+      inner &&
+      inner._type !== "simple-type" &&
+      inner._type !== "type-name";
+    if (isCompound) {
+      const converted = recur(inner);
+      return typeNode.array ? TypeEnvironment.array(converted) : converted;
+    }
+  }
 
   // Simple types
   if (typeNode._type === "type" || typeNode._type === "simple-type") {
@@ -123,14 +173,15 @@ function convertAstType(
     return withArray({ kind: "primitive", name });
   }
 
-  // Generic types (Array<Int>, Map<String,Int>)
+  // Generic types (Array<Int>, Box<Dog>, Map<String,Int>)
   if (typeNode._type === "generic-type") {
     const genericNode = typeNode as unknown as ast.GenericTypeNode;
     const baseType = genericNode.name.name;
-    const genericParams =
-      genericNode.generics?.map((g) =>
-        recur({ _type: "simple-type", name: g, array: false } as any)
-      ) ?? [];
+    // Each argument is already a TypeNode. It used to be re-wrapped in a synthetic
+    // `{_type:"simple-type", name: g}` -- but a TypeNode has no `.name`, so the simple-type branch
+    // read `undefined` and produced `Unknown`. Latent: this branch was unreachable from any
+    // annotation (see the wrapper unwrap at the top), so the bug never fired.
+    const genericParams = genericNode.generics?.map((g) => recur(g as any)) ?? [];
 
     const generic: InferredType = { kind: "generic", name: baseType, generics: genericParams };
     return typeNode.array ? TypeEnvironment.array(generic) : generic;
@@ -445,14 +496,27 @@ class CollectTypesPass extends BaseAstTreeWalker {
       }
     }
     
-    // Extract interface implementations
+    // Extract interface implementations, WITH their type arguments.
+    //
+    // `interfaceType` used to be `{kind:'interface', name}` -- the bare name, no arguments -- which
+    // was all it could be, since both frontends dropped the `<Dog>` of `:implements Producer<Dog>`
+    // (fixed in P7a). Without the arguments, "is a DogProducer a Producer<Animal>?" is unanswerable:
+    // you know it implements *some* Producer and nothing more.
+    //
+    // Converted inside the class's type-parameter scope, so a generic class implementing a generic
+    // interface (`(defclass Wrap<T> :implements Producer<T>)`) resolves its own `T`.
     const implementedInterfaces: InterfaceImplementation[] = [];
     if (node.implements && node.implements.length > 0) {
       for (const impl of node.implements) {
         if (impl.type && impl.type.name) {
+          const typeArgs = (impl.generics ?? []).map((g) => this.convertAstTypeToInferred(g));
           implementedInterfaces.push({
             interfaceName: impl.type.name,
-            interfaceType: { kind: 'interface', name: impl.type.name },
+            interfaceType: {
+              kind: 'interface',
+              name: impl.type.name,
+              ...(typeArgs.length ? { generics: typeArgs } : {}),
+            },
             methodMappings: new Map() // TODO: Build actual mappings
           });
         }
@@ -1381,13 +1445,67 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       }
     }
 
+    this.checkVariancePositions(node);
+
     node.body.forEach(member => this.visit(member));
     this.typeEnv.exitScope();
   }
 
+  /**
+   * LL0214 -- declaration-site variance. A type parameter may only appear where its variance allows.
+   *
+   *   :out T   COVARIANT      T is produced, never consumed -- return positions only
+   *   :in  T   CONTRAVARIANT  T is consumed, never produced -- parameter positions only
+   *   T        INVARIANT      anywhere; the default, and unrestricted
+   *
+   * The rule is what makes the use-site rule SOUND, not a style preference. If `:out T` could sit in
+   * a parameter, then `Producer<Dog>` -- which we now accept wherever a `Producer<Animal>` is wanted
+   * -- would expose a method taking a `Dog`, and the caller, holding what it believes is a
+   * `Producer<Animal>`, would hand it a `Cat`. Covariance is only safe because `T` never comes IN.
+   */
+  private checkVariancePositions(node: ast.InterfaceNode | ast.ClassNode): void {
+    const variances = new Map<string, ast.TypeVariance>();
+    for (const g of node.generics ?? []) {
+      if (g.variance) variances.set(g.name, g.variance);
+    }
+    if (variances.size === 0) return;
+
+    const offenders = (typeNode: ast.TypeNode | undefined, illegal: ast.TypeVariance): string[] =>
+      [...collectTypeNames(typeNode)].filter((n) => variances.get(n) === illegal);
+
+    for (const member of node.body ?? []) {
+      const fn = ast.isListNode(member) ? member.nodes[0] : member;
+      if (!fn || fn._type !== "function") continue;
+      const method = fn as ast.FunctionNode;
+      const methodName = ast.symbolName(method.name);
+
+      for (const param of method.params ?? []) {
+        // A parameter is an INPUT, so it may not mention a covariant (`:out`) parameter.
+        for (const name of offenders(param.type, "out")) {
+          this.reportTypeError(
+            param,
+            "LL0214",
+            `Covariant type parameter '${name}' cannot appear in the parameter position of '${methodName}'. ` +
+              `':out' means '${name}' is only ever produced; a parameter consumes it.`
+          );
+        }
+      }
+
+      // A return type is an OUTPUT, so it may not mention a contravariant (`:in`) parameter.
+      for (const name of offenders(method.returns, "in")) {
+        this.reportTypeError(
+          method,
+          "LL0214",
+          `Contravariant type parameter '${name}' cannot appear in the return position of '${methodName}'. ` +
+            `':in' means '${name}' is only ever consumed; a return produces it.`
+        );
+      }
+    }
+  }
+
   visitTypeDef(node: ast.TypeDefNode) {
     // In the second pass, we need to resolve type references
-    // Type-aliases are already registered in pass 1, 
+    // Type-aliases are already registered in pass 1,
     // but we need to convert type-refs to point to actual types
     const typeName = ast.symbolName(node.name);
     

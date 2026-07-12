@@ -145,6 +145,14 @@ interface Case {
   pending?: boolean;
 }
 
+/** A two-level hierarchy, shared by the P7d subtyping and variance cases. */
+const ANIMALS = `(defclass Animal (fn speak [] -> String (return "...")))
+(defclass Dog :extends Animal (fn speak [] -> String (return "Woof")))`;
+
+/** A covariant producer and one implementation of it. */
+const PRODUCER = `(definterface Producer<:out T> (fn produce [] -> T))
+(defclass DogProducer :implements Producer<Dog> (fn produce [] -> Dog (return (Dog))))`;
+
 const CASES: Case[] = [
   // --- must be silent: these are correct programs, or JS interop the checker has no business
   // judging. Every one of these is a false positive we are killing. ---
@@ -181,6 +189,81 @@ const CASES: Case[] = [
   { name: "map KEYS are not references", source: '(let m { :name "x" :age 1 })\n(console.log m)', silent: true },
   { name: "JS globals are not flagged", source: '(console.log (Math.max 1 2) (JSON.stringify [1]))', silent: true },
   { name: "a member call on a local", source: '(let s "a,b")\n(console.log (s.split ","))', silent: true },
+
+  // --- P7d: class subtyping. `TypeChecker` said `// TODO: Class inheritance checking` and
+  // isAssignable(Dog, Animal) was FALSE, so a subclass could not be passed where its parent was
+  // expected. Variance is decoration until this works. ---
+  {
+    name: "a subclass IS its parent",
+    source: `${ANIMALS}
+(fn feed [a <- Animal] -> Void (console.log "fed"))
+(let d <- Dog (Dog))
+(feed d)`,
+    silent: true,
+  },
+  {
+    name: "a parent is NOT its subclass",
+    source: `${ANIMALS}
+(fn walk [d <- Dog] -> Void (console.log "walked"))
+(let a <- Animal (Animal))
+(walk a)`,
+    expect: /LL0203/,
+  },
+  {
+    name: "a subclass IS its grandparent",
+    source: `${ANIMALS}
+(defclass Puppy :extends Dog (fn speak [] -> String (return "Yip")))
+(fn feed [a <- Animal] -> Void (console.log "fed"))
+(let p <- Puppy (Puppy))
+(feed p)`,
+    silent: true,
+  },
+
+  // --- P7d: use-site variance. ---
+  {
+    name: "covariant :out accepts a subtype",
+    source: `${ANIMALS}
+${PRODUCER}
+(fn use [p <- Producer<Animal>] -> Void (console.log "used"))
+(let dp <- Producer<Dog> (DogProducer))
+(use dp)`,
+    silent: true,
+  },
+  {
+    name: "a class implementing Producer<Dog> IS a Producer<Animal>",
+    source: `${ANIMALS}
+${PRODUCER}
+(fn use [p <- Producer<Animal>] -> Void (console.log "used"))
+(let dp <- DogProducer (DogProducer))
+(use dp)`,
+    silent: true,
+  },
+  {
+    name: "covariant :out still REJECTS a supertype",
+    source: `${ANIMALS}
+${PRODUCER}
+(defclass AnimalProducer :implements Producer<Animal> (fn produce [] -> Animal (return (Animal))))
+(fn use [p <- Producer<Dog>] -> Void (console.log "used"))
+(let ap <- Producer<Animal> (AnimalProducer))
+(use ap)`,
+    expect: /LL0203/,
+  },
+  {
+    name: "an INVARIANT generic rejects a subtype",
+    source: `${ANIMALS}
+(defclass Box<T> (mut :ctor v <- T))
+(fn take [b <- Box<Animal>] -> Void (console.log "took"))
+(let bd <- Box<Dog> (Box (Dog)))
+(take bd)`,
+    expect: /LL0203/,
+  },
+
+  // --- P7d: declaration-site variance (LL0214). ---
+  { name: ":out in a parameter position", source: "(definterface P<:out T> (fn f [x <- T] -> Void))", expect: /LL0214/ },
+  { name: ":in in a return position", source: "(definterface C<:in T> (fn f [] -> T))", expect: /LL0214/ },
+  { name: ":out in a return position is legal", source: "(definterface P<:out T> (fn f [] -> T))", silent: true },
+  { name: ":in in a parameter position is legal", source: "(definterface C<:in T> (fn f [x <- T] -> Void))", silent: true },
+  { name: "an invariant T is legal in both positions", source: "(definterface I<T> (fn f [x <- T] -> T))", silent: true },
 ];
 
 function runCases(): { failed: number; pending: number } {

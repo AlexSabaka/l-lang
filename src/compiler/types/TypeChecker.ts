@@ -77,10 +77,111 @@ export class TypeChecker {
       return allAssignable;
     }
 
-    // TODO: Interface implementation checking
-    // TODO: Class inheritance checking
+    // Nominal subtyping: `Dog` is an `Animal`; a `DogProducer` is a `Producer<Dog>`; and -- because
+    // `T` is declared `:out` -- a `Producer<Dog>` is a `Producer<Animal>`.
+    //
+    // This replaces `// TODO: Interface implementation checking` / `// TODO: Class inheritance
+    // checking`, which meant isAssignable(Dog, Animal) was literally FALSE. Everything that follows
+    // from inheritance -- passing a subclass to a function typed on its parent -- was a type error.
+    if (this.isSubtype(sourceUnwrapped, targetUnwrapped, symbolTable)) {
+      return true;
+    }
 
     return false;
+  }
+
+  /**
+   * Is `source` a subtype of `target`? Walks the parent chain and the implemented interfaces.
+   *
+   * Nominal, not structural: a class is its ancestors and the interfaces it declares, and nothing
+   * else. Needs the symbol table -- a type carries only the NAME of its parent, not the parent.
+   *
+   * Only ever ADDS assignability, so it cannot introduce a false positive on the corpus.
+   */
+  static isSubtype(source: InferredType, target: InferredType, symbolTable?: SymbolTable): boolean {
+    if (!symbolTable || !source?.name || !target?.name) {
+      return false;
+    }
+
+    const seen = new Set<string>();
+
+    const visit = (type: InferredType | undefined): boolean => {
+      if (!type?.name || seen.has(type.name)) {
+        return false;
+      }
+      seen.add(type.name);
+
+      // The same nominal type. Whether it MATCHES then depends on the type arguments, and that is
+      // where variance lives: `Producer<Dog>` reaches `Producer<Animal>` only because `T` is `:out`.
+      if (type.name === target.name && this.typeArgumentsAssignable(type, target, symbolTable)) {
+        return true;
+      }
+
+      // The interfaces it declares. Their type ARGUMENTS come from the `:implements` clause, so a
+      // DogProducer arrives here as `Producer<Dog>` rather than a bare `Producer`.
+      for (const impl of type.implementedInterfaces ?? []) {
+        if (visit(impl.interfaceType ?? { kind: "interface", name: impl.interfaceName })) {
+          return true;
+        }
+      }
+
+      // Its parent, resolved by name.
+      if (type.parentClass) {
+        const parent = symbolTable.resolveSymbol(type.parentClass);
+        if (visit(parent?.inferredType)) {
+          return true;
+        }
+      }
+
+      return false;
+    };
+
+    return visit(source);
+  }
+
+  /**
+   * Compare two same-named generic types' arguments, honouring DECLARATION-SITE variance.
+   *
+   *   :out T   covariant      -- Producer<Dog> is a Producer<Animal>
+   *   :in T    contravariant  -- Consumer<Animal> is a Consumer<Dog>
+   *   T        invariant      -- Box<Dog> is NOT a Box<Animal>, and that is the default
+   *
+   * The variance belongs to the DECLARATION, not the use: `Producer<Dog>` does not know it is
+   * covariant, `(definterface Producer<:out T>)` does. So it is looked up, not read off the operand.
+   */
+  private static typeArgumentsAssignable(
+    source: InferredType,
+    target: InferredType,
+    symbolTable?: SymbolTable
+  ): boolean {
+    const sourceArgs = source.generics ?? [];
+    const targetArgs = target.generics ?? [];
+
+    // A bare `Producer` against a `Producer<Animal>`: the arguments were never written, so there is
+    // nothing to compare and nothing to complain about. Same reasoning as a bare type parameter.
+    if (sourceArgs.length === 0 || targetArgs.length === 0) {
+      return true;
+    }
+    if (sourceArgs.length !== targetArgs.length) {
+      return false;
+    }
+
+    const declaration = symbolTable?.resolveSymbol(target.name)?.inferredType;
+    const params = declaration?.generics ?? [];
+
+    return sourceArgs.every((arg, i) => {
+      switch (params[i]?.variance) {
+        case "out":
+          return this.isAssignable(arg, targetArgs[i], symbolTable);
+        case "in":
+          return this.isAssignable(targetArgs[i], arg, symbolTable);
+        default:
+          return this.typesEqual(
+            this.unwrapType(arg, symbolTable),
+            this.unwrapType(targetArgs[i], symbolTable)
+          );
+      }
+    });
   }
 
   /**

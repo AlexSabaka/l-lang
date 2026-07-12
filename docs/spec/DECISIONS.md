@@ -530,6 +530,40 @@ changes. This is a restoration, not an invention: the runtime converter still ca
 is a truthy name. Both metadata goldens (`01_interfacses`, `10_generics_basic`) independently say
 `Any`; **no passing golden pins `Unknown` or `Void` anywhere.**
 
+### Subtyping, then variance (P7d)
+
+`isAssignable(Dog, Animal)` was **false**. `TypeChecker` said `// TODO: Class inheritance checking`,
+so passing a subclass to a function typed on its parent was a type error, and variance was
+decoration -- `Producer<Dog> -> Producer<Animal>` cannot be decided if `Dog -> Animal` cannot be.
+Subtyping is nominal: a class is its ancestors and the interfaces it declares, and nothing else.
+
+**Declaration-site variance (`LL0214`).**
+
+    :out T   COVARIANT      T is produced, never consumed -- return positions only
+    :in  T   CONTRAVARIANT  T is consumed, never produced -- parameter positions only
+    T        INVARIANT      anywhere; the DEFAULT, and unrestricted
+
+The rule is what makes the use-site rule **sound**, not a style preference. If `:out T` could sit in
+a parameter, then `Producer<Dog>` -- which we now accept wherever a `Producer<Animal>` is wanted --
+would expose a method taking a `Dog`, and a caller holding what it believes is a `Producer<Animal>`
+would hand it a `Cat`. Covariance is only safe because `T` never comes IN.
+
+**The variance belongs to the DECLARATION, not the use.** `Producer<Dog>` does not know it is
+covariant; `(definterface Producer<:out T>)` does. So `isAssignable` looks it up rather than reading
+it off the operand.
+
+**Two bugs found by the tests that must REJECT.** The covariance tests passed before either was
+fixed -- vacuously, and that is the entire argument for writing the negative half:
+
+- **A type annotation lost its type arguments.** `Box<Animal>` parses as
+  `{_type:"type", type:{_type:"generic-type", ...}}` -- the compound type is NESTED in the wrapper,
+  and `convertAstType`'s `"type"` branch read only `typeNode.type.name`, saw `Box`, and threw the
+  `<Animal>` away. The `generic-type` branch was therefore **unreachable from any annotation**, and
+  every `Box<Dog>` / `Producer<Animal>` in the language collapsed to a bare `Box` / `Producer`. The
+  same shape bug as the array flag: the outer node is a wrapper, the inner node carries the meaning.
+- **That branch, once reachable, was itself wrong** -- it re-wrapped each argument (already a
+  `TypeNode`) in a synthetic `simple-type`, which has no `.name`, yielding `Unknown`.
+
 ### The one golden edit
 
 `10_generics_basic.expect`: `requiredCount: 0` → `1`. **A golden is never edited to make the
@@ -598,7 +632,10 @@ the enclosing function's return type from propagating.
   filled. P7 binds them where they are converted, so the code is correct and inert; making them
   *parseable* is a grammar change.
 
-- **Variance is parsed but not enforced.** `:out T` in a parameter position, or `:in T` in a return
-  position, is accepted. Use-site variance (`Producer<Dog>` where `Producer<Animal>` is expected) is
-  rejected, because class subtyping does not exist: `TypeChecker.ts` still says
-  `// TODO: Class inheritance checking`, and `isAssignable(Dog, Animal)` is **false**. **P7d.**
+- **Generic INSTANTIATION is not inferred.** `(let c (Container 42))` does not deduce
+  `Container<Int>`; the constructor's bare `T` simply accepts the `Int`. Variance and subtyping are
+  checked, but a type ARGUMENT is never inferred from a call. That is the deliberate boundary of P7.
+
+- **A generic PARENT drops its arguments.** `:extends Container<Int>` records `parentClass` as the
+  bare name `Container`; only `:implements` keeps its type arguments. Subtyping through a generic
+  base class therefore compares no arguments.
