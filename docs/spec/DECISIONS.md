@@ -645,14 +645,32 @@ Suite: **59 → 63**, zero FAILs, under both frontends.
 
 ## Open findings
 
-- **`:comptime` is accepted and IGNORED.** P5d stopped it emitting a call to a nonexistent
-  `__ll_modifier_comptime` transformer (it is a *built-in* modifier, not a user-defined one), and
-  `06-modifiers/00_memoization.lisp` and `10_comptime.lisp` now pass as a result. **They do not prove
-  comptime works.** Their goldens assert only *values* — `30`, `120`, `28657` — which are identical
-  whether the expression is folded at compile time or simply evaluated at run time. Nothing in the
-  corpus can tell the difference, and today it is the latter. D3 (metaprogramming) stands. A
-  `:comptime` that is silently ignored is the "silently degrades" class the audit exists to kill;
-  it deserves a diagnostic, or an implementation.
+- ~~**`:comptime` is accepted and IGNORED.**~~ **RETRACTED — this was false.**
+
+  I wrote, in P5d and here, that `:comptime` is silently ignored and that its two tests evaluate at
+  run time. **Both claims are wrong.** `:comptime` *folds*, and always has:
+
+  ```
+  (let :comptime x (+ 10 20))     ->  const x = 30;
+  (fn :comptime factorial [n] …)  ->  DELETED -- not present in the emitted JS at all
+  (let fact5 (factorial 5))       ->  const fact5 = 120;
+  ```
+
+  `ComptimeEvaluationAstVisitor` — a real partial evaluator running a `node:vm` sandbox — is wired
+  into the desugar stage at `Context.ts:326`. I never looked for it. The reasoning that led me astray
+  was sound as far as it went (the goldens assert only *values*, so they genuinely cannot distinguish
+  a fold from a run) and then I asserted the conclusion I expected instead of reading the output. The
+  emitted JavaScript settles it in one line.
+
+  The P5d *fix* was real — `:comptime` is a **built-in** modifier, and codegen was wrapping it in a
+  call to a `__ll_modifier_comptime` transformer that does not exist, which is why those two tests
+  were erroring. My *explanation* of the fix was not.
+
+  What `:comptime` actually needs is narrower, and is D3's business: its sandbox hand-rolls ~10
+  operators, and `evaluateExpression` **catches every failure and returns `undefined`** — so a
+  `:comptime` variable that cannot be folded raises `LL0099` (correct), while a `:comptime` *call*
+  that cannot be folded degrades **silently** to run time. That is the "silently degrades" class,
+  and it is what the phase should kill.
 
 - **`fn` parameter defaults are unrepresentable.** `ast.ParameterNode` has no default slot at all, so
   `(fn f [x 5])` is not merely unemitted. Grammar + AST + codegen. The `AssignmentPattern` support
