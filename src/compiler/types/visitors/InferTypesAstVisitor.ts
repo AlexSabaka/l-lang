@@ -255,18 +255,27 @@ class CollectTypesPass extends BaseAstTreeWalker {
     });
     this.context.log(LogLevel.Debug, `Function '${funcName}' param types: ${JSON.stringify(simplifiedParams)}`);
 
+    // Inert today -- neither frontend populates FunctionNode.generics, because `(fn f<T> [...])` is
+    // not parseable. Bound anyway, next to the conversions it would govern, so a generic function
+    // works the day the grammar grows one rather than silently typing every `T` as Unknown.
+    this.typeEnv.enterScope(node);
+    this.bindTypeParameters(node.generics);
+
     // Build function type from signature
-    const paramTypes = node.params.map(p => 
+    const paramTypes = node.params.map(p =>
       p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.unknown()
     );
-    
-    const returnType = node.returns 
+
+    const returnType = node.returns
       ? this.convertAstTypeToInferred(node.returns)
       : TypeEnvironment.primitive("Void");
 
-    // Build method signature for complete metadata
+    // Build method signature for complete metadata -- still inside the scope, it converts the same
+    // parameter and return types over again.
     const methodSignature = this.buildMethodSignature(node);
-    
+
+    this.typeEnv.exitScope();
+
     // Build complete codegen metadata for function
     const codegenMetadata: CodegenMetadata = {
       typeName: funcName,
@@ -298,8 +307,33 @@ class CollectTypesPass extends BaseAstTreeWalker {
     this.context.log(LogLevel.Debug, `Collected function signature '${funcName}': ${TypeChecker.formatType(funcType)}`);
   }
 
+  /**
+   * Bind a declaration's type PARAMETERS, so that `T` inside it resolves to `T`.
+   *
+   * Without this, `convertAstType`'s `typeEnv.resolveIdentifier("T")` finds nothing and every
+   * `<- T` annotation degrades to `Unknown` -- which, under gradual typing, silently disables every
+   * check that touches it, and makes the class report `type: 'Unknown'` for a member it declared as
+   * `T`. InferAndCheckPass DOES bind them (visitClass, visitInterface, visitFunction) -- it just
+   * runs SECOND, long after this pass has already built the metadata that codegen and `(type x)`
+   * report. Binding has to happen wherever the types are converted, and they are converted here.
+   *
+   * Requires an open scope: bindTypeParameter writes into the innermost one and is a silent no-op
+   * when the stack is empty.
+   */
+  private bindTypeParameters(generics: ast.TypeNameNode[] | undefined): void {
+    for (const g of generics ?? []) {
+      this.typeEnv.bindTypeParameter(g.name, {
+        kind: "generic",
+        name: g.name,
+        variance: g.variance,
+      });
+    }
+  }
+
   visitClass(node: ast.ClassNode) {
     const className = node.name.name;
+    this.typeEnv.enterScope(node);
+    this.bindTypeParameters(node.generics);
     const members: any[] = [];
     const detailedMembers: DetailedMember[] = [];
     const methodSignatures = new Map<string, MethodSignature>();
@@ -486,13 +520,17 @@ class CollectTypesPass extends BaseAstTreeWalker {
       codegenMetadata
     };
     
+    // The type parameters were only ever in scope for converting THIS class's member, parameter and
+    // return types. `bindIdentifier` writes to the symbol table, not the scope, so it is safe here.
+    this.typeEnv.exitScope();
+
     this.typeEnv.bindIdentifier(className, classType, node);
     this.context.log(LogLevel.Debug, `Collected class type '${className}' with ${members.length} members, ${methodSignatures.size} methods, ${operatorOverloads.length} operator overloads`);
   }
 
   visitInterface(node: ast.InterfaceNode) {
     const interfaceName = node.name.name;
-    
+
     const interfaceType: InferredType = {
       kind: "interface",
       name: interfaceName,

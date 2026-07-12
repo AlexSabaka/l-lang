@@ -24,6 +24,25 @@ export class TypeChecker {
       return true;
     }
 
+    // An UNINSTANTIATED type parameter is compatible with anything, in either direction.
+    //
+    // `(defclass Container<T> (mut :ctor value <- T))` then `(let c (Container 42))`: the ctor
+    // parameter's type is the bare `T` and the argument's is `Int`. Deciding that honestly means
+    // INSTANTIATING the class -- inferring `Container<Int>` from the call and substituting -- and
+    // that is a type system l-lang does not have. This phase makes `T` say "T" instead of lying
+    // that it is `Unknown`; it does not pretend to check it.
+    //
+    // Not optional: until `T` was bound it WAS `Unknown`, and `isUnknown` short-circuited every
+    // check that touched it. Binding it for real without this rule produced 2 false positives on
+    // currently-passing tests (14_generic_interface, 20-stdlib/complex_math_test) -- gradual typing
+    // has to keep holding at exactly the point where inference stops.
+    //
+    // A bare parameter only. `Container<Int>` carries its arguments and is compared structurally by
+    // typesEqual; it is not a type parameter and does not come through here.
+    if (this.isBareTypeParameter(sourceUnwrapped) || this.isBareTypeParameter(targetUnwrapped)) {
+      return true;
+    }
+
     // Null can be assigned to nullable types
     if (sourceUnwrapped.name === "Null" && targetUnwrapped.nullable) {
       return true;
@@ -373,6 +392,18 @@ export class TypeChecker {
     // A generic (including an array) whose every argument is unknown is itself uninformative.
     if (type.generics?.length && type.generics.every((g) => this.isUnknown(g))) return true;
     return false;
+  }
+
+  /**
+   * An UNINSTANTIATED type parameter -- the `T` of `(defclass Container<T>)`, standing for a type we
+   * have not inferred.
+   *
+   * Distinct from an INSTANTIATED generic: `Container<Int>` and `Int[]` are also `kind: "generic"`,
+   * but they carry their arguments and are compared structurally. A type parameter carries none --
+   * there is nothing to compare it against.
+   */
+  static isBareTypeParameter(type: InferredType | undefined): boolean {
+    return !!type && type.kind === "generic" && !type.generics?.length;
   }
 
   /**
