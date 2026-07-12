@@ -141,6 +141,10 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "modifiers_test.lisp": {
     status: "xfail",
-    reason: "D4: unknown-modifier enforcement not yet implemented",
+    reason:
+      "D4 is now enforced, and this file is what it catches: it applies ':memoized' and ':cached' " +
+      "while declaring neither (LL0015). Both are user-defined modifiers -- 05_memoization.lisp " +
+      "and 05_multiple_modifiers.lisp declare ':memoized' with (defmodifier memoized []) and pass. " +
+      "The example is at fault, not the compiler; fixing it edits the corpus and needs a call.",
   },
 };

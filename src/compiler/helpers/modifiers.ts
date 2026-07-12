@@ -21,8 +21,134 @@ export const BUILTIN_MODIFIERS = [
   ...MEMBER_MODIFIERS,
 ] as const;
 
+/**
+ * D15: claimed for the eventual native backend. These PARSE, but are a hard error on a JS
+ * target -- never silently ignored, which is what they are today.
+ */
+export const RESERVED_NATIVE_MODIFIERS = ["gc", "stack", "manual", "destructor"] as const;
+
 export type SymbolVisibility = typeof VISIBILITY_MODIFIERS[number];
 export type BuiltinModifier = typeof BUILTIN_MODIFIERS[number];
+
+/**
+ * D4: which builtin modifiers may appear on which construct.
+ *
+ * The sets are derived from what the corpus actually uses, widened to the documented groups --
+ * deliberately not narrower. The point of D4 is to reject modifier names that mean NOTHING
+ * (`:inline`, `:bogus`), not to relitigate which construct may carry `:static`. Tightening the
+ * per-construct split is a separate, evidence-led change.
+ *
+ * Note `comptime` and `ctor` legitimately appear on BOTH functions and variables in the corpus
+ * (`(let :comptime x ...)`, `(let :ctor x <- Real 0)`), which is why they are in both sets.
+ */
+const FUNCTION_CONSTRUCT = [
+  ...FUNCTION_MODIFIERS,
+  ...VISIBILITY_MODIFIERS,
+  ...CLASS_MODIFIERS,
+  ...MEMBER_MODIFIERS,
+];
+
+const VARIABLE_CONSTRUCT = [
+  ...VISIBILITY_MODIFIERS,
+  ...TYPE_MODIFIERS,
+  ...CLASS_MODIFIERS,
+  ...MEMBER_MODIFIERS,
+  "comptime",
+];
+
+const TYPE_CONSTRUCT = [...VISIBILITY_MODIFIERS, ...CLASS_MODIFIERS];
+
+const BY_CONSTRUCT: Record<string, readonly string[]> = {
+  function: FUNCTION_CONSTRUCT,
+  variable: VARIABLE_CONSTRUCT,
+  parameter: PARAMETER_MODIFIERS,
+  class: TYPE_CONSTRUCT,
+  struct: TYPE_CONSTRUCT,
+  enum: TYPE_CONSTRUCT,
+  interface: TYPE_CONSTRUCT,
+  "type-def": TYPE_CONSTRUCT,
+};
+
+/**
+ * The builtin modifiers legal on `constructType`. An unknown construct returns the full builtin
+ * set: we refuse to invent errors for constructs nobody has studied.
+ */
+export function builtinModifiersFor(constructType: string | undefined): readonly string[] {
+  if (!constructType) return BUILTIN_MODIFIERS;
+  return BY_CONSTRUCT[constructType] ?? BUILTIN_MODIFIERS;
+}
+
+/**
+ * Every modifier name defined IN SOURCE by `(defmodifier name ...)`.
+ *
+ * This is the whole reason the D4 whitelist cannot be a constant. `examples/06-modifiers/`
+ * defines `:identity`, `:logged`, `:timed` and `:retry` in l-lang itself, and those four
+ * examples pass today. A static list would hard-error on all of them.
+ *
+ * Collected per-module, from the AST: `defmodifier` is not exported across module boundaries
+ * today (InlineImportsAstVisitor is disabled), so a modifier used in a file that does not define
+ * it is genuinely unresolved -- which is exactly what `modifiers_test.lisp` does with `:cached`
+ * and `:memoized`, and why it is xfail'd against D4.
+ */
+export function collectDefinedModifiers(root: ast.ASTNode): Set<string> {
+  const found = new Set<string>();
+
+  const walk = (n: any): void => {
+    if (!n || typeof n !== "object") return;
+    if (Array.isArray(n)) {
+      n.forEach(walk);
+      return;
+    }
+    if (n._type === "modifier-def" && typeof n.name === "string") {
+      found.add(n.name.toLowerCase());
+    }
+    for (const key of Object.keys(n)) {
+      if (key === "_parent" || key === "_location") continue;
+      walk(n[key]);
+    }
+  };
+
+  walk(root);
+  return found;
+}
+
+/** Levenshtein distance, for the did-you-mean D4 asks for. */
+function editDistance(a: string, b: string): number {
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) =>
+    Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  );
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      d[i][j] = Math.min(
+        d[i - 1][j] + 1,
+        d[i][j - 1] + 1,
+        d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+  }
+  return d[a.length][b.length];
+}
+
+/**
+ * The closest valid modifier to `name`, or undefined if nothing is close enough to be worth
+ * suggesting. The threshold scales with length so `:pubic` -> `:public` is offered but
+ * `:xyz` -> `:gc` is not.
+ */
+export function suggestModifier(name: string, valid: readonly string[]): string | undefined {
+  const limit = Math.max(2, Math.floor(name.length / 3));
+  let best: string | undefined;
+  let bestDistance = Infinity;
+
+  for (const candidate of valid) {
+    const distance = editDistance(name, candidate);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = candidate;
+    }
+  }
+
+  return bestDistance <= limit ? best : undefined;
+}
 
 /**
  * Check if a modifier is present in a list of modifiers

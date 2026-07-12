@@ -1,8 +1,87 @@
 import * as ast from "../../frontend/ast";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { checkRules, Rule, Rules as r } from "../../rules";
+import { createRule, RuleSeverity } from "../../rules/RuleBuilder";
+import {
+  builtinModifiersFor,
+  collectDefinedModifiers,
+  suggestModifier,
+  RESERVED_NATIVE_MODIFIERS,
+} from "../../helpers/modifiers";
 
 export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
+  /**
+   * Modifier names defined in this module by `(defmodifier name ...)`. Populated in visitProgram,
+   * which the tree walker runs before it descends into the children -- see D4 enforcement in
+   * visitModifier below.
+   */
+  private definedModifiers: Set<string> = new Set();
+
+  visitProgram(node: ast.ProgramNode) {
+    this.definedModifiers = collectDefinedModifiers(node);
+    return node;
+  }
+
+  /**
+   * D4: an unknown `:modifier` is a hard error, whitelisted per construct, with a did-you-mean.
+   *
+   * This replaces two blocks that sat commented out here for a long time. They could never have
+   * worked: they were written against `FunctionModifierNode` and `AccessModifierNode`, node types
+   * that do not exist -- the AST has one `ModifierNode`, and the construct it modifies is its
+   * `_parent`. That is presumably why they were switched off rather than fixed.
+   *
+   * The valid set is per-construct builtins UNION the modifiers this module defines itself.
+   * `defmodifier` makes modifiers user-extensible, so a constant whitelist is not merely
+   * incomplete -- it is wrong by construction, and would reject `:logged` / `:retry` / `:timed` /
+   * `:identity`, i.e. the four `examples/06-modifiers` tests that pass today.
+   */
+  visitModifier(node: ast.ModifierNode) {
+    const name = node.modifier.replace(/^:/, "").toLowerCase();
+
+    // Parameter modifiers keep their own, more specific diagnostic (below); don't double-report.
+    const construct = (node._parent as ast.ASTNode | undefined)?._type;
+    if (construct === "parameter") return node;
+
+    if ((RESERVED_NATIVE_MODIFIERS as readonly string[]).includes(name)) {
+      this.reportModifierError(
+        node,
+        "LL0016",
+        `':${name}' is reserved for the native backend and is not implemented on the JS target.`
+      );
+      return node;
+    }
+
+    const builtins = builtinModifiersFor(construct);
+    if (builtins.includes(name) || this.definedModifiers.has(name)) {
+      return node;
+    }
+
+    const valid = [...builtins, ...this.definedModifiers];
+    const suggestion = suggestModifier(name, valid);
+    const on = construct ? ` on ${construct}` : "";
+
+    this.reportModifierError(
+      node,
+      "LL0015",
+      `Unknown modifier ':${name}'${on}.` +
+        (suggestion ? ` Did you mean ':${suggestion}'?` : "") +
+        ` Declare it with (defmodifier ${name} ...) if it is meant to be a custom modifier.`
+    );
+
+    return node;
+  }
+
+  private reportModifierError(node: ast.ASTNode, code: string, message: string): void {
+    const rule = createRule<ast.ASTNode>()
+      .addSeverity(RuleSeverity.Error)
+      .addCode(code)
+      .addMessage(message)
+      .addTest(() => true)
+      .build();
+
+    this.context.results.add(node, rule, this.context);
+  }
+
   visitFunction(node: ast.FunctionNode) {
     checkRules(node, [r.ExternFunctionCannotHaveBody], this.context);
   }
@@ -13,13 +92,6 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
       checkRules(modifier, [r.FunctionAllowedParameterModifiers], this.context)
     );
   }
-
-  // visitFunctionModifier(node: ast.FunctionModifierNode) {
-  //   const validModifiers = ["extern", "override", "extension", "operator"];
-  //   if (!validModifiers.includes(node.modifier)) {
-  //     this.error(node, "LL0015", `Invalid function modifier '${node.modifier}'.`);
-  //   }
-  // }
 
   visitInterface(node: ast.InterfaceNode) {
     const body = node.body.flatMap((x) => (x as ast.ListNode)?.nodes ?? [x]);
@@ -57,13 +129,6 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
   visitClass(node: ast.ClassNode) {
     checkRules(node, [r.ClassMustHaveName], this.context);
   }
-
-  // visitAccessModifier(node: ast.AccessModifierNode) {
-  //   const validModifiers = ["public", "private", "static", "internal"];
-  //   if (!validModifiers.includes(node.modifier)) {
-  //     this.error(node, "LL0013", `Invalid access modifier '${node.modifier}'.`);
-  //   }
-  // }
 
   visitWhen(node: ast.WhenNode) {
     checkRules(
