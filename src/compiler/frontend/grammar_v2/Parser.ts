@@ -407,10 +407,19 @@ class LLangParser extends CstParser {
       this.CONSUME(t.RBracket);
     });
 
+    // The GATE mirrors the PEG's `(!"|" @Expression)*` -- a row must NOT swallow its own
+    // separator. simpleIdentifier accepts operators (including Pipe) as identifiers, so without
+    // this the row eats the `|`, and then matrix's AT_LEAST_ONE(CONSUME(Pipe)) finds none.
     this.matrixRow = this.RULE("matrixRow", () => {
-      this.AT_LEAST_ONE(() => {
-        this.SUBRULE(this.expression);
-        this.OPTION(() => this.CONSUME(t.Comma));
+      this.AT_LEAST_ONE({
+        GATE: () => {
+          const la = this.LA(1)?.tokenType;
+          return la !== t.Pipe && la !== t.RBracket;
+        },
+        DEF: () => {
+          this.SUBRULE(this.expression);
+          this.OPTION(() => this.CONSUME(t.Comma));
+        },
       });
     });
 
@@ -465,17 +474,42 @@ class LLangParser extends CstParser {
     // TYPES
     // ========================================================================
     this.type = this.RULE("type", () => {
-      this.SUBRULE(this.unionType);
-      // Array-type suffix `Expr[]`. Same adjacency rule as the indexer: the `[` must butt
-      // directly against the type name. Without the GATE, `(let program <- Expr ["+" 10])`
-      // reads the vector VALUE as an array-type suffix on `Expr` and then dies on the `"+"`.
-      this.OPTION({
-        GATE: () => this.isAdjacentLBracket(),
-        DEF: () => {
-          this.CONSUME(t.LBracket);
-          this.CONSUME(t.RBracket);
+      this.OR([
+        {
+          // Parenthesized type -- the PEG's second Type alternative:
+          //   "(" _ type:UnionType _ ")" _ array:"[]"?
+          // Missing here entirely, so `(deftype Expr (Int | String | Expr)[])` produced a
+          // deftype with a NULL type, and the type pass then crashed dereferencing it.
+          GATE: () => this.LA(1)?.tokenType === t.LParen,
+          ALT: () => {
+            this.CONSUME(t.LParen);
+            this.SUBRULE(this.unionType);
+            this.CONSUME(t.RParen);
+            this.OPTION({
+              GATE: () => this.isAdjacentLBracket(),
+              DEF: () => {
+                this.CONSUME(t.LBracket);
+                this.CONSUME(t.RBracket);
+              },
+            });
+          },
         },
-      });
+        {
+          ALT: () => {
+            this.SUBRULE2(this.unionType);
+            // Array-type suffix `Expr[]`. Same adjacency rule as the indexer: the `[` must butt
+            // directly against the type. Without the GATE, `(let program <- Expr ["+" 10])`
+            // reads the vector VALUE as an array-type suffix on `Expr` and dies on the `"+"`.
+            this.OPTION2({
+              GATE: () => this.isAdjacentLBracket(),
+              DEF: () => {
+                this.CONSUME2(t.LBracket);
+                this.CONSUME2(t.RBracket);
+              },
+            });
+          },
+        },
+      ]);
     });
 
     this.unionType = this.RULE("unionType", () => {
@@ -1139,17 +1173,27 @@ class LLangParser extends CstParser {
     this.performSelfAnalysis();
   }
 
-  // Lookahead to detect if this is a matrix (contains |)
+  /**
+   * Does this `[...]` literal contain a top-level `|`, i.e. is it a matrix rather than a vector?
+   *
+   * Scanning starts at LA(2), NOT LA(1): LA(1) is the `[` that OPENS this literal. Counting it
+   * as a nested bracket pushed depth to 1, so every row separator inside sat at depth 1 and the
+   * `depth === 0` test could never fire -- isMatrix() always returned false and matrices never
+   * parsed at all. The `|` then fell through to simpleIdentifier (which accepts operators as
+   * identifiers) and was emitted as an identifier named `|`, hence the `_7c is not defined`
+   * ReferenceError at runtime.
+   */
   private isMatrix(): boolean {
     let depth = 0;
-    let i = 1;
+    let i = 2;
     while (i < 100) {
       // Safety limit
       const token = this.LA(i);
-      if (!token || (token.tokenType === t.RBracket && depth === 0)) break;
+      if (!token) break;
+      if (token.tokenType === t.RBracket && depth === 0) break; // closes this literal
       if (token.tokenType === t.LBracket) depth++;
-      if (token.tokenType === t.RBracket) depth--;
-      if (token.tokenType === t.Pipe && depth === 0) return true;
+      else if (token.tokenType === t.RBracket) depth--;
+      else if (token.tokenType === t.Pipe && depth === 0) return true;
       i++;
     }
     return false;

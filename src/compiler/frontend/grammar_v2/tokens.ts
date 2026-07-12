@@ -40,6 +40,15 @@ export const Identifier = createToken({
   pattern: /[a-zA-Z_\u0080-\uFFFF][a-zA-Z0-9_\-\u0080-\uFFFF]*/,
 });
 
+// Operator identifier (for operator overloading like `fn :operator + [...]`), and for the
+// pipeline operators `|>` / `<|`. Declared here, ahead of its "MUST be last" position in the
+// token arrays below, so LAngle can reference it via `longer_alt` -- array order still governs
+// lexer priority, not declaration order.
+export const OperatorIdent = createToken({
+  name: "OperatorIdent",
+  pattern: /[*+\-\\/^&%$#@!~=|<>?]+/,
+});
+
 // ============================================================================
 // KEYWORDS
 // Order: longer patterns first, then alphabetically
@@ -168,7 +177,18 @@ export const LBracket = createToken({ name: "LBracket", pattern: /\[/ });
 export const RBracket = createToken({ name: "RBracket", pattern: /\]/ });
 export const LBrace = createToken({ name: "LBrace", pattern: /\{/ });
 export const RBrace = createToken({ name: "RBrace", pattern: /\}/ });
-export const LAngle = createToken({ name: "LAngle", pattern: /<(?![-=])/ }); // Not followed by - or =
+// `longer_alt` is what makes the reverse-pipeline operator `<|` work. Chevrotain picks the first
+// token in ARRAY order that matches, not the longest -- and LAngle precedes OperatorIdent -- so
+// `<|` matched LAngle and split into LAngle + Pipe, emitting an identifier named `<`. (`|>` was
+// only fine by accident: Pipe's own pattern already excludes a following `>`.) With longer_alt,
+// OperatorIdent wins whenever it matches MORE characters: `<|` -> OperatorIdent, while a plain `<`
+// (generics `Box<Int>`, comparison `(< i 5)`) still lexes as LAngle, because there OperatorIdent
+// matches no further than LAngle does.
+export const LAngle = createToken({
+  name: "LAngle",
+  pattern: /<(?![-=])/, // Not followed by - or =
+  longer_alt: OperatorIdent,
+});
 export const RAngle = createToken({ name: "RAngle", pattern: />(?!=)/ }); // Not followed by =
 // Only `:=` is excluded (and `ColonEq` precedes this token in the arrays anyway, so it wins
 // regardless). A colon followed by a letter MUST lex as `Colon` + `Identifier`: that is the
@@ -245,13 +265,6 @@ export const StringLiteral = createToken({
 
 // ============================================================================
 // OPERATOR IDENTIFIER (catch-all, must be last alongside Identifier)
-// ============================================================================
-// Operator identifier (for operator overloading like `fn :operator + [...]`)
-// This catches operators when used as function names
-export const OperatorIdent = createToken({
-  name: "OperatorIdent",
-  pattern: /[*+\-\\/^&%$#@!~=|<>?]+/,
-});
 
 // ============================================================================
 // TOKEN GROUPS FOR LEXER MODES

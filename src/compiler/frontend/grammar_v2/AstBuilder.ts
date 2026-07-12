@@ -384,15 +384,23 @@ export class LLangAstBuilder extends BaseCstVisitor {
   }
 
   compositeIdentifier(ctx: any): ast.CompositeIdentifierNode {
-    const parts: string[] = [];
-    // Collect all identifier parts
-    if (ctx.Identifier) {
-      for (const token of ctx.Identifier) {
-        parts.push(token.image);
-      }
-    }
-    const headless = !ctx.Identifier || ctx.Identifier.length === (ctx.Dot?.length || 0);
-    const id = parts.join(".");
+    // Chevrotain keys CST children by TOKEN NAME, not occurrence index, so the head (CONSUME)
+    // and the tail (CONSUME2) both land in ctx.Identifier, in source order.
+    const images: string[] = ctx.Identifier
+      ? ctx.Identifier.map((token: any) => token.image)
+      : [];
+
+    // Headless means `.foo` -- one dot per identifier, with no head before the first dot.
+    const headless = images.length === (ctx.Dot?.length ?? 0);
+    const id = images.join(".");
+
+    // The PEG builds `parts: [head, ...tail]`, so for a headless `.foo` the head is a null
+    // PLACEHOLDER at index 0 and `parts` is [null, "foo"]. Codegen depends on that offset:
+    // visitCompositeIdentifier does `startPartId = node.headless ? 1 : 0` and reads
+    // parts[startPartId]. Omitting the placeholder left parts[1] undefined and crashed
+    // encodeIdentifier() on every headless composite (05_matching, 08_pipelines).
+    const parts = headless ? [null, ...images] : images;
+
     return this.makeNode("composite-identifier", ctx, {
       id,
       headless,
@@ -465,6 +473,8 @@ export class LLangAstBuilder extends BaseCstVisitor {
   // TYPES
   // ========================================================================
   type(ctx: any): ast.TypeNode {
+    // Both alternatives (bare and parenthesized) put their union under ctx.unionType, since
+    // Chevrotain keys CST children by rule name rather than occurrence index.
     const type = this.visit(ctx.unionType[0]);
     const array = !!ctx.LBracket;
     return this.makeNode("type", ctx, { type, array });
