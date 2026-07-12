@@ -13,6 +13,7 @@ import {
   CodegenMetadata 
 } from "../../analysis/SymbolTable";
 import { TypeChecker } from "../TypeChecker";
+import { createRule, RuleSeverity } from "../../rules/RuleBuilder";
 import { SymbolTable } from "../../analysis";
 
 /**
@@ -868,6 +869,30 @@ class CollectTypesPass extends BaseAstTreeWalker {
 class InferAndCheckPass extends BaseAstTreeWalker {
   private typeEnv: TypeEnvironment;
   private symbolTable: SymbolTable;
+
+  /**
+   * The type system's ONLY route to `hasErrors` -- and therefore the only way a type error can
+   * block codegen and exit 1.
+   *
+   * It used to live in TypeCheckingValidatorAstVisitor, a 360-line class that could never run:
+   * its dispatch built `visit${node._type}` with no capitalisation, so even "variable" resolved
+   * to `visitvariable` and matched nothing. Every check in the type system was therefore either
+   * unreachable (there) or print-only (here, via context.log, which touches the logger and
+   * nothing else). Moved to the pass that actually runs.
+   *
+   * Nothing calls this yet -- the six existing checks still log. Arming them is P4b, and it must
+   * not happen until the false positives are gone, or 19 passing tests break at once.
+   */
+  protected reportTypeError(node: ast.ASTNode, code: string, message: string): void {
+    const rule = createRule<ast.ASTNode>()
+      .addSeverity(RuleSeverity.Error)
+      .addCode(code)
+      .addMessage(message)
+      .addTest(() => true)
+      .build();
+
+    this.context.results.add(node, rule, this.context);
+  }
 
   constructor(context: any, typeEnv: TypeEnvironment, symbolTable: SymbolTable) {
     super(context);

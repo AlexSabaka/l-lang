@@ -12,7 +12,6 @@ import {
   SyntaxRulesAstVisitor,
   TreeShakeAstVisitor,
   InferTypesAstVisitor,
-  TypeCheckingValidatorAstVisitor,
 } from "./index";
 
 import {
@@ -280,13 +279,14 @@ export class Context {
     inferTypesVisitor.inferTypes(ast);
     const typeEnv = inferTypesVisitor.getTypeEnvironment();
 
-    let typesVisitCount = (inferTypesVisitor as any).getVisitCount?.() || 0;
-
-    if (typeEnv) {
-      const typeCheckingValidator = new TypeCheckingValidatorAstVisitor(this, typeEnv, moduleSymbols);
-      typeCheckingValidator.visit(ast);
-      typesVisitCount += (typeCheckingValidator as any).getVisitCount?.() || 0;
-    }
+    // TypeCheckingValidatorAstVisitor used to run here. It was deleted: its dispatch built
+    // `visit${node._type}` with no capitalisation at all, so even "variable" resolved to
+    // `visitvariable` and matched nothing. It did zero work, and because that visit() override
+    // also suppressed the inherited child-walk, it never even recursed. Its four visitors
+    // duplicated InferAndCheckPass's, so repairing it would only have double-reported. Its one
+    // useful part -- `reportTypeError`, the type system's ONLY results.add path -- now lives in
+    // InferAndCheckPass, which has the working dispatch and the real checks.
+    const typesVisitCount = (inferTypesVisitor as any).getVisitCount?.() || 0;
     
     this.performanceMetrics.endTimer("types", desugaredNodeCount, typesVisitCount, {
       typesInferred: (moduleSymbols as any).countTypedSymbols?.() || 0
