@@ -263,12 +263,12 @@ class CollectTypesPass extends BaseAstTreeWalker {
 
     // Build function type from signature
     const paramTypes = node.params.map(p =>
-      p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.unknown()
+      p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.any()
     );
 
     const returnType = node.returns
       ? this.convertAstTypeToInferred(node.returns)
-      : TypeEnvironment.primitive("Void");
+      : TypeEnvironment.any();
 
     // Build method signature for complete metadata -- still inside the scope, it converts the same
     // parameter and return types over again.
@@ -354,7 +354,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
         // Handle variables (properties)
         if (target._type === 'variable') {
           const varNode = target as ast.VariableNode;
-          const memberType = varNode.type ? this.convertAstTypeToInferred(varNode.type) : TypeEnvironment.unknown();
+          const memberType = varNode.type ? this.convertAstTypeToInferred(varNode.type) : TypeEnvironment.any();
           
           const isCtor = (varNode.modifiers ?? []).some((m: any) => m.modifier === ':ctor' || m.modifier === 'ctor');
           const isPrivate = (varNode.modifiers ?? []).some((m: any) => m.modifier === ':private' || m.modifier === 'private');
@@ -400,8 +400,8 @@ class CollectTypesPass extends BaseAstTreeWalker {
         // Handle functions (methods)
         else if (target._type === 'function') {
           const funcNode = target as ast.FunctionNode;
-          const paramTypes = funcNode.params.map(p => p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.unknown());
-          const returnType = funcNode.returns ? this.convertAstTypeToInferred(funcNode.returns) : TypeEnvironment.primitive("Void");
+          const paramTypes = funcNode.params.map(p => p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.any());
+          const returnType = funcNode.returns ? this.convertAstTypeToInferred(funcNode.returns) : TypeEnvironment.any();
           const funcType = TypeEnvironment.function(paramTypes, returnType, isVariadicParams(funcNode.params));
           const name = typeof funcNode.name === 'string' ? funcNode.name : (funcNode.name as any).id || (funcNode.name as any).name;
           
@@ -598,7 +598,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
 
           const memberType = varNode.type 
             ? this.convertAstTypeToInferred(varNode.type)
-            : TypeEnvironment.unknown();
+            : TypeEnvironment.any();
           
           const member: any = {
             name: name,
@@ -631,8 +631,8 @@ class CollectTypesPass extends BaseAstTreeWalker {
           members.push(member);
         } else if (target._type === "function") {
           const funcNode = target as ast.FunctionNode;
-          const paramTypes = funcNode.params.map(p => p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.unknown());
-          const returnType = funcNode.returns ? this.convertAstTypeToInferred(funcNode.returns) : TypeEnvironment.primitive("Void");
+          const paramTypes = funcNode.params.map(p => p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.any());
+          const returnType = funcNode.returns ? this.convertAstTypeToInferred(funcNode.returns) : TypeEnvironment.any();
           const funcType = TypeEnvironment.function(paramTypes, returnType, isVariadicParams(funcNode.params));
           const name = typeof funcNode.name === 'string' ? funcNode.name : (funcNode.name as any).id || (funcNode.name as any).name;
           
@@ -764,7 +764,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
       }
     }
     
-    const memberType = varNode.type ? this.convertAstTypeToInferred(varNode.type) : TypeEnvironment.unknown();
+    const memberType = varNode.type ? this.convertAstTypeToInferred(varNode.type) : TypeEnvironment.any();
     
     return {
       name: propName,
@@ -790,7 +790,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     
     const parameters: ParameterInfo[] = funcNode.params.map(p => {
       const paramName = (p.name as any).id || (p.name as any).name || 'unknown';
-      const paramType = p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.unknown();
+      const paramType = p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.any();
       
       return {
         name: paramName,
@@ -803,7 +803,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     
     const returnType = funcNode.returns ? 
       this.convertAstTypeToInferred(funcNode.returns) : 
-      TypeEnvironment.primitive("Void");
+      TypeEnvironment.any();
     
     // Extract modifiers
     const modifiers = new Set<string>();

@@ -337,12 +337,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         result.extends = metadata.parentClass;
       }
       
-      if (metadata.implementedInterfaces?.length > 0) {
-        result.implements = metadata.implementedInterfaces.map((iface: any) => iface.interfaceName);
-      }
-      
+      // `generics` before `implements`: a class is `Container<T> :implements GenericContainer<T>`,
+      // and the metadata is printed by `(type x)` through console.log, which walks insertion order.
+      // The golden reads in declaration order; so does this.
       if (metadata.typeParameters?.length > 0) {
         result.generics = metadata.typeParameters.map((tp: any) => tp.name);
+      }
+
+      if (metadata.implementedInterfaces?.length > 0) {
+        result.implements = metadata.implementedInterfaces.map((iface: any) => iface.interfaceName);
       }
     }
     

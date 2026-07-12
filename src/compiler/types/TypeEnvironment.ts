@@ -235,6 +235,25 @@ export class TypeEnvironment {
   static unknown(): InferredType {
     return { kind: "unknown", name: "Unknown" };
   }
+
+  /**
+   * `Any` -- the top type, and what an ABSENT annotation means.
+   *
+   * The same `kind` as `unknown()`, so gradual typing is unaffected: `isUnknown` is true for both,
+   * and `isAssignable` already lets `Any` accept everything. The difference is what the type is
+   * CALLED, and that difference is the whole point:
+   *
+   *   Any      the source declared nothing, so anything goes -- a statement about the PROGRAM
+   *   Unknown  we tried to infer and failed                  -- a statement about the COMPILER
+   *
+   * Reporting `type: 'Unknown'` for `(let :ctor name)` tells the user their compiler is confused,
+   * when in fact their code simply said nothing. Both metadata goldens say `Any`, and the runtime
+   * converter still carries a `m.type.name || 'Any'` fallback from when this was the default --
+   * unreachable, because `Unknown` is a truthy name.
+   */
+  static any(): InferredType {
+    return { kind: "unknown", name: "Any" };
+  }
 }
 
 /**

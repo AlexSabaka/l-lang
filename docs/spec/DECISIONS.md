@@ -482,6 +482,65 @@ emission ever needs module-level ordering — but wiring it in today would be ce
   stdlib has 6 `(export …)` forms against 53 `(fn …)` definitions. It needs its own phase and its own
   ruling, and must not be mistaken for an oversight.
 
+## P7 — generics stop being a lie
+
+`(defclass Container<T>)` reported itself as `{ generics: [null], properties: [{ type: 'Unknown' }] }`.
+`T` was not merely unchecked, it was **not represented** — and an `Unknown` silently disables every
+check that touches it. `08-types/10_generics_basic.lisp` was the suite's one red FAIL (not an xfail)
+because of it; its golden already specified the right answer.
+
+### The declared type was a lie (P7a)
+
+`ClassNode.generics` was declared `GenericTypeNode[]` and `InterfaceNode.generics`
+`InterfaceGenericType[]`. **Neither frontend emitted either.** What arrived was a `TypeNameNode`
+whose `name` is a plain string, so all six consumers read `generic.name.name`, got `undefined`, and
+bound every type parameter under the name `undefined`. Same bug class as `TypeDefNode` declared `{}`
+in Phase 2 — TypeScript cannot catch a lie it has been told to believe. Declaring the truth is what
+*found* the six sites: they were the entire output of `tsc`.
+
+Two things that were parsed and discarded are now kept, in **both** frontends:
+
+- **Variance.** `(definterface Producer<:out T>)`. It rides on the type-name.
+- **Type arguments.** `:implements Producer<Animal>` dropped its `<Animal>` in both frontends — so
+  `16_covariance.lisp`, whose every line is `:implements Producer<Animal>`, retained not one of the
+  type arguments it exists to demonstrate.
+
+### A bare type parameter is compatible with anything (P7b)
+
+Type parameters are now bound in `CollectTypesPass` — which builds the metadata codegen reports, and
+which never entered a scope, so `bindTypeParameter` had nowhere to write. (`InferAndCheckPass` did
+bind them; it runs *second*, too late.)
+
+Binding `T` for real is what makes the rule necessary: `(let c (Container 42))` checks `Int` against
+a bare `T`, and deciding that honestly means **instantiating** `Container<Int>` and substituting —
+a type system l-lang does not have. **We fix the name, we do not implement instantiation.** Gradual
+typing has to keep holding exactly where inference stops; before P7b it did so only by accident,
+because `T` *was* `Unknown`. An *instantiated* generic (`Container<Int>`, `Int[]`) carries its
+arguments and is still compared structurally.
+
+### An absent annotation is `Any`, not `Unknown` (P7c)
+
+    Any      the source declared nothing, so anything goes  -- a statement about the PROGRAM
+    Unknown  we tried to infer and failed                   -- a statement about the COMPILER
+
+Reporting `type: 'Unknown'` for `(let :ctor name)` tells the user their compiler is confused when
+their code simply said nothing. Same `kind`, so gradual typing is untouched — only the *name*
+changes. This is a restoration, not an invention: the runtime converter still carries a
+`m.type.name || 'Any'` fallback from when `Any` was the default, made unreachable because `Unknown`
+is a truthy name. Both metadata goldens (`01_interfacses`, `10_generics_basic`) independently say
+`Any`; **no passing golden pins `Unknown` or `Void` anywhere.**
+
+### The one golden edit
+
+`10_generics_basic.expect`: `requiredCount: 0` → `1`. **A golden is never edited to make the
+compiler pass — this one was asserting a bug, not a behaviour.** It encodes the pre-Phase-3
+`hasDefault` defect (`null !== undefined`, i.e. *always true*, so every ctor parameter looked
+optional). `(mut :ctor value <- T)` has no default and `(let c (Container 42))` passes one argument:
+**1 is correct.** Approved explicitly before the edit. Every other field in that golden was matched
+by fixing the *compiler*, and no other golden moved.
+
+Suite: **58 → 59. The one red FAIL is closed.**
+
 ## Open findings
 
 - **`:ctor` defaults are dropped by codegen.** `(defclass Vec (let :ctor x <- Int 7))` emits
@@ -528,28 +587,18 @@ the enclosing function's return type from propagating.
   side was fixed in Phase 3 (`hasDefault` was computing `null !== undefined`, i.e. always true); the
   *codegen* side never reads it. **P5.**
 
-- **Generic type parameters are never bound, so every `T` is `Unknown`.** Five sites in
-  `InferAndCheckPass` read `generic.name.name` over a declaration's generics list. But
-  `ClassNode.generics` is *declared* as `GenericTypeNode[]` and both frontends actually emit
-  `TypeNameNode[]` — whose `name` is a plain **string**. So `.name.name` is `undefined`, no type
-  parameter is ever `bindTypeParameter`'d, and `convertAstType` resolves `T` to `Unknown`. Same bug
-  class as `TypeDefNode` being declared `{}` in Phase 2: the declared type is a lie.
+- **Generic constraints are not real.** PEG parses `:where T :of Comparable` into broken plumbing
+  (`{where, ...constraints}` spreads an array into an object, giving numeric keys; `Class` then reads
+  a `c.clause` that is never produced). grammar_v2 has no constraint rule at all. And
+  `13_generic_constraints.lisp` does not actually use constraint syntax — nothing in the corpus
+  exercises it. Its own phase.
 
-  This is why `08-types/10_generics_basic.lisp` has been the suite's one red FAIL (not an xfail)
-  since before this work started — its golden already specifies the correct `type: 'T'`,
-  `generics: ['T']`, `returns: 'T'`.
+- **`(fn f<T> [...])` — function-level type parameters are unparseable.** `FunctionNode.generics` is
+  never populated by either frontend, so only classes and interfaces have a generics slot that is
+  filled. P7 binds them where they are converted, so the code is correct and inert; making them
+  *parseable* is a grammar change.
 
-  **Not a drive-by fix.** An `Unknown` suppresses every check under gradual typing, so binding `T`
-  for real would un-silence the type checker across all generic code at once. It needs its own phase.
-
-- **The frontends disagree on interface generics, and grammar_v2 loses variance.** For
-  `(definterface Producer<:out T>)`:
-
-  ```
-  peg          generics = [{ name: { _type: "type-name", name: "T" }, covariance: null }]
-  grammar_v2   generics = [{ _type: "type-name", name: "T" }]
-  ```
-
-  PEG wraps, grammar_v2 does not — and `InterfaceGenericType` is declared to match PEG. Worse,
-  grammar_v2 **drops the `:in`/`:out` annotation entirely**, so variance is not merely unenforced
-  (which `16_covariance.lisp` says up front) but unparsed. Blocks any future variance work.
+- **Variance is parsed but not enforced.** `:out T` in a parameter position, or `:in T` in a return
+  position, is accepted. Use-site variance (`Producer<Dog>` where `Producer<Animal>` is expected) is
+  rejected, because class subtyping does not exist: `TypeChecker.ts` still says
+  `// TODO: Class inheritance checking`, and `isAssignable(Dog, Animal)` is **false**. **P7d.**

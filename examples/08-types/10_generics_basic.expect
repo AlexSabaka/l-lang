@@ -15,7 +15,7 @@
     { name: 'get', params: [], returns: 'Any' },
     { name: 'set', params: [Array], returns: 'Any' }
   ],
-  constructor: { params: [ [Object] ], requiredCount: 0 },
+  constructor: { params: [ [Object] ], requiredCount: 1 },
   generics: [ 'T' ],
   implements: [ 'GenericContainer' ],
   nullable: false
