@@ -906,34 +906,101 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     return (this as any)[methodName]?.(node) ?? node;
   }
 
+  /**
+   * The type checker had never looked inside a loop body, a match arm, or a try block.
+   *
+   * The dispatch above calls `visitFor` for a `for` node -- and `visitFor` DOES exist, inherited
+   * from BaseAstVisitor as a stub that returns the node untouched. So the dispatch "succeeded",
+   * the children were silently dropped, and every control-flow form was a dead end. This pass
+   * defines visitors for 12 node types; `for`, `for-each`, `while`, `match`, `when`, `cond`,
+   * `try-catch` and `compound-assignment` are not among them.
+   *
+   * BaseAstVisitor routes every un-overridden visitor through `onUnhandled`, so overriding it here
+   * is the whole fix: having no visitor for a node type does not make its CHILDREN uninteresting.
+   */
+  protected onUnhandled(node: ast.ASTNode, _method: string): any {
+    this.visitChildren(node);
+    return node;
+  }
+
+  /** Visit every AST child of a node, whatever shape the node is. */
+  private visitChildren(node: ast.ASTNode): void {
+    for (const key of ast.getNodeIterableKeys(node)) {
+      const value = (node as any)[key];
+
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (Array.isArray(item)) {
+            for (const nested of item) {
+              if (ast.isAstNode(nested)) this.visit(nested);
+            }
+          } else if (ast.isAstNode(item)) {
+            this.visit(item);
+          }
+        }
+      } else if (ast.isAstNode(value)) {
+        this.visit(value);
+      }
+    }
+  }
+
+
   visitProgram(node: ast.ProgramNode) {
     this.typeEnv.enterScope(node);
     node.program.forEach(item => this.visit(item));
     this.typeEnv.exitScope();
   }
 
+  private static readonly DECLARATIONS = [
+    "variable", "function", "class", "interface", "type-def", "struct",
+  ];
+
+  private isDeclaration(node: ast.ASTNode | undefined): boolean {
+    return !!node && InferAndCheckPass.DECLARATIONS.includes(node._type);
+  }
+
+  /**
+   * A list is a block (a bag of declarations and statements) or a call. It used to be treated as
+   * ONLY the former, and only partially: everything that was not a declaration was dropped, with
+   * the comment "Skip comments and other non-declaration items".
+   *
+   * So a call at statement level -- `(console.log x)`, `(bogus-fn x)` -- was never visited, and
+   * neither was any control-flow form. Combined with the dead-end dispatch (see onUnhandled), the
+   * type checker only ever looked at declarations and their initialisers. `(if "str" 1 2)`
+   * produced NOTHING, even though visitIf exists and checks exactly that.
+   */
   visitList(node: ast.ListNode) {
-    // Lists may contain declarations and expressions
-    // Scan through the list for declarations we need to process
-    if (node.nodes && node.nodes.length > 0) {
-      for (const item of node.nodes) {
-        // Check for direct declarations
-        if (item._type === "variable" || item._type === "function" || 
-            item._type === "class" || item._type === "interface" ||
-            item._type === "type-def" || item._type === "struct") {
-          this.visit(item);
-        }
-        // Check for lists that contain declarations
-        else if (ast.isListNode(item) && item.nodes.length > 0) {
-          const innerFirst = item.nodes[0];
-          if (innerFirst._type === "variable" || innerFirst._type === "function" ||
-              innerFirst._type === "class" || innerFirst._type === "interface" ||
-              innerFirst._type === "type-def" || innerFirst._type === "struct") {
-            this.visit(innerFirst);
-          }
-        }
-        // Skip comments and other non-declaration items
+    if (!node.nodes || node.nodes.length === 0) return;
+
+    for (const item of node.nodes) {
+      if (this.isDeclaration(item)) {
+        this.visit(item);
+        continue;
       }
+
+      if (ast.isListNode(item) && item.nodes.length > 0) {
+        const head = item.nodes[0];
+
+        // The list-wrapping quirk: a parenthesised form arrives wrapped in a `list`. `(let x 5)`
+        // is list{[variable]}, and `(if c a b)` is list{[if]}. Look at the head to tell what the
+        // list actually IS:
+        if (this.isDeclaration(head)) {
+          this.visit(head);
+        } else if (head._type === "simple-identifier" || head._type === "composite-identifier") {
+          // A real call: `(console.log x)`. Inferring it runs the argument and operator checks.
+          this.inferExpressionType(item);
+        } else {
+          // A wrapped special form -- if / for / while / match / when / cond / try. Visiting it
+          // reaches its own visitor (visitIf) or onUnhandled, which walks its children. Treating
+          // these as call expressions is what made `(if "str" 1 2)` report nothing at all.
+          this.visit(head);
+        }
+        continue;
+      }
+
+      // Control flow, identifiers, literals. visit() routes to a real visitor where one exists
+      // (visitIf), and otherwise to onUnhandled, which walks the children.
+      this.visit(item);
     }
   }
 
@@ -1212,7 +1279,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   visitIf(node: ast.IfNode) {
     // Check condition is boolean
     const condType = this.inferExpressionType(node.condition);
-    if (condType.name !== "Boolean") {
+    // Gradual typing, as everywhere else: a condition we could not type is not a condition we
+    // can call wrong. (This check only started firing once visitList stopped skipping non-
+    // declarations -- it had never run before, so it had never needed the guard.)
+    if (!TypeChecker.isUnknown(condType) && condType.name !== "Boolean") {
       this.context.log(
         LogLevel.Error,
         `If condition must be Boolean, got ${TypeChecker.formatType(condType)}`
