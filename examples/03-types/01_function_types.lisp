@@ -35,7 +35,7 @@
     ;; 6. Function returning union type
     (fn parse-int [str <- String] -> Int | String (
         (let num (Number str))
-        (if (is-nan num)
+        (if (isNaN num)
             (return str)
             (return num))
     ))

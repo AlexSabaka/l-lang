@@ -12,7 +12,7 @@
             ["+" a b] => (+ (eval-expr a) (eval-expr b))
             ["-" a b] => (- (eval-expr a) (eval-expr b))
             ["*" a b] => (* (eval-expr a) (eval-expr b))
-            [op  _ _] => (error "Unknown operator: " op)
+            [op  _ _] => (error (+ "Unknown operator: " op))
             value     => (Number value)
         })
     ))
