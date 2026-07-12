@@ -364,6 +364,15 @@ export class LLangAstBuilder extends BaseCstVisitor {
       "RightArrow", "RightDoubleArrow", "EqualEq", "ExclamationEq",
       "OperatorIdent",
     ];
+    // Enum member access `HttpMethod:GET` is parsed as Identifier Colon Identifier but must
+    // collapse back into ONE identifier whose name carries the colon -- that is exactly what the
+    // PEG produces, and what symbol resolution and codegen key off. See simpleIdentifier in
+    // Parser.ts.
+    if (ctx.Colon && ctx.Identifier?.length > 1) {
+      return this.makeNode("simple-identifier", ctx, {
+        id: ctx.Identifier.map((tok: any) => tok.image).join(":"),
+      });
+    }
     for (const key of tokenKeys) {
       if (ctx[key]) {
         return this.makeNode("simple-identifier", ctx, {
@@ -536,7 +545,9 @@ export class LLangAstBuilder extends BaseCstVisitor {
   // MODIFIERS
   // ========================================================================
   modifier(ctx: any): ast.ModifierNode {
-    const modifier = ctx.Identifier[0].image.toLowerCase();
+    // `:async` lexes its name as AsyncKw rather than Identifier -- see the modifier rule.
+    const nameToken = ctx.Identifier?.[0] ?? ctx.AsyncKw?.[0];
+    const modifier = nameToken.image.toLowerCase();
     const args = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : undefined;
     return this.makeNode("modifier", ctx, { modifier, args });
   }
@@ -560,8 +571,12 @@ export class LLangAstBuilder extends BaseCstVisitor {
   }
 
   functionExpr(ctx: any): ast.FunctionNode {
-    const async = !!ctx.AsyncKw;
     const modifiers = ctx.modifier ? ctx.modifier.map((m: any) => this.visit(m)) : [];
+    // PEG derives this purely from the modifiers (`async = !!modifiers.find(m => m.modifier ===
+    // "async")`) -- `(fn :async f [] ...)` is the only async form the PEG has. Reading it off
+    // `ctx.AsyncKw` alone meant the flag stayed false for every real async function in the corpus.
+    // `ctx.AsyncKw` here is the `(async fn ...)` prefix form, which this frontend also accepts.
+    const async = !!ctx.AsyncKw || modifiers.some((m: any) => m.modifier === "async");
     const name = ctx.identifier ? this.visit(ctx.identifier[0]) : null;
     const params = ctx.parameter ? ctx.parameter.map((p: any) => this.visit(p)) : [];
     const returns = ctx.type ? this.visit(ctx.type[0]) : null;

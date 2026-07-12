@@ -193,12 +193,13 @@ class LLangParser extends CstParser {
         { ALT: () => this.SUBRULE(this.vector) },
         // Map: { ... }
         { ALT: () => this.SUBRULE(this.map) },
-        // Identifier with optional indexer
+        // Identifier with optional indexer. The GATE is load-bearing: see isAdjacentIndexer().
         {
           ALT: () => {
             this.SUBRULE(this.identifier);
-            this.MANY(() => {
-              this.SUBRULE(this.indexerSuffix);
+            this.MANY({
+              GATE: () => this.isAdjacentLBracket(),
+              DEF: () => this.SUBRULE(this.indexerSuffix),
             });
           },
         },
@@ -246,11 +247,12 @@ class LLangParser extends CstParser {
       ]);
     });
 
+    // PEG: ("[" @Expression|1.., ","?| "]") -- at least one index, comma optional.
     this.indexerSuffix = this.RULE("indexerSuffix", () => {
       this.CONSUME(t.LBracket);
-      this.MANY_SEP({
-        SEP: t.Comma,
-        DEF: () => this.SUBRULE(this.expression),
+      this.AT_LEAST_ONE(() => {
+        this.SUBRULE(this.expression);
+        this.OPTION(() => this.CONSUME(t.Comma));
       });
       this.CONSUME(t.RBracket);
     });
@@ -320,7 +322,26 @@ class LLangParser extends CstParser {
 
     this.simpleIdentifier = this.RULE("simpleIdentifier", () => {
       this.OR([
-        { ALT: () => this.CONSUME(t.Identifier) },
+        {
+          ALT: () => {
+            this.CONSUME(t.Identifier);
+            // Enum member access: `HttpMethod:GET`. The PEG lexes this as a SINGLE identifier
+            // (`:` is in its `Control` char class), so the name literally carries the colon and
+            // symbol resolution / codegen key off the string "HttpMethod:GET". Reproduce that
+            // exactly rather than inventing a qualified-access node no downstream pass reads.
+            //
+            // Adjacency-gated: `HttpMethod:GET` has no spaces, whereas a modifier (`(let :ctor x)`)
+            // or a map key (`{:name "Alice"}`) always has whitespace before its colon. Without the
+            // gate this would swallow those.
+            this.OPTION({
+              GATE: () => this.isAdjacentQualifier(),
+              DEF: () => {
+                this.CONSUME(t.Colon);
+                this.CONSUME2(t.Identifier);
+              },
+            });
+          },
+        },
         // Allow operators as identifiers (for operator overloading)
         { ALT: () => this.CONSUME(t.Plus) },
         { ALT: () => this.CONSUME(t.Minus) },
@@ -445,9 +466,15 @@ class LLangParser extends CstParser {
     // ========================================================================
     this.type = this.RULE("type", () => {
       this.SUBRULE(this.unionType);
-      this.OPTION(() => {
-        this.CONSUME(t.LBracket);
-        this.CONSUME(t.RBracket);
+      // Array-type suffix `Expr[]`. Same adjacency rule as the indexer: the `[` must butt
+      // directly against the type name. Without the GATE, `(let program <- Expr ["+" 10])`
+      // reads the vector VALUE as an array-type suffix on `Expr` and then dies on the `"+"`.
+      this.OPTION({
+        GATE: () => this.isAdjacentLBracket(),
+        DEF: () => {
+          this.CONSUME(t.LBracket);
+          this.CONSUME(t.RBracket);
+        },
       });
     });
 
@@ -474,9 +501,14 @@ class LLangParser extends CstParser {
         { ALT: () => this.SUBRULE(this.genericType), GATE: () => this.isGenericType() },
         { ALT: () => this.SUBRULE(this.simpleType) },
       ]);
-      this.OPTION(() => {
-        this.CONSUME(t.LBracket);
-        this.CONSUME(t.RBracket);
+      // Array-type suffix, same adjacency rule as in `type` above -- this is the inner of the
+      // two sites, and the one that actually fires first.
+      this.OPTION({
+        GATE: () => this.isAdjacentLBracket(),
+        DEF: () => {
+          this.CONSUME(t.LBracket);
+          this.CONSUME(t.RBracket);
+        },
       });
     });
 
@@ -491,12 +523,13 @@ class LLangParser extends CstParser {
       ]);
     });
 
+    // PEG: name:TypeName "<" generics:Type|1.., ","?| ">" -- comma optional (`Pair<T U>`).
     this.genericType = this.RULE("genericType", () => {
       this.SUBRULE(this.typeName);
       this.CONSUME(t.LAngle);
-      this.MANY_SEP({
-        SEP: t.Comma,
-        DEF: () => this.SUBRULE(this.type),
+      this.AT_LEAST_ONE(() => {
+        this.SUBRULE(this.type);
+        this.OPTION(() => this.CONSUME(t.Comma));
       });
       this.CONSUME(t.RAngle);
     });
@@ -515,11 +548,12 @@ class LLangParser extends CstParser {
       this.SUBRULE2(this.type);
     });
 
+    // PEG: "{" keys:KeyDefinition|.., ","?| "}" -- comma optional.
     this.mapType = this.RULE("mapType", () => {
       this.CONSUME(t.LBrace);
-      this.MANY_SEP({
-        SEP: t.Comma,
-        DEF: () => this.SUBRULE(this.keyTypeDefinition),
+      this.MANY(() => {
+        this.SUBRULE(this.keyTypeDefinition);
+        this.OPTION(() => this.CONSUME(t.Comma));
       });
       this.CONSUME(t.RBrace);
     });
@@ -541,14 +575,23 @@ class LLangParser extends CstParser {
     // ========================================================================
     // MODIFIERS (like :public, :private, :ctor, etc.)
     // ========================================================================
+    // PEG: ":" ModifierName ("[" _ args:Expression|.., ","?| _ "]")? -- comma optional.
     this.modifier = this.RULE("modifier", () => {
       this.CONSUME(t.Colon);
-      this.CONSUME(t.Identifier);
+      // The name is normally an Identifier, but PEG's ModifierName is just [a-zA-Z_][\w-]* --
+      // it does not exclude keywords. `:async` is the real one: `async` lexes as AsyncKw here,
+      // not Identifier, so `(fn :async f [] ...)` -- the ONLY async syntax the PEG actually has
+      // -- could not parse at all. Any other keyword used as a modifier name needs adding here
+      // too; `:cond` and `:from` are safe because they lex whole, as reserved *ModKw tokens.
+      this.OR([
+        { ALT: () => this.CONSUME(t.Identifier) },
+        { ALT: () => this.CONSUME(t.AsyncKw) },
+      ]);
       this.OPTION(() => {
         this.CONSUME(t.LBracket);
-        this.MANY_SEP({
-          SEP: t.Comma,
-          DEF: () => this.SUBRULE(this.expression),
+        this.MANY(() => {
+          this.SUBRULE(this.expression);
+          this.OPTION2(() => this.CONSUME(t.Comma));
         });
         this.CONSUME(t.RBracket);
       });
@@ -650,9 +693,13 @@ class LLangParser extends CstParser {
       this.SUBRULE(this.typeName);
       this.OPTION(() => {
         this.CONSUME(t.LAngle);
-        this.AT_LEAST_ONE_SEP({
-          SEP: t.Comma,
-          DEF: () => this.SUBRULE2(this.typeName),
+        this.AT_LEAST_ONE(() => {
+          // Variance annotation: `(definterface Producer<:out T>`. Parsed so the declaration is
+          // accepted, but deliberately not recorded: the AST has no field for variance, and
+          // neither frontend has ever preserved it. Representing it is a separate decision.
+          this.OPTION2(() => this.SUBRULE(this.modifier));
+          this.SUBRULE2(this.typeName);
+          this.OPTION3(() => this.CONSUME(t.Comma));
         });
         this.CONSUME(t.RAngle);
       });
@@ -737,11 +784,14 @@ class LLangParser extends CstParser {
     this.modifierDefDecl = this.RULE("modifierDefDecl", () => {
       this.CONSUME(t.DefModifierKw);
       this.CONSUME(t.Identifier);
+      // PEG: ("[" _ @FunctionParameter|.., ","?| _ "]" _)? -- comma optional.
+      // MANY2, not MANY: this rule already uses MANY for the body below, and Chevrotain
+      // requires a unique occurrence index per DSL method within a rule.
       this.OPTION(() => {
         this.CONSUME(t.LBracket);
-        this.MANY_SEP({
-          SEP: t.Comma,
-          DEF: () => this.SUBRULE(this.parameter),
+        this.MANY2(() => {
+          this.SUBRULE(this.parameter);
+          this.OPTION2(() => this.CONSUME(t.Comma));
         });
         this.CONSUME(t.RBracket);
       });
@@ -754,11 +804,12 @@ class LLangParser extends CstParser {
     // IMPORT / EXPORT
     // ========================================================================
     // import "file.lisp" | module.namespace | { symbols } from source
+    // PEG: imports:ImportDefinition|1.., ","?| -- comma optional.
     this.importExpr = this.RULE("importExpr", () => {
       this.CONSUME(t.ImportKw);
-      this.AT_LEAST_ONE_SEP({
-        SEP: t.Comma,
-        DEF: () => this.SUBRULE(this.importDefinition),
+      this.AT_LEAST_ONE(() => {
+        this.SUBRULE(this.importDefinition);
+        this.OPTION(() => this.CONSUME(t.Comma));
       });
     });
 
@@ -769,11 +820,12 @@ class LLangParser extends CstParser {
       ]);
     });
 
+    // PEG: "{" symbols:SymbolAlias|1.., ","?| "}" -- comma optional.
     this.importSymbols = this.RULE("importSymbols", () => {
       this.CONSUME(t.LBrace);
-      this.MANY_SEP({
-        SEP: t.Comma,
-        DEF: () => this.SUBRULE(this.symbolAlias),
+      this.AT_LEAST_ONE(() => {
+        this.SUBRULE(this.symbolAlias);
+        this.OPTION(() => this.CONSUME(t.Comma));
       });
       this.CONSUME(t.RBrace);
       this.CONSUME(t.FromKw);
@@ -798,9 +850,9 @@ class LLangParser extends CstParser {
     // export symbol :as alias, ...
     this.exportExpr = this.RULE("exportExpr", () => {
       this.CONSUME(t.ExportKw);
-      this.AT_LEAST_ONE_SEP({
-        SEP: t.Comma,
-        DEF: () => this.SUBRULE(this.exportAlias),
+      this.AT_LEAST_ONE(() => {
+        this.SUBRULE(this.exportAlias);
+        this.OPTION(() => this.CONSUME(t.Comma));
       });
     });
 
@@ -910,11 +962,18 @@ class LLangParser extends CstParser {
         this.OPTION9(() => this.CONSUME(t.ThenModKw));
         this.SUBRULE5(this.expression);
       });
-      // :else expression
-      // this.OPTION10(() => {
-      //   this.CONSUME(t.ElseModKw);
-      //   this.SUBRULE6(this.expression);
-      // });
+      // :else expression -- was commented out in the recovered source, but both the PEG
+      // (`elseFor:((ElseModKw __)? @Expression)?`) and this frontend's own AstBuilder (which
+      // already branches on `ctx.ElseModKw`) expect it. Left disabled, `(for ... :else ...)`
+      // could not parse at all.
+      //
+      // OPTION1, not OPTION10: Chevrotain only defines OPTION and OPTION1..OPTION9. The clauses
+      // above already use OPTION and OPTION2..OPTION9 -- nine of the ten -- which is very likely
+      // why this clause was commented out rather than finished. OPTION1 is the one still free.
+      this.OPTION1(() => {
+        this.CONSUME(t.ElseModKw);
+        this.SUBRULE6(this.expression);
+      });
     });
 
     // while :cond? condition :then? then*
@@ -1094,6 +1153,47 @@ class LLangParser extends CstParser {
       i++;
     }
     return false;
+  }
+
+  /**
+   * Is the next token a `[` that butts *directly* against the previous token, with no
+   * whitespace between them?
+   *
+   * `arr[i]` is an indexer and `Expr[]` is an array type; `arr [i]` is an identifier followed by
+   * a separate vector, and `Expr [1 2]` is a type followed by a vector value.
+   *
+   * The PEG frontend distinguishes them by adjacency -- its rule is
+   *   Indexer = id:Identifier indices:("[" @Expression|1.., ","?| "]")|1..|
+   * with no whitespace rule between the identifier and the `[`, so the bracket has to butt
+   * directly against it. Chevrotain's lexer discards whitespace, so that information survives
+   * only in the token offsets: require the `[` to start exactly where the previous token ended.
+   *
+   * Without this the indexer is greedy and silently eats a following vector argument --
+   * `(analyze-vector [1 9 9])` parses as indexing `analyze-vector` at `[1 9 9]` rather than
+   * calling it with a vector.
+   */
+  private isAdjacentLBracket(): boolean {
+    const prev = this.LA(0); // last consumed token
+    const next = this.LA(1);
+    if (!prev || !next || next.tokenType !== t.LBracket) return false;
+    if (typeof prev.endOffset !== "number" || typeof next.startOffset !== "number") return false;
+    return next.startOffset === prev.endOffset + 1;
+  }
+
+  /**
+   * `HttpMethod:GET` -- an Identifier, a `:`, and an Identifier with no whitespace anywhere
+   * between them. See the comment in `simpleIdentifier`: this is an enum member reference, which
+   * the PEG lexes as one colon-bearing identifier. Whitespace anywhere means it is something else
+   * (a modifier, or a map key), so all three tokens must be strictly adjacent.
+   */
+  private isAdjacentQualifier(): boolean {
+    const prev = this.LA(0); // the Identifier we just consumed
+    const colon = this.LA(1);
+    const next = this.LA(2);
+    if (!prev || !colon || !next) return false;
+    if (colon.tokenType !== t.Colon || next.tokenType !== t.Identifier) return false;
+    if (typeof prev.endOffset !== "number" || typeof colon.endOffset !== "number") return false;
+    return colon.startOffset === prev.endOffset + 1 && next.startOffset === colon.endOffset + 1;
   }
 
   private isCompositeIdentifier(): boolean {
