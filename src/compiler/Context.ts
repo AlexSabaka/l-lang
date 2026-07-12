@@ -218,7 +218,9 @@ export class Context {
     this.performanceMetrics.endTimer("syntax", nodeCount, (syntaxRulesVisitor as any).getVisitCount?.() || 0);
 
     if (this.results.hasErrors) {
-      logCompilationMessages(this);
+      // Deliberately does NOT log here. The CLI (command.transform / command.run) logs whatever
+      // is in `results` before exiting 1, and it does so for EVERY stage -- including codegen,
+      // which this method never covered. Logging in both places printed every diagnostic twice.
       return { ast: ast as ASTNode };
     }
 
@@ -298,7 +300,9 @@ export class Context {
     }
 
     if (this.results.hasErrors) {
-      logCompilationMessages(this);
+      // Deliberately does NOT log here. The CLI (command.transform / command.run) logs whatever
+      // is in `results` before exiting 1, and it does so for EVERY stage -- including codegen,
+      // which this method never covered. Logging in both places printed every diagnostic twice.
       return { ast: ast as ASTNode };
     }
 

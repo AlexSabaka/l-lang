@@ -130,6 +130,11 @@ function convertAstType(
   return TypeEnvironment.unknown();
 }
 
+/** Does this parameter list end in a rest/spread parameter? `(fn print [msg ...args])` */
+function isVariadicParams(params: ast.ParameterNode[]): boolean {
+  return params.length > 0 && !!params[params.length - 1].spread;
+}
+
 class CollectTypesPass extends BaseAstTreeWalker {
   private typeEnv: TypeEnvironment;
   private symbolTable: SymbolTable;
@@ -253,7 +258,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
       requiresRuntimeMetadata: methodSignature.isOperatorOverload
     };
 
-    const funcType = TypeEnvironment.function(paramTypes, returnType);
+    const funcType = TypeEnvironment.function(paramTypes, returnType, isVariadicParams(node.params));
     // Enhance function type with metadata
     const enhancedFuncType: InferredType = {
       ...funcType,
@@ -338,7 +343,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
           const funcNode = target as ast.FunctionNode;
           const paramTypes = funcNode.params.map(p => p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.unknown());
           const returnType = funcNode.returns ? this.convertAstTypeToInferred(funcNode.returns) : TypeEnvironment.primitive("Void");
-          const funcType = TypeEnvironment.function(paramTypes, returnType);
+          const funcType = TypeEnvironment.function(paramTypes, returnType, isVariadicParams(funcNode.params));
           const name = typeof funcNode.name === 'string' ? funcNode.name : (funcNode.name as any).id || (funcNode.name as any).name;
           
           const isOperator = (funcNode.modifiers ?? []).some((m: any) => m.modifier === 'operator' || m.modifier === ':operator');
@@ -562,7 +567,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
           const funcNode = target as ast.FunctionNode;
           const paramTypes = funcNode.params.map(p => p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.unknown());
           const returnType = funcNode.returns ? this.convertAstTypeToInferred(funcNode.returns) : TypeEnvironment.primitive("Void");
-          const funcType = TypeEnvironment.function(paramTypes, returnType);
+          const funcType = TypeEnvironment.function(paramTypes, returnType, isVariadicParams(funcNode.params));
           const name = typeof funcNode.name === 'string' ? funcNode.name : (funcNode.name as any).id || (funcNode.name as any).name;
           
           const isOperator = (funcNode.modifiers ?? []).some((m: any) => m.modifier === 'operator' || m.modifier === ':operator');
@@ -1416,7 +1421,32 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             // Check argument types
             const args = listNode.nodes.slice(1);
             const argTypes = args.map(arg => this.inferExpressionType(arg));
-            
+
+            // ARITY. There was no check at all: the loop below iterates the ARGUMENTS with an
+            // `i < params.length` guard, so extra arguments were silently skipped and missing ones
+            // were never noticed.
+            //
+            // A variadic function absorbs the tail, so its declared params are a MINIMUM, not an
+            // exact count -- the corpus really does have `(fn print [msg <- String ...args])`,
+            // `compose` and `partial`.
+            if (funcType.params) {
+              const declared = funcType.params.length;
+              const required = funcType.isVariadic ? declared - 1 : declared;
+              const tooFew = args.length < required;
+              const tooMany = !funcType.isVariadic && args.length > declared;
+
+              if (tooFew || tooMany) {
+                const expected = funcType.isVariadic
+                  ? `at least ${required}`
+                  : `${declared}`;
+                this.reportTypeError(
+                  listNode,
+                  "LL0211",
+                  `'${funcName}' expects ${expected} argument${required === 1 && !funcType.isVariadic ? "" : "s"}, got ${args.length}.`
+                );
+              }
+            }
+
             if (funcType.params) {
               argTypes.forEach((argType, i) => {
                 if (i < funcType.params!.length) {

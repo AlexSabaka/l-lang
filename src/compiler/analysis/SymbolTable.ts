@@ -44,6 +44,12 @@ export interface InferredType {
   generics?: InferredType[];
   params?: InferredType[];  // For function types
   returns?: InferredType;   // For function types
+  /**
+   * The function's last parameter is a rest/spread param: `(fn print [msg <- String ...args])`.
+   * Without this, an arity check would reject every call to `print`, `compose` and `partial` --
+   * the corpus really does use variadic functions.
+   */
+  isVariadic?: boolean;     // For function types
   alternatives?: InferredType[];  // For union types
   keyType?: InferredType;   // For map types
   valueType?: InferredType; // For map types

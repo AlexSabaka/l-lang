@@ -199,12 +199,17 @@ export class TypeEnvironment {
   /**
    * Helper to create function types
    */
-  static function(params: InferredType[], returns: InferredType): InferredType {
+  static function(
+    params: InferredType[],
+    returns: InferredType,
+    isVariadic = false
+  ): InferredType {
     return {
       kind: "function",
       name: "Function",
       params,
       returns,
+      ...(isVariadic ? { isVariadic } : {}),
     };
   }
 
