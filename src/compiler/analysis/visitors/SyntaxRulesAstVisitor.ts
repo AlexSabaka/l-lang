@@ -82,7 +82,31 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
     this.context.results.add(node, rule, this.context);
   }
 
+  /**
+   * Declarations must be parenthesized: `(let x 5)`, never a bare `let x 5`.
+   *
+   * The parser accepts a bare declaration because `expression` is shared between `program`
+   * (top level) and `list` (inside parens) -- a declaration is a legal expression either way.
+   * The distinction is visible only on the AST: a parenthesized declaration is wrapped in a
+   * `list` node, so its parent is a list. A declaration whose parent is the `program` itself was
+   * never parenthesized.
+   *
+   * This matters because a bare `fn` greedily swallows whatever follows it -- the next top-level
+   * form becomes its body -- which is a silent misparse, not a syntax error.
+   */
+  private requireParens(node: ast.ASTNode, form: string): void {
+    if ((node._parent as ast.ASTNode | undefined)?._type === "program") {
+      this.reportModifierError(
+        node,
+        "LL0019",
+        `'${form}' must be parenthesized: write (${form} ...). A bare declaration at the top ` +
+          `level silently swallows the form that follows it.`
+      );
+    }
+  }
+
   visitFunction(node: ast.FunctionNode) {
+    this.requireParens(node, "fn");
     checkRules(node, [r.ExternFunctionCannotHaveBody], this.context);
   }
 
@@ -94,6 +118,7 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
   }
 
   visitInterface(node: ast.InterfaceNode) {
+    this.requireParens(node, "definterface");
     const body = node.body.flatMap((x) => (x as ast.ListNode)?.nodes ?? [x]);
 
     body.forEach((member) =>
@@ -119,6 +144,7 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
   }
 
   visitVariable(node: ast.VariableNode) {
+    this.requireParens(node, node.mutable ? "mut" : "let");
     checkRules(
       node,
       [r.VariableMustHaveName, r.ConstantVariableMustHaveInitializer],
@@ -127,7 +153,23 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
   }
 
   visitClass(node: ast.ClassNode) {
+    this.requireParens(node, "defclass");
     checkRules(node, [r.ClassMustHaveName], this.context);
+  }
+
+  visitStruct(node: ast.StructNode) {
+    this.requireParens(node, "defstruct");
+    return node;
+  }
+
+  visitEnum(node: ast.EnumNode) {
+    this.requireParens(node, "defenum");
+    return node;
+  }
+
+  visitTypeDef(node: ast.TypeDefNode) {
+    this.requireParens(node, "deftype");
+    return node;
   }
 
   /**
