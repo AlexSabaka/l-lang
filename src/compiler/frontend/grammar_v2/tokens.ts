@@ -27,9 +27,17 @@ export const Comment = createToken({
 // declaration order -- Identifier/OperatorIdent still go last in every mode's
 // token list, exactly as the original.
 // ============================================================================
+// The \u0080-\uFFFF (non-ASCII) range matches the PEG frontend, whose `NonControl` class is a
+// *negated* set of ASCII punctuation -- so every non-ASCII character is a legal identifier
+// character there. l-lang leans on this: examples/20-stdlib/std/math.lisp declares the
+// dot-product operator as `(fn :operator · [v2 <- Vector3] -> Real ...)`, naming it `·`
+// (U+00B7). Restricting this token to ASCII made that file -- a `library` other tests import --
+// impossible to tokenize at all.
+// Only the non-ASCII range is added: every ASCII operator/bracket/keyword keeps its own token,
+// and Identifier is last in the token arrays, so those all still win over it.
 export const Identifier = createToken({
   name: "Identifier",
-  pattern: /[a-zA-Z_][a-zA-Z0-9_\-]*/,
+  pattern: /[a-zA-Z_\u0080-\uFFFF][a-zA-Z0-9_\-\u0080-\uFFFF]*/,
 });
 
 // ============================================================================
@@ -84,22 +92,34 @@ export const NilKw = createToken({
 
 // ============================================================================
 // MODIFIER KEYWORDS (start with colon)
-// No longer_alt: these can never collide with Identifier (which never starts
-// with `:`), so there's no keyword/identifier ambiguity to resolve here.
+//
+// These are the modifier names the *grammar* reserves (they occupy structural slots in
+// classDecl/forExpr/condExpr/...). Every other `:name` is a generic modifier or map key and
+// lexes as `Colon` + `Identifier` instead -- see the `Colon` token below.
+//
+// These precede `Colon` in the token arrays, so `:extends` wins over `Colon`+`Identifier`.
+// The trailing `(?![a-zA-Z0-9_-])` is what stops that from over-matching: without it,
+// `:extendsfoo` would lex as ExtendsModKw + Identifier("foo") rather than as a modifier named
+// `extendsfoo`. Same over-match class as the `longer_alt` bug fixed in Phase 2a, and the same
+// negative-lookahead idiom used by Dot/Pipe/Equal/LAngle/Underscore below.
+//
+// No longer_alt: these can never collide with Identifier (which never starts with `:`).
+// Case-sensitive, consistent with the plain keywords above.
 // ============================================================================
-export const ImplementsModKw = createToken({ name: "ImplementsModKw", pattern: /:implements/i });
-export const ExtendsModKw = createToken({ name: "ExtendsModKw", pattern: /:extends/i });
-export const WhereModKw = createToken({ name: "WhereModKw", pattern: /:where/i });
-export const CondModKw = createToken({ name: "CondModKw", pattern: /:cond/i });
-export const ThenModKw = createToken({ name: "ThenModKw", pattern: /:then/i });
-export const ElseModKw = createToken({ name: "ElseModKw", pattern: /:else/i });
-export const InitModKw = createToken({ name: "InitModKw", pattern: /:init/i });
-export const StepModKw = createToken({ name: "StepModKw", pattern: /:step/i });
-export const EachModKw = createToken({ name: "EachModKw", pattern: /:each/i });
-export const FromModKw = createToken({ name: "FromModKw", pattern: /:from/i });
-export const AsModKw = createToken({ name: "AsModKw", pattern: /:as/i });
-export const OfModKw = createToken({ name: "OfModKw", pattern: /:of/i });
-export const IsModKw = createToken({ name: "IsModKw", pattern: /:is/i });
+const modKwTail = "(?![a-zA-Z0-9_-])";
+export const ImplementsModKw = createToken({ name: "ImplementsModKw", pattern: new RegExp(`:implements${modKwTail}`) });
+export const ExtendsModKw = createToken({ name: "ExtendsModKw", pattern: new RegExp(`:extends${modKwTail}`) });
+export const WhereModKw = createToken({ name: "WhereModKw", pattern: new RegExp(`:where${modKwTail}`) });
+export const CondModKw = createToken({ name: "CondModKw", pattern: new RegExp(`:cond${modKwTail}`) });
+export const ThenModKw = createToken({ name: "ThenModKw", pattern: new RegExp(`:then${modKwTail}`) });
+export const ElseModKw = createToken({ name: "ElseModKw", pattern: new RegExp(`:else${modKwTail}`) });
+export const InitModKw = createToken({ name: "InitModKw", pattern: new RegExp(`:init${modKwTail}`) });
+export const StepModKw = createToken({ name: "StepModKw", pattern: new RegExp(`:step${modKwTail}`) });
+export const EachModKw = createToken({ name: "EachModKw", pattern: new RegExp(`:each${modKwTail}`) });
+export const FromModKw = createToken({ name: "FromModKw", pattern: new RegExp(`:from${modKwTail}`) });
+export const AsModKw = createToken({ name: "AsModKw", pattern: new RegExp(`:as${modKwTail}`) });
+export const OfModKw = createToken({ name: "OfModKw", pattern: new RegExp(`:of${modKwTail}`) });
+export const IsModKw = createToken({ name: "IsModKw", pattern: new RegExp(`:is${modKwTail}`) });
 
 // ============================================================================
 // OPERATORS (Multi-char before single-char!)
@@ -150,7 +170,14 @@ export const LBrace = createToken({ name: "LBrace", pattern: /\{/ });
 export const RBrace = createToken({ name: "RBrace", pattern: /\}/ });
 export const LAngle = createToken({ name: "LAngle", pattern: /<(?![-=])/ }); // Not followed by - or =
 export const RAngle = createToken({ name: "RAngle", pattern: />(?!=)/ }); // Not followed by =
-export const Colon = createToken({ name: "Colon", pattern: /:(?![a-zA-Z=])/ }); // Not followed by letter or =
+// Only `:=` is excluded (and `ColonEq` precedes this token in the arrays anyway, so it wins
+// regardless). A colon followed by a letter MUST lex as `Colon` + `Identifier`: that is the
+// sequence the `modifier` and `keyValue` parser rules consume, and it is the only design that
+// can work -- `defmodifier` lets users define modifier names in l-lang source (`:logged`,
+// `:retry`, ... in examples/06-modifiers), so they can never be enumerated as fixed tokens.
+// The earlier `(?![a-zA-Z=])` made both of those rules unreachable and left 44/95 examples
+// unable to tokenize at all.
+export const Colon = createToken({ name: "Colon", pattern: /:(?!=)/ });
 
 // ============================================================================
 // LITERALS
