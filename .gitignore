@@ -137,3 +137,4 @@ dist
 examples/**/*.js
 examples/**/*.map
 examples/**/*.json
+src/test/.compiled/

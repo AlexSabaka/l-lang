@@ -19,9 +19,17 @@ import { Context, CompilerOptions, LogLevel } from '../compiler/Context';
 
 // Configuration
 const EXAMPLES_DIR = path.join(__dirname, '../../examples');
+const COMPILED_DIR = path.join(__dirname, '.compiled');
 const SKIP_DIRS = ['p5js', 'node_modules'];
 const VERBOSE = process.argv.includes('--verbose') || process.argv.includes('-v');
 const RUN_TIMEOUT_MS = 5000;
+
+// Mirrors examples/'s directory structure under a gitignored scratch dir, instead of writing
+// generated .js/.js.map next to the .lisp source -- the suite must not dirty the tracked corpus.
+function compiledPathFor(lispPath: string): string {
+  const rel = path.relative(EXAMPLES_DIR, lispPath).replace(/\.lisp$/, '.js');
+  return path.join(COMPILED_DIR, rel);
+}
 
 // Mirrors the CLI's defaults for `transform <file>` with no flags (see getCompilerOptions.ts).
 // logger is a no-op: the old execSync-based runner discarded the compile step's own stdout/stderr
@@ -72,7 +80,7 @@ function runTest(lispPath: string): TestResult {
   const fileName = path.basename(lispPath);
   const dirName = path.dirname(lispPath);
   const expectPath = path.join(dirName, fileName.replace('.lisp', '.expect'));
-  const jsPath = path.join(dirName, fileName.replace('.lisp', '.js'));
+  const jsPath = compiledPathFor(lispPath);
   
   // Check if .expect file exists
   if (!fs.existsSync(expectPath)) {
@@ -98,6 +106,7 @@ function runTest(lispPath: string): TestResult {
         };
       }
 
+      fs.mkdirSync(path.dirname(jsPath), { recursive: true });
       fs.writeFileSync(jsPath, result.code || '');
       fs.writeFileSync(jsPath + '.map', (result.map || '').toString());
     } catch (compileError: any) {
@@ -229,7 +238,11 @@ function main() {
   console.log(chalk.bold('\n================================'));
   console.log(chalk.bold('  L-Lang Compiler Test Suite'));
   console.log(chalk.bold('================================\n'));
-  
+
+  // Fresh scratch dir each run so a renamed/deleted example can't leave a stale compiled
+  // artifact behind.
+  fs.rmSync(COMPILED_DIR, { recursive: true, force: true });
+
   const testFiles: string[] = [];
   walkDir(EXAMPLES_DIR, (filePath) => {
     if (filePath.endsWith('.lisp')) {
