@@ -3,7 +3,7 @@ import highlight from "cli-highlight";
 
 import { Command } from "commander";
 
-import { Context, LogLevel } from "../../compiler/Context";
+import { Context, LogLevel, logCompilationMessages } from "../../compiler/Context";
 
 import { getCompilerOptions } from "../getCompilerOptions";
 import evalInScope from "../../compiler/runtime/evalInScope";
@@ -19,6 +19,8 @@ export function evalFile(
   const { code } = context.process(file, "codegen");
 
   if (context.results.hasErrors) {
+    // Same gap as `transform`: codegen-stage diagnostics are never printed by Context.process().
+    logCompilationMessages(context);
     process.exitCode = 1;
     return;
   }

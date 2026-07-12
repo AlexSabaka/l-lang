@@ -4,7 +4,12 @@ import highlight from "cli-highlight";
 
 import { Command } from "commander";
 
-import { Context, LogLevel, CompilationStage } from "../../compiler/Context";
+import {
+  Context,
+  LogLevel,
+  CompilationStage,
+  logCompilationMessages,
+} from "../../compiler/Context";
 import { Scope } from "../../compiler/analysis/SymbolTable";
 import { getCompilerOptions } from "../getCompilerOptions";
 
@@ -198,6 +203,11 @@ export function transform(file: string, command: Command) {
   const map = result.map || '';
 
   if (context.results.hasErrors) {
+    // Context.process() logs diagnostics after the syntax and types stages, but NOT after
+    // codegen -- so a codegen error (LL0100/LL0101) was collected, correctly suppressed the
+    // output file, correctly exited 1, and told the user nothing at all. Print whatever is in
+    // results before bailing, whichever stage raised it.
+    logCompilationMessages(context);
     process.exitCode = 1;
     return;
   }
