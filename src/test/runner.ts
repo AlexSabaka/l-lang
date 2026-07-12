@@ -16,11 +16,16 @@ import path from 'path';
 import chalk from 'chalk';
 import { spawnSync } from 'child_process';
 import { Context, CompilerOptions, LogLevel } from '../compiler/Context';
+import { MANIFEST, ExampleStatus } from './manifest';
 
 // Configuration
 const EXAMPLES_DIR = path.join(__dirname, '../../examples');
 const COMPILED_DIR = path.join(__dirname, '.compiled');
-const SKIP_DIRS = ['p5js', 'node_modules'];
+// node_modules is defense-in-depth only; nothing should ever place one under examples/.
+// (Previously also skipped any directory path containing "p5js" -- a substring match against
+// the FULL path, so checking the repo out under a path containing "p5js" anywhere would have
+// skipped the entire suite. That directory's files are now declared in manifest.ts instead.)
+const SKIP_DIRS = ['node_modules'];
 const VERBOSE = process.argv.includes('--verbose') || process.argv.includes('-v');
 const RUN_TIMEOUT_MS = 5000;
 
@@ -45,11 +50,37 @@ const COMPILE_OPTIONS: CompilerOptions = {
 
 interface TestResult {
   name: string;
-  status: 'pass' | 'fail' | 'skip' | 'error';
+  status: 'pass' | 'fail' | 'skip' | 'error' | ExampleStatus;
   message?: string;
   expected?: string;
   actual?: string;
   stderr?: string;
+}
+
+type Classification = { status: ExampleStatus | 'undeclared'; reason?: string };
+
+// Every .lisp is either declared in the manifest, or has a matching .expect (implicitly
+// 'test'), or it's undeclared -- a hard error, not a silent skip.
+function classify(lispPath: string): Classification {
+  const relPath = path.relative(EXAMPLES_DIR, lispPath).split(path.sep).join('/');
+  const expectPath = lispPath.replace(/\.lisp$/, '.expect');
+  const entry = MANIFEST[relPath];
+
+  if (entry) {
+    if (entry.status === 'test' && !fs.existsSync(expectPath)) {
+      return {
+        status: 'undeclared',
+        reason: `manifest declares 'test' but no matching .expect exists`
+      };
+    }
+    return entry;
+  }
+
+  if (fs.existsSync(expectPath)) {
+    return { status: 'test' };
+  }
+
+  return { status: 'undeclared', reason: 'not in manifest and no matching .expect' };
 }
 
 function walkDir(dir: string, callback: (filePath: string) => void) {
@@ -230,6 +261,15 @@ function printTestResult(result: TestResult, index: number, total: number) {
         console.log(chalk.gray(`  stderr: ${result.stderr.trim()}\n`));
       }
       break;
+    case 'library':
+      console.log(chalk.cyan('📚 LIBRARY'));
+      break;
+    case 'fixture':
+      console.log(chalk.magenta('🧪 FIXTURE') + (result.message ? chalk.gray(`  (${result.message})`) : ''));
+      break;
+    case 'xfail':
+      console.log(chalk.yellow('⏳ XFAIL') + (result.message ? chalk.gray(`  (${result.message})`) : ''));
+      break;
   }
 }
 
@@ -249,33 +289,55 @@ function main() {
       testFiles.push(filePath);
     }
   });
-  
+
   // Sort files for consistent ordering
   testFiles.sort();
-  
+
+  // Preflight: every .lisp must be declared -- either it has a matching .expect, or it's
+  // classified in manifest.ts. An undeclared file is a hard error, not a silent skip.
+  const classifications = testFiles.map(filePath => ({ filePath, ...classify(filePath) }));
+  const undeclared = classifications.filter(c => c.status === 'undeclared');
+
+  if (undeclared.length > 0) {
+    console.log(chalk.red.bold(`💥 ${undeclared.length} undeclared example(s):\n`));
+    undeclared.forEach(u => {
+      const rel = path.relative(EXAMPLES_DIR, u.filePath);
+      console.log(chalk.red(`  ${rel}`) + chalk.gray(u.reason ? ` -- ${u.reason}` : ''));
+    });
+    console.log(chalk.gray('\nAdd a .expect file, or classify it in src/test/manifest.ts.\n'));
+    process.exit(1);
+  }
+
   const results: TestResult[] = [];
   const total = testFiles.length;
-  
-  testFiles.forEach((filePath, index) => {
-    const result = runTest(filePath);
+
+  classifications.forEach(({ filePath, status, reason }, index) => {
+    // 'undeclared' already exited above -- everything reaching here is a real ExampleStatus.
+    const result: TestResult = status === 'test'
+      ? runTest(filePath)
+      : { name: path.basename(filePath), status: status as ExampleStatus, message: reason };
     results.push(result);
     printTestResult(result, index + 1, total);
   });
-  
+
   // Summary
   const passed = results.filter(r => r.status === 'pass').length;
   const failed = results.filter(r => r.status === 'fail').length;
   const errors = results.filter(r => r.status === 'error').length;
-  const skipped = results.filter(r => r.status === 'skip').length;
-  
+  const library = results.filter(r => r.status === 'library').length;
+  const fixture = results.filter(r => r.status === 'fixture').length;
+  const xfail = results.filter(r => r.status === 'xfail').length;
+
   console.log(chalk.bold('\n================================'));
   console.log(chalk.bold('  Test Results'));
   console.log(chalk.bold('================================'));
-  console.log(chalk.green(`✅ Passed:  ${passed}`));
-  console.log(chalk.red(`❌ Failed:  ${failed}`));
-  console.log(chalk.red(`💥 Errors:  ${errors}`));
-  console.log(chalk.yellow(`⚠️  Skipped: ${skipped}`));
-  console.log(chalk.bold(`📊 Total:   ${total}\n`));
+  console.log(chalk.green(`✅ Passed:   ${passed}`));
+  console.log(chalk.red(`❌ Failed:   ${failed}`));
+  console.log(chalk.red(`💥 Errors:   ${errors}`));
+  console.log(chalk.cyan(`📚 Library:  ${library}`));
+  console.log(chalk.magenta(`🧪 Fixture:  ${fixture}`));
+  console.log(chalk.yellow(`⏳ XFail:    ${xfail}`));
+  console.log(chalk.bold(`📊 Total:    ${total}\n`));
   
   if (failed === 0 && errors === 0) {
     console.log(chalk.green.bold('🎉 All tests passed!\n'));
