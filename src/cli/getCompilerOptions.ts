@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import { Command } from "commander";
-import { CompilerOptions, LogLevel } from "../compiler/Context";
+import { CompilerOptions, CompilationLanguage, LogLevel } from "../compiler/Context";
+
+const VALID_LANGUAGES: CompilationLanguage[] = ["js", "legacy-js"];
 
 function createFileLogger(file: string) {
   const stream = fs.createWriteStream(file, { flags: "a" });
@@ -55,10 +57,17 @@ export function getCompilerOptions(
     logLevel = LogLevel.Error;
   }
 
+  const language: CompilationLanguage = opts.language || "js";
+  if (!VALID_LANGUAGES.includes(language)) {
+    throw new Error(
+      `Invalid --language '${opts.language}'. Valid values are: ${VALID_LANGUAGES.join(", ")}`
+    );
+  }
+
   return {
     minimumLogLevel: logLevel,
     logger: opts.logFile ? createFileLogger(opts.logFile) : console.log,
-    language: opts.language || "js",
+    language,
     stage: opts.stage || "codegen",
     includeRuntimeShim: opts.runtimeShim !== undefined ? !!opts.runtimeShim : true, // default to true
     stdout: !!opts.stdout,

@@ -18,7 +18,7 @@ program
   .option("-w, --watch", "watch for changes and recompile")
   .option("-d, --debug", "debug mode")
   .option("-s, --silent", "silent mode")
-  .option("--language", "use legacy JS transpiler")
+  .option("--language <lang>", "target backend: js (default) or legacy-js")
   .option("--stdout", "output compiled JavaScript to stdout")
   .option("--runtime-shim", "include runtime shim in compiled output")
   .option("--stage <stage>", "compilation stage to stop at (parse, syntax, symbols, desugar, types, codegen)")

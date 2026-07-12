@@ -326,9 +326,11 @@ export class Context {
     } else if (this.options.language === "js") {
       // Use new ESTree-based transformer (default)
       transformer = new JSTransformerAstVisitorEstree(this);
-    } else {
+    } else if (this.options.language === "llang") {
       // Use l-lang to l-lang transformer
       transformer = new LlangTransformerAstVisitor(this);
+    } else {
+      throw new Error(`Unknown compilation target language: '${this.options.language}'`);
     }
 
     const result = transformer.compile(ast);
