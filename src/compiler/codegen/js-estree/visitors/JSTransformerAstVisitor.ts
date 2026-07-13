@@ -2707,14 +2707,60 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     };
   }
 
+  /**
+   * `(x := v)` and `(x += v)`.
+   *
+   * `+=` DESUGARS to `x = (+ x v)` rather than emitting the raw JS `x += v`, and the difference is the
+   * whole point: raw `+=` never touches the `+` runtime shim, so it never reaches the registry or an
+   * `_1` method, and a user OVERLOAD is never found. On a struct that is `object + object` --
+   * `"[object Object][object Object]"`, or undefined. `x += y` has always MEANT `x = x + y`; it just
+   * did not compile to it.
+   *
+   * The type checker already models it that way (`visitCompoundAssignment` in InferTypesAstVisitor:
+   * "x += y means x = x + y"). Codegen was the half that did not.
+   *
+   * The target is emitted TWICE, and deliberately through DIFFERENT paths: the READ goes through
+   * `visit` (so an indexer routes via `__ll_index` and throws on an absent key, per D9f), the WRITE
+   * through `visitAssignmentTarget` (a bare member expression -- a write CREATES). The same node
+   * cannot serve both.
+   *
+   * Caveat, surfaced not absorbed: a target with a side-effecting subexpression -- `xs[f()] += 1` --
+   * now evaluates `f()` twice. Avoiding that needs a temporary, which needs statement context, which an
+   * assignment in expression position does not have. Nothing in the corpus does it (all four compound
+   * assignments there target a plain name or a member path, both idempotent to read).
+   */
   visitCompoundAssignment(
     node: ast.CompoundAssignmentNode
   ): ESTree.AssignmentExpression {
+    // `:=` is a plain assignment and must NOT be desugared through an operator.
+    if (node.operator === ":=") {
+      return {
+        type: "AssignmentExpression",
+        operator: "=",
+        left: this.visitAssignmentTarget(node.assignable),
+        right: this.asValue(this.visit(node.value) as ESTree.Expression, node.value),
+        loc: ESTreeBuilder.loc(node),
+      };
+    }
+
+    const op = node.operator.replace(/=$/, "");
+
+    // The shim only lands in the output if the symbol is asked for -- the same list visitIdentifier
+    // feeds when it sees a bare `+`.
+    this.inlineStandardSymbols.push(op);
+
     return {
       type: "AssignmentExpression",
-      operator: node.operator.replace(":", "") as ESTree.AssignmentOperator,
+      operator: "=",
       left: this.visitAssignmentTarget(node.assignable),
-      right: this.asValue(this.visit(node.value) as ESTree.Expression, node.value),
+      right: ESTreeBuilder.callExpression(
+        node,
+        ESTreeBuilder.identifier(node, encodeIdentifier(op)),
+        [
+          this.visit(node.assignable) as ESTree.Expression,
+          this.visit(node.value) as ESTree.Expression,
+        ]
+      ) as ESTree.Expression,
       loc: ESTreeBuilder.loc(node),
     };
   }
