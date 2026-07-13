@@ -45,8 +45,15 @@ type Step =
 interface Expect {
   /** The value, rendered by `show()`. Structural -- never a chalk string. */
   value?: string;
-  /** The value must NOT be this. For assertions of the form "it must no longer be 1". */
+  /**
+   * The value must NOT be this. For assertions of the form "it must no longer be 1".
+   *
+   * A refusal or a runtime error SATISFIES this: a binding that is gone is certainly not still 1,
+   * and after a real `.reset` a bare `x` is an unresolved name, not a value.
+   */
   notValue?: string;
+  /** The line the diagnostic must be attributed to, WITHIN the user's own input. */
+  line?: number;
   /** console.log lines produced BY THIS STEP, in order. `[]` asserts silence. */
   output?: string[];
   /** The input must be REFUSED, reporting diagnostics matching all of these. */
@@ -129,7 +136,7 @@ const CASES: Case[] = [
     name: "a refused form does not enter history",
     steps: [{ input: "(defmacro m [x] x)" }, { input: "(let ok 1)" }, { input: "ok" }],
     expect: [{ refused: [/LL0023/] }, null, { value: "1" }],
-    cells: 1,
+    cells: 2, // the defmacro is refused; `(let ok 1)` and `ok` are both accepted inputs
     wasBroken:
       "nothing enforced this. A form that failed to compile could still be replayed, so one bad " +
       "input poisoned every subsequent one until .reset.",
@@ -177,19 +184,23 @@ const CASES: Case[] = [
       "list the way every example and both new harnesses do, every rebind becomes a hard error.",
   },
   {
-    name: "a rebind that breaks history is refused, and names the cell",
+    name: "a type-changing rebind is refused, at the user's own line",
     steps: [
       { input: "(let x 1)" },
       { input: "(fn double [] -> Int (* x 2))" },
       { input: '(let x "hi")' },
       { input: "x" },
     ],
-    expect: [null, null, { refused: [/LL/], origin: "history" }, { value: "1" }],
-    cells: 2,
+    expect: [null, null, { refused: [/LL0200/], origin: "input", line: 1 }, { value: "1" }],
+    cells: 3, // the rebind is refused; the other three inputs are accepted
     wasBroken:
-      "D17. `double` cannot mean two things at once. Accepting the rebind and letting `double` fail " +
-      "only IF CALLED is the silent-wrong-answer pattern this compiler exists to refuse. The old REPL " +
-      "printed nothing either way (B2).",
+      "D17, and NOT what the ruling first assumed. The checker treats a second `(let x ...)` as an " +
+      "ASSIGNMENT to the existing symbol, so a binding's TYPE IS FIXED AT FIRST DECLARATION: the " +
+      "rebind is refused (LL0200) whether or not anything depends on x. MEASURED: identical refusal " +
+      "with and without `double` present. That makes .delete the ONLY way to change a binding's " +
+      "type -- it is not a convenience, it is the escape hatch.\n" +
+      "        `line: 1` pins the remapping: in the assembled program this error is on line 5. The " +
+      "old REPL would have reported a line number in a temp file the user never saw.",
   },
   {
     name: ".delete unblocks a refused rebind",
@@ -325,7 +336,18 @@ function checkStep(e: Expect, res: ReplResult | { buffer: string }, bufKind?: st
             (r.diagnostics.map((d) => d.origin.kind).join(", ") || "(none)")
         );
       }
+      if (e.line !== undefined) {
+        const lines = r.diagnostics.map((d) => (d.origin as any).line);
+        if (!lines.includes(e.line)) {
+          bad.push(`expected the diagnostic on line ${e.line}, got ${lines.join(", ") || "(none)"}`);
+        }
+      }
     }
+    return bad;
+  }
+
+  // "it must no longer be X" is satisfied by a refusal or a throw -- both mean it is not X.
+  if (e.notValue !== undefined && (r.kind === "refused" || r.kind === "runtime-error")) {
     return bad;
   }
 
