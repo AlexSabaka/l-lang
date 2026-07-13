@@ -436,7 +436,17 @@ export interface CompoundAssignmentNode extends ASTNode<"compound-assignment"> {
 
 export interface IndexerNode extends ASTNode<"indexer"> {
   id: IdentifierNode;
+  /** The suffix chain, in source order. `xs[0].name` -> [[0], ["name"]]. */
   indices: ASTNode[][];
+  /**
+   * Parallel to `indices`: true where the suffix was written `.name` rather than `[expr]`.
+   *
+   * The two EMIT identically -- `obj.name` and `obj["name"]` are the same thing in JavaScript -- but
+   * they do not MEAN the same thing to D1, which rules that `(obj.m)` is always a CALL while
+   * `(obj["m"])` is a read. Erasing the distinction would silently turn every `(xs["key"])` into a
+   * call, which is the opposite of what D1 is for.
+   */
+  members?: boolean[];
 }
 
 export interface TryCatchNode extends ASTNode<"try-catch"> {

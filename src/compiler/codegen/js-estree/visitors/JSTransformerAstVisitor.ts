@@ -2290,12 +2290,37 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // Lists
   // =========================================================================
 
+  /**
+   * An indexer whose LAST suffix was written `.name` -- `gs[0].hi`, but not `gs[0]` and not
+   * `gs["hi"]`. See D1, and IndexerNode.members.
+   */
+  private isDottedMemberIndexer(node: ast.ASTNode): boolean {
+    if (node._type !== "indexer") return false;
+    const members = (node as ast.IndexerNode).members;
+    return !!members?.length && members[members.length - 1] === true;
+  }
+
   visitList(node: ast.ListNode): ESTree.Expression | ESTree.Statement {
     const nodes = Array.isArray(node.nodes) ? node.nodes : [node.nodes];
     if (nodes.length === 0) return ESTreeBuilder.literal(node, null);
     
     // Special case: single element that's NOT an identifier is just wrapped in parens (return it as-is)
-    if (nodes.length === 1 && nodes[0]._type !== "simple-identifier" && nodes[0]._type !== "composite-identifier") {
+    //
+    // ...unless it is a MEMBER access written with a dot. D1: `(obj.m)` is ALWAYS a call, and that
+    // does not stop being true because the object was reached through an index:
+    //
+    //     (gs[0].hi)      a call        -- exactly as `(g.hi)` is
+    //     (gs[0])         a read        -- there is no member
+    //     (gs["hi"])      a read        -- a string INDEX is not a member; D1 is about the `.m` form
+    //
+    // The `members` flag is what keeps those last two apart: they emit identical JavaScript, so the
+    // AST is the only place the distinction can live.
+    if (
+      nodes.length === 1 &&
+      nodes[0]._type !== "simple-identifier" &&
+      nodes[0]._type !== "composite-identifier" &&
+      !this.isDottedMemberIndexer(nodes[0])
+    ) {
       return this.visit(nodes[0]);
     }
 
@@ -2310,6 +2335,16 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     }
 
     const [head, ...rest] = nodes;
+
+    // D1, for an indexer head. Stated, not guessed: the heuristic below (`isKnownFunction ||
+    // isMethodCall`) exists because D1 had not landed, and D1's own note says it should be deleted
+    // rather than migrated. There is nothing to guess here -- the source said `.hi`, so it is a call.
+    if (this.isDottedMemberIndexer(head)) {
+      const callee = this.visit(head) as ESTree.Expression;
+      const args = rest.map((a) => this.visit(a) as ESTree.Expression);
+      return ESTreeBuilder.callExpression(node, callee, args);
+    }
+
     const isHeadIdentifier =
       head._type === "simple-identifier" ||
       head._type === "composite-identifier";

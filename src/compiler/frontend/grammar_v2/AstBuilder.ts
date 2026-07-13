@@ -146,10 +146,31 @@ export class LLangAstBuilder extends BaseCstVisitor {
     }
     if (ctx.identifier) {
       const id = this.visit(ctx.identifier[0]);
-      if (ctx.indexerSuffix && ctx.indexerSuffix.length > 0) {
-        const indices = ctx.indexerSuffix.map((s: any) => this.visit(s));
-        return this.makeNode("indexer", ctx, { id, indices });
+
+      // The suffix chain, IN SOURCE ORDER.
+      //
+      // The CST hands back `indexerSuffix` and `memberSuffix` as two FLAT arrays with no linkage
+      // between them, so `m.rows[0][1].v` would otherwise come back as "two indexes" and "one
+      // member" with no way to know the member came last. Offsets carry the order the arrays lose --
+      // the same trap as the `:extends`/`:implements` clauses in P7a.
+      const suffixes = [
+        ...(ctx.indexerSuffix ?? []).map((s: any) => ({ at: s.location.startOffset, cst: s, member: false })),
+        ...(ctx.memberSuffix ?? []).map((s: any) => ({ at: s.location.startOffset, cst: s, member: true })),
+      ].sort((a, b) => a.at - b.at);
+
+      if (suffixes.length > 0) {
+        // A MEMBER suffix is a computed index with a string key. `obj.name` and `obj["name"]` are the
+        // same thing in JavaScript, so no new AST shape is needed -- visitIndexer already emits
+        // exactly this. It is also what D13 requires of map keys: a string, never mangled.
+        const indices = suffixes.map((s) =>
+          s.member ? [this.visit(s.cst)] : this.visit(s.cst)
+        );
+        // Which suffixes were written `.name`. They emit identically to a string index, but D1 rules
+        // `(obj.m)` a CALL and `(obj["m"])` a read -- so the spelling has to survive.
+        const members = suffixes.map((s) => s.member);
+        return this.makeNode("indexer", ctx, { id, indices, members });
       }
+
       return id;
     }
     throw new Error(`Unknown primary expression: ${Object.keys(ctx)}`);
@@ -170,6 +191,11 @@ export class LLangAstBuilder extends BaseCstVisitor {
 
   indexerSuffix(ctx: any): ast.ASTNode[] {
     return ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
+  }
+
+  /** `.name` -- emitted as the STRING key of a computed access. See primaryExpr. */
+  memberSuffix(ctx: any): ast.StringNode {
+    return this.makeNode("string", ctx, { value: ctx.Identifier[0].image });
   }
 
   // ========================================================================

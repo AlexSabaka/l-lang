@@ -576,9 +576,32 @@ Assignable
   / Indexer
   / Identifier
 
+// An identifier followed by a SUFFIX CHAIN: `xs[0]`, `xs[0].name`, `m.rows[0][1].v`.
+//
+// This used to accept only `[...]` suffixes, so the `.name` of `xs[0].name` fell out and was parsed
+// as a HEADLESS composite-identifier (`.bar` is a legal form -- 05_matching.lisp pipes with
+// `(.apply evt)`). It became a separate argument: `console.log(xs[0], name)`, a ReferenceError at run
+// time with no diagnostic at all.
+//
+// A MEMBER suffix is a computed index with a string key -- `obj.name` and `obj["name"]` are the same
+// thing in JavaScript -- so no new AST shape is needed. But `members` records which suffixes were
+// written `.name`, because D1 rules `(obj.m)` a CALL and `(obj["m"])` a read, and they emit
+// identically: the AST is the only place that distinction can survive.
+IndexerSuffix
+  = "[" indices:Expression|1.., ","?| "]" {
+    return { member: false, values: indices };
+  }
+  / "." name:Ident {
+    return { member: true, values: [ makeNode("string", { value: name }) ] };
+  }
+
 Indexer
-  = id:Identifier indices:("[" @Expression|1.., ","?| "]")|1..| {
-    return makeNode("indexer", { id, indices })
+  = id:Identifier suffixes:IndexerSuffix|1..| {
+    return makeNode("indexer", {
+      id,
+      indices: suffixes.map(s => s.values),
+      members: suffixes.map(s => s.member),
+    })
   }
 
 

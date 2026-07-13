@@ -20,6 +20,7 @@ class LLangParser extends CstParser {
   primaryExpr: ParserMethod<[], CstNode>;
   assignmentOp: ParserMethod<[], CstNode>;
   indexerSuffix: ParserMethod<[], CstNode>;
+  memberSuffix: ParserMethod<[], CstNode>;
   comment: ParserMethod<[], CstNode>;
   nil: ParserMethod<[], CstNode>;
   boolean: ParserMethod<[], CstNode>;
@@ -200,13 +201,30 @@ class LLangParser extends CstParser {
         { ALT: () => this.SUBRULE(this.vector) },
         // Map: { ... }
         { ALT: () => this.SUBRULE(this.map) },
-        // Identifier with optional indexer. The GATE is load-bearing: see isAdjacentIndexer().
+        // An identifier followed by a SUFFIX CHAIN: `xs[0]`, `xs[0].name`, `m.rows[0][1].v`.
+        //
+        // The loop used to accept only `[...]`, so `.name` fell out of it and was parsed as a
+        // HEADLESS composite-identifier -- `.bar` is a legal form (05_matching.lisp pipes with
+        // `(.apply evt)`) -- which made it a separate argument. `xs[0].name` emitted
+        // `console.log(xs[0], name)`: the `.name` silently LOST, and a ReferenceError at run time
+        // with no diagnostic, because `name` is a perfectly good identifier that resolves to nothing.
+        //
+        // The GATEs are load-bearing, and adjacency is exactly the right discriminator for BOTH
+        // suffixes: `xs [0]` (spaced) is an identifier and a vector, `xs[0]` is an index; `foo .bar`
+        // (spaced) is an identifier and a headless member-ref, `foo.bar` is one name.
         {
           ALT: () => {
             this.SUBRULE(this.identifier);
             this.MANY({
-              GATE: () => this.isAdjacentLBracket(),
-              DEF: () => this.SUBRULE(this.indexerSuffix),
+              GATE: () => this.isAdjacentLBracket() || this.isAdjacentDot(),
+              DEF: () =>
+                this.OR2([
+                  {
+                    GATE: () => this.LA(1)?.tokenType === t.LBracket,
+                    ALT: () => this.SUBRULE(this.indexerSuffix),
+                  },
+                  { ALT: () => this.SUBRULE(this.memberSuffix) },
+                ]),
             });
           },
         },
@@ -255,6 +273,15 @@ class LLangParser extends CstParser {
     });
 
     // PEG: ("[" @Expression|1.., ","?| "]") -- at least one index, comma optional.
+    /**
+     * `.name` after an index or another member. NOT the same thing as `a.b`, which the lexer-level
+     * `compositeIdentifier` rule consumes whole -- this is the suffix that can follow a `[...]`.
+     */
+    this.memberSuffix = this.RULE("memberSuffix", () => {
+      this.CONSUME(t.Dot);
+      this.CONSUME(t.Identifier);
+    });
+
     this.indexerSuffix = this.RULE("indexerSuffix", () => {
       this.CONSUME(t.LBracket);
       this.AT_LEAST_ONE(() => {
@@ -1326,6 +1353,21 @@ class LLangParser extends CstParser {
    * the PEG lexes as one colon-bearing identifier. Whitespace anywhere means it is something else
    * (a modifier, or a map key), so all three tokens must be strictly adjacent.
    */
+  /**
+   * A `.` immediately after the token just consumed -- no whitespace.
+   *
+   * Same discriminator as isAdjacentLBracket, and for the same reason. `foo .bar` (spaced) is an
+   * identifier followed by a HEADLESS member-reference, which is a real form: 05_matching.lisp
+   * pipes with `(.apply evt1)`. `foo.bar` with no space is one thing.
+   */
+  private isAdjacentDot(): boolean {
+    const prev = this.LA(0); // last consumed token
+    const next = this.LA(1);
+    if (!prev || !next || next.tokenType !== t.Dot) return false;
+    if (typeof prev.endOffset !== "number" || typeof next.startOffset !== "number") return false;
+    return next.startOffset === prev.endOffset + 1;
+  }
+
   private isAdjacentQualifier(): boolean {
     const prev = this.LA(0); // the Identifier we just consumed
     const colon = this.LA(1);
