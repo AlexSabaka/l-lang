@@ -20,11 +20,15 @@
                 (console.log "[log] call:" args)
                 (original ...args))))
 
+    ;; `(get cache n)` asks whether the key is THERE; `cache[n]` asserts that it is. The indexer is
+    ;; partial after D9 and would throw on the first, uncached call. The write below stays a plain
+    ;; `cache[n] :=` -- a write CREATES -- and so does the final read, which runs only once the key
+    ;; is known to exist.
     (defmodifier memoized []
         (fn [original]
             (let cache {})
             (fn [n]
-                (if (== cache[n] nil)
+                (if (== (get cache n) nil)
                     (cache[n] := (original n)))
                 cache[n])))
 

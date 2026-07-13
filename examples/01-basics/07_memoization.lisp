@@ -8,9 +8,14 @@
     ;; Global memo cache
     (let memo {})
 
-    ;; Memoized Fibonacci function using simple statements
+    ;; Memoized Fibonacci function using simple statements.
+    ;;
+    ;; `(get memo n)` -- NOT `memo[n]` -- for the "is it cached?" question. The indexer is PARTIAL
+    ;; (D9): an absent key THROWS, because asking `c[k]` means asserting the thing is there. Asking
+    ;; whether it is there at all is what the TOTAL form, `get`, is for -- and it answers nil.
     (fn fib [n <- Int] -> Int
-        (if (!= memo[n] nil) (return memo[n]))
+        (let cached (get memo n))
+        (if (!= cached nil) (return cached))
         (if (<= n 1) 
             (memo[n] := n)
             (memo[n] := (+ (fib (- n 1)) (fib (- n 2))))

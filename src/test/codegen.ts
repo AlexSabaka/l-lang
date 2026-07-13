@@ -223,11 +223,14 @@ const CASES: Case[] = [
   },
   {
     name: "defmodifier: a memoizer memoizes BY DECLARATION, not by accident",
+    // `(get cache n)`, not `cache[n]`, for the "is it cached?" question -- the indexer is PARTIAL
+    // after D9f and an absent key THROWS. The WRITE stays a plain `cache[n] :=` (a write creates),
+    // and so does the final read, which happens only once the key is known to be there.
     source: `(defmodifier memoized []
   (fn [original]
     (let cache {})
     (fn [n]
-      (if (== cache[n] nil)
+      (if (== (get cache n) nil)
           (cache[n] := (original n)))
       cache[n])))
 (fn :memoized slow [n <- Int] -> Int (console.log "computing" n) (* n 2))

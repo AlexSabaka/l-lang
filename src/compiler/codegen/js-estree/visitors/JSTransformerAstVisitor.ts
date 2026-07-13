@@ -2575,7 +2575,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return {
       type: "AssignmentExpression",
       operator: "=",
-      left: this.visit(node.assignable) as ESTree.Pattern,
+      left: this.visitAssignmentTarget(node.assignable),
       right: this.visit(node.value) as ESTree.Expression,
       loc: ESTreeBuilder.loc(node),
     };
@@ -2587,15 +2587,31 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return {
       type: "AssignmentExpression",
       operator: node.operator.replace(":", "") as ESTree.AssignmentOperator,
-      left: this.visit(node.assignable) as ESTree.Pattern,
+      left: this.visitAssignmentTarget(node.assignable),
       right: this.visit(node.value) as ESTree.Expression,
       loc: ESTreeBuilder.loc(node),
     };
   }
 
-  visitIndexer(node: ast.IndexerNode): ESTree.MemberExpression {
-    let expr = this.visit(node.id) as ESTree.Expression;
+  /**
+   * The left-hand side of an assignment.
+   *
+   * An indexer READ is checked (D9f) and emits a `__ll_index(...)` CALL -- which cannot be assigned
+   * to. A WRITE must stay a bare member expression, and it must stay UNCHECKED: `(m["k"] := 1)` on an
+   * absent key CREATES it. That asymmetry is not an oversight, it is the point -- a read asks for
+   * something that is already there, a write puts it there. A write that refused to create would make
+   * building a map impossible, which is exactly what the memoizers do.
+   */
+  private visitAssignmentTarget(assignable: ast.ASTNode): ESTree.Pattern {
+    if (assignable._type === "indexer") {
+      return this.indexerMemberChain(assignable as ast.IndexerNode) as unknown as ESTree.Pattern;
+    }
+    return this.visit(assignable) as ESTree.Pattern;
+  }
 
+  /** The raw `a[b][c]` chain, with no bounds check. Shared by the read and write paths. */
+  private indexerMemberChain(node: ast.IndexerNode): ESTree.Expression {
+    let expr = this.visit(node.id) as ESTree.Expression;
     for (const indices of node.indices) {
       for (const idx of indices) {
         expr = ESTreeBuilder.memberExpression(
@@ -2606,8 +2622,37 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         );
       }
     }
+    return expr;
+  }
 
-    return expr as ESTree.MemberExpression;
+  /**
+   * `xs[0]`, `m["host"]`, `xs[0].name` -- a READ, and reads are PARTIAL (D9f).
+   *
+   * Every suffix goes through `__ll_index`, which throws IndexOutOfRange past the end of an array and
+   * KeyError on an absent key. It used to be a bare `a[b]`, so `xs[9999]` handed back `undefined`
+   * while the expression was typed `Int` -- a bottom value straight through a type that promises there
+   * is none. `T` cannot mean `T` while the commonest expression in the language lies about it.
+   *
+   * A dot suffix is checked identically, because under D1/P8b `xs[0].name` IS a computed index with a
+   * string key -- the same node, the same operation. Checking one and not the other would be
+   * incoherent.
+   *
+   * The total form is `(get c k)`, which answers nil.
+   */
+  visitIndexer(node: ast.IndexerNode): ESTree.Expression {
+    let expr = this.visit(node.id) as ESTree.Expression;
+
+    for (const indices of node.indices) {
+      for (const idx of indices) {
+        expr = ESTreeBuilder.callExpression(
+          node,
+          ESTreeBuilder.identifier(node, "__ll_index"),
+          [expr, this.visit(idx) as ESTree.Expression]
+        ) as ESTree.Expression;
+      }
+    }
+
+    return expr;
   }
 
   visitSpread(node: ast.SpreadNode): ESTree.SpreadElement {

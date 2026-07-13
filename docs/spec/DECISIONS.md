@@ -865,6 +865,42 @@ else — which is why the PEG's `TypeName` had to stop eating the whitespace in 
 suffixes. That single trailing `_` is also why the PEG could never gate its ARRAY suffix either
 (`Expr []` was an array type there and a vector VALUE in grammar_v2).
 
+### The indexer is PARTIAL; `get` is TOTAL (D9f)
+
+**`c[k]` asks for something that is THERE.** Absence is a bug, not a value, and a bug must be loud:
+`xs[9999]` throws IndexOutOfRange, `m["absent"]` throws KeyError. **`(get c k)` is the total form** and
+answers nil. One rule, both containers.
+
+This closes the last hole in "non-nullable by default". `xs[i]` was typed `Int` and handed back
+`undefined` for an out-of-range index — a bottom value straight through a type that promises there
+isn't one. **The type system cannot be honest while the commonest expression in the language lies.**
+
+Arrays and maps answer differently *on purpose*, and that asymmetry is what makes a second bottom
+value unnecessary — which was the question that opened this ruling. An out-of-range **index** is a
+defect (you computed it). An absent **key** is ordinary control flow ("is this configured?"). So:
+
+> **absent → throws. present-but-nil → nil.** The `null`/`undefined` distinction survives, as *control
+> flow* rather than as a second value nobody can tell apart.
+
+A **write is unchecked**: `(m["k"] := 1)` on an absent key CREATES it. A read asserts the thing is
+there; a write puts it there. A write that refused to create would make building a map impossible.
+
+**This is what gives `T?` a PRODUCER.** `(get c k)`, `(elem xs i)` and `(head xs)` are typed `T?` —
+before them, an optional could only ever arise where a programmer typed a `?` by hand, LL0205 would
+have had nothing to catch, and the whole feature would have shipped inert while every test passed.
+
+```lisp
+(let xs <- Int[] [1 2 3])
+(let a <- Int xs[0])         ;; Int   -- partial, and honest: it throws rather than lying
+(let b <- Int (get xs 0))    ;; LL0200: cannot assign Int? to Int
+(let c <- Int (head xs))     ;; LL0200 -- the lie DECISIONS.md:84 flagged, finally typed
+```
+
+**The corpus told us the ruling was right.** Every file that broke was a *memoizer*, and every one
+broke on the same line — `(!= memo[n] nil)`, an ABSENCE CHECK written as an assertion that the thing
+is present. That is precisely the confusion the partial/total split exists to end. They now ask
+`(get memo n)`. Three are passing goldens whose output did **not** move.
+
 ### PEG: `void` the spelling vs `Void` the type
 
 The PEG's `NilKw` was `"void"i` — **case-insensitive** — so `Void`, the return TYPE used across

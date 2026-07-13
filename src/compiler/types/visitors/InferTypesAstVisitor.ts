@@ -1063,6 +1063,50 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     return (this as any)[methodName]?.(node) ?? node;
   }
 
+  /** What you get OUT of a container: a map's value type, or an array's element type. */
+  private containerElementType(container: InferredType): InferredType | undefined {
+    if (!container) return undefined;
+    if (container.kind === "map") return container.valueType;
+    if (
+      container.isArray ||
+      (container.kind === "generic" && container.name === "Array")
+    ) {
+      return container.inner ?? container.generics?.[0];
+    }
+    return undefined;
+  }
+
+  /**
+   * `(get c k)`, `(elem xs i)`, `(head xs)` -- the TOTAL container accessors, and the only things in
+   * the language that PRODUCE a `T?` (D9f).
+   *
+   * This is what stops optionals shipping inert. `c[k]` is partial and yields a plain `T`, so before
+   * this an optional could only ever arise where a programmer typed a `?` by hand -- and LL0205 would
+   * have had nothing to catch. `head` is the canonical case: DECISIONS.md:84 flagged it years before
+   * this phase ("optionals, so `first`/`last` can be typed honestly").
+   *
+   * A user-defined `get` still wins: these are runtime helpers, not keywords, and shadowing one is
+   * the programmer's business.
+   *
+   * An unknown container gives `Unknown`, not `Unknown?` -- gradual typing has to keep holding. We do
+   * not know what is in an untyped `{}`, and refusing to unwrap a value we cannot type would turn the
+   * feature into noise on exactly the code that is least annotated.
+   */
+  private inferTotalAccessorType(
+    funcName: string,
+    args: ast.ASTNode[]
+  ): InferredType | undefined {
+    if (funcName !== "get" && funcName !== "elem" && funcName !== "head") return undefined;
+    if (this.symbolTable.resolveSymbol(funcName)) return undefined;
+    if (!args.length) return undefined;
+
+    const container = this.inferExpressionType(args[0] as any);
+    const element = this.containerElementType(container);
+    if (!element || TypeChecker.isUnknown(element)) return TypeEnvironment.unknown();
+
+    return TypeEnvironment.optional(element);
+  }
+
   /**
    * The type checker had never looked inside a loop body, a match arm, or a try block.
    *
@@ -1844,6 +1888,13 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           const funcName = (firstNode as ast.IdentifierNode).id;
           const funcType = this.typeEnv.resolveIdentifier(funcName);
 
+          // The TOTAL container accessors are the ONLY things in the language that PRODUCE a `T?`.
+          const totalAccessor = this.inferTotalAccessorType(funcName, listNode.nodes.slice(1));
+          if (totalAccessor) {
+            inferredType = totalAccessor;
+            break;
+          }
+
           // OPERATORS FIRST -- before the plain-function branch below.
           //
           // A user-defined overload (`(fn :operator + [c1 <- Complex, c2 <- Complex] -> Complex)`)
@@ -2006,18 +2057,13 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       case "indexer": {
         const indexerNode = node as ast.IndexerNode;
         const containerType = this.inferExpressionType(indexerNode.id as any);
-        
-        // Determine the element type based on container type
-        if (containerType.kind === "map") {
-          // Map indexing returns the value type
-          inferredType = containerType.valueType ?? TypeEnvironment.unknown();
-        } else if (containerType.isArray || (containerType.kind === "generic" && containerType.name === "Array")) {
-          // Array indexing returns the element type
-          inferredType = containerType.inner ?? containerType.generics?.[0] ?? TypeEnvironment.unknown();
-        } else {
-          // Unknown container type
-          inferredType = TypeEnvironment.unknown();
-        }
+
+        // NOT optional, deliberately (D9f). `c[k]` is PARTIAL: it asserts the thing is there, and
+        // throws if it is not. That is what lets `xs[i]` be a plain `Int` and stay honest -- it used
+        // to be a plain `Int` that handed back `undefined`, which is a hole straight through the type
+        // system. The question "is it there?" is asked with the TOTAL form, `(get c k)`, below.
+        inferredType =
+          this.containerElementType(containerType) ?? TypeEnvironment.unknown();
         break;
       }
 

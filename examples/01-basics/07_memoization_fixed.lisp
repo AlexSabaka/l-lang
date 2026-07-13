@@ -12,9 +12,11 @@
     (fn make-memoized [base-fn]
         (let memo {})
         (fn memoized-wrapper [n <- Int] -> Int
-            ;; Check cache
-            (if (!= memo[n] nil)
-                (return memo[n])
+            ;; Check cache. `get` is TOTAL and answers nil; the indexer is PARTIAL and would throw
+            ;; on an absent key (D9) -- which, on a cache, is the whole point of asking.
+            (let cached (get memo n))
+            (if (!= cached nil)
+                (return cached)
             )
             (let result (base-fn n))
             ;; Cache result

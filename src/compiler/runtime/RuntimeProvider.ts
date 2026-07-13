@@ -41,6 +41,34 @@ function __ll_deep_eq(a, b) {
   for (const k of keysA) if (!keysB.includes(k) || !__ll_deep_eq(a[k], b[k])) return false;
   return true;
 }
+// The INDEXER is PARTIAL (D9). \`c[k]\` asks for something that is THERE; absence is a bug, not a
+// value, and a bug must be loud. \`(get c k)\` is the total form and answers nil.
+//
+// This is what closes the last hole in "non-nullable by default": \`xs[i]\` is typed \`Int\` and used to
+// hand back \`undefined\` for an out-of-range index -- a bottom value straight through a type that
+// promises there isn't one. The type system cannot be honest while the most common expression in the
+// language lies.
+//
+// Arrays and maps answer differently ON PURPOSE, and it is the distinction that makes a second bottom
+// value unnecessary: an out-of-range INDEX is a defect (you computed it), while an absent KEY is
+// ordinary control flow ("is this configured?"). The first throws; the second is what \`get\` is for.
+function __ll_index(obj, key) {
+  if (obj == null) throw new TypeError('cannot index into nil');
+  if (Array.isArray(obj) || typeof obj === 'string') {
+    const i = typeof key === 'number' ? key : Number(key);
+    if (!Number.isInteger(i) || i < 0 || i >= obj.length) {
+      throw new RangeError('IndexOutOfRange: ' + String(key) + ' (length ' + obj.length + ')');
+    }
+    return obj[i];
+  }
+  if (typeof obj === 'object' || typeof obj === 'function') {
+    // \`in\`, not \`hasOwnProperty\`: a method lives on the prototype, and a class instance must be able
+    // to reach its own methods and its inherited fields.
+    if (!(key in obj)) throw new Error('KeyError: ' + String(key));
+    return obj[key];
+  }
+  return obj[key];
+}
 function __ll_format_object(obj) { return _util.formatWithOptions({ depth: null, colors: false }, obj !== undefined && obj !== null ? obj : ""); }
 const __ll_op_registry = {
   operators: {},
@@ -254,7 +282,12 @@ function __ll_is_type(val, type) {
     // List/Vector Ops
     "set!": `const ${encodeIdentifier('set!')} = (obj, key, val) => { obj[key] = val; return val; };`,
     "set?": `const ${encodeIdentifier('set?')} = (obj, key) => { return obj[key] !== undefined && obj[key] !== null; };`,
-    "get": `const get = (obj, key) => obj[key];`,
+    // TOTAL, and the counterpart to the partial `c[k]` (D9). This is the ONLY way to ask "is it
+    // there?", and it is what gives `T?` a PRODUCER: without it an optional would only ever arise
+    // where someone typed a `?`, and the forced unwrap would have nothing to catch.
+    //
+    // `?? null`, not `|| null`: a stored `0`, `""` or `false` is a VALUE and must come back as itself.
+    "get": `const get = (obj, key) => obj?.[key] ?? null;`,
     // D9: `head []` returned THE ARRAY ITSELF -- so `(head [])` was `[]`, and asking "did I get
     // anything?" was unanswerable. It is nil. DECISIONS.md:84 cites exactly this ("optionals, so
     // `first`/`last` can be typed honestly") as why D9 must precede a typed stdlib: `head` is the
@@ -265,7 +298,9 @@ function __ll_is_type(val, type) {
     // `=== undefined` was blind to null -- so `(empty nil)` was FALSE, and once nil is `null` (D9c)
     // it would have been blind to every bottom value the language emits.
     "empty": `const empty = (a) => a == null || (Array.isArray(a) && a.length === 0);`,
-    "elem": `const elem = (a, i) => a[i];`,
+    // Total, like `get`. It was `a[i]`, which hands back `undefined` for a miss -- and `undefined` is
+    // no longer a value this language has.
+    "elem": `const elem = (a, i) => a?.[i] ?? null;`,
     "cons": `const cons = (...args) => args.reduce((acc, curr) => Array.isArray(curr) ? [...acc, ...curr] : [...acc, curr], []);`,
     "list": `const list = (...args) => [...args];`,
 
