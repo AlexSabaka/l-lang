@@ -325,6 +325,108 @@ const CASES: Case[] = [
     expect: ["Hello, Sloth!"],
     wasBroken: "not broken -- a guard. `'\"` is a formatted-string, split from `'` by a negative lookahead",
   },
+
+  // ===============================================================================================
+  // P8 -- PAPERCUTS. Ordinary code that silently does the wrong thing.
+  // ===============================================================================================
+
+  // --- Member access AFTER an indexer. `primaryExpr` is `identifier indexerSuffix*` -- there is no
+  // member access afterwards -- so `.name` falls out of the loop and parses as a HEADLESS
+  // composite-identifier (`.bar` is a legal form), becoming its own argument. ---
+  {
+    name: "indexer then member: xs[0].name",
+    source: `(let xs [{ :name "a" } { :name "b" }])
+(console.log xs[1].name)`,
+    expect: ["b"],
+    wasBroken:
+      "emitted `console.log(xs[1], name)` -- the `.name` was LOST -> ReferenceError, zero diagnostics",
+  },
+  {
+    name: "indexer then member, chained: a.b[0].c",
+    source: `(let obj { :items [{ :label "x" }] })
+(console.log obj.items[0].label)`,
+    expect: ["x"],
+    wasBroken: "the `.label` was lost the same way; reaching into any nested structure hits this",
+  },
+  {
+    name: "member, indexer, indexer, then member",
+    source: `(let m { :rows [[{ :v 10 } { :v 20 }]] })
+(console.log m.rows[0][1].v)`,
+    expect: ["20"],
+    // An index CHAIN already worked (`m.rows[0][1]`); it is a MEMBER after an index that is lost.
+    // This case has to end on the member, or it passes vacuously.
+    wasBroken: "the trailing `.v` was lost -- index chains worked, a member after an index did not",
+  },
+  {
+    name: "(obj.m) is still a CALL, not a member read (D1)",
+    source: `(defclass Greeter (fn hi [] -> String (return "hi")))
+(let gs [(Greeter)])
+(console.log (gs[0].hi))`,
+    expect: ["hi"],
+    wasBroken: "not broken -- a guard. D1: `(obj.m)` is ALWAYS a call; bare `obj.m` is the read",
+  },
+
+  // --- The implicit return, lost when a body is ONE parenthesized block. ---
+  {
+    name: "implicit return: a single-block body returns its last expression",
+    source: `(fn f [n <- Int] -> Int ((console.log "side") (* n 2)))
+(console.log (f 4))`,
+    expect: ["side", "8"],
+    wasBroken:
+      "returned undefined. The identical multi-item body -- `(fn f [n] (log) (* n 2))` -- returned 8",
+  },
+  {
+    name: "implicit return: the two spellings AGREE",
+    source: `(fn block-body [n <- Int] -> Int ((let d (* n 2)) (+ d 1)))
+(fn multi-body [n <- Int] -> Int (let d (* n 2)) (+ d 1))
+(console.log (block-body 4) (multi-body 4))`,
+    expect: ["9 9"],
+    // The block must hold MORE THAN ONE item, or it passes vacuously: `visitList` returns a lone
+    // statement as itself (an expression), so a one-item block `((* n 2))` already returned fine.
+    // Only a multi-item block emits a BlockStatement, which is what drops the value.
+    wasBroken: "the same program, two spellings, two different answers: undefined and 9",
+  },
+  {
+    name: "implicit return: an explicit return still wins",
+    source: `(fn f [n <- Int] -> Int ((return (* n 3)) (* n 2)))
+(console.log (f 4))`,
+    expect: ["12"],
+    wasBroken: "guards the fix -- adding an implicit return must not override an explicit one",
+  },
+
+  // --- `fn` parameter defaults. ParameterNode has no default slot AT ALL. ---
+  {
+    name: "fn parameter defaults",
+    source: `(fn greet [name <- String "World"] -> String (+ "Hello, " name))
+(console.log (greet))
+(console.log (greet "Sloth"))`,
+    expect: ["Hello, World", "Hello, Sloth"],
+    wasBroken: "unparseable -- `ast.ParameterNode` has no slot for a value, so it could not be said",
+  },
+  {
+    name: "fn parameter defaults: default before required is LL0102",
+    source: `(fn f [a <- Int 1 b <- Int] -> Int (+ a b))
+(console.log (f 1 2))`,
+    expectDiagnostic: /LL0102/,
+    wasBroken:
+      "the same trap as a ctor's: `f(a = 1, b)` can only be called as f(1, 2), so the default is unreachable",
+  },
+
+  // --- String keys in map literals. `keyValue` requires a leading colon. ---
+  {
+    name: "map literal: bare string keys",
+    source: `(let config {"host" "localhost" "port" 8080})
+(console.log config["host"] config["port"])`,
+    expect: ["localhost 8080"],
+    wasBroken: "parse error -- the `keyValue` rule required a leading colon. This blocks 02_maps.lisp",
+  },
+  {
+    name: "map literal: :keyword keys still unmangled (D13)",
+    source: `(let m { :my-key 1 })
+(console.log (JSON.stringify m))`,
+    expect: ['{"my-key":1}'],
+    wasBroken: "not broken -- a guard. Adding a string-key form must not disturb the colon form",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------
