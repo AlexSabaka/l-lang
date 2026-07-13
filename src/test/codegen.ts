@@ -1021,6 +1021,100 @@ const CASES: Case[] = [
       "`this` IS the caller's struct. Under pass-by-value a mutating operator is incoherent -- in C# an " +
       "operator is static and takes its operands by value. 07_structs does exactly this",
   },
+
+  // ===============================================================================================
+  // W -- four silent wrong answers. Programs that compile clean and do the wrong thing.
+  // ===============================================================================================
+
+  // --- Destructuring binds by reference. The hole value semantics left behind. -------------------
+  {
+    name: "destructuring COPIES a struct",
+    source: `(defstruct P (mut :ctor x <- Int 0))
+(let ps [(P 1) (P 2)])
+(let [a b] ps)
+(a.x := 99)
+(console.log ps[0].x a.x)`,
+    expect: ["1 99"],
+    wasBroken:
+      "`99 99`. Value semantics copies at every inflow EXCEPT this one: visitVariable wraps the " +
+      "initializer in __ll_copy, but for a destructuring binding the initializer is the ARRAY -- which " +
+      "carries no struct marker, so the copy is a no-op that LOOKS like a fix and passes review",
+  },
+  {
+    name: "destructuring in `for :each` COPIES too",
+    source: `(defstruct P (mut :ctor x <- Int 0))
+(let pairs [[(P 1) (P 2)]])
+(for :each [a b] :from pairs :then (a.x := 99))
+(console.log pairs[0][0].x)`,
+    expect: ["1"],
+    wasBroken: "`99` -- the same hole, reached through the loop's pattern binding",
+  },
+
+  // --- A compound assignment never reaches the operator shim. -------------------------------------
+  {
+    name: "`+=` finds the operator overload",
+    source: `(defstruct C (let :ctor r <- Int 0))
+(fn :operator + [a <- C b <- C] -> C (return (C (+ a.r b.r))))
+(mut z (C 1))
+(z += (C 2))
+(console.log z.r)`,
+    expect: ["3"],
+    wasBroken:
+      "`undefined`. visitCompoundAssignment emits `node.operator.replace(':', '')` -- raw JS `z += ...` " +
+      "-- which never touches the `+` shim, so no overload is ever found. On a struct that is " +
+      "object + object: `[object Object][object Object]`, or undefined",
+  },
+  {
+    name: "`+=` on a number still works (guard)",
+    source: `(mut n 1)
+(n += 2)
+(console.log n)`,
+    expect: ["3"],
+    wasBroken: "not broken -- a guard. Desugaring `+=` must not break the arithmetic it already does",
+  },
+  {
+    name: "`:=` is still a plain assignment (guard)",
+    source: `(mut n 1)
+(n := 2)
+(console.log n)`,
+    expect: ["2"],
+    wasBroken: "not broken -- a guard. `:=` maps to `=` and must NOT be desugared through an operator",
+  },
+
+  // --- A two-parameter :operator METHOD is dead code. ---------------------------------------------
+  {
+    name: "a 2-param :operator METHOD is refused",
+    source: `(defstruct V (let :ctor x <- Int 0)
+  (fn :operator + [u <- V v <- V] -> V (return (V (+ u.x v.x)))))`,
+    expectDiagnostic: /LL0208/,
+    wasBroken:
+      "compiled, emitted `+_2` (name + arity), and was NEVER CALLED -- the runtime shim probes `+_1`. " +
+      "Dead code, silently. Inside a type an operator takes ONE parameter, because `this` IS the left " +
+      "operand; a two-param method leaves `this` bound and meaningless. The arity suffix itself cannot " +
+      "just be dropped -- 08_operators declares both `- [other]` and `- []`, which would collide",
+  },
+  {
+    name: "a 1-param :operator METHOD still works (guard)",
+    source: `(defstruct C (let :ctor r <- Int 0)
+  (fn :operator + [other <- C] -> C (return (C (+ this.r other.r)))))
+(let z (+ (C 1) (C 2)))
+(console.log z.r)`,
+    expect: ["3"],
+    wasBroken:
+      "not broken -- a guard, and the form std/math and 08_operators actually use. `this` is the left " +
+      "operand; the method emits `+_1`, which is what the shim probes",
+  },
+  {
+    name: "a top-level 2-param operator still works (guard)",
+    source: `(defstruct C (let :ctor r <- Int 0))
+(fn :operator + [a <- C b <- C] -> C (return (C (+ a.r b.r))))
+(let z (+ (C 1) (C 2)))
+(console.log z.r)`,
+    expect: ["3"],
+    wasBroken:
+      "not broken -- a guard, and the form 06_structs, 09_operators and 10_value_semantics use. It " +
+      "registers in __ll_op_registry. LL0208 must refuse the METHOD form and leave this one alone",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

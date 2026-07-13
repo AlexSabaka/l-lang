@@ -382,6 +382,102 @@ const CASES: Case[] = [
       };
     },
   },
+
+  // -----------------------------------------------------------------------------------------------
+  // OPERATOR OVERLOADS ACROSS A MODULE BOUNDARY.
+  //
+  // `visitIdentifier` checks IMPORT before RUNTIME and RETURNS, so an imported `+` is inlined like any
+  // ordinary function. Nothing in the corpus imports a top-level operator, which is exactly why this
+  // has never been caught -- std/math declares its operators as one-param METHODS, so there is no
+  // module-scope symbol named `+` in it at all.
+  // -----------------------------------------------------------------------------------------------
+  {
+    name: "an imported top-level operator overload is CALLED, not inlined into itself",
+    why:
+      "The import check runs before the runtime check and returns, so `+` at the call site resolves " +
+      "to the IMPORTED SYMBOL and gets inlined. Then, re-visiting the operator's own body, " +
+      "`(+ a.amount b.amount)` -- adding two Ints -- hits the same memo key and compiles to a call to " +
+      "THE FUNCTION CURRENTLY BEING DEFINED. It crashes: TypeError: Cannot read properties of " +
+      "undefined (reading 'amount'). Two silent consequences too: `+` never reaches " +
+      "inlineStandardSymbols, so the `+` SHIM IS NEVER EMITTED; and the registration block is reached " +
+      "with the CALL SITE's scope depth, so __ll_op_registry.register is never emitted either.",
+    run: () => {
+      const entry = fixture(
+        "imported-operator",
+        {
+          "lib.lisp":
+            `(\n` +
+            `  (defstruct Money (let :ctor amount <- Int 0))\n` +
+            `  (fn :operator + [a <- Money b <- Money] -> Money\n` +
+            `      (return (Money (+ a.amount b.amount))))\n` +
+            `  (export Money)\n` +
+            `)\n`,
+          "main.lisp":
+            `(\n` +
+            `  (import "lib.lisp")\n` +
+            `  (let total (+ (Money 3) (Money 4)))\n` +
+            `  (console.log total.amount)\n` +
+            `  (console.log (+ 1 2))          ;; plain Ints must still add\n` +
+            `)\n`,
+        },
+        "main.lisp"
+      );
+      const out = build(entry);
+
+      if (!out.compiled) return { ok: false, detail: "did not compile" };
+      if (out.runtimeError) return { ok: false, detail: `runtime: ${out.runtimeError}` };
+      if (out.stdout !== "7\n3") {
+        return { ok: false, detail: `expected "7\\n3", got ${JSON.stringify(out.stdout)}` };
+      }
+
+      // Output alone is not enough. Assert the SHAPE: the operator must be reached through the shim's
+      // registry, and the operator's own body must NOT call itself.
+      const code = out.code ?? "";
+      const registered = /__ll_op_registry\.register\(\s*["']\+["']/.test(code);
+      if (!registered) {
+        return { ok: false, detail: "the imported operator was never registered with __ll_op_registry" };
+      }
+
+      return { ok: true, detail: "the imported operator is registered and dispatched, not self-inlined" };
+    },
+  },
+
+  {
+    name: "an imported ONE-PARAM METHOD operator still works (guard)",
+    why:
+      "Not broken -- a GUARD, and the shape of the only passing golden that exercises this " +
+      "(complex_math_test, which imports std/math). Its operators are one-param METHODS, so there is " +
+      "no module-scope `+` symbol and the import check never fires. The fix must not disturb it.",
+    run: () => {
+      const entry = fixture(
+        "imported-method-operator",
+        {
+          "lib.lisp":
+            `(\n` +
+            `  (defstruct Money\n` +
+            `    (let :ctor amount <- Int 0)\n` +
+            `    (fn :operator + [other <- Money] -> Money\n` +
+            `        (return (Money (+ this.amount other.amount)))))\n` +
+            `  (export Money)\n` +
+            `)\n`,
+          "main.lisp":
+            `(\n` +
+            `  (import "lib.lisp")\n` +
+            `  (let total (+ (Money 3) (Money 4)))\n` +
+            `  (console.log total.amount)\n` +
+            `)\n`,
+        },
+        "main.lisp"
+      );
+      const out = build(entry);
+
+      if (!out.compiled) return { ok: false, detail: "did not compile" };
+      if (out.runtimeError) return { ok: false, detail: `runtime: ${out.runtimeError}` };
+      return out.stdout === "7"
+        ? { ok: true, detail: "an imported one-param method operator dispatches through `_1`" }
+        : { ok: false, detail: `expected "7", got ${JSON.stringify(out.stdout)}` };
+    },
+  },
 ];
 
 function main() {
