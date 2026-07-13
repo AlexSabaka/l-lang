@@ -840,7 +840,45 @@ would have fixed nothing:
 constraint (`:where T :inherits Base`). The grammar has always agreed with D11 — it was the README and
 the reference doc that taught the wrong word, and they are corrected.
 
-### Deferred: `defstruct` by-copy value semantics
+### `defstruct` by-copy value semantics — SHIPPED
+
+**A struct is copied when it moves; a class is shared.** `visitStruct` was literally `return
+this.visitClass(node)`, so `(mut b a) (b.x := 99)` silently changed `a`.
+
+**A copy is MEMBERWISE, recursing into struct-typed fields; reference types are SHARED** (arrays,
+maps, class instances). The C# rule, and what a native struct lowers to: the struct's own storage is
+copied, and a field holding a pointer copies the pointer.
+
+> **The corpus could not see this phase, and could not see the way it would go wrong.** Every passing
+> struct golden has **all-primitive fields**. A *shallow* copy gives correct value semantics for
+> exactly that set and silently keeps aliasing everything else — it would have passed all 68 tests.
+> The gate's nested-struct case is the only thing in the tree that can tell the two apart, and it was
+> written before a line of the implementation.
+
+**COPY-ON-ENTRY, not copy-on-call.** A parameter *prologue* (`p = __ll_copy(p)`) rather than a wrap
+around every call argument. It is one site per *function* instead of N per *call site* — and it is the
+only one that works at all for operators: the runtime shim routes `(+ c1 c2)` through `c1['+_1'](c2)`,
+so the argument never passes through a call the code generator can see.
+
+**`this` is never copied.** It is the receiver, not a parameter. It must not be: construct-mutate-return
+is the corpus's only way to build a struct (~30 sites), and copying the receiver makes every one of
+them silently return an unmutated value.
+
+**The marker is `static __ll_struct = true`, intrinsic to the class.** Not `__ll_type_metadata` — which
+already records `kind: 'struct'` and is the obvious choice — because it is conditional on
+`includeRuntimeShim` *and* the import inliner **renames** structs (`class inlined_Vector3_7`), so any
+name-keyed lookup silently misses **every imported struct**.
+
+### LL0207 — a struct `:operator` may not mutate `this`
+
+A struct is passed by value, so an operator receives copies. In C# an operator is `static` for exactly
+this reason: `a * b` cannot mutate `a`. A mutating operator is not discouraged — it is **not coherent**.
+
+And it does not merely fail; it **escapes**. The runtime routes `(* w 2)` to `w['*_1'](2)`, so `this`
+*is* the caller's struct, and copy-on-entry cannot reach it because the receiver is not a parameter.
+Build a new value and return it — which is what the whole corpus already does.
+
+### Deferred (superseded): the original by-copy plan
 
 Not a fix — a **from-scratch feature**, and its own phase. There is no clone helper, no value-type
 marker, and codegen has **no per-node type information at all** (`typeEnv` is a dead local at
@@ -1105,6 +1143,24 @@ It is the only one of the four papercuts that adds a FEATURE rather than fixing 
   because `__ll_match_list` does `if (pattern === null) continue`" — which is *true of the shim text*
   and **cannot fire**. Read from the source it looked live; built as a test case, it did not exist.
   Fixing it would have been indistinguishable, in the commit log, from fixing something.
+
+- **`__ll_is_type` and the operator registry are keyed on `constructor.name`** — and the import inliner
+  **renames** structs (`class inlined_Vector3_7`). So a free-operator overload is **already broken** for
+  every imported struct today. Found while choosing the value-type marker; `std/math` escapes it only
+  because its operators are declared at top level and reach the registry by a different path.
+
+- **An `:operator` METHOD with two parameters is never called.** A method is emitted as `+_2` (name +
+  arity) but the runtime shim looks for `+_1`, so a two-operand operator declared *inside* a struct or
+  class body is dead code, silently. The corpus declares its operators at top level, which is why
+  nothing has noticed.
+
+- **DESTRUCTURING binds by reference.** `(let [a b] structs)` and `(for :each [a b] :from pts)` bind
+  through a pattern, so the value copied is the *array* — which carries no marker, making the copy a
+  no-op and leaving the elements aliased. Needs a per-bound-name copy inside the pattern.
+
+- **An identifier beginning with TWO underscores does not lex.** `_foo` and `a_b` are fine; `__bar` is a
+  parse error. `Underscore` is `/_(?![a-zA-Z0-9])/` and `_` is not in that lookahead class, so the first
+  `_` of `__` matches the standalone-underscore token. One character to fix.
 
 - **A method call on a PARENTHESISED expression emits invalid JavaScript** (LL0101). `((Dog).speak)`,
   `(type p).kind`. Loud, not silent. Bind to a `let` first.

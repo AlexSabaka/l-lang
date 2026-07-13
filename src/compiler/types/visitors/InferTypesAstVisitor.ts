@@ -1953,10 +1953,88 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     }
   }
 
+  /**
+   * Does this subtree assign to a member of `this`?
+   *
+   * Both `(this.n := 1)` and `(this.bytes[0] := 1)` count -- the second is an INDEXER whose head is a
+   * `this` path, and it is the form 07_structs actually uses, so checking only the plain member form
+   * would have found nothing.
+   */
+  private assignsToThis(node: ast.ASTNode | undefined): boolean {
+    if (!node || typeof node !== "object") return false;
+
+    if (node._type === "simple-assignment" || node._type === "compound-assignment") {
+      const target: any = (node as ast.SimpleAssignmentNode).assignable;
+      const base: string | undefined =
+        target?._type === "indexer"
+          ? (target.id?.id ?? target.id?.name)
+          : (target?.id ?? target?.name);
+      if (typeof base === "string" && (base === "this" || base.startsWith("this."))) {
+        return true;
+      }
+    }
+
+    for (const key of Object.keys(node)) {
+      if (key === "_parent" || key === "_location") continue;
+      const child = (node as any)[key];
+      if (Array.isArray(child)) {
+        if (child.some((c) => this.assignsToThis(c))) return true;
+      } else if (child && typeof child === "object" && (child as any)._type) {
+        if (this.assignsToThis(child)) return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * LL0207 -- a struct `:operator` may not mutate `this`.
+   *
+   * A struct is a VALUE TYPE (D11), so an operator receives its operands BY VALUE. In C# an operator
+   * is `static` for exactly this reason: `a * b` cannot mutate `a`, because `a` was copied on the way
+   * in. A mutating operator is not a feature that is merely discouraged -- it is not a coherent thing
+   * to write.
+   *
+   * And it does not merely not-work; it ESCAPES. The runtime routes `(* w 2)` to `w['*_1'](2)`, so
+   * `this` inside the method IS the caller's struct -- copy-on-entry cannot reach it, because the
+   * receiver is not a parameter. Without this diagnostic the mutation silently lands on the original,
+   * which is the exact failure value semantics exists to prevent.
+   *
+   * The whole corpus already complies: Complex and Vector3 build a FRESH result and return it. Only
+   * `07_structs` violates it, and that file is unblockable anyway (a `..` range operator neither
+   * frontend has).
+   */
+  private checkStructOperatorsArePure(node: ast.StructNode): void {
+    const structName = ast.symbolName(node.name);
+
+    for (const item of node.body ?? []) {
+      const target = ast.isListNode(item) && item.nodes.length ? item.nodes[0] : item;
+      if (target._type !== "function") continue;
+
+      const fn = target as ast.FunctionNode;
+      const isOperator = (fn.modifiers ?? []).some(
+        (m: any) => m.modifier === "operator" || m.modifier === ":operator"
+      );
+      if (!isOperator) continue;
+
+      if (fn.body?.some((b) => this.assignsToThis(b))) {
+        this.reportTypeError(
+          fn,
+          "LL0207",
+          `An operator on the value type '${structName}' may not mutate 'this'. A struct is passed ` +
+            `BY VALUE, so the mutation would escape to the caller's struct. Build a new ` +
+            `'${structName}' and return it instead.`
+        );
+      }
+    }
+  }
+
   visitStruct(node: ast.StructNode) {
+    this.checkStructOperatorsArePure(node);
+
     // Similar to visitTypeDef, resolve any type references in struct members
     const structName = ast.symbolName(node.name);
-    
+
     const registeredType = this.typeEnv.resolveIdentifier(structName);
     
     if (registeredType && registeredType.kind === "struct" && registeredType.members) {

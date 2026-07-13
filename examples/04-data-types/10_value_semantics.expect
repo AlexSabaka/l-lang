@@ -1,0 +1,13 @@
+--- struct copies, class aliases ---
+struct  p1.x: 1  p2.x: 99
+class   n1: changed  n2: changed
+--- passed by value ---
+returned: 105  caller's x is still: 5
+--- what a copy copies ---
+struct field a.start.x: 0   (b's change did not reach it)
+array  field a.tags:   [ 'red', 'blue' ]   (b's push DID reach it -- a reference is shared)
+--- collections hold copies ---
+saved[0].x: 0  origin.x: 42
+after the loop: 1 2
+--- a pure operator ---
+v1 + v2 = 11 22    (v1 is untouched: 1 2 )

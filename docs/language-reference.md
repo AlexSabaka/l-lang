@@ -212,9 +212,9 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 (deftype UserId Int)
 (let uid (as UserId 123))
 
-;; Struct
+;; Struct -- a VALUE type
 (defstruct Person
-    (let :stor name <- String)
+    (let :ctor name <- String)
     (let :ctor age <- Int)
 )
 
@@ -224,6 +224,43 @@ Complete API reference for the **l-lang** standard library and compiler introspe
     Inactive
     Pending)
 ```
+
+#### `defstruct` is a VALUE type; `defclass` is a REFERENCE type
+
+This is the whole difference between the two, and it is the only one that matters:
+
+```lisp
+(defstruct Point (mut :ctor x <- Int 0))
+(mut p1 (Point 1))
+(mut p2 p1)          ;; a COPY
+(p2.x := 99)         ;; p1.x is still 1
+
+(defclass Node (mut :ctor label <- String ""))
+(let n1 (Node "a"))
+(let n2 n1)          ;; the SAME object
+(n2.label := "b")    ;; n1.label is "b" too
+```
+
+A struct is copied wherever it moves into a new home: a binding, an assignment, a **function
+parameter** (so a struct is passed *by value* and a callee cannot reach back into its caller), a
+collection slot, and each iteration of a `for :each`.
+
+**What a copy copies.** Memberwise, recursing into struct-typed fields. A field holding a **reference
+type** — an array, a map, a class instance — copies the *reference*, exactly as in C# and exactly as a
+native struct holding a pointer would. The struct's own storage is copied; what it points *at* is not.
+
+```lisp
+(defstruct Line (let :ctor start <- Point) (let :ctor tags <- String[]))
+(mut b a)
+(b.start.x := 77)      ;; `start` is a STRUCT -> copied. `a` does not see it.
+(b.tags.push "blue")   ;; `tags` is an ARRAY  -> shared. `a` DOES see it.
+```
+
+**An operator on a struct must be pure.** It receives its operands by value, so it cannot mutate them.
+Assigning to `this` inside a struct `:operator` is an error (**LL0207**) rather than a mutation that
+silently escapes to the caller. Build a new value and return it.
+
+See `examples/04-data-types/10_value_semantics.lisp`.
 
 ---
 
