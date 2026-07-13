@@ -84,7 +84,14 @@ export interface Cell {
 }
 
 export type DeleteOutcome =
-  | { kind: "deleted"; cell: Cell }
+  | {
+      kind: "deleted";
+      removed: Cell;
+      /** Other names the removed cell also declared. They are gone too, and the user must be told. */
+      alsoRemoved: string[];
+      /** Cells that no longer compile without it, and were therefore dropped. Loudly, never silently. */
+      broke: string[];
+    }
   | { kind: "not-found"; name: string };
 
 /** Where one cell sits in the assembled program text. */
@@ -213,9 +220,52 @@ export class ReplSession {
     this.sandbox = this.newSandbox();
   }
 
-  /** PHASE 4. Declared so the gate can assert against it. */
+  /**
+   * Remove the cell that declares `name`, and rebuild the session without it.
+   *
+   * This is not a convenience. A binding's TYPE IS FIXED AT FIRST DECLARATION -- the checker reads
+   * a second `(let x ...)` as an assignment to the existing symbol, so `(let x 1)` then
+   * `(let x "hi")` is refused (LL0200) no matter what else is in the session. `.delete x` is the
+   * ONLY way to give `x` a different type without throwing the whole session away.
+   *
+   * The sandbox must be rebuilt, not patched: a `var` on a contextified global cannot be reliably
+   * removed. So the surviving cells are replayed into a fresh one. A cell that no longer compiles
+   * without the deleted declaration is DROPPED and REPORTED -- never silently kept, and never
+   * silently discarded.
+   */
   delete(name: string): DeleteOutcome {
-    return { kind: "not-found", name };
+    const index = this.cellList.findIndex((c) => c.declares.includes(name));
+    if (index < 0) return { kind: "not-found", name };
+
+    const removed = this.cellList[index];
+    const survivors = this.cellList.filter((_, i) => i !== index).map((c) => c.source);
+
+    const broke = this.replay(survivors);
+
+    return {
+      kind: "deleted",
+      removed,
+      alsoRemoved: removed.declares.filter((n) => n !== name),
+      broke,
+    };
+  }
+
+  /** Rebuild the sandbox and re-run `sources` into it. Returns the ones that no longer compile. */
+  private replay(sources: string[]): string[] {
+    this.sandbox = this.newSandbox();
+    this.cellList = [];
+
+    const broke: string[] = [];
+    for (const source of sources) {
+      const before = this.cellList.length;
+      this.eval(source);
+      // eval() only pushes a cell when the form compiled AND ran. If the count did not move, this
+      // form depended on what we just deleted.
+      if (this.cellList.length === before) broke.push(source);
+    }
+
+    this.output = [];
+    return broke;
   }
 
   symbols(): Map<string, any> {
@@ -251,8 +301,11 @@ export class ReplSession {
     // `JSON.stringify(arg, null, 2)`, so the SAME program printed differently at the prompt than it
     // did under `node` -- `[1 2]` came out as a pretty-printed JSON array here and as `[ 1, 2 ]`
     // there. Two spellings, two answers, which is the bug class this compiler exists to refuse.
-    const log = (...args: any[]) =>
+    // The braces matter. As a bare arrow expression this returns `Array.push`'s value -- the new
+    // LENGTH -- so `(console.log "hi")` answered `=> 1` instead of printing and yielding nothing.
+    const log = (...args: any[]): void => {
       this.output.push(util.formatWithOptions({ colors: false, depth: null }, ...args));
+    };
 
     const sandbox = vm.createContext({
       console: { log, error: log, warn: log },
@@ -501,18 +554,44 @@ function captureResult(body: ESTree.Statement[]): ESTree.Statement[] {
   return [assign(bound ?? { type: "Identifier", name: "undefined" })];
 }
 
-/** Top-level names a set of nodes binds. Reads through the `list` wrapper each cell's form has. */
+/**
+ * The name(s) a declaration's `name` field binds.
+ *
+ * There are two shapes, and they are not interchangeable. `variable` and `function` name themselves
+ * with an `IdentifierNode` -- whose field is `id: string`. `class`, `struct`, `enum` and `interface`
+ * use a `TypeNameNode` -- whose field is `name: string`. Reading only one of them finds half the
+ * declarations, silently.
+ *
+ * A `let` may also destructure (`(let [x y] point)`), in which case the target is a pattern binding
+ * several names at once.
+ */
+function bindingNames(n: any): string[] {
+  if (!n) return [];
+  if (typeof n === "string") return [n];
+  if (typeof n.id === "string") return [n.id]; // simple- / composite-identifier
+  if (typeof n.name === "string") return [n.name]; // type-name
+  if (Array.isArray(n.elements)) return n.elements.flatMap(bindingNames); // vector pattern
+  if (Array.isArray(n.entries)) return n.entries.flatMap(bindingNames); // map pattern
+  return [];
+}
+
+/**
+ * Top-level names a cell binds. Drives `.delete`.
+ *
+ * Each cell arrives as a `list` WRAPPING its declaration -- and note that the wrapper also carries
+ * the child's fields smeared onto it (TreeShakeAstVisitor spreads the child into the parent but
+ * forces `_type` back to "list"), so the wrapper is not safe to read directly. Go through `nodes`.
+ */
 function declaredNames(nodes: ast.ASTNode[]): string[] {
   const names: string[] = [];
 
   const scan = (n: any): void => {
     if (!n || typeof n !== "object") return;
-    if (DECLARING.has(n._type) && n.name) {
-      const name = typeof n.name === "string" ? n.name : n.name?.name;
-      if (name) names.push(name);
+
+    if (DECLARING.has(n._type)) {
+      names.push(...bindingNames(n.name));
       return;
     }
-    // Desugar leaves each cell as a `list` wrapping its declaration, so look one level in.
     if (n._type === "list" && Array.isArray(n.nodes)) n.nodes.forEach(scan);
   };
 

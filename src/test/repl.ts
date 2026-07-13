@@ -64,6 +64,8 @@ interface Expect {
   runtimeError?: RegExp;
   /** For `{lines}` steps: what the buffer must have decided. */
   buffer?: "complete" | "incomplete" | "unbalanced" | "empty";
+  /** For `{delete}` steps: what the deletion must have taken with it. */
+  deleted?: { broke?: number; alsoRemoved?: string[] };
 }
 
 interface Case {
@@ -203,18 +205,35 @@ const CASES: Case[] = [
       "old REPL would have reported a line number in a temp file the user never saw.",
   },
   {
-    name: ".delete unblocks a refused rebind",
+    name: ".delete is the only way to change a binding's type",
     steps: [
       { input: "(let x 1)" },
-      { input: "(fn double [] -> Int (* x 2))" },
-      { delete: "double" },
+      { input: '(let x "hi")' },
+      { delete: "x" },
       { input: '(let x "hi")' },
       { input: "x" },
     ],
-    expect: [null, null, null, null, { value: '"hi"' }],
+    expect: [null, { refused: [/LL0200/] }, null, null, { value: '"hi"' }],
+    cells: 2,
     wasBroken:
-      "there was no .delete. A refusal with no escape hatch wedges the session -- the user's only way " +
-      "out is .reset, which throws away everything.",
+      "there was no .delete, and without it a type-changing rebind WEDGES the session: the only way " +
+      "out is .reset, which throws away everything. Note what this case is NOT -- deleting a " +
+      "DEPENDENT (`double`) does not unblock the rebind, because the refusal never came from the " +
+      "dependent. It came from `x` already being Int.",
+  },
+  {
+    name: ".delete reports the cells it breaks",
+    steps: [
+      { input: "(let x 1)" },
+      { input: "(fn double [] -> Int (* x 2))" },
+      { delete: "x" },
+    ],
+    expect: [null, null, { deleted: { broke: 1 } }],
+    cells: 0,
+    wasBroken:
+      "deleting a declaration that surviving cells depend on has to drop them, and dropping code the " +
+      "user wrote must be LOUD. Silently keeping them would replay a program that no longer compiles; " +
+      "silently discarding them would lose work with no trace.",
   },
 
   // -----------------------------------------------------------------------------------------
@@ -261,12 +280,14 @@ const CASES: Case[] = [
       "value of ANY form which both logged and returned.",
   },
   {
-    name: "console.log formats the way node does",
+    name: "console.log formats the way node does, and yields nothing",
     steps: [{ input: '(console.log "v" [1 2])' }],
-    expect: [{ output: ["v [ 1, 2 ]"] }],
+    expect: [{ output: ["v [ 1, 2 ]"], value: "undefined" }],
     wasBroken:
-      "the REPL's console did JSON.stringify(arg, null, 2), so the SAME program printed differently " +
-      "in the REPL than under `node`. That is the 'two spellings, two answers' class this repo keeps killing.",
+      "two bugs. (1) the REPL's console did JSON.stringify(arg, null, 2), so the SAME program printed " +
+      "differently in the REPL than under `node` -- the 'two spellings, two answers' class this repo " +
+      "keeps killing. (2) the replacement was written as a bare arrow, so it returned Array.push's " +
+      "value -- the new LENGTH -- and `(console.log \"hi\")` answered `=> 1`.",
   },
 
   // -----------------------------------------------------------------------------------------
@@ -395,15 +416,38 @@ function run(c: Case): string[] {
 
       if ("reset" in step) {
         session.reset();
-      } else if ("delete" in step) {
+        continue;
+      }
+
+      if ("delete" in step) {
         const outcome = session.delete(step.delete);
-        if (outcome.kind === "not-found" && e === null) {
-          bad.push(`step ${i + 1}: .delete ${step.delete} -- not found (unimplemented?)`);
+        if (outcome.kind === "not-found") {
+          bad.push(`step ${i + 1}: .delete ${step.delete} -- not found`);
+          continue;
         }
-      } else if ("lines" in step) {
+        const want = e?.deleted;
+        if (want?.broke !== undefined && outcome.broke.length !== want.broke) {
+          bad.push(
+            `step ${i + 1}: expected ${want.broke} broken cell(s), got ${outcome.broke.length} ` +
+              JSON.stringify(outcome.broke)
+          );
+        }
+        if (
+          want?.alsoRemoved &&
+          JSON.stringify(outcome.alsoRemoved) !== JSON.stringify(want.alsoRemoved)
+        ) {
+          bad.push(
+            `step ${i + 1}: expected alsoRemoved ${JSON.stringify(want.alsoRemoved)}, ` +
+              `got ${JSON.stringify(outcome.alsoRemoved)}`
+          );
+        }
+        continue;
+      }
+
+      if ("lines" in step) {
         let completed: string | undefined;
         for (const line of step.lines) {
-          const fed = buffer.feed(line); // may THROW today -- that is B3
+          const fed = buffer.feed(line);
           bufKind = fed.kind;
           if (fed.kind === "complete") completed = fed.source;
         }

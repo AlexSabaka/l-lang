@@ -1382,3 +1382,61 @@ the enclosing function's return type from propagating.
 - **A generic PARENT drops its arguments.** `:extends Container<Int>` records `parentClass` as the
   bare name `Container`; only `:implements` keeps its type arguments. Subtyping through a generic
   base class therefore compares no arguments.
+
+---
+
+## D17 — REPL semantics: what a session is, and what enters history
+
+The REPL had no ruling and no test, and it rotted invisibly through P4–P8 until it was dead on the
+first keystroke. Most of what follows is not new policy — it is what the compiler ALREADY does,
+written down, because the REPL depends on it and nothing was stopping a future pass from "fixing"
+it away.
+
+**A session is a program that grows by one top-level form at a time.** Each accepted input is a
+*cell*, and the session's program is the cells, in order, as **sibling top-level forms**. Every
+input recompiles the whole thing — in a statically typed language that is the only sound choice,
+since rebinding `x` must be checked against every form that already uses `x` — but **only the new
+form is ever executed.** History is compiled, never re-run; the values it produced are already in
+the sandbox.
+
+**A session is NOT wrapped in the conventional outer list.** Every example and both new harnesses
+wrap a file in one outer `( ... )`. A session must not. That outer list is a *block*: it would make
+each cell a block-scoped statement, hide `class`/`const` bindings from the next cell, and turn
+every rebinding into a hard LL0212. It is one character away and it is wrong.
+
+**LL0212 (duplicate declaration) is a BLOCK-scope check, and stays one.** It is tested in
+`visitList`, not `visitProgram`. Two cells are two lists, so `(let x 1)` then `(let x 2)` is not a
+duplicate — while inside a file's single top-level block, a redeclaration remains an error. Both are
+correct. *Moving this check to `visitProgram` would make the REPL unusable.* `test:repl` pins it.
+
+**A binding's TYPE is fixed at first declaration.** The checker reads a second `(let x ...)` as an
+*assignment* to the existing symbol, so `(let x 1)` followed by `(let x "hi")` is refused with
+LL0200 — **whether or not anything depends on `x`.** (Measured: the refusal is identical with and
+without a dependent form present.) Rebinding at the *same* type is accepted, and redefining a
+function or a class is accepted. This is sound: within one program `x` is one symbol with one type.
+
+**`.delete <name>` is therefore not a convenience — it is the escape hatch.** It is the only way to
+give a binding a different type without discarding the session. It removes the cell that declared
+the name and replays the survivors into a fresh sandbox (a `var` on a contextified global cannot be
+reliably removed, so the sandbox is rebuilt rather than patched). A surviving cell that no longer
+compiles without the deleted declaration is **dropped and reported** — never silently kept, and
+never silently discarded.
+
+**History is exactly what the user typed.** There is no automatic de-duplication on rebinding.
+Dropping the earlier `(let x 1)` would not rescue a type-changing rebind anyway — the refusal does
+not come from the old cell — and it would silently take any co-declared names with it. `.history`
+does not lie; `.delete` is the only removal.
+
+**An input enters history only if it compiled AND ran to completion.** A refused input, and an input
+whose JavaScript threw, leave the session exactly as they found it. Otherwise the replay and the
+sandbox diverge, and every later input compiles against a world that never existed.
+
+**A top-level `class` or `enum` in a session is emitted as `var X = class X {...}`, not as a lexical
+declaration.** A lexical binding in a `vm.Context` lands in the realm's global lexical environment:
+redeclaring it is a `SyntaxError`, and it is not reachable as a property of the global. A REPL in
+which a class can be defined exactly once is not a REPL.
+
+*Deferred:* true sequential shadowing — input *n* rebinds `x` at a new type while earlier cells keep
+the old `x` by alpha-renaming. It is strictly more permissive and it is what a dynamic REPL gives
+away for free. It requires renaming bindings across the replayed AST, and the refusal above is sound
+without it.
