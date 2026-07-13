@@ -2,6 +2,7 @@ import * as ESTree from "estree";
 import * as ast from "../../frontend/ast";
 import { Context } from "../../Context";
 import { encodeIdentifier } from "../../utils";
+import { hasModifier } from "../../helpers/modifiers";
 
 /**
  * A constructor parameter: its name, and the AST node of its DEFAULT, if it declared one.
@@ -328,6 +329,8 @@ export class ClassBuilder {
       },
       kind: "constructor",
       computed: false,
+      // Correct as written, and deliberately left alone: a constructor is never static. Of the three
+      // hardcoded `static: false` in the backend, only the other two were bugs.
       static: false,
       loc: loc(this.node)
     };
@@ -360,7 +363,8 @@ export class ClassBuilder {
         key,
         value,
         computed: false,
-        static: false,
+        // `:static` (D11e) -- was a hardcoded `false`, and the modifier was never read.
+        static: hasModifier(v.modifiers ?? [], "static"),
         loc: loc(v)
       } as ESTree.PropertyDefinition;
     });

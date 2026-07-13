@@ -12,7 +12,7 @@ import {
 } from "../../../utils";
 import { createRule, RuleSeverity } from "../../../rules/RuleBuilder";
 import { TypeChecker } from "../../../types/TypeChecker";
-import { isBuiltinModifier } from "../../../helpers/modifiers";
+import { isBuiltinModifier, hasModifier } from "../../../helpers/modifiers";
 import * as acorn from "acorn";
 import { ClassBuilder } from "../JSClassBuilder";
 import { SourceMapGenerator } from "source-map";
@@ -948,7 +948,12 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           },
           kind: "method",
           computed: false,
-          static: false,
+          // `:static` (D11e). This was a hardcoded `false`, and nothing in codegen ever read the
+          // modifier -- so `(fn :static twice [...])` was emitted as an INSTANCE method and
+          // `(MathUtil.twice 21)` was a TypeError. Reflection agreed with the emission, for the wrong
+          // reason: MethodSignature has no isStatic field at all, so `m.isStatic || false` was
+          // `undefined || false`. Both halves were wrong together, which is why neither looked wrong.
+          static: hasModifier(node.modifiers ?? [], "static"),
           loc: ESTreeBuilder.loc(node),
         } as ESTree.MethodDefinition;
       } else if (this.scope[1] === ScopeType.program) {
