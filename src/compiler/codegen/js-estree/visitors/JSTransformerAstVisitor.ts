@@ -877,6 +877,13 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // Process function body with implicit return
       const bodyStatements: ESTree.Statement[] = [];
 
+      // A struct is passed BY VALUE (D11). One `p = __ll_copy(p)` per parameter, before anything else
+      // in the body -- so the function cannot mutate its caller's struct, and cannot observe a later
+      // mutation of it either. See parameterCopyPrologue for why this is the callee's job.
+      bodyStatements.push(
+        ...this.parameterCopyPrologue(params, node.params.map((p) => p.type))
+      );
+
       node.body.forEach((x, index) => {
         const visited = this.visit(x);
         const isLast = index === node.body.length - 1;
@@ -1271,8 +1278,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     const id: ESTree.Pattern = destructuring
       ? this.bindingPatternToESTree(node.name as ast.ASTNode)
       : (this.visit(node.name) as ESTree.Identifier);
+    // `(mut b a)` COPIES the struct (D11). This is the binding that made value semantics a lie.
     const value = node.value
-      ? (this.visit(node.value) as ESTree.Expression)
+      ? this.asValue(this.visit(node.value) as ESTree.Expression, node.value)
       : null;
     this.popScope();
 
@@ -2581,7 +2589,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       type: "AssignmentExpression",
       operator: "=",
       left: this.visitAssignmentTarget(node.assignable),
-      right: this.visit(node.value) as ESTree.Expression,
+      // `(b := a)` COPIES a struct, exactly as `(mut b a)` does.
+      right: this.asValue(this.visit(node.value) as ESTree.Expression, node.value),
       loc: ESTreeBuilder.loc(node),
     };
   }
@@ -2593,7 +2602,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       type: "AssignmentExpression",
       operator: node.operator.replace(":", "") as ESTree.AssignmentOperator,
       left: this.visitAssignmentTarget(node.assignable),
-      right: this.visit(node.value) as ESTree.Expression,
+      right: this.asValue(this.visit(node.value) as ESTree.Expression, node.value),
       loc: ESTreeBuilder.loc(node),
     };
   }
@@ -2709,6 +2718,145 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    */
   visitQuote(node: ast.QuoteNode): ESTree.Expression {
     return this.dataToESTree(node.nodes, node);
+  }
+
+  // ===========================================================================================
+  // STRUCT VALUE SEMANTICS -- a struct is copied on the way into a new home.
+  // ===========================================================================================
+
+  /**
+   * Node types that can NEVER evaluate to a struct.
+   *
+   * A DENY-list, on purpose. The alternative -- listing what CAN be a struct -- fails unsafely: a node
+   * type I forget would be left unwrapped, which is an aliasing bug. Forgetting one here merely leaves
+   * a redundant `__ll_copy()` around a literal, which is noise. Correctness is not symmetric with
+   * tidiness, so the asymmetry decides the direction.
+   */
+  private static readonly NEVER_A_STRUCT = new Set([
+    "integer-number", "float-number", "hex-number", "octal-number", "binary-number",
+    "fraction-number", "complex-number", "string", "formatted-string", "boolean", "null",
+    "vector", "matrix", "map", "function", "quote", "comment",
+  ]);
+
+  /**
+   * Does this expression need a copy on the way into a binding, a parameter, or a collection slot?
+   *
+   * Codegen has no type information (there is no per-node type channel; `typeEnv` is a dead local in
+   * Context.ts), so this cannot ask "is it a struct?" -- only "could it possibly be?". The runtime
+   * `__ll_copy` makes the real decision by looking for the marker; this is purely about not emitting a
+   * call that provably cannot do anything.
+   */
+  private needsValueCopy(node: ast.ASTNode | undefined | null): boolean {
+    if (!node) return false;
+    if (JSTransformerAstVisitor.NEVER_A_STRUCT.has(node._type)) return false;
+
+    // A FRESH construction is already a brand-new object -- `(let result (Complex))`. Copying it would
+    // duplicate an object nobody else can reach. This is not just an optimisation: the corpus's whole
+    // idiom is construct-mutate-return, so without it every struct in std/math and 09_operators would
+    // be cloned once for no reason at all.
+    if (ast.isListNode(node)) {
+      const head = (node as ast.ListNode).nodes[0];
+      if (head && head._type === "simple-identifier") {
+        const id = ast.symbolName(head as ast.IdentifierNode);
+        if (id === "new" || this.classes.includes(id)) return false;
+      }
+    }
+
+    return true;
+  }
+
+  /** Wrap an emitted expression in `__ll_copy(...)`, unless it provably cannot be a struct. */
+  private asValue(
+    emitted: ESTree.Expression,
+    source: ast.ASTNode | undefined | null
+  ): ESTree.Expression {
+    if (!this.needsValueCopy(source)) return emitted;
+    return ESTreeBuilder.callExpression(
+      (source ?? emitted) as any,
+      ESTreeBuilder.identifier((source ?? emitted) as any, "__ll_copy"),
+      [emitted]
+    ) as ESTree.Expression;
+  }
+
+  /**
+   * `p = __ll_copy(p);` at the top of a function body, one per parameter -- a struct is passed BY
+   * VALUE (D11).
+   *
+   * COPY-ON-ENTRY, not copy-on-call, and the difference is not cosmetic:
+   *
+   *   - Copying at the CALL SITE means a `__ll_copy` around every argument in the program. `(let c3
+   *     (+ c1 c2))` becomes four of them.
+   *   - It is one site per FUNCTION here, instead of N per CALL SITE.
+   *   - Decisively: the runtime operator shim routes `(+ c1 c2)` through `c1['+_1'](c2)`. The argument
+   *     never passes through a call the code generator can see, so a caller-side wrap CANNOT reach it.
+   *     The callee's own prologue can.
+   *
+   * `this` is deliberately NOT copied. It is the receiver, never a parameter -- and it must not be:
+   * construct-mutate-return is the corpus's only way to build a struct (~30 sites across std/math and
+   * 09_operators). Copy the receiver and every one of them silently returns an unmutated value.
+   */
+  public parameterCopyPrologue(
+    params: ESTree.Pattern[],
+    types?: (ast.TypeNode | undefined)[]
+  ): ESTree.Statement[] {
+    const prologue: ESTree.Statement[] = [];
+
+    params.forEach((p, i) => {
+      // An AssignmentPattern is a defaulted parameter; the name is on its left.
+      const target =
+        p.type === "Identifier"
+          ? p
+          : p.type === "AssignmentPattern" && p.left.type === "Identifier"
+            ? p.left
+            : undefined;
+      if (!target) return;
+
+      // A parameter DECLARED a known primitive can never hold a struct, so its copy is provably
+      // incapable of doing anything. This is the one place codegen has real type information -- the
+      // annotation is right there on the AST -- and using it is what keeps `(let :ctor real <- Real 0)`
+      // from emitting `real = __ll_copy(real)` in every constructor in the corpus.
+      //
+      // An UNANNOTATED parameter is still wrapped. Gradual typing cuts the same way here as everywhere
+      // else: not knowing the type is not permission to assume it is not a struct.
+      if (this.isDeclaredPrimitive(types?.[i])) return;
+
+      prologue.push({
+        type: "ExpressionStatement",
+        expression: {
+          type: "AssignmentExpression",
+          operator: "=",
+          left: { type: "Identifier", name: target.name },
+          right: {
+            type: "CallExpression",
+            callee: { type: "Identifier", name: "__ll_copy" },
+            arguments: [{ type: "Identifier", name: target.name }],
+            optional: false,
+          },
+        },
+      } as ESTree.Statement);
+    });
+
+    return prologue;
+  }
+
+  /** The primitives. A value of one of these can never be a struct. */
+  private static readonly PRIMITIVE_TYPE_NAMES = new Set([
+    "Int", "Real", "String", "Char", "Boolean", "Bool", "Void",
+  ]);
+
+  /** Is this annotation a known primitive -- and NOT an array of one? `Int[]` is an array. */
+  private isDeclaredPrimitive(type: ast.TypeNode | undefined): boolean {
+    if (!type) return false;
+
+    const inner: any = (type as any).type;
+    // The array flag can sit on either node -- the same shape bug the type converter has to handle.
+    if ((type as any).array || inner?.array) return false;
+    // An optional `T?` is still a T (or nil), and nil is not a struct either -- but keep it simple and
+    // let the runtime decide; the marker check is a single property read.
+    if ((type as any).optional || inner?.optional) return false;
+
+    const name = typeof inner?.name === "string" ? inner.name : inner?.name?.name;
+    return typeof name === "string" && JSTransformerAstVisitor.PRIMITIVE_TYPE_NAMES.has(name);
   }
 
   /** A plain JS value -> the ESTree expression that reconstructs it. */

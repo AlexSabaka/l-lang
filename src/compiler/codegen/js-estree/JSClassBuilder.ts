@@ -21,6 +21,16 @@ interface CtorParam {
   name: string;
   /** The default's AST node. Emitted as an ESTree AssignmentPattern. */
   defaultValue?: ast.ASTNode;
+  /**
+   * The declared type, when there is one.
+   *
+   * Carried purely so the value-copy prologue (D11) can skip a parameter that is declared a known
+   * PRIMITIVE and therefore cannot possibly be a struct. Without it every `(let :ctor real <- Real 0)`
+   * emits `real = __ll_copy(real)` -- correct, and provably incapable of doing anything.
+   *
+   * A parent's pass-through parameters have no type here; they are wrapped, which is safe.
+   */
+  type?: ast.TypeNode;
 }
 
 /**
@@ -40,7 +50,11 @@ function getCtorParamsFromClassNode(classNode: ast.ClassNode): CtorParam[] {
 
       if (fieldModifiers.includes("ctor")) {
         const paramName = (variable.name as any).id ?? (variable.name as any).name;
-        result.push({ name: paramName, defaultValue: (variable as any).value ?? undefined });
+        result.push({
+          name: paramName,
+          defaultValue: (variable as any).value ?? undefined,
+          type: variable.type,
+        });
       }
     }
   }
@@ -167,6 +181,7 @@ export class ClassBuilder {
     const localCtorParams: CtorParam[] = this.ctorVars.map((v) => ({
       name: (v.name as any).id ?? (v.name as any).name,
       defaultValue: (v as any).value ?? undefined,
+      type: v.type,
     }));
     const localCtorArgNames = localCtorParams.map((p) => p.name);
 
@@ -244,6 +259,19 @@ export class ClassBuilder {
     });
 
     const bodyStatements: ESTree.Statement[] = [];
+
+    // A struct is passed BY VALUE (D11), and a constructor's parameters are parameters. This body is
+    // SYNTHESIZED here rather than emitted by visitFunction, so the prologue that visitFunction adds
+    // never reaches it -- the constructor is the one function in the language the visitor cannot see.
+    //
+    // Before `super(...)`: assigning to a parameter does not touch `this`, so it is legal there, and
+    // the parent must receive the COPIES too.
+    bodyStatements.push(
+      ...this.visitor.parameterCopyPrologue(
+        params,
+        finalConstructorParams.map((p) => p.type)
+      )
+    );
 
     // Add super() call if needed
     if (parentClassName) {
