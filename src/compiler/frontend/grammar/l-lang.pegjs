@@ -356,9 +356,21 @@ ModifierArgs
   = "[" _ args:Expression|.., ","?| _ "]" _ { return args; }
 
 // Variable definition
+//
+// The binding target is a NAME or a DESTRUCTURING PATTERN (D16). This rule was `name:Identifier?` --
+// so `(let [a b] point)` failed here with LL0005 ("Variable declaration must have a name"), and
+// destructuring, which the register records as landed, existed in grammar_v2 ONLY. An undocumented
+// frontend divergence, found by a value-semantics gate case that could not pass under the PEG.
+//
+// VectorPattern / MapPattern already existed for `match`, and already build the `vector-pattern` /
+// `map-pattern` nodes that ast.isBindingPattern looks for. They just were not reachable from here.
+//
+// Pattern-before-Identifier: a `[` or `{` in the NAME slot -- immediately after let/mut and its
+// modifiers, before any value -- can only be a destructuring pattern. A vector or map VALUE always
+// follows a name (`(let resources [])`), so there is nothing to be ambiguous with.
 Variable
-  = _ mutable:LetMutMode __ modifiers:Modifier* _ name:Identifier? _ type:(LeftArrowKw _ @Type)?
-    _ value:Expression? {
+  = _ mutable:LetMutMode __ modifiers:Modifier* _ name:(VectorPattern / MapPattern / Identifier)?
+    _ type:(LeftArrowKw _ @Type)? _ value:Expression? {
     return makeNode("variable", { name, mutable, modifiers, type, value });
   }
 
@@ -697,9 +709,13 @@ CondCase
 
 
 // Loop statements
+//
+// The `:each` loop variable is a NAME or a DESTRUCTURING PATTERN (D16), same as a `let` binding --
+// `(for :each [k v] :from settings.entries ...)`. It was `@Identifier` only, so the pattern form
+// existed in grammar_v2 alone.
 For
   = _ ForKw __ init:((InitModKw __)? @Expression)?
-             _ var_:((EachModKw __)? @Identifier)?
+             _ var_:((EachModKw __)? @(VectorPattern / MapPattern / Identifier))?
              _ cond:((CondModKw __)? @Expression)?
              _ coll:((FromModKw __)? @Expression)?
              _ step:((StepModKw __)? @Expression)?

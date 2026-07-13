@@ -3093,7 +3093,13 @@ function peg$parse(input, options) {
           s5 = peg$parseModifier();
         }
         s5 = peg$parse_();
-        s6 = peg$parseIdentifier();
+        s6 = peg$parseVectorPattern();
+        if (s6 === peg$FAILED) {
+          s6 = peg$parseMapPattern();
+          if (s6 === peg$FAILED) {
+            s6 = peg$parseIdentifier();
+          }
+        }
         if (s6 === peg$FAILED) {
           s6 = null;
         }
@@ -5691,7 +5697,13 @@ function peg$parse(input, options) {
         if (s7 === peg$FAILED) {
           s7 = null;
         }
-        s8 = peg$parseIdentifier();
+        s8 = peg$parseVectorPattern();
+        if (s8 === peg$FAILED) {
+          s8 = peg$parseMapPattern();
+          if (s8 === peg$FAILED) {
+            s8 = peg$parseIdentifier();
+          }
+        }
         if (s8 !== peg$FAILED) {
           s6 = s8;
         } else {
