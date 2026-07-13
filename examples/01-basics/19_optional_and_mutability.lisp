@@ -1,165 +1,128 @@
-;; Optional Values & Mutability
+;; Optional values, and mutability
+;;
+;; Two ideas that are easy to confuse, and are not the same one:
+;;
+;;   `String?`   -- the VALUE may be absent.    (D9)
+;;   `mut`       -- the BINDING may be rebound. (D10)
+;;
+;; A `let` optional is a value that might be nil and can never be reassigned. A `mut` non-optional
+;; is a value that is definitely there and can be swapped for another. The two axes are independent.
 ;;
 ;; This example demonstrates:
-;; - Optional type handling (using union with nil)
-;; - Mutable vs immutable bindings
-;; - Mutation operations
-;; - nil checking and default values
+;; - `T?` vs `T`, across `let` and `mut`
+;; - the forced unwrap, and the nil-checks that discharge it
+;; - functions that may answer with nothing
+;; - rebinding a name vs mutating what the name points at
 
 (
-    ;; 1. Optional values (using union types)
-    (console.log "--- Optional Values ---")
-    (let maybe-number (| Int nil))  ;; Can be Int or nil
-    (maybe-number := 42)
-    (if (== maybe-number nil)
-        (console.log "Value is nil")
-        (console.log "Value is:" maybe-number))
+    ;; ------------------------------------------------------------------------------------------
+    ;; 1. The two axes are independent.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- optional vs mutable ---")
 
-    ;; 2. Function returning optional
-    (fn find-user [id <- Int] -> (| {:name String :email String} nil) (
-        (if (== id 1)
-            (return {:name "Alice" :email "alice@example.com"})
-            (return nil))
+    (let fixed-known   <- String  "always here, never changes")
+    (let fixed-maybe   <- String? nil)
+    (mut movable-known <- String  "always here, may be replaced")
+    (mut movable-maybe <- String? nil)
+
+    (console.log "let String :" fixed-known)
+    (console.log "let String?:" fixed-maybe)
+    (console.log "mut String :" movable-known)
+    (console.log "mut String?:" movable-maybe)
+
+    ;; Only the `mut` bindings can be rebound.
+    (movable-known := "replaced")
+    (movable-maybe := "no longer nil")
+    (console.log "rebound to :" movable-known "/" movable-maybe)
+
+    ;; ------------------------------------------------------------------------------------------
+    ;; 2. `T` refuses nil -- and that is a PROMISE about `T`, not a restriction on nil.
+    ;;
+    ;;    (let bad <- Int nil)     ;; LL0200: cannot assign Nil to Int
+    ;;
+    ;; Because an `Int` can never be nil, nothing that takes an `Int` has to check for it.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- a promise, not a restriction ---")
+
+    (fn double [n <- Int] -> Int (return (* n 2)))   ;; no nil check here. There cannot be one.
+    (console.log "double 21:" (double 21))
+
+    ;; ------------------------------------------------------------------------------------------
+    ;; 3. An optional must be unwrapped before it is used.
+    ;;
+    ;;    (console.log fixed-maybe.length)   ;; LL0205: 'fixed-maybe' is possibly nil (String?)
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- the forced unwrap ---")
+
+    (mut label <- String? "hello")
+
+    (if (!= label nil)
+        (console.log "label has" label.length "characters")
+        (console.log "label is nil"))
+
+    (label := nil)
+
+    (if (!= label nil)
+        (console.log "label has" label.length "characters")
+        (console.log "label is nil"))
+
+    ;; ------------------------------------------------------------------------------------------
+    ;; 4. A lookup that may not find anything says so in its return type.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- a lookup that may fail ---")
+
+    (fn find-name [id <- String] -> String? (
+        (let names {"1" "Alice" "2" "Bob"})
+        (return (get names id))
     ))
-    
-    (let user1 (find-user 1))
-    (let user2 (find-user 999))
-    
-    (if (!= user1 nil)
-        (console.log "Found user:" user1)
-        (console.log "User 1 not found"))
-    
-    (if (== user2 nil)
-        (console.log "User 2 not found"))
 
-    ;; 3. Safe optional access
-    (console.log "--- Safe Optional Access ---")
-    (fn get-user-email [id <- Int] -> String (
-        (let user (find-user id))
-        (if (== user nil)
-            (return "unknown@example.com")
-            (return user:email))
+    ;; The guard-and-return. Below the guard, `found` is a plain String -- the compiler followed the
+    ;; reasoning and stops asking.
+    (fn greet [id <- String] -> String (
+        (let found (find-name id))
+        (if (== found nil)
+            (return "no such user"))
+        (return (+ "Hello, " found))
     ))
-    
-    (let email1 (get-user-email 1))
-    (let email2 (get-user-email 999))
-    (console.log "Email 1:" email1)
-    (console.log "Email 2:" email2)
 
-    ;; 4. Mutable vs immutable variables
-    (console.log "--- Mutability ---")
-    
-    ;; Immutable binding (let)
-    (let immutable-val 10)
-    ;; immutable-val := 20  ;; Would cause error
-    (console.log "Immutable:" immutable-val)
-    
-    ;; Mutable binding (mut)
-    (mut mutable-val 10)
-    (mutable-val := 20)
-    (console.log "Mutable (first):" mutable-val)
-    (mutable-val := 30)
-    (console.log "Mutable (second):" mutable-val)
+    (console.log (greet "1"))
+    (console.log (greet "2"))
+    (console.log (greet "999"))
 
-    ;; 5. Mutable collections
-    (console.log "--- Mutable Collections ---")
-    (mut items [1 2 3])
-    (console.log "Initial:" items)
-    
-    (items[0] := 100)
-    (console.log "After index update:" items)
-    
-    (items.push 4)
-    (console.log "After push:" items)
+    ;; ------------------------------------------------------------------------------------------
+    ;; 5. `mut` governs the BINDING. It does not deep-freeze what the binding points at.
+    ;;
+    ;; A `let` array cannot be REPLACED -- but it can still be pushed to, because that mutates the
+    ;; array, not the binding. Two names for one array see each other's changes.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- rebinding vs mutating ---")
 
-    ;; 6. Mutable map updates
-    (console.log "--- Mutable Map ---")
-    (mut config {:timeout 5000 :retries 3})
-    (console.log "Initial config:" config)
-    
-    (config:timeout := 10000)
-    (console.log "After update:" config)
-    
-    (config:debug := true)
-    (console.log "After adding field:" config)
+    (mut totals [])
+    (for :each n :from [10 20 30 40] :then (totals.push n))
+    (console.log "collected: " totals)
 
-    ;; 7. Mutable parameters vs immutable
-    (console.log "--- Mutation in Functions ---")
-    (fn update-point [point <- {:x Int :y Int}] -> {:x Int :y Int} (
-        ;; Parameters are immutable by default
-        ;; Create new object instead of mutating
-        (let updated {:x (* point:x 2) :y (* point:y 2)})
-        (return updated)
+    (let first-list [1 2 3])
+    (let alias first-list)          ;; the SAME array, under a second name
+    (first-list.push 999)
+    (console.log "first-list:" first-list)
+    (console.log "alias:     " alias)
+
+    ;; ------------------------------------------------------------------------------------------
+    ;; 6. A mutable optional: the classic cache.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- a mutable optional ---")
+
+    (mut cache <- String? nil)
+
+    (fn describe-cache [c <- String?] -> String (
+        (if (== c nil)
+            (return "empty"))
+        (return (+ "holding: " c))
     ))
-    
-    (let original {:x 5 :y 10})
-    (let scaled (update-point original))
-    (console.log "Original:" original)
-    (console.log "Scaled:" scaled)
 
-    ;; 8. Mutable local state in function
-    (fn accumulate [values <- [Int]] -> Int (
-        (mut total 0)
-        (for :each val :from values :then (
-            (total := (+ total val))
-        ))
-        (return total)
-    ))
-    
-    (let sum (accumulate [10 20 30 40]))
-    (console.log "Accumulated sum:" sum)
-
-    ;; 9. Mutable reference behavior
-    (console.log "--- Reference Mutation ---")
-    (mut arr1 [1 2 3])
-    (let arr2 arr1)          ;; arr2 refers to same array
-    (arr1[0] := 999)
-    (console.log "arr1:" arr1)
-    (console.log "arr2:" arr2)  ;; Also shows mutation
-
-    ;; 10. Optional with mutable
-    (console.log "--- Optional Mutable ---")
-    (mut cache (| String nil))
+    (console.log (describe-cache cache))
+    (cache := "some-value")
+    (console.log (describe-cache cache))
     (cache := nil)
-    (console.log "Cache empty:" (== cache nil))
-    
-    (cache := "cached-value")
-    (console.log "Cache set:" cache)
-    
-    (cache := nil)
-    (console.log "Cache cleared:" (== cache nil))
-
-    ;; 11. Optional in collection
-    (let maybe-numbers [(| Int nil) (| Int nil) (| Int nil)])
-    (maybe-numbers[0] := 100)
-    (maybe-numbers[1] := nil)
-    (maybe-numbers[2] := 200)
-    (console.log "Optional array:" maybe-numbers)
-
-    ;; 12. Pattern matching on optional
-    (console.log "--- Match Optional ---")
-    (fn format-number [n <- (| Int nil)] -> String (
-        (match n
-            [(nil match) (return "No value")]
-            [(num <- Int) (return (+ "Number: " num))]
-        )
-    ))
-    
-    (console.log (format-number 42))
-    (console.log (format-number nil))
-
-    ;; 13. Chaining optional operations
-    (console.log "--- Optional Chain ---")
-    (fn get-user-age [id <- Int] -> (| Int nil) (
-        (let user (find-user id))
-        (if (== user nil)
-            (return nil)
-            ;; In real code, would look up age from database
-            (return 30))
-    ))
-    
-    (let age (get-user-age 1))
-    (if (!= age nil)
-        (console.log "User age:" age "years")
-        (console.log "Could not determine age"))
+    (console.log (describe-cache cache))
 )

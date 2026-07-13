@@ -80,8 +80,7 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "is D5/P8 type-system work, not the form layer.",
   },
   "01-basics/19_optional_and_mutability.lisp": {
-    status: "xfail",
-    reason: "D9: T? optional-type syntax not real yet",
+    status: "test",
   },
   "01-basics/20_scope.lisp": {
     status: "xfail",
@@ -92,8 +91,7 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "slot-drift misparse. The example is at fault; it never reaches its destructuring on :112.",
   },
   "01-basics/21_nil_handling.lisp": {
-    status: "xfail",
-    reason: "D9: nil/optional-type semantics",
+    status: "test",
   },
   "02-errors/01_try_catch.lisp": {
     status: "xfail",

@@ -1,0 +1,23 @@
+--- optional vs mutable ---
+let String : always here, never changes
+let String?: null
+mut String : always here, may be replaced
+mut String?: null
+rebound to : replaced / no longer nil
+--- a promise, not a restriction ---
+double 21: 42
+--- the forced unwrap ---
+label has 5 characters
+label is nil
+--- a lookup that may fail ---
+Hello, Alice
+Hello, Bob
+no such user
+--- rebinding vs mutating ---
+collected:  [ 10, 20, 30, 40 ]
+first-list: [ 1, 2, 3, 999 ]
+alias:      [ 1, 2, 3, 999 ]
+--- a mutable optional ---
+empty
+holding: some-value
+empty

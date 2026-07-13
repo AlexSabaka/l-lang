@@ -1,0 +1,38 @@
+--- nil vs the falsy values ---
+nil is: null
+nil == nil     true
+nil == false   false
+nil == 0       false
+nil == empty   false
+--- declaring an optional ---
+maybe-name: null
+real-name:  Alice
+--- the forced unwrap ---
+real-name has 5 characters
+maybe-name is nil
+--- functions that may return nothing ---
+val1: has value
+val2: null
+--- absence is asked with get, not by indexing ---
+Host:    localhost
+Timeout: 5000
+--- the guard-and-return ---
+HELLO!
+(nothing to say)
+--- nil propagation ---
+chain 20:  50
+chain 100: null
+chain nil: null
+--- nil in collections ---
+with nils: [ 1, null, 3, null, 5 ]
+without:   [ 1, 3, 5 ]
+head of []:       null
+head of [1 2 3]:  1
+--- nil in patterns ---
+nothing
+zero
+something
+--- a mutable optional ---
+empty?   true
+filled:  cached-data
+cleared? true

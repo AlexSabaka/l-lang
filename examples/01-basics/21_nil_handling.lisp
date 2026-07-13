@@ -1,194 +1,188 @@
-;; Null/Nil Handling
+;; nil, and the optional type `T?`   (D9)
+;;
+;; l-lang has exactly ONE bottom value, spelled `nil`. There is no `undefined`, no `none`, no `void`.
+;; A type is NON-NULLABLE by default -- `String` can never be nil -- and `String?` is how you say a
+;; value might be. The compiler then makes you check it before you use it.
 ;;
 ;; This example demonstrates:
-;; - nil vs false vs empty
-;; - Nil checking
-;; - Null coalescing
-;; - Default values
+;; - nil vs false vs empty vs zero
+;; - `T?` declarations, and why `T` refuses nil
+;; - the forced unwrap (LL0205), and the two nil-checks that discharge it
+;; - the PARTIAL indexer `c[k]` vs the TOTAL `(get c k)`
+;; - nil in collections, and nil in patterns
 
 (
-    ;; 1. nil vs false vs empty values
-    (console.log "--- nil vs Other Falsy Values ---")
-    (let nil-value nil)
-    (let false-value false)
-    (let empty-string "")
-    (let zero 0)
-    (let empty-array [])
-    
-    (console.log "nil is:" nil-value)
-    (console.log "false is:" false-value)
-    (console.log "empty string is:" empty-string)
-    (console.log "zero is:" zero)
-    (console.log "empty array is:" empty-array)
+    ;; ------------------------------------------------------------------------------------------
+    ;; 1. nil is not false, and it is not zero, and it is not empty.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- nil vs the falsy values ---")
 
-    ;; 2. nil checking with ==
-    (console.log "--- Nil Checking ---")
-    (let maybe-value nil)
-    
-    (if (== maybe-value nil)
-        (console.log "Value is nil"))
-    
-    (if (!= maybe-value nil)
-        (console.log "Value is not nil")
-        (console.log "Value is definitely nil"))
+    (console.log "nil is:" nil)
+    (console.log "nil == nil    " (== nil nil))
+    (console.log "nil == false  " (== nil false))
+    (console.log "nil == 0      " (== nil 0))
+    (console.log "nil == empty  " (== nil ""))
 
-    ;; 3. Truthiness checks (if-based)
-    (console.log "--- Truthiness ---")
-    (if nil
-        (console.log "nil is truthy")
-        (console.log "nil is falsy"))
-    
-    (if false
-        (console.log "false is truthy")
-        (console.log "false is falsy"))
-    
-    (if 0
-        (console.log "0 is truthy")
-        (console.log "0 is falsy"))
-    
-    (if ""
-        (console.log "empty string is truthy")
-        (console.log "empty string is falsy"))
+    ;; Note there is no `(if nil ...)` here: an `if` condition must be a Boolean, so nil is not a
+    ;; truthiness test you can write. Ask the question you mean -- `(== x nil)`.
 
-    ;; 4. Returning nil from functions
-    (console.log "--- Functions Returning Nil ---")
-    (fn get-value-or-nil [condition <- Bool] -> (| String nil) (
-        (if condition
+    ;; ------------------------------------------------------------------------------------------
+    ;; 2. `T` cannot be nil. `T?` can.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- declaring an optional ---")
+
+    ;; (let bad <- String nil)     ;; LL0200: cannot assign Nil to String
+    (let maybe-name <- String? nil)
+    (let real-name  <- String? "Alice")
+
+    (console.log "maybe-name:" maybe-name)
+    (console.log "real-name: " real-name)
+
+    ;; ------------------------------------------------------------------------------------------
+    ;; 3. The unwrap is FORCED.
+    ;;
+    ;;    (console.log real-name.length)   ;; LL0205: 'real-name' is possibly nil (String?)
+    ;;
+    ;; The compiler will not let an optional be dereferenced. Checking it against nil is what
+    ;; discharges the obligation -- inside the branch you proved, the value is a plain `String`.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- the forced unwrap ---")
+
+    (if (!= real-name nil)
+        (console.log "real-name has" real-name.length "characters")
+        (console.log "real-name is nil"))
+
+    (if (== maybe-name nil)
+        (console.log "maybe-name is nil")
+        (console.log "maybe-name has" maybe-name.length "characters"))
+
+    ;; ------------------------------------------------------------------------------------------
+    ;; 4. A function that may answer with nothing says so in its return type.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- functions that may return nothing ---")
+
+    (fn get-value-or-nil [has-value <- Boolean] -> String? (
+        (if has-value
             (return "has value")
             (return nil))
     ))
-    
+
     (let val1 (get-value-or-nil true))
     (let val2 (get-value-or-nil false))
-    
-    (if (== val1 nil)
-        (console.log "val1 is nil")
-        (console.log "val1: " val1))
-    
-    (if (== val2 nil)
-        (console.log "val2 is nil"))
 
-    ;; 5. Default values for nil
-    (console.log "--- Default Values ---")
-    (fn get-config [key <- String] -> (| String nil) (
+    (console.log "val1:" val1)
+    (console.log "val2:" val2)
+
+    ;; ------------------------------------------------------------------------------------------
+    ;; 5. The PARTIAL indexer, and the TOTAL `get`.
+    ;;
+    ;; `data[key]` ASSERTS the key is there -- an absent one is a KeyError, because indexing
+    ;; something that is not there is a bug, not a value. Asking WHETHER it is there is a different
+    ;; question, and `(get data key)` is how you ask it. It answers `V?`.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- absence is asked with get, not by indexing ---")
+
+    (fn get-config [key <- String] -> String? (
         (let data {:host "localhost" :port "8080"})
-        (return data[key])
+        (return (get data key))
     ))
-    
-    (let host (get-config "host"))
+
+    (let host    (get-config "host"))
     (let timeout (get-config "timeout"))
-    
-    (let host-val (if (== host nil) "default-host" host))
+
+    ;; Coalescing, by hand: `(if (== x nil) default x)`.
+    (let host-val    (if (== host nil) "default-host" host))
     (let timeout-val (if (== timeout nil) "5000" timeout))
-    
-    (console.log "Host:" host-val)
+
+    (console.log "Host:   " host-val)
     (console.log "Timeout:" timeout-val)
 
-    ;; 6. Nil in collections
-    (console.log "--- Nil in Collections ---")
-    (let items [1 nil 3 nil 5])
-    (console.log "Array with nils:" items)
-    
-    (for :each item :from items :then (
-        (if (== item nil)
-            (console.log "Found nil")
-            (console.log "Found value:" item))
+    ;; ------------------------------------------------------------------------------------------
+    ;; 6. A guard-and-return narrows the REST of the function.
+    ;;
+    ;; This is the shape you reach for most: bail out early on nil, and everything below the guard
+    ;; is a plain `String` -- the compiler has followed the reasoning and no longer asks.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- the guard-and-return ---")
+
+    (fn shout [text <- String?] -> String (
+        (if (== text nil)
+            (return "(nothing to say)"))
+        ;; From here down `text` is a String, not a String?.
+        (return (+ (text.toUpperCase) "!"))
     ))
 
-    ;; 7. Nil in maps/objects
-    (console.log "--- Nil in Objects ---")
-    (let user {:name "Alice" :email nil :age 30})
-    (console.log "User object:" user)
-    
-    (if (== user:email nil)
-        (console.log "Email not provided"))
+    (console.log (shout "hello"))
+    (console.log (shout nil))
 
-    ;; 8. Safe navigation (manual)
-    (console.log "--- Safe Property Access ---")
-    (fn get-user-city [user <- (| {:name String :location {:city String}} nil)] -> String (
-        (if (== user nil)
-            (return "unknown"))
-        
-        (if (== user:location nil)
-            (return "no location"))
-        
-        (return user:location:city)
-    ))
-    
-    (let user1 {:name "Bob" :location {:city "NYC"}})
-    (let user2 {:name "Charlie" :location nil})
-    (let user3 nil)
-    
-    (console.log "City 1:" (get-user-city user1))
-    (console.log "City 2:" (get-user-city user2))
-    (console.log "City 3:" (get-user-city user3))
+    ;; ------------------------------------------------------------------------------------------
+    ;; 7. nil propagates: an optional in, an optional out.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- nil propagation ---")
 
-    ;; 9. nil coalescing pattern
-    (console.log "--- Nil Coalescing ---")
-    (fn choose-value [primary <- (| Int nil) :secondary <- Int] -> Int (
-        (if (!= primary nil)
-            (return primary)
-            (return secondary))
-    ))
-    
-    (let val1 (choose-value nil :secondary 42))
-    (let val2 (choose-value 10 :secondary 42))
-    (console.log "Coalesced 1:" val1)  ;; 42
-    (console.log "Coalesced 2:" val2)  ;; 10
-
-    ;; 10. Array filtering out nils
-    (console.log "--- Filter Out Nils ---")
-    (let maybe-items [1 nil 2 nil 3 nil 4])
-    (let filtered [])
-    (for :each item :from maybe-items :then (
-        (if (!= item nil)
-            (filtered.push item))
-    ))
-    (console.log "Filtered (no nils):" filtered)
-
-    ;; 11. nil in pattern matching
-    (console.log "--- Pattern Matching with Nil ---")
-    (fn describe-value [val <- (| String Int nil)] -> String (
-        (match val
-            [(nil match) (return "nothing")]
-            [(s <- String) (return (+ "text: " s))]
-            [(n <- Int) (return (+ "number: " n))]
-        )
-    ))
-    
-    (console.log (describe-value nil))
-    (console.log (describe-value "hello"))
-    (console.log (describe-value 42))
-
-    ;; 12. Nil propagation
-    (console.log "--- Nil Propagation ---")
-    (fn chain-operations [initial <- (| Int nil)] -> (| Int nil) (
+    (fn chain [initial <- Int?] -> Int? (
         (if (== initial nil)
             (return nil))
-        
-        (let step1 (* initial 2))
-        (if (> step1 100)
-            (return nil))  ;; Return nil if condition fails
-        
-        (let step2 (+ step1 10))
-        (return step2)
-    ))
-    
-    (console.log "Chain 1:" (chain-operations 20))    ;; 50
-    (console.log "Chain 2:" (chain-operations 100))   ;; nil
-    (console.log "Chain 3:" (chain-operations nil))   ;; nil
 
-    ;; 13. Initializing with nil
-    (console.log "--- Initialization ---")
-    (let cache (| String nil))
-    (cache := nil)  ;; Explicitly set to nil
-    (console.log "Cache initialized to nil:" (== cache nil))
-    
-    ;; Later set value
+        (let doubled (* initial 2))
+        (if (> doubled 100)
+            (return nil))
+
+        (return (+ doubled 10))
+    ))
+
+    (console.log "chain 20: " (chain 20))
+    (console.log "chain 100:" (chain 100))
+    (console.log "chain nil:" (chain nil))
+
+    ;; ------------------------------------------------------------------------------------------
+    ;; 8. nil in collections.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- nil in collections ---")
+
+    (let items [1 nil 3 nil 5])
+    (console.log "with nils:" items)
+
+    (mut kept [])
+    (for :each item :from items :then (
+        (if (!= item nil)
+            (kept.push item))
+    ))
+    (console.log "without:  " kept)
+
+    ;; `head` of an EMPTY array is nil -- not the array, and not a crash. That is why it is `T?`.
+    (let empty-list <- Int[] [])
+    (console.log "head of []:      " (head empty-list))
+    (console.log "head of [1 2 3]: " (head [1 2 3]))
+
+    ;; ------------------------------------------------------------------------------------------
+    ;; 9. nil is a pattern, not a name.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- nil in patterns ---")
+
+    (fn describe [val] -> String (
+        (return (match val {
+            nil => "nothing"
+            0   => "zero"
+            _   => "something"
+        }))
+    ))
+
+    (console.log (describe nil))
+    (console.log (describe 0))
+    (console.log (describe "hi"))
+
+    ;; ------------------------------------------------------------------------------------------
+    ;; 10. A mutable optional: set it, clear it, set it again.
+    ;; ------------------------------------------------------------------------------------------
+    (console.log "--- a mutable optional ---")
+
+    (mut cache <- String? nil)
+    (console.log "empty?  " (== cache nil))
+
     (cache := "cached-data")
-    (console.log "Cache has value:" cache)
-    
-    ;; Clear cache
+    (console.log "filled: " cache)
+
     (cache := nil)
-    (console.log "Cache cleared:" (== cache nil))
+    (console.log "cleared?" (== cache nil))
 )

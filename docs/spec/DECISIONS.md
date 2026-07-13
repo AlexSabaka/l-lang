@@ -901,6 +901,51 @@ broke on the same line — `(!= memo[n] nil)`, an ABSENCE CHECK written as an as
 is present. That is precisely the confusion the partial/total split exists to end. They now ask
 `(get memo n)`. Three are passing goldens whose output did **not** move.
 
+### The unwrap is FORCED (D9g)
+
+**LL0205** — a possibly-nil value, *used* as though it were not. This is the error the whole ruling
+exists to produce. Everything before it made `T?` sayable, producible and unassignable-to-`T`; without
+this, a program could still take an optional and dereference it.
+
+It is a **dereference** check, not an assignability one. The assignability sites (`let`, argument,
+`return`) already refuse `T? → T` and report LL0200/LL0203/LL0213 — a second code there would be a
+second name for the same error. What had *no* check at all was **using** the thing: reading a member
+off it, indexing into it, doing arithmetic with it. (`Int?` is still *named* `Int`, so `isNumeric` said
+yes and `(+ h 1)` produced `"null1"` or `NaN` at run time.)
+
+**Equality is exempt, and must be.** `(== h nil)` is how you *discharge* the obligation; if the check
+itself were an error, the only way to satisfy LL0205 would be the one expression LL0205 forbids.
+
+**Narrowing**, in two shapes, both syntactic and both deliberately small:
+
+```lisp
+(if (!= h nil) (h.length))            ;; narrowed inside the branch it proves
+(if (== h nil) (return 0))            ;; narrowed for the REST of the block
+(return h.length)                     ;;   <- h is a plain String here
+```
+
+There is no flow analysis in this compiler, and inventing one here would be a phase of its own (D5
+owns narrowing proper). But **LL0205 without an escape hatch does not make `T?` unsafe — it makes it
+unusable**, because the nil-check you just wrote would not be believed. The guard-and-return is the
+shape the corpus actually writes; recognising only the branch form would have left the idiom people
+reach for first unsupported.
+
+**Two bugs found by building it:**
+
+- **`bindIdentifier` does not bind into a scope.** It writes *through* to the symbol table, which is
+  neither scoped nor reversible — so a narrowing bound with it survived `exitScope` and narrowed the
+  name for the rest of the **program**. A nil-check believed everywhere is strictly worse than one
+  believed nowhere: it reports nothing while proving nothing. The scope-local binding already existed
+  (`bindTypeParameter`, which is how a generic `T` is bound) and is now `bindInScope`.
+- **Call arguments were never type-inferred** when the callee could not be resolved. So `(let z
+  h.length)` reported LL0205 while `(console.log h.length)` — the same expression — reported nothing,
+  and `console.log` is most of the corpus's I/O. Inferring them *fully* is the right fix and is **not**
+  this phase's: measured, it produces **16 new diagnostics on passing tests**, and none are nil bugs —
+  they are LL0210 on locally-scoped names (symbol resolution is top-level-only; **P6**) and LL0211 on a
+  headless member call. Shipping a false-positive flood under a nil-safety banner is the exact
+  dishonesty this audit exists to stop. The arguments are visible to the **nil check and nothing else**
+  until P6 lands.
+
 ### PEG: `void` the spelling vs `Void` the type
 
 The PEG's `NilKw` was `"void"i` — **case-insensitive** — so `Void`, the return TYPE used across
@@ -988,6 +1033,14 @@ It is the only one of the four papercuts that adds a FEATURE rather than fixing 
   because `__ll_match_list` does `if (pattern === null) continue`" — which is *true of the shim text*
   and **cannot fire**. Read from the source it looked live; built as a test case, it did not exist.
   Fixing it would have been indistinguishable, in the commit log, from fixing something.
+
+- **Call arguments are invisible to the type checker when the callee cannot be resolved.** Measured at
+  **16 diagnostics** on passing tests once made visible — LL0210 on locally-scoped names (symbol
+  resolution is top-level-only) and LL0211 on a headless member call. Blocked on **P6**. D9g threads
+  the nil check through behind an explicit guard; everything else there stays dark.
+
+- **`\"` inside a string literal is not unescaped** — it emits literally, so `"a \"b\" c"` prints
+  `a \"b\" c`. Found while writing `21_nil_handling`; worked around, not fixed.
 
 - **A boolean cannot be a match pattern.** `constantPattern` is `StringLiteral | number` — so
   `(match x { true => …})` does not parse. Found while adding `nil` to the same rule; the same two
