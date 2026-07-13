@@ -1,0 +1,22 @@
+{
+  // VS Code's behaviour when two languages claim the same file extension is not deterministic.
+  // l-lang uses .lisp, which Lisp / Scheme / Common Lisp grammars also claim. A workspace
+  // association beats any extension's declared extensions, so this pins it unconditionally.
+  // Requires the l-lang extension: https://github.com/AlexSabaka/l-lang-vscode
+  "files.associations": {
+    "*.lisp": "llang"
+  },
+
+  "[llang]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    // Identifiers contain hyphens (sort-by, high-score, explicit-cast). VS Code's default word
+    // separators include '-', so double-clicking `sort-by` would select only `sort`, and
+    // Ctrl+Arrow would stop at every hyphen. This is the default list with '-' removed.
+    "editor.wordSeparators": "`~!@#$%^&*()=+[{]}\\|;:'\",.<>/?"
+  },
+
+  // examples/ is the grammar's test corpus and is diffed against .expect goldens byte for byte.
+  // Do not let the editor reformat it.
+  "files.trimTrailingWhitespace": false
+}

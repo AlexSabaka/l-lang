@@ -229,12 +229,18 @@ function __ll_is_type(val, type) {
     case 'any': return true;
     default:
       if (val === null || val === undefined) return false;
-      // Check constructor name (handles classes/structs even in IIFE)
       let current = val;
       while (current) {
+        // __ll_name FIRST; constructor.name only as a fallback.
+        //
+        // The import inliner RENAMES a class -- \`class __ll_inlined_Money_1\` -- to keep two modules'
+        // \`Point\` apart. Right for the BINDING, wrong for the TYPE: this function, and
+        // __ll_op_registry through it, both ask "is this a Money?". Keyed on constructor.name, the
+        // answer for an IMPORTED Money was always no -- so an overload registered on ["Money","Money"]
+        // could never match one, and \`(x of Money)\` never matched one either. __ll_name is the SOURCE
+        // name, stamped on the class, and immune to the rename.
+        if (current.constructor && current.constructor.__ll_name === type) return true;
         if (current.constructor && current.constructor.name === type) return true;
-        // Also check l-lang specific type metadata if available
-        if (current.__ll_type === type) return true;
         current = Object.getPrototypeOf(current);
         if (current === Object.prototype || !current) break;
       }
@@ -433,7 +439,53 @@ ${metadataInit}
 `;
   }
 
+  /**
+   * The LANGUAGE OPERATORS. Not library functions -- language.
+   *
+   * SYMBOL_MAP is two different things wearing one coat, and that conflation is a live bug. It holds
+   * these, AND it holds `get` / `head` / `tail` / `empty` / `elem` / `cons` / `list` / `call` / `eval`
+   * / `type` / `set!` / `set?` -- which are ordinary, user-definable, IMPORTABLE names. The two halves
+   * need opposite treatment, and nothing could tell them apart:
+   *
+   *   an OPERATOR  is not a name. It cannot be shadowed, imported or redefined -- only OVERLOADED,
+   *                via `:operator`. `+` at a call site must ALWAYS mean the operator.
+   *   a FUNCTION   is an ordinary name. An imported `head` SHOULD shadow the builtin `head`, and the
+   *                import-before-runtime precedence in visitIdentifier gives exactly that.
+   *
+   * So `visitIdentifier`'s ordering is CORRECT for the library half and nonsense for the operator half
+   * -- and because it could not distinguish them, an imported `(fn :operator + ...)` was inlined like
+   * an ordinary function and ended up calling itself. Guarding on `isRuntimeReference` would have
+   * "fixed" that by silently shadowing an imported user `head` with the runtime one: one silent wrong
+   * answer traded for another. Hence a narrow set.
+   *
+   * These names can never be user identifiers -- the lexer cannot produce them as one -- so guarding
+   * on them cannot capture anything a program meant to be its own.
+   *
+   * The other half is the worklist for D7: everything a real stdlib has to replace, so that JS interop
+   * lives behind a library boundary rather than inside the code generator. `isRuntimeFunction` names it
+   * explicitly for that purpose.
+   */
+  private static readonly OPERATOR_SYMBOLS: ReadonlySet<string> = new Set([
+    "!", "==", "!=", "≠", "+", "-", "*", "/", "%", "<", ">", "<=", ">=", "&&", "||",
+  ]);
+
+  /** An operator: language, not library. See OPERATOR_SYMBOLS. */
+  public static isOperatorSymbol(symbol: SymbolName): boolean {
+    return this.OPERATOR_SYMBOLS.has(symbol);
+  }
+
+  /**
+   * A runtime FUNCTION -- the proto-stdlib half of SYMBOL_MAP.
+   *
+   * `get`, `head`, `tail`, `empty`, `elem`, `cons`, `list`, `call`, `eval`, `type`, `set!`, `set?`.
+   * These are what a real stdlib (D7) must provide, at which point they leave the code generator
+   * entirely. An import of the same name legitimately shadows them, and must keep doing so.
+   */
+  public static isRuntimeFunction(symbol: SymbolName): boolean {
+    return symbol in this.SYMBOL_MAP && !this.isOperatorSymbol(symbol);
+  }
+
   public static isRuntimeReference(symbol: SymbolName): boolean {
     return symbol in this.SYMBOL_MAP;
-  } 
+  }
 }

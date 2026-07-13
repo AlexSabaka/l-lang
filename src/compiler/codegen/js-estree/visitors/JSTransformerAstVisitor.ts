@@ -647,8 +647,39 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     };
   }
 
+  /**
+   * Force every IMPORTED operator overload into the output.
+   *
+   * The import system inlines a symbol ON DEMAND -- when something references it by name. An operator
+   * overload is NEVER referenced by name: `(+ a b)` means the runtime shim, and the shim finds the
+   * overload by DISPATCH, through the registry. So an imported operator has nothing to trigger its
+   * inlining, and simply does not exist in the output.
+   *
+   * That was invisible until the operator guard landed. Before it, `+` at the call site resolved to the
+   * imported symbol and dragged the definition in -- while also compiling the operator into a call to
+   * itself, and suppressing the `+` shim entirely. The definition was present and the program was
+   * wrong. Now the program is right and the definition has to be fetched deliberately.
+   */
+  private inlineImportedOperators(): void {
+    const all = (this.context?.symbolTable as any)?.getAllSymbols?.();
+    if (!all) return;
+
+    for (const symbol of all.values()) {
+      if (symbol?.nodeType !== "function") continue;
+      if (!this.isImportedSymbol(symbol)) continue;
+
+      const modifiers = (symbol.value as ast.FunctionNode)?.modifiers ?? [];
+      const isOperator = modifiers.some(
+        (m: any) => m.modifier === "operator" || m.modifier === ":operator"
+      );
+      if (isOperator) this.ensureSymbolInlined(symbol);
+    }
+  }
+
   visitProgram(node: ast.ProgramNode): ESTree.Program {
     const statements: ESTree.Statement[] = [];
+
+    this.inlineImportedOperators();
 
     for (const n of node.program) {
       const result = this.visit(n);
@@ -838,7 +869,19 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
       const isOperator = node.modifiers?.some(m => m.modifier === 'operator');
       if (isOperator && name) {
-        if (this.scope.length === 2 && this.scope[1] === ScopeType.program) {
+        // A FREE operator -- anything that is not a method -- registers with __ll_op_registry.
+        //
+        // This used to read `this.scope.length === 2 && this.scope[1] === ScopeType.program`, which is
+        // not "is this a top-level operator" but "is the VISITOR's scope stack one frame deep RIGHT
+        // NOW" -- a property of where the visitor happens to be, not of the node it is looking at. An
+        // IMPORTED operator is visited from wherever the call site was (inside a `(let ...)`, so two
+        // frames deep), the test failed, and the `:operator` modifier was silently ignored: no
+        // registration, no anything. That is the whole of the imported-operator bug.
+        //
+        // The distinction that actually matters is method-or-not: a method's receiver IS the left
+        // operand and it dispatches through `_1`; a free operator takes both operands and dispatches
+        // through the registry.
+        if (this.currentScope() !== ScopeType.method) {
           const overloadName = `__ll_overload_${name.name}_${this.overloadCounter++}`;
           const paramTypes = node.params.map(p => this.getTypeName(p.type));
 
@@ -866,8 +909,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           } as ESTree.Statement);
 
           name = { ...name, name: overloadName } as ESTree.Identifier;
-        } else if (this.currentScope() === ScopeType.method) {
-          // Append arity for methods to avoid shadowing in JS prototype
+        } else {
+          // A METHOD. The arity suffix is not decoration: 08_operators declares both `- [other]` and
+          // `- []`, which without it collide on one JS key. The runtime probes `_1` (binary, receiver +
+          // one operand) and `_0` (unary).
           name = { ...name, name: `${name.name}_${node.params.length}` } as ESTree.Identifier;
         }
       }
@@ -2227,6 +2272,25 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     // Now: if the name resolves to something declared in THIS module (or in an enclosing scope --
     // a parameter, a local), it keeps its own encoded name. Only a symbol that genuinely resolves
     // to ANOTHER module gets inlined.
+    // AN OPERATOR IS NOT A NAME, so it must be decided BEFORE the symbol table is consulted.
+    //
+    // The block below resolves an imported symbol and inlines it, and for a library FUNCTION that
+    // precedence is exactly right: an imported `head` should shadow the builtin `head`. But an operator
+    // cannot be shadowed, imported or redefined -- only OVERLOADED, via `:operator` -- and the code
+    // could not tell the two apart, because SYMBOL_MAP conflates them.
+    //
+    // So an imported `(fn :operator + [a b])` resolved as an ordinary imported symbol and was INLINED.
+    // Then, re-visiting the operator's own body, `(+ a.amount b.amount)` -- adding two Ints -- hit the
+    // same memo key and compiled to a call to THE FUNCTION CURRENTLY BEING DEFINED. It crashed. Worse,
+    // `+` never reached inlineStandardSymbols, so the `+` SHIM WAS NEVER EMITTED AT ALL.
+    //
+    // `+` at a call site ALWAYS means the operator. The shim then dispatches: registry -> `_1` method
+    // -> raw JS. That is where an overload gets found, and it is the only place it can be.
+    if (RuntimeProvider.isOperatorSymbol(node.id)) {
+      this.inlineStandardSymbols.push(node.id);
+      return ESTreeBuilder.identifier(node, encodeIdentifier(node.id));
+    }
+
     try {
       const resolved = this.context?.symbolTable?.resolveSymbol?.(node as any, node);
       if (resolved && this.isImportedSymbol(resolved)) {
@@ -3132,9 +3196,23 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         const fn = this.cloneNode(
           symbol.value as ast.FunctionNode
         ) as ast.FunctionNode;
-        fn.name = fn.name
-          ? ({ ...fn.name, id: uniq } as any)
-          : ({ _type: "simple-identifier", id: uniq } as any);
+
+        // An OPERATOR keeps its own name. Everything else is renamed to a unique inlined name so two
+        // modules' `helper` cannot collide -- but an operator is not referenced BY name, it is found by
+        // DISPATCH, and `visitFunction` needs to see `+` to register the overload under `"+"`. Rename
+        // it and it registers under `"__ll_inlined__2b_1"`, a key nothing will ever look up.
+        //
+        // No collision risk: visitFunction gives every free operator a counter-unique emitted name
+        // (`__ll_overload__2b_0`) regardless of what it was called in source.
+        const isOperatorFn = (fn.modifiers ?? []).some(
+          (m: any) => m.modifier === "operator" || m.modifier === ":operator"
+        );
+        if (!isOperatorFn) {
+          fn.name = fn.name
+            ? ({ ...fn.name, id: uniq } as any)
+            : ({ _type: "simple-identifier", id: uniq } as any);
+        }
+
         defStmt = this.visit(fn) as ESTree.Statement;
       } else if (symbol.nodeType === "class" || symbol.nodeType === "struct") {
         // A struct emits through visitClass (visitStruct delegates to it), so it is renamed exactly
@@ -3143,6 +3221,16 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         const cls = this.cloneNode(
           symbol.value as ast.ClassNode
         ) as ast.ClassNode;
+
+        // Remember what it was CALLED before the rename.
+        //
+        // The JS binding must be unique, but the TYPE's identity must not change: `__ll_is_type` and
+        // `__ll_op_registry` both ask "is this a Money?", and after inlining `constructor.name` is
+        // `__ll_inlined_Money_1`. So a registered overload on `["Money","Money"]` never matched an
+        // imported Money -- which is precisely why an imported operator, even once emitted and
+        // registered correctly, still returned undefined.
+        (cls as any).__ll_source_name = symName;
+
         cls.name = cls.name
           ? ({ ...cls.name, name: uniq } as any)
           : ({ _type: "identifier", name: uniq } as any);

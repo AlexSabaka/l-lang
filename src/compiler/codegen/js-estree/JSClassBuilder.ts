@@ -454,11 +454,45 @@ export class ClassBuilder {
     ];
   }
 
+  /**
+   * `static __ll_name = "Money"` -- the type's SOURCE name, which the JS binding's name is not.
+   *
+   * The import inliner renames a class to keep two modules' `Point` apart (`class __ll_inlined_Point_3`).
+   * That is correct for the BINDING and wrong for the TYPE: `__ll_is_type` and `__ll_op_registry` both
+   * ask "is this a Money?" by comparing `constructor.name`, and after inlining that answers
+   * `"__ll_inlined_Money_1"`. So an overload registered on `["Money","Money"]` never matched an imported
+   * Money, and `(x of Money)` never matched one either.
+   *
+   * The register has carried this as an open finding since D11 ("__ll_is_type and the operator registry
+   * are keyed on constructor.name, and the inliner renames structs"). It only became load-bearing once
+   * an imported operator could reach the registry at all.
+   *
+   * A static field, for the same reasons as `__ll_struct`: it rides on the class object, survives the
+   * rename, stays off the instance, and is inherited.
+   */
+  private buildTypeNameMarker(): ESTree.PropertyDefinition[] {
+    const sourceName =
+      (this.node as any).__ll_source_name ?? this.node.name?.name;
+    if (!sourceName) return [];
+
+    return [
+      {
+        type: "PropertyDefinition",
+        key: { type: "Identifier", name: "__ll_name" },
+        value: { type: "Literal", value: sourceName },
+        computed: false,
+        static: true,
+        loc: loc(this.node),
+      } as ESTree.PropertyDefinition,
+    ];
+  }
+
   public build(): ESTree.ClassDeclaration {
     const body: (ESTree.MethodDefinition | ESTree.PropertyDefinition)[] = [];
 
-    // The value-type marker, before anything else -- a static field, so ordering is immaterial, but
-    // it reads first and that is where a human looks.
+    // The markers, before anything else -- static fields, so ordering is immaterial, but they read
+    // first and that is where a human looks.
+    body.push(...this.buildTypeNameMarker());
     body.push(...this.buildValueTypeMarker());
 
     // Add fields
