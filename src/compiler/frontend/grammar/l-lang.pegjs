@@ -824,9 +824,9 @@ Boolean
   / _ FalseKw _ { return makeNode("boolean", { value: false }); }
 
 
-// Nil (null, undefined, nil, none, void, empty)
+// Nil. `nil`, and `null` as the JS-interop alias. Both are the same value (D9).
 Nil
-  = _ kw:NilKw _ { return makeNode("null", { keyword: kw }); }
+  = _ NilKw _ { return makeNode("null", { keyword: "nil" }); }
 
 
 // Numbers
@@ -953,13 +953,20 @@ ImplementsModKw = ":implements"i
 ExtendsModKw = ":extends"i
 WhereModKw = ":where"i
 
+// Nil. ONE bottom value (D9). `none` / `void` / `undefined` are deleted as spellings; `null` survives
+// only as the JS-interop alias.
+//
+// Case-SENSITIVE now, and boundary-guarded. Both were bugs, and both were live:
+//   - `"void"i` meant `Void` -- the TYPE, used across 08-types/ and std/io.lisp -- lexed as a nil
+//     KEYWORD in the PEG while grammar_v2 (case-sensitive since D14) read it as an Identifier.
+//   - with no trailing guard, `nullable` lexed as `null` + `able`. That is the exact misparse D14
+//     fixed in grammar_v2 via `longer_alt`, recorded in diff-frontends.ts, and never fixed here.
+//
+// The guard is the identifier-CONTINUATION set (Alpha covers `_`, and `-` is legal mid-identifier),
+// which is tighter than the `!NonControl` used by TrueKw/FalseKw -- those still admit `true-x`.
 NilKw
-  = "nil"i
-  / "null"i
-  / "none"i
-
-  / "void"i
-  / "undefined"i
+  = "nil" !(Alpha / Digit / "-")
+  / "null" !(Alpha / Digit / "-")
 
 ConstraintKw
   = (

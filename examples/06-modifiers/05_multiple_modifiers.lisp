@@ -24,7 +24,7 @@
         (fn [original]
             (let cache {})
             (fn [n]
-                (if (== cache[n] undefined)
+                (if (== cache[n] nil)
                     (cache[n] := (original n)))
                 cache[n])))
 

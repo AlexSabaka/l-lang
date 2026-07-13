@@ -8,7 +8,7 @@
     ;; Memoized fibonacci function
     (fn fib [n <- Int] -> Int
         ;; Check if result is cached
-        (if (!= fib-memo[n] undefined) (return fib-memo[n]))
+        (if (!= fib-memo[n] nil) (return fib-memo[n]))
         
         ;; Calculate result based on input
         (let result (match n {

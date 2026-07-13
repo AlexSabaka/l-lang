@@ -13,7 +13,7 @@
         (let memo {})
         (fn memoized-wrapper [n <- Int] -> Int
             ;; Check cache
-            (if (!= memo[n] undefined)
+            (if (!= memo[n] nil)
                 (return memo[n])
             )
             (let result (base-fn n))

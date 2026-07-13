@@ -130,11 +130,14 @@ const CASES: Case[] = [
     wasBroken: "not broken -- a guard on the property the visitWhen rewrite must preserve",
   },
   {
-    name: "when: a false condition yields nothing",
+    name: "when: a false condition yields nil",
     source: `(let v (when false :then "x"))
 (console.log v)`,
-    expect: ["undefined"],
-    wasBroken: "`when` has no else (WhenNode {condition, then[]}); a false condition is undefined",
+    // Was `undefined` until D9c. `when` has no else (WhenNode {condition, then[]}), so a false
+    // condition yields the bottom value -- and the bottom value is nil, spelled `null`, the same one
+    // the `nil` literal produces. That it used to be a DIFFERENT bottom is the bug D9 exists to kill.
+    expect: ["null"],
+    wasBroken: "`when` has no else; a false condition yielded `undefined` -- the second bottom value",
   },
   {
     name: "map keys are never mangled (D13)",
@@ -224,7 +227,7 @@ const CASES: Case[] = [
   (fn [original]
     (let cache {})
     (fn [n]
-      (if (== cache[n] undefined)
+      (if (== cache[n] nil)
           (cache[n] := (original n)))
       cache[n])))
 (fn :memoized slow [n <- Int] -> Int (console.log "computing" n) (* n 2))

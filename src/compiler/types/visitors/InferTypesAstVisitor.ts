@@ -2053,9 +2053,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     "console", "Math", "JSON", "Object", "Array", "String", "Number", "Boolean", "Symbol",
     "Error", "TypeError", "RangeError", "Date", "RegExp", "Map", "Set", "WeakMap", "WeakSet",
     "Promise", "Proxy", "Reflect", "BigInt",
-    "parseInt", "parseFloat", "isNaN", "isFinite", "NaN", "Infinity", "undefined", "globalThis",
-    // Host environment. `window` is real: 20-stdlib/std/io.lisp reaches for it behind the
-    // idiomatic `(if (&& (typeof window) (!= window undefined)) (window.alert msg))` guard.
+    "parseInt", "parseFloat", "isNaN", "isFinite", "NaN", "Infinity", "globalThis",
+    // NO `undefined` (D9). It is deleted as a spelling, and it is the SECOND bottom value -- so
+    // dropping it from NilKw while leaving it here would simply re-admit it as an ambient global,
+    // still emitting the JS `undefined` identifier, with zero diagnostics. Both had to go, and it is
+    // exactly the kind of half-fix this audit exists to catch. LL0210 now refuses it by name.
     "window", "document", "navigator", "process",
     "setTimeout", "setInterval", "clearTimeout", "clearInterval", "fetch",
   ]);

@@ -20,7 +20,11 @@
 
 (fn is-int [x] (Number.isInteger x))
 
-(fn is-nil [x] (|| (Object.is x null) (Object.is x undefined)))
+;; D9: one bottom value. `==` against nil catches BOTH JS representations -- the `null` l-lang emits
+;; and the `undefined` a JS library hands back -- so the two-armed Object.is test is no longer needed.
+;; It could not survive the migration anyway: Object.is is strict and does not route through the
+;; runtime's equality, so a plain spelling swap would have left this blind to half of what it catches.
+(fn is-nil [x] (== x nil))
 
 (fn get-type [x]
   (let res (if (is-nil x) "Nil" x.constructor.name))

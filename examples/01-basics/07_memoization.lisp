@@ -10,7 +10,7 @@
 
     ;; Memoized Fibonacci function using simple statements
     (fn fib [n <- Int] -> Int
-        (if (!= memo[n] undefined) (return memo[n]))
+        (if (!= memo[n] nil) (return memo[n]))
         (if (<= n 1) 
             (memo[n] := n)
             (memo[n] := (+ (fib (- n 1)) (fib (- n 2))))

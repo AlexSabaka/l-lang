@@ -318,6 +318,20 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
         _location: original._location,
         _parent: original._parent
       } as ast.BooleanNode;
+    } else if (value == null) {
+      // A fold whose ANSWER is nil (D9). `"null"` was already in this visitor's `isLiteral` set, so
+      // it would happily fold INTO a nil -- and then fall through to `return original`, silently
+      // handing back the UNFOLDED expression. The fold reported success and changed nothing.
+      //
+      // `== null` on purpose: it catches both bottoms. `node:vm` is a real JS sandbox and hands back
+      // a real `undefined` for, say, an out-of-range lookup; the language has one bottom, so both
+      // become `nil` on the way back in.
+      return {
+        _type: "null",
+        keyword: "nil",
+        _location: original._location,
+        _parent: original._parent
+      } as ast.NullNode;
     }
     return original;
   }

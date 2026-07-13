@@ -92,10 +92,19 @@ export const FnKw = createToken({ name: "FnKw", pattern: /fn/, longer_alt: Ident
 // Boolean Literals (before Identifier)
 export const TrueKw = createToken({ name: "TrueKw", pattern: /true|#t/, longer_alt: Identifier });
 export const FalseKw = createToken({ name: "FalseKw", pattern: /false|#f/, longer_alt: Identifier });
-// Nil Keywords
+// Nil. ONE bottom value (D9).
+//
+// `none` / `void` / `undefined` are DELETED as spellings. They lex as plain Identifiers now, and
+// LL0210 refuses them -- which is the whole point: `undefined` was the SECOND bottom value, and four
+// spellings of one value meant nobody could tell there were two of them.
+//
+// `null` survives ONLY as the JS-interop alias. It is the same node and the same emission as `nil`.
+//
+// `void` the spelling goes; `Void` the TYPE stays. They are distinguishable only because this token
+// is case-SENSITIVE (D14) -- which the PEG's `"void"i` was not.
 export const NilKw = createToken({
   name: "NilKw",
-  pattern: /nil|null|none|void|undefined/,
+  pattern: /nil|null/,
   longer_alt: Identifier,
 });
 

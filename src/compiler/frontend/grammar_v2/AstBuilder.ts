@@ -209,9 +209,11 @@ export class LLangAstBuilder extends BaseCstVisitor {
   }
 
   nil(ctx: any): ast.NullNode {
-    return this.makeNode("null", ctx, {
-      keyword: ctx.NilKw[0].image.toLowerCase(),
-    });
+    // Always "nil" (D9). `null` is only the JS-interop ALIAS -- the same value, not a second one --
+    // so the spelling must not survive into the AST. It used to, and codegen branched on it: an
+    // `undefined` keyword emitted the JS `undefined` identifier while every other spelling emitted
+    // `null`. That branch was the second bottom value.
+    return this.makeNode("null", ctx, { keyword: "nil" });
   }
 
   boolean(ctx: any): ast.BooleanNode {

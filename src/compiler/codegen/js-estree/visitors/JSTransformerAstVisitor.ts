@@ -1471,7 +1471,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           consequent: this.asExpression(thenBranch, node.then!),
           alternate: elseBranch
             ? this.asExpression(elseBranch, node.else!)
-            : ESTreeBuilder.identifier(node, "undefined"),
+            : this.nilLiteral(node),
           loc: ESTreeBuilder.loc(node),
         } as ESTree.ConditionalExpression;
       }
@@ -1542,7 +1542,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
       let consequent: ESTree.Expression;
       if (body.length === 0) {
-        consequent = ESTreeBuilder.identifier(node, "undefined");
+        consequent = this.nilLiteral(node);
       } else if (body.length === 1) {
         consequent = this.asExpression(body[0], node.then![0]);
       } else if (body.every((b) => this.isExpression(b))) {
@@ -1561,7 +1561,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         type: "ConditionalExpression",
         test: condition,
         consequent,
-        alternate: ESTreeBuilder.identifier(node, "undefined"),
+        alternate: this.nilLiteral(node),
         loc: ESTreeBuilder.loc(node),
       } as ESTree.ConditionalExpression;
     });
@@ -1572,10 +1572,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     if (this.isExpressionContext()) {
       // Build nested ternary
-      let result: ESTree.Expression = ESTreeBuilder.identifier(
-        node,
-        "undefined"
-      );
+      let result: ESTree.Expression = this.nilLiteral(node);
       for (let i = cases.length - 1; i >= 0; i--) {
         result = cases[i] as ESTree.ConditionalExpression;
         if (i > 0) {
@@ -1628,7 +1625,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         type: "ConditionalExpression",
         test: this.visit(node.condition) as ESTree.Expression,
         consequent: body as ESTree.Expression,
-        alternate: ESTreeBuilder.identifier(node, "undefined"),
+        alternate: this.nilLiteral(node),
         loc: ESTreeBuilder.loc(node),
       };
     }
@@ -1952,12 +1949,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         } as ESTree.IfStatement);
       }
       
-      funcBody.push(
-        ESTreeBuilder.returnStatement(
-          node,
-          ESTreeBuilder.identifier(node, "undefined")
-        )
-      );
+      funcBody.push(ESTreeBuilder.returnStatement(node, this.nilLiteral(node)));
 
       return ESTreeBuilder.callExpression(
         node,
@@ -2391,7 +2383,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // Handle (new ClassName args...) -> new ClassName(args...)
       if (head._type === "simple-identifier" && headId === "new") {
         if (rest.length === 0) {
-          return ESTreeBuilder.identifier(node, "undefined");
+          // `(new)` with no class name. Bottom, for now -- but it is really a malformed form and
+          // deserves a diagnostic rather than a value. Surfaced, not absorbed.
+          return this.nilLiteral(node);
         }
         const classNameNode = rest[0];
         const constructorArgs = rest.slice(1).map((x) => this.visit(x) as ESTree.Expression);
@@ -2699,11 +2693,25 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   visitNull(node: ast.NullNode) {
-    // If the keyword is "undefined", emit undefined identifier instead of null literal
-    if (node.keyword && node.keyword.toLowerCase() === "undefined") {
-      return ESTreeBuilder.identifier(node, "undefined");
-    }
+    // ONE bottom value (D9). There is nothing left to branch on.
+    //
+    // This used to read: `if (keyword === "undefined") return identifier("undefined")`. That single
+    // line WAS the second bottom value -- four spellings emitted `null` and one emitted `undefined`,
+    // and __ll_deep_eq told them apart, so `(== (when false 1) nil)` was false.
     return ESTreeBuilder.literal(node, null);
+  }
+
+  /**
+   * The bottom value, as the CODE GENERATOR emits it when a construct produces no value: an `if` with
+   * no else, a `when` whose condition is false, a `cond` that falls through, a function that runs off
+   * its end.
+   *
+   * These sites emitted the JS `undefined` identifier while the `nil` literal emitted `null` -- so the
+   * language produced a bottom value it could not itself detect. Every one of them is `nil` now, and
+   * they route through here rather than each spelling it out, so there is one place to be wrong.
+   */
+  private nilLiteral(node: ast.ASTNode): ESTree.Expression {
+    return ESTreeBuilder.literal(node, null) as ESTree.Expression;
   }
 
   // =========================================================================
@@ -2865,7 +2873,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         ) as ast.VariableNode;
         const valueExpr = v.value
           ? (this.visit(v.value) as ESTree.Expression)
-          : ESTreeBuilder.identifier(v, "undefined");
+          : this.nilLiteral(v);
         defStmt = {
           type: "VariableDeclaration",
           kind: "const",
@@ -2916,8 +2924,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           // module's scope and leave `uniq` unbound.
           const init = (emitted as ESTree.VariableDeclaration).declarations[0]?.init;
           defStmt = bindTo(
-            (init as ESTree.Expression) ??
-              ESTreeBuilder.identifier(symbol.value as any, "undefined")
+            (init as ESTree.Expression) ?? this.nilLiteral(symbol.value as any)
           );
         } else {
           defStmt = emitted as ESTree.Statement;

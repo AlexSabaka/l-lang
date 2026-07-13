@@ -13,7 +13,7 @@
   (fn prn [x] (console.log x))
   
   (fn alert [msg] 
-    (if (&& (typeof window) (!= window undefined)) 
+    (if (&& (typeof window) (!= window nil)) 
       (window.alert msg)
       (console.log "ALERT:" msg)))
 

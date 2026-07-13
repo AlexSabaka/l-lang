@@ -777,6 +777,62 @@ caught a consumer that had assumed the array and was emitting `'((+ 1 2))` — a
 
 **This is code as DATA, not code as CODE.** There is no `eval`.
 
+## D9 — what is `nil`?
+
+### The premise was backwards (D9a)
+
+The ruling reads as a *tightening* — "non-nullable by default" — and it is not one. **Annotated slots
+were already non-nullable.** The nil literal types as `Null`, `isUnknown` is false for it, and nothing
+anywhere ever set `nullable` on a *target*, so `isAssignable(Null, String)` was already false and
+`(let x <- String nil)` already errored (LL0200).
+
+The cage was always shut. What was missing was the **door**: no way to say "this one may be nil". D9
+builds `T?`. This is recorded because it inverts the phase's risk — the danger was never a flood of
+new errors, it was that `T?` would ship inert.
+
+### One bottom value (D9b, D9c)
+
+There were **two**, and they were strictly distinguishable:
+
+```lisp
+(== (when false 1) nil)   ;; => FALSE
+```
+
+`nil` emitted `null`; `if`-no-else / `when` / `cond` / a function running off its end all emitted
+`undefined`; and `__ll_deep_eq` opens with `a === b`. **The language could not detect the bottom value
+it produced itself.**
+
+- **`nil` is the spelling. `null` survives only as the JS-interop alias** — same node, same emission.
+  `none` / `void` / `undefined` are deleted, and LL0210 refuses them by name.
+- **`undefined` had to leave `JS_GLOBALS` too.** Dropping it from `NilKw` alone would have re-admitted
+  it as an ambient global, still emitting the JS `undefined` identifier, with zero diagnostics — a
+  half-fix indistinguishable from a fix.
+- **Eight codegen sites** emitted the implicit bottom; all now emit `nil`. (Two others are LL0100 /
+  LL0102 error-recovery placeholders and are left alone.)
+- **`__ll_deep_eq` gains the one loose `==` in the runtime.** l-lang emits only `null`, but JavaScript
+  hands back `undefined` constantly. Since `undefined` is no longer a spelling, a program *cannot ask*
+  which bottom it got — so the two must be indistinguishable. `a == null` is exactly that, and 0, `""`,
+  `false` and `NaN` stay tight.
+- **`head []` returned THE ARRAY**, so "did I get anything?" was unanswerable. It is nil. This is the
+  lie D9's own entry above (`first`/`last`, typed honestly) was written about.
+- **`:nullable` was a MODIFIER** that nothing read: `(let :nullable x <- String)` compiled clean and
+  meant nothing. Deleted. Optionality is spelled `T?`, in the type, where the checker can see it.
+
+### Two goldens moved, by ruling (D9c)
+
+`03_if_else.expect` and `04_when.expect` said `Message: undefined` / `Nothing: undefined`. They now say
+`null`. This is the one place D9 changes an observed answer, it was signed off before the work started,
+and the diff is exactly those two lines.
+
+### PEG: `void` the spelling vs `Void` the type
+
+The PEG's `NilKw` was `"void"i` — **case-insensitive** — so `Void`, the return TYPE used across
+`08-types/` and `std/io.lisp`, lexed as a nil *keyword* there while grammar_v2 (case-sensitive since
+D14) read it as an identifier. It also had no boundary guard, so `nullable` lexed as `null` + `able` —
+the exact D14 misparse, recorded in `diff-frontends.ts`, never fixed on this side. Both are now fixed,
+and the guard is the identifier-continuation set (tighter than the `!NonControl` that `TrueKw` and
+`FalseKw` still use — those admit `true-x`).
+
 ## P8 — papercuts: ordinary code that silently did the wrong thing
 
 Not missing features. **Wrong answers**, in code anyone would write in their first hour.
@@ -844,6 +900,35 @@ will reject `(greet)` as "too few arguments".
 It is the only one of the four papercuts that adds a FEATURE rather than fixing a wrong answer.
 
 ## Open findings
+
+- **Three runtime functions are DEAD, and one of them nearly bought a fake fix.** Nothing in the
+  codegen ever calls `__ll_match_list`, `__ll_match_struct`, or `__ll_is_type` — they are emitted into
+  every program and reachable from nothing. Vector patterns are *inlined* (`_` becomes `&& true`), and
+  the `:is` type patterns that would need `__ll_is_type` do not parse at all (grammar_v2: "Expecting
+  RightDoubleArrow but found ':is'" — the misparse behind the `05_pattern_matching` xfail).
+
+  This matters beyond the dead weight. The D9 plan carried an item — "a `nil` pattern is a WILDCARD,
+  because `__ll_match_list` does `if (pattern === null) continue`" — which is *true of the shim text*
+  and **cannot fire**. Read from the source it looked live; built as a test case, it did not exist.
+  Fixing it would have been indistinguishable, in the commit log, from fixing something.
+
+- **A `nil` match pattern is a live frontend divergence.** grammar_v2 refuses it outright ("Expecting
+  RBracket but found 'nil'"). PEG emits `let nil; ... (nil = tmp[0], true)` — it binds **a variable
+  named `nil`** and matches *anything*, silently. Both `19_optional_and_mutability` and
+  `21_nil_handling` lean on nil patterns. Needed by D9g.
+
+- **`if` / `when` / `cond` as a CALL ARGUMENT emit invalid JavaScript** (LL0101). A `let` initializer
+  is an expression context and a call argument is not, so `(console.log (when false 1))` emits
+  `console.log(if (false) {…`. `(let v (when false 1))` is fine. A P5 leftover — loud rather than
+  silent, which is why it waited.
+
+- **`set?` cannot be spelled** in grammar_v2 at all: `Identifier` excludes `?`. It is a registered
+  runtime symbol reachable only from the PEG. D9e makes `?` a type suffix, which settles it — but the
+  Lisp `foo?` predicate convention is foreclosed by that, deliberately, and nothing in the corpus used
+  it (zero `?`-suffixed identifiers in live code).
+
+- **`(new)` with no class name emits a bottom value** instead of a diagnostic. It is a malformed form
+  and should be refused.
 
 - ~~**`:comptime` is accepted and IGNORED.**~~ **RETRACTED — this was false.**
 

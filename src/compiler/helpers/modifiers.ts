@@ -8,7 +8,11 @@ import * as ast from "../frontend/ast";
 export const VISIBILITY_MODIFIERS = ["public", "private", "protected", "internal"] as const;
 export const PARAMETER_MODIFIERS = ["in", "out", "ref"] as const;
 export const CLASS_MODIFIERS = ["static", "override", "extern"] as const;
-export const TYPE_MODIFIERS = ["explicit-cast", "implicit-cast", "nullable", "readonly"] as const;
+// No `nullable` (D9). It was accepted as a modifier name and read by NOTHING -- so `(let :nullable x
+// <- String)` compiled clean and meant exactly as much as writing nothing. Optionality is spelled
+// `T?`, in the type, where the checker can see it. D4/LL0015 refuses `:nullable` by name now; the
+// corpus never used it.
+export const TYPE_MODIFIERS = ["explicit-cast", "implicit-cast", "readonly"] as const;
 export const FUNCTION_MODIFIERS = ["extension", "operator", "comptime", "async"] as const;
 export const MEMBER_MODIFIERS = ["ctor"] as const;
 
