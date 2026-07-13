@@ -382,8 +382,14 @@ export class ClassBuilder {
     return this.classFields.map(v => {
       const key = this.visitor.visit(v.name) as ESTree.Identifier;
 
+      // A FIELD is a new home for a value (D11), so an initializer that names an existing struct
+      // stores a copy of it. `(let vel <- Vector3 (new Vector3 0 0 0))` is a fresh construction and is
+      // not copied; `(let vel <- Vector3 other)` is.
       const value = v.value
-        ? this.visitor.visit(v.value) as ESTree.Expression
+        ? (this.visitor.asValue(
+            this.visitor.visit(v.value) as ESTree.Expression,
+            v.value
+          ) as ESTree.Expression)
         : null;
 
       return {

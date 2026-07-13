@@ -1790,11 +1790,34 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           ),
         ]);
 
+    // `for :each` BINDS BY REFERENCE, and a struct must be a copy (D11).
+    //
+    // This is the site that is easiest to miss entirely, because it is not a let, not an assignment,
+    // not an argument and not a literal -- it is a ForOfStatement whose `left` is a bare identifier
+    // that the loop re-assigns each iteration. `(for :each p :from ps :then (p.x := 99))` reaches
+    // straight through into the array's elements.
+    //
+    // The copy goes in the BODY, per iteration -- wrapping `right` would copy the ARRAY, which carries
+    // no marker and would therefore be a no-op that looks like a fix.
+    //
+    // Destructuring (`:each [a b]`) is not covered: the names are bound through a pattern, not a single
+    // identifier. Surfaced as an open finding rather than half-done here.
+    const perIterationCopy: ESTree.Statement[] = destructuring
+      ? []
+      : this.parameterCopyPrologue([variable]);
+
+    const loopBody: ESTree.Statement =
+      perIterationCopy.length === 0
+        ? bodyStmt
+        : bodyStmt.type === "BlockStatement"
+          ? ({ ...bodyStmt, body: [...perIterationCopy, ...bodyStmt.body] } as ESTree.BlockStatement)
+          : ESTreeBuilder.blockStatement(node.then, [...perIterationCopy, bodyStmt]);
+
     const forOfStmt: ESTree.ForOfStatement = {
       type: "ForOfStatement",
-      left: variable, 
+      left: variable,
       right: collection,
-      body: bodyStmt,
+      body: loopBody,
       await: false,
       loc: ESTreeBuilder.loc(node),
     };
@@ -2397,7 +2420,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           ScopeType.variable,
           () => this.visit(rest[0]) as ESTree.Expression
         );
-        return ESTreeBuilder.returnStatement(node, returnValue);
+        // `(return this)` hands the RECEIVER out of the function. Without a copy here, the caller
+        // would hold the callee's own struct and could mutate it through the back door -- and a
+        // returned LOCAL is the corpus's whole construct-mutate-return idiom, which must not hand out
+        // an alias either (D11).
+        return ESTreeBuilder.returnStatement(node, this.asValue(returnValue, rest[0]));
       }
 
       // Handle (new ClassName args...) -> new ClassName(args...)
@@ -2525,7 +2552,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   visitVector(node: ast.VectorNode): ESTree.ArrayExpression {
     return {
       type: "ArrayExpression",
-      elements: node.values.map((x) => this.visit(x) as ESTree.Expression),
+      // A collection SLOT is a new home for a value (D11). `(let xs [a])` stores a COPY of the struct,
+      // so a later `(a.x := 99)` cannot be seen through `xs[0]`.
+      elements: node.values.map((x) => this.asValue(this.visit(x) as ESTree.Expression, x)),
       loc: ESTreeBuilder.loc(node),
     };
   }
@@ -2537,7 +2566,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         (row) =>
           ({
             type: "ArrayExpression",
-            elements: row.map((x) => this.visit(x) as ESTree.Expression),
+            elements: row.map((x) => this.asValue(this.visit(x) as ESTree.Expression, x)),
           } as ESTree.ArrayExpression)
       ),
       loc: ESTreeBuilder.loc(node),
@@ -2568,7 +2597,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         ? ESTreeBuilder.literal(node.key, (node.key as ast.SimpleIdentifierNode).id)
         : (this.visit(node.key) as ESTree.Expression);
 
-    const value = this.visit(node.value) as ESTree.Expression;
+    // The map's VALUE is visited here, not in visitMap -- so this, not visitMap, is where a struct
+    // stored under a key gets its copy (D11).
+    const value = this.asValue(this.visit(node.value) as ESTree.Expression, node.value);
 
     return {
       type: "Property",
@@ -2765,8 +2796,13 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return true;
   }
 
-  /** Wrap an emitted expression in `__ll_copy(...)`, unless it provably cannot be a struct. */
-  private asValue(
+  /**
+   * Wrap an emitted expression in `__ll_copy(...)`, unless it provably cannot be a struct.
+   *
+   * Public because JSClassBuilder needs it too -- field initializers are emitted there, and the
+   * builder reaches the visitor through an `any` to dodge a circular import.
+   */
+  public asValue(
     emitted: ESTree.Expression,
     source: ast.ASTNode | undefined | null
   ): ESTree.Expression {
