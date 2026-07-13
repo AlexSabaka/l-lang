@@ -1259,8 +1259,26 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             );
           }
         }
-        // Update symbol with inferred type (the actual value type) after validation
-        this.symbolTable.bindType(varName, valueType);
+        // The DECLARED type wins (D9d).
+        //
+        // This bound `valueType`: the annotation was checked, and then thrown away. `(mut pet <-
+        // Animal (Dog))` bound `Dog`, so a later `(pet := (Cat))` was "Cat is not a Dog" -- an
+        // LL0202 FALSE POSITIVE against a declaration that explicitly permits any Animal. Annotating
+        // a binding is precisely how you ask for the WIDER type; discarding it made the annotation a
+        // no-op, and the wider it was, the more wrong the binding became.
+        //
+        // It is also what would have killed optionals on their own declaration line: `(let x <-
+        // String? nil)` binds the value's type, `Null` -- so the `?` evaporated one line after it was
+        // written, and `T?` could not survive to be used, let alone unwrapped.
+        //
+        // The no-initializer path below has ALWAYS bound the declared type. The two disagreed.
+        //
+        // Gradual typing still holds at the same place it always did: an annotation naming a type we
+        // cannot resolve is Unknown, and Unknown must not ERASE a value type we did manage to infer.
+        this.symbolTable.bindType(
+          varName,
+          TypeChecker.isUnknown(declaredType) ? valueType : declaredType
+        );
       } else {
         // No explicit type - bind the inferred type
         this.typeEnv.bindIdentifier(varName, valueType, node);
