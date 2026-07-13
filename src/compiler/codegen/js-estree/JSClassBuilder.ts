@@ -264,21 +264,19 @@ export class ClassBuilder {
 
     // Add field assignments (fields use encoded names)
     for (const v of this.ctorVars) {
-      const isPrivate = v.modifiers.some((x) => x.modifier === "private");
       // fieldName should already be encoded via visitor
       const fieldName = this.visitor.visit(v.name) as ESTree.Identifier;
-      
+
       // The parameter name matches the unencoded field name logic, so we must encode it too
       // to match constructor params
       const paramNameRaw = (v.name as any).id ?? (v.name as any).name;
       const paramRefName = encodeIdentifier(paramNameRaw);
 
+      // Visibility is ERASED (D11) -- a plain `this.x`, never `this.#x`. See buildFields.
       const targetField: ESTree.MemberExpression = {
         type: "MemberExpression",
         object: { type: "ThisExpression" },
-        property: isPrivate 
-          ? { type: "PrivateIdentifier", name: fieldName.name } as any
-          : fieldName,
+        property: fieldName,
         computed: false,
         optional: false
       };
@@ -335,22 +333,31 @@ export class ClassBuilder {
     };
   }
 
+  /**
+   * Visibility is ERASED at codegen (D11). A `:private` field emits a PLAIN field name.
+   *
+   * It used to emit a `PrivateIdentifier` -- a JS `#name` -- and that was a silent wrong answer, not
+   * a hardening. Nothing else in the compiler knows about `#`: every read and write of the field goes
+   * through `visitCompositeIdentifier`, which emits `this.count` and has no idea the declaration said
+   * `:private`. So the `#count` slot kept its initializer forever, `this.count` was `undefined`, and
+   * `(this.count := (+ this.count 1))` produced NaN with zero diagnostics. Two declaration-side sites
+   * decided privacy; the entire reference side never heard about it.
+   *
+   * Erasure is the ruling, and it is also the only coherent option: `#` is a RUNTIME enforcement
+   * mechanism, and D11 puts enforcement in the TYPE CHECKER (LL0206, D11c) where it can produce a
+   * located error instead of a wrong number.
+   */
   private buildFields(): ESTree.PropertyDefinition[] {
     return this.classFields.map(v => {
-      const isPrivate = v.modifiers.some((x) => x.modifier === "private");
       const key = this.visitor.visit(v.name) as ESTree.Identifier;
-      
-      const fieldKey = isPrivate
-        ? { type: "PrivateIdentifier", name: key.name } as any
-        : key;
 
-      const value = v.value 
+      const value = v.value
         ? this.visitor.visit(v.value) as ESTree.Expression
         : null;
 
       return {
         type: "PropertyDefinition",
-        key: fieldKey,
+        key,
         value,
         computed: false,
         static: false,

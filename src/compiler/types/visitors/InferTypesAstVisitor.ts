@@ -824,21 +824,37 @@ class CollectTypesPass extends BaseAstTreeWalker {
     let arity: number | undefined;
     
     if (varNode.modifiers) {
-      const mods = varNode.modifiers.map((m: any) => m.modifier || m);
-      
+      // NORMALISE, then compare (D11b).
+      //
+      // These comparisons used to read `mod === ':private'` -- WITH a colon -- against a value both
+      // parsers strip it from (AstBuilder:593 stores `nameToken.image`; l-lang.pegjs:348 matches the
+      // ":" as a literal and captures only the name). All seven were DEAD, so `visibility`,
+      // `isStatic`, `isConstructorParam` and `isOperator` never left their defaults.
+      //
+      // The visible consequence: reflection reported every `:private` field as `isPublic: true` while
+      // CODEGEN emitted `#field` for the same declaration -- the two halves of the compiler disagreed
+      // about the same word. (D11's own text says the disagreement is `:static` false-vs-true. It is
+      // neither; that is why the gate asserts the real thing.)
+      //
+      // The line below (`modifiers.add(mod.replace(':', ''))`) stripped defensively and was the only
+      // one that worked, which is what kept the bug invisible.
+      const mods = varNode.modifiers.map((m: any) =>
+        String(m.modifier ?? m).replace(/^:/, "")
+      );
+
       for (const mod of mods) {
-        modifiers.add(mod.replace(':', ''));
-        
-        if (mod === ':private') { visibility = 'private'; }
-        else if (mod === ':public') { visibility = 'public'; }
-        else if (mod === ':protected') { visibility = 'protected'; }
-        else if (mod === ':internal') { visibility = 'internal'; }
-        else if (mod === ':ctor') { isConstructorParam = true; }
-        else if (mod === ':static') { isStatic = true; }
-        else if (mod === ':operator') { isOperator = true; }
+        modifiers.add(mod);
+
+        if (mod === 'private') { visibility = 'private'; }
+        else if (mod === 'public') { visibility = 'public'; }
+        else if (mod === 'protected') { visibility = 'protected'; }
+        else if (mod === 'internal') { visibility = 'internal'; }
+        else if (mod === 'ctor') { isConstructorParam = true; }
+        else if (mod === 'static') { isStatic = true; }
+        else if (mod === 'operator') { isOperator = true; }
       }
     }
-    
+
     // Extract operator information
     if (isOperator && propName) {
       // Parse operator symbol and arity from method name
@@ -897,18 +913,25 @@ class CollectTypesPass extends BaseAstTreeWalker {
     let isOperatorOverload = false;
     let operatorSymbol: string | undefined;
     let arity: number | undefined;
-    
+
     if (funcNode.modifiers) {
-      const mods = funcNode.modifiers.map((m: any) => m.modifier || m);
-      
+      // Normalised, for the same reason as the variable path above (D11b): these compared against
+      // `':private'` while the parser stores `'private'`, so every one of them was dead and a
+      // method's `visibility` never left `'public'`.
+      //
+      // A method has no `isStatic` at all -- `MethodSignature` has no such field. That is D11e's.
+      const mods = funcNode.modifiers.map((m: any) =>
+        String(m.modifier ?? m).replace(/^:/, "")
+      );
+
       for (const mod of mods) {
-        modifiers.add(mod.replace(':', ''));
-        
-        if (mod === ':private') { visibility = 'private'; }
-        else if (mod === ':public') { visibility = 'public'; }
-        else if (mod === ':protected') { visibility = 'protected'; }
-        else if (mod === ':internal') { visibility = 'internal'; }
-        else if (mod === ':operator') { isOperatorOverload = true; }
+        modifiers.add(mod);
+
+        if (mod === 'private') { visibility = 'private'; }
+        else if (mod === 'public') { visibility = 'public'; }
+        else if (mod === 'protected') { visibility = 'protected'; }
+        else if (mod === 'internal') { visibility = 'internal'; }
+        else if (mod === 'operator') { isOperatorOverload = true; }
       }
     }
     
@@ -932,7 +955,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
       visibility
     };
   }
-  
+
   /**
    * Decode operator symbol from encoded name
    */

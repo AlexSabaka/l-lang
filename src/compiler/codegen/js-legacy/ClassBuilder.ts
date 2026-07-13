@@ -178,13 +178,13 @@ export class ClassBuilder {
     );
 
     const assignments = this.ctorVars.map((v) => {
+      // Visibility is ERASED at codegen (D11) -- no `#`. Same bug as the ESTree backend: the `#` slot
+      // was declared and every reference emitted a plain `this.x`, so the field read as undefined.
       const fieldName = this.visitor.visit(v.name);
-      const isPrivate = v.modifiers.some((x) => x.modifier === "private");
-      const targetField = isPrivate ? ["#", fieldName] : [fieldName];
       return createSourceNode(
         v,
         "this.",
-        ...targetField,
+        fieldName,
         " = ",
         fieldName
       );
@@ -220,9 +220,8 @@ export class ClassBuilder {
   private buildFields(): (SourceNode | string)[] {
     return this.classFields.flatMap((v) => {
       const result: (SourceNode | string)[] = [];
-      const isPrivate = v.modifiers.some((x) => x.modifier === "private");
 
-      if (isPrivate) result.push("#");
+      // Visibility is ERASED at codegen (D11). See the ESTree backend's buildFields.
       result.push(this.visitor.visit(v.name));
 
       if (v.value) {
