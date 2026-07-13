@@ -13,6 +13,12 @@ export enum ScopeType {
   if = "if",
   struct = "struct",
   "type-def" = "type-def",
+  /**
+   * `(defmodifier repeated [n <- Int] ...)`. Its parameters and body are its own -- without a scope
+   * they would be defined in the enclosing one, so a modifier's `n` would leak into module scope and
+   * collide with a module-level `n`.
+   */
+  "modifier-def" = "modifier-def",
 
   // list = "list",
   // quote = "quote",
@@ -32,7 +38,7 @@ export enum ScopeType {
 }
 
 export function isNodeScope(type: any): type is ScopeType {
-  return [ "program", "class", "interface", "function", "variable", "method", "match", "when", "if", "struct", "type-def" ].includes(type);
+  return [ "program", "class", "interface", "function", "variable", "method", "match", "when", "if", "struct", "type-def", "modifier-def" ].includes(type);
 }
 
 /**
@@ -535,9 +541,31 @@ export class SymbolTableBuilder {
     return new SymbolTable(this.root);
   }
 
+  /**
+   * Did each open `enterScope()` actually PUSH a scope?
+   *
+   * `enterScope` has three paths that decline to push -- an unregistered node type, a re-entry into
+   * the scope already active, and the creation of the root -- and `exitScope` popped
+   * UNCONDITIONALLY. So any caller doing `enterScope(x) ... exitScope()` desynced the stack the
+   * instant `enterScope` declined, and the next exit walked off the root:
+   *
+   *     Error: Already at the root scope. Cannot exit.
+   *
+   * That is what `(defmodifier m [n <- Int])` did -- `modifier-def` was not a registered scope type,
+   * so the enter was a silent no-op and the exit popped a scope it never opened. The compiler
+   * crashed outright. `modifier-def` is registered below, but that alone would only fix the ONE node
+   * type that happens to have tripped it: the asymmetry is a landmine for every node type that is
+   * not in `isNodeScope`, and for every future one.
+   *
+   * Recording what each enter DID makes the pair impossible to desync. A no-op enter now pairs with
+   * a no-op exit.
+   */
+  private pushedScope: boolean[] = [];
+
   enterScope(node: ast.ASTNode) {
     const nodeType = node._type as any;
     if (!isNodeScope(nodeType)) {
+      this.pushedScope.push(false);
       return;
     }
 
@@ -561,6 +589,7 @@ export class SymbolTableBuilder {
     }
 
     if (this.active.node === node) {
+      this.pushedScope.push(false);
       return;
     }
 
@@ -575,9 +604,22 @@ export class SymbolTableBuilder {
     this.active.scopes.push(newScope);
 
     this.active = newScope;
+    this.pushedScope.push(true);
   }
 
   exitScope() {
+    const didPush = this.pushedScope.pop();
+
+    if (didPush === undefined) {
+      throw new Error("exitScope() without a matching enterScope().");
+    }
+
+    // The matching enter declined to push -- an unregistered node type, or a re-entry into the scope
+    // already active. There is nothing to unwind, and unwinding anyway is precisely the bug.
+    if (!didPush) {
+      return;
+    }
+
     if (this.root === undefined) {
       throw new Error("No root scope. Cannot exit.");
     }
