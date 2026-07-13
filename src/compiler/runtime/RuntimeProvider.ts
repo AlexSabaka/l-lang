@@ -15,7 +15,21 @@ let _util = null;
 try { _util = require("util"); } catch (e) { console.log("util module unavailable"); _util = { formatWithOptions: (opts, obj) => obj.toString() }; }
 function __ll_deep_eq(a, b) {
   if (a === b) return true;
-  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+  // D9: ONE bottom value in the language, TWO representations at the JS boundary.
+  //
+  // l-lang emits only \`null\` for nil -- but JavaScript hands you \`undefined\` constantly (a missing
+  // property, \`arr.find\` with no hit, a library that never heard of us). Since \`undefined\` is not a
+  // spelling any more, a program CANNOT ask which one it got, so the two must not be distinguishable.
+  // \`a == null\` is exactly "is it either bottom", and it is the only loose \`==\` in this runtime.
+  //
+  // Without this, \`(== (when false 1) nil)\` was FALSE: the language could not detect the bottom value
+  // it produced itself. It is also what makes the memoization rewrite CORRECT rather than merely
+  // compiling -- \`(!= (get memo n) nil)\` on an absent key must read "not cached", not "cached".
+  //
+  // It stays TIGHT on everything else: 0, "", false and NaN are not nil.
+  if (a == null && b == null) return true;
+  if (a === null || b === null || a === undefined || b === undefined) return false;
+  if (typeof a !== 'object' || typeof b !== 'object') return false;
   if (Array.isArray(a)) {
     if (!Array.isArray(b) || a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) if (!__ll_deep_eq(a[i], b[i])) return false;
@@ -241,9 +255,16 @@ function __ll_is_type(val, type) {
     "set!": `const ${encodeIdentifier('set!')} = (obj, key, val) => { obj[key] = val; return val; };`,
     "set?": `const ${encodeIdentifier('set?')} = (obj, key) => { return obj[key] !== undefined && obj[key] !== null; };`,
     "get": `const get = (obj, key) => obj[key];`,
-    "head": `const head = (a) => (Array.isArray(a) && a.length > 0) ? a[0] : a;`,
+    // D9: `head []` returned THE ARRAY ITSELF -- so `(head [])` was `[]`, and asking "did I get
+    // anything?" was unanswerable. It is nil. DECISIONS.md:84 cites exactly this ("optionals, so
+    // `first`/`last` can be typed honestly") as why D9 must precede a typed stdlib: `head` is the
+    // canonical `T?` producer, and it could not be typed while it lied about the empty case.
+    // `tail []` is `[]`, which is the true answer, and is left alone.
+    "head": `const head = (a) => (Array.isArray(a) && a.length > 0) ? a[0] : null;`,
     "tail": `const tail = (a) => (Array.isArray(a) && a.length > 0) ? a.slice(1) : a;`,
-    "empty": `const empty = (a) => a === undefined || (Array.isArray(a) && a.length === 0);`,
+    // `=== undefined` was blind to null -- so `(empty nil)` was FALSE, and once nil is `null` (D9c)
+    // it would have been blind to every bottom value the language emits.
+    "empty": `const empty = (a) => a == null || (Array.isArray(a) && a.length === 0);`,
     "elem": `const elem = (a, i) => a[i];`,
     "cons": `const cons = (...args) => args.reduce((acc, curr) => Array.isArray(curr) ? [...acc, ...curr] : [...acc, curr], []);`,
     "list": `const list = (...args) => [...args];`,
