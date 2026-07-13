@@ -16,7 +16,8 @@
     "test:diff-frontends": "ts-node test/diff-frontends.ts",
     "test:type-errors": "ts-node test/type-errors.ts",
     "test:imports": "ts-node test/imports.ts",
-    "test:codegen": "ts-node test/codegen.ts"
+    "test:codegen": "ts-node test/codegen.ts",
+    "test:repl": "ts-node test/repl.ts"
   },
   "author": "Alex Sabaka",
   "license": "MIT",

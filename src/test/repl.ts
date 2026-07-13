@@ -1,0 +1,435 @@
+#!/usr/bin/env ts-node
+/**
+ * The measurement harness for the REPL.
+ *
+ * WHY THIS EXISTS: the REPL is the only subsystem that never had a gate. While P4-P8 armed the type
+ * checker, tightened the grammar and cut over to grammar_v2, nothing here was ever executed by a
+ * test -- so it rotted invisibly, and is now dead on the first keystroke. Every other harness in
+ * this directory drives `.lisp` files through `Context`; not one of them touches the REPL.
+ *
+ * It drives `ReplSession` and `MultiLineBuffer` DIRECTLY -- no pty, no readline, no stdout scraping.
+ * That is only possible because those two are headless by contract: the session takes a string and
+ * returns plain data, and all colour lives in the renderer. A REPL that can only be tested through a
+ * terminal is a REPL that will not be tested.
+ *
+ * Discipline, same as test:codegen: a case must go RED before its fix lands. A case that passes on
+ * the first run proves nothing about the bug it claims to cover.
+ *
+ * NOT IN SCOPE. `__`-prefixed identifiers do not tokenize under grammar_v2 (the `Underscore` token
+ * omits `_` from its own lookahead, so `__private` lexes as wildcard + `_private`). That is a real
+ * compiler bug -- it is why the old REPL, whose boundary marker was named `__repl_marker`, failed to
+ * parse EVERY input -- but it is a compiler bug, and this refactor is scoped REPL-side. The REPL
+ * routes around it by deleting the marker entirely. The lexer fix and its test belong to the
+ * compiler stream; see docs/inbox/compiler-notes-from-repl.md. Do not add a `__private` case here.
+ *
+ * Usage:
+ *   npm run test:repl
+ *   npm run test:repl -- --verbose
+ */
+import { CompilerOptions, LogLevel } from "../compiler/Context";
+import { ReplSession, ReplResult } from "../cli/repl/ReplSession";
+import { MultiLineBuffer } from "../cli/repl/MultiLineBuffer";
+
+const VERBOSE = process.argv.includes("--verbose");
+const FRONTEND = (process.argv.find((a) => a.startsWith("--frontend="))?.split("=")[1] ??
+  "grammar_v2") as any;
+
+type Step =
+  /** One submitted input, evaluated by the session. */
+  | { input: string }
+  /** Lines fed through the multi-line buffer; the completed form (if any) is then evaluated. */
+  | { lines: string[] }
+  | { reset: true }
+  | { delete: string };
+
+interface Expect {
+  /** The value, rendered by `show()`. Structural -- never a chalk string. */
+  value?: string;
+  /** The value must NOT be this. For assertions of the form "it must no longer be 1". */
+  notValue?: string;
+  /** console.log lines produced BY THIS STEP, in order. `[]` asserts silence. */
+  output?: string[];
+  /** The input must be REFUSED, reporting diagnostics matching all of these. */
+  refused?: RegExp[];
+  /** Where the diagnostic must be attributed. */
+  origin?: "input" | "history" | "file";
+  /** The emitted JavaScript must have thrown. */
+  runtimeError?: RegExp;
+  /** For `{lines}` steps: what the buffer must have decided. */
+  buffer?: "complete" | "incomplete" | "unbalanced" | "empty";
+}
+
+interface Case {
+  name: string;
+  steps: Step[];
+  /** Positionally aligned with `steps`. `null` = don't care about that step. */
+  expect: (Expect | null)[];
+  /** History length at the end. Pins what does, and does not, enter history. */
+  cells?: number;
+  /** What was wrong before -- printed on failure, so a regression names its own bug. */
+  wasBroken: string;
+}
+
+const CASES: Case[] = [
+  // -----------------------------------------------------------------------------------------
+  // B1 -- the REPL is dead on the first keystroke.
+  // -----------------------------------------------------------------------------------------
+  {
+    name: "a binding evaluates, under the DEFAULT frontend",
+    steps: [{ input: "(let x 5)" }, { input: "x" }],
+    expect: [null, { value: "5" }],
+    cells: 2,
+    wasBroken:
+      "the session injected a boundary marker named `__repl_marker`, and grammar_v2's Underscore " +
+      "token ate its leading `_`. EVERY input failed to parse. The REPL only worked under --frontend peg.",
+  },
+  {
+    name: "a literal is its own value",
+    steps: [{ input: "42" }],
+    expect: [{ value: "42" }],
+    cells: 1,
+    wasBroken: "same marker parse failure -- nothing evaluated at all.",
+  },
+  {
+    name: "a binding reports its value, not the strict directive",
+    steps: [{ input: "(let x 5)" }],
+    expect: [{ value: "5" }],
+    wasBroken:
+      "`var x = 5;` has an EMPTY completion, so a script's value falls back to the last non-empty " +
+      "one -- the `\"use strict\"` directive. Reading the vm completion value reports `=> \"use strict\"`.",
+  },
+
+  // -----------------------------------------------------------------------------------------
+  // B5 -- history must be COMPILED, never re-EXECUTED.
+  // -----------------------------------------------------------------------------------------
+  {
+    name: "history is not re-executed",
+    steps: [{ input: '(console.log "once")' }, { input: "(let y 2)" }],
+    expect: [{ output: ["once"] }, { output: [] }],
+    cells: 2,
+    wasBroken:
+      "the new code was recovered by splitting the emitted JavaScript on a marker STRING. If the " +
+      "split ever missed, `parts.pop()` handed back the whole program and all history re-ran. No guard.",
+  },
+
+  // -----------------------------------------------------------------------------------------
+  // B2 -- the compiler's diagnostics must reach the prompt.
+  // -----------------------------------------------------------------------------------------
+  {
+    name: "a refused form reports its diagnostic",
+    steps: [{ input: "(defmacro m [x] x)" }],
+    expect: [{ refused: [/LL0023/], origin: "input" }],
+    cells: 0,
+    wasBroken:
+      "Context.processModule returns {ast} with no `code` on error and deliberately does not log -- " +
+      "the CLI is meant to. command.repl.ts never read context.results, so a refusal printed NOTHING: " +
+      "just a fresh prompt, no message, no reason.",
+  },
+  {
+    name: "a refused form does not enter history",
+    steps: [{ input: "(defmacro m [x] x)" }, { input: "(let ok 1)" }, { input: "ok" }],
+    expect: [{ refused: [/LL0023/] }, null, { value: "1" }],
+    cells: 1,
+    wasBroken:
+      "nothing enforced this. A form that failed to compile could still be replayed, so one bad " +
+      "input poisoned every subsequent one until .reset.",
+  },
+
+  // -----------------------------------------------------------------------------------------
+  // B3 -- a stray `)` must not kill the process.
+  // -----------------------------------------------------------------------------------------
+  {
+    name: "a stray ) is refused, and does not crash",
+    steps: [{ lines: [")"] }],
+    expect: [{ buffer: "unbalanced" }],
+    cells: 0,
+    wasBroken:
+      "checkBracketsBalance returns -1 for more closers than openers; command.repl.ts did " +
+      "`\".\".repeat(balance * 2)` -> RangeError, thrown OUTSIDE the line handler's try/catch. " +
+      "Typing `)` killed the REPL.",
+  },
+
+  // -----------------------------------------------------------------------------------------
+  // B4 -- .reset must actually reset.
+  // -----------------------------------------------------------------------------------------
+  {
+    name: ".reset clears the sandbox, not just the history",
+    steps: [{ input: "(let x 1)" }, { reset: true }, { input: "x" }],
+    expect: [null, null, { notValue: "1" }],
+    cells: 0,
+    wasBroken:
+      "reset() cleared history and rebuilt the Context but REUSED the vm context, so every `var` the " +
+      "user had ever defined survived it. `(let x 1)`, `.reset`, `x` still answered 1.",
+  },
+
+  // -----------------------------------------------------------------------------------------
+  // Redefinition. D17.
+  // -----------------------------------------------------------------------------------------
+  {
+    name: "rebinding at the same type is accepted",
+    steps: [{ input: "(let x 1)" }, { input: "(let x 2)" }, { input: "x" }],
+    expect: [null, null, { value: "2" }],
+    cells: 3,
+    wasBroken:
+      "worked only BY ACCIDENT: LL0212 (duplicate declaration) is checked in visitList, not " +
+      "visitProgram, and the REPL's cells are sibling top-level forms. This case PINS that. If " +
+      "anyone moves LL0212 to visitProgram, or wraps the replayed program in the conventional outer " +
+      "list the way every example and both new harnesses do, every rebind becomes a hard error.",
+  },
+  {
+    name: "a rebind that breaks history is refused, and names the cell",
+    steps: [
+      { input: "(let x 1)" },
+      { input: "(fn double [] -> Int (* x 2))" },
+      { input: '(let x "hi")' },
+      { input: "x" },
+    ],
+    expect: [null, null, { refused: [/LL/], origin: "history" }, { value: "1" }],
+    cells: 2,
+    wasBroken:
+      "D17. `double` cannot mean two things at once. Accepting the rebind and letting `double` fail " +
+      "only IF CALLED is the silent-wrong-answer pattern this compiler exists to refuse. The old REPL " +
+      "printed nothing either way (B2).",
+  },
+  {
+    name: ".delete unblocks a refused rebind",
+    steps: [
+      { input: "(let x 1)" },
+      { input: "(fn double [] -> Int (* x 2))" },
+      { delete: "double" },
+      { input: '(let x "hi")' },
+      { input: "x" },
+    ],
+    expect: [null, null, null, null, { value: '"hi"' }],
+    wasBroken:
+      "there was no .delete. A refusal with no escape hatch wedges the session -- the user's only way " +
+      "out is .reset, which throws away everything.",
+  },
+
+  // -----------------------------------------------------------------------------------------
+  // F2/F3 -- the codegen traps. These are the guards against the obvious-but-wrong implementation.
+  // -----------------------------------------------------------------------------------------
+  {
+    name: "a class defined in an EARLIER cell is constructed with `new`",
+    steps: [
+      { input: "(defclass P (let :ctor n <- Int 1))" },
+      { input: "(let p (P))" },
+      { input: "p.n" },
+    ],
+    expect: [null, null, { value: "1" }],
+    wasBroken:
+      "F2, and the reason tail-only codegen is UNSOUND. The transformer accumulates `this.classes` " +
+      "AS IT WALKS declarations, then reads it back to decide `new P(...)` vs `P(...)`. Run it over " +
+      "only the new nodes and the accumulator is empty, so `(P)` compiles to `P()` -> " +
+      "'TypeError: Class constructor P cannot be invoked without new'. VISIT ALL, EMIT SOME.",
+  },
+  {
+    name: "a class is redefinable",
+    steps: [
+      { input: "(defclass P (let :ctor n <- Int 1))" },
+      { input: "(defclass P (let :ctor n <- Int 2))" },
+      { input: "(let p (P))" },
+      { input: "p.n" },
+    ],
+    expect: [null, null, null, { value: "2" }],
+    wasBroken:
+      "F3. visitClass emits an ESTree ClassDeclaration, which in a vm.Context lands in the realm's " +
+      "GLOBAL LEXICAL environment: redeclaring it is a hard SyntaxError, and it is not even readable " +
+      "as a property of the global. Redefinition is the entire point of a REPL.",
+  },
+
+  // -----------------------------------------------------------------------------------------
+  // Output, values, and the divergence between the REPL and `node`.
+  // -----------------------------------------------------------------------------------------
+  {
+    name: "a form that logs AND returns keeps its value",
+    steps: [{ input: '(fn g [] -> Int (console.log "side") 7)' }, { input: "(g)" }],
+    expect: [null, { output: ["side"], value: "7" }],
+    wasBroken:
+      "`return consoleOutput.length > 0 ? undefined : returnValue` -- a hack that threw away the " +
+      "value of ANY form which both logged and returned.",
+  },
+  {
+    name: "console.log formats the way node does",
+    steps: [{ input: '(console.log "v" [1 2])' }],
+    expect: [{ output: ["v [ 1, 2 ]"] }],
+    wasBroken:
+      "the REPL's console did JSON.stringify(arg, null, 2), so the SAME program printed differently " +
+      "in the REPL than under `node`. That is the 'two spellings, two answers' class this repo keeps killing.",
+  },
+
+  // -----------------------------------------------------------------------------------------
+  // Multi-line.
+  // -----------------------------------------------------------------------------------------
+  {
+    name: "a multi-line form is one cell",
+    steps: [
+      { lines: ["(fn add [a <- Int b <- Int] -> Int", "  (+ a b))"] },
+      { input: "(add 2 3)" },
+    ],
+    expect: [{ buffer: "complete" }, { value: "5" }],
+    cells: 2,
+    wasBroken: "the marker parse failure (B1) killed this like everything else.",
+  },
+];
+
+// -------------------------------------------------------------------------------------------------
+
+function show(v: unknown): string {
+  if (v === undefined) return "undefined";
+  if (v === null) return "null";
+  if (typeof v === "string") return JSON.stringify(v);
+  if (typeof v === "function") return `[Function ${(v as any).name || "anonymous"}]`;
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+
+function options(): CompilerOptions {
+  return {
+    minimumLogLevel: LogLevel.Error,
+    logger: () => {},
+    includeRuntimeShim: true,
+    stdout: false,
+    stage: "codegen",
+    language: "js",
+    frontend: FRONTEND,
+  };
+}
+
+/** Every way a step can fall short, as a list of human sentences. Empty = the step passed. */
+function checkStep(e: Expect, res: ReplResult | { buffer: string }, bufKind?: string): string[] {
+  const bad: string[] = [];
+
+  if (e.buffer) {
+    if (bufKind !== e.buffer) bad.push(`buffer: expected ${e.buffer}, got ${bufKind ?? "(none)"}`);
+    if (e.buffer !== "complete") return bad; // nothing was evaluated; the rest cannot apply
+  }
+
+  const r = res as ReplResult;
+  if (!("kind" in r)) return bad;
+
+  if (e.refused) {
+    if (r.kind !== "refused") {
+      bad.push(
+        `expected REFUSED ${e.refused.join(", ")}, got ${r.kind}` +
+          (r.kind === "value" ? ` (${show(r.value)}) -- it compiled SILENTLY` : "")
+      );
+    } else {
+      const blob = r.diagnostics.map((d) => `${d.code}: ${d.text}`).join(" | ");
+      for (const re of e.refused) {
+        if (!re.test(blob)) bad.push(`expected diagnostic ${re}, got ${blob || "(none)"}`);
+      }
+      if (e.origin && !r.diagnostics.some((d) => d.origin.kind === e.origin)) {
+        bad.push(
+          `expected a diagnostic attributed to ${e.origin}, got ` +
+            (r.diagnostics.map((d) => d.origin.kind).join(", ") || "(none)")
+        );
+      }
+    }
+    return bad;
+  }
+
+  if (e.runtimeError) {
+    if (r.kind !== "runtime-error") bad.push(`expected a runtime error, got ${r.kind}`);
+    else if (!e.runtimeError.test(String(r.error?.message)))
+      bad.push(`expected ${e.runtimeError}, got ${r.error?.message}`);
+    return bad;
+  }
+
+  if (r.kind === "refused") {
+    bad.push(`REFUSED: ${r.diagnostics.map((d) => `${d.code} ${d.text}`).join(" | ") || "(no reason given)"}`);
+    return bad;
+  }
+  if (r.kind === "runtime-error") {
+    bad.push(`THREW: ${String(r.error?.message).split("\n")[0].slice(0, 96)}`);
+    return bad;
+  }
+
+  if (e.value !== undefined && show(r.value) !== e.value)
+    bad.push(`expected value ${e.value}, got ${show(r.value)}`);
+  if (e.notValue !== undefined && show(r.value) === e.notValue)
+    bad.push(`value must NOT be ${e.notValue}, and is`);
+  if (e.output) {
+    const got = r.output;
+    const ok = got.length === e.output.length && got.every((l, i) => l === e.output![i]);
+    if (!ok) bad.push(`expected output ${JSON.stringify(e.output)}, got ${JSON.stringify(got)}`);
+  }
+
+  return bad;
+}
+
+function run(c: Case): string[] {
+  const session = new ReplSession(options());
+  const buffer = new MultiLineBuffer();
+  const bad: string[] = [];
+
+  try {
+    for (let i = 0; i < c.steps.length; i++) {
+      const step = c.steps[i];
+      const e = c.expect[i];
+
+      let res: ReplResult | undefined;
+      let bufKind: string | undefined;
+
+      if ("reset" in step) {
+        session.reset();
+      } else if ("delete" in step) {
+        const outcome = session.delete(step.delete);
+        if (outcome.kind === "not-found" && e === null) {
+          bad.push(`step ${i + 1}: .delete ${step.delete} -- not found (unimplemented?)`);
+        }
+      } else if ("lines" in step) {
+        let completed: string | undefined;
+        for (const line of step.lines) {
+          const fed = buffer.feed(line); // may THROW today -- that is B3
+          bufKind = fed.kind;
+          if (fed.kind === "complete") completed = fed.source;
+        }
+        if (completed !== undefined) res = session.eval(completed);
+      } else {
+        res = session.eval(step.input);
+      }
+
+      if (!e) continue;
+      const problems = checkStep(e, res ?? ({ buffer: bufKind ?? "" } as any), bufKind);
+      for (const p of problems) bad.push(`step ${i + 1}: ${p}`);
+    }
+
+    if (c.cells !== undefined && session.cells.length !== c.cells) {
+      bad.push(`history: expected ${c.cells} cell(s), got ${session.cells.length}`);
+    }
+  } catch (err: any) {
+    // A THROW that escapes the session is itself the bug -- B3 is exactly this.
+    bad.push(`UNCAUGHT ${err?.name ?? "Error"}: ${String(err?.message).split("\n")[0].slice(0, 88)}`);
+  } finally {
+    session.dispose();
+  }
+
+  return bad;
+}
+
+function main() {
+  console.log(`=== repl: the session is driven directly -- no pty, no readline ===`);
+  console.log(`    frontend: ${FRONTEND}\n`);
+
+  let failed = 0;
+  for (const c of CASES) {
+    const problems = run(c);
+    if (problems.length === 0) {
+      console.log(`  PASS  ${c.name}`);
+    } else {
+      failed++;
+      console.log(`  FAIL  ${c.name}`);
+      for (const p of problems) console.log(`          ${p}`);
+      if (VERBOSE) console.log(`          was: ${c.wasBroken}`);
+    }
+  }
+
+  console.log(`\n=== summary ===`);
+  console.log(`  cases : ${CASES.length}`);
+  console.log(`  failed: ${failed}   (target: 0)`);
+
+  process.exit(failed === 0 ? 0 : 1);
+}
+
+main();
