@@ -49,6 +49,15 @@ interface Case {
    */
   expectDiagnostic?: RegExp;
   /**
+   * The case must COMPILE, RUN, and then THROW -- with this error reaching stderr.
+   *
+   * D9 rules that `c[k]` is PARTIAL: an out-of-bounds index and an absent map key are *bugs*, not
+   * values, and a bug must be loud. That is the one behaviour this harness could not previously
+   * express -- a nonzero exit was unconditionally a failure -- so an intended throw was untestable
+   * and, by construction, the safest thing to leave unimplemented.
+   */
+  expectThrow?: RegExp;
+  /**
    * Assertions on the EMITTED TEXT, not the output.
    *
    * Needed for anything whose correctness is invisible at run time. A `:comptime` fold produces the
@@ -423,6 +432,254 @@ const CASES: Case[] = [
     expect: ['{"my-key":1}'],
     wasBroken: "not broken -- a guard. Adding a string-key form must not disturb the colon form",
   },
+
+  // ===============================================================================================
+  // D9 -- what is `nil`?   (DECISIONS.md:99-108)
+  //
+  // "Non-nullable by default, explicit `T?` optionals, ONE bottom value."
+  //
+  // The premise that reframed the phase: non-nullable-by-default is ALREADY TRUE for every annotated
+  // slot -- nothing ever sets `nullable` on a target, so isAssignable(Null, String) is false and
+  // `(let x <- String nil)` already errors. D9 is not a tightening. It is a cage with no door, and
+  // `T?` is the door.
+  // ===============================================================================================
+
+  // --- Two bottom values, and they are strictly distinguishable. -------------------------------
+  //
+  // NOTE the `(let v ...)` in each of these. It is not stylistic. A `when`/`if`/`cond` written
+  // DIRECTLY as a call argument -- `(console.log (when false 1))` -- emits invalid JavaScript and
+  // trips LL0101: a `let` initializer is an expression context and a call argument is not, so the
+  // branch is emitted as a statement. That is a P5 leftover, unrelated to nil, and it is LOUD rather
+  // than silent. Surfaced as an open finding, not absorbed here.
+  {
+    name: "nil catches the bottom the compiler itself emits (when)",
+    source: `(let v (when false 1))
+(console.log (== v nil))`,
+    expect: ["true"],
+    wasBroken:
+      "FALSE. `when`-false emits `undefined` while `nil` emits `null`, and __ll_deep_eq opens with " +
+      "`a === b` -- so the language cannot detect the bottom value it produces itself",
+  },
+  {
+    name: "nil catches the bottom the compiler itself emits (if, no else)",
+    source: `(let v (if false 1))
+(console.log (== v nil))`,
+    expect: ["true"],
+    wasBroken: "FALSE -- the same two-bottom split, reached through the if-without-else path",
+  },
+  {
+    name: "there is ONE bottom value, and it prints as one thing",
+    source: `(let a (when false 1))
+(let b (if false 1))
+(console.log a b nil)`,
+    expect: ["null null null"],
+    wasBroken: "`undefined undefined null` -- two bottoms, visible in the output",
+  },
+  {
+    name: "nil is not equal to the falsy values",
+    source: `(console.log (== nil nil) (== 0 nil) (== "" nil) (== false nil))`,
+    expect: ["true false false false"],
+    wasBroken:
+      "not broken -- a GUARD on D9b. The loose-null clause (`a == null && b == null`) is the one " +
+      "place a JS `==` sneaks in; it must not drag 0, \"\" or false along with it",
+  },
+
+  // --- The runtime does not know what nil is. --------------------------------------------------
+  // A `nil` pattern is the sharpest frontend divergence in the tree, and neither half is what the
+  // audit predicted from reading the runtime source.
+  //
+  //   grammar_v2: PARSE ERROR -- "Expecting RBracket but found 'nil'". Loud, at least.
+  //   PEG:        emits `let nil; ... (nil = tmp[0], true) ...` -- it parses `nil` as a BINDING
+  //               VARIABLE NAMED `nil`, which matches ANYTHING and shadows the literal. Silent.
+  //
+  // The predicted bug -- __ll_match_list's `if (pattern === null) continue; // Wildcard` -- is real
+  // in the shim text but CANNOT FIRE: nothing in the codegen ever calls __ll_match_list or
+  // __ll_match_struct. They are dead code. Vector patterns are inlined (`_` becomes `&& true`).
+  // Written from the source, that finding looked live; the harness says otherwise. Hence the harness.
+  {
+    name: "a nil pattern TESTS for nil -- it does not match everything",
+    source: `(let v [1 2])
+(console.log (match v { [nil 2] => "matched-nil" _ => "other" }))`,
+    expect: ["other"],
+    wasBroken:
+      "grammar_v2: parse error. PEG: prints \"matched-nil\" -- it bound a VARIABLE named `nil` to the " +
+      "value 1 and matched unconditionally. The two frontends disagree, and one of them is silent",
+  },
+  {
+    name: "a nil pattern DOES match an actual nil",
+    source: `(let v [nil 2])
+(console.log (match v { [nil 2] => "matched-nil" _ => "other" }))`,
+    expect: ["matched-nil"],
+    wasBroken:
+      "grammar_v2: parse error. PEG: right answer, wrong reason -- it matches everything, so it also " +
+      "'matches' a nil. Examples 19 and 21 both lean on nil patterns",
+  },
+  {
+    name: "head of an empty array is nil, not the array",
+    source: `(console.log (== (head []) nil))`,
+    expect: ["true"],
+    wasBroken:
+      "FALSE -- `head` returns THE ARRAY ITSELF when empty: `a.length > 0 ? a[0] : a`. " +
+      "DECISIONS.md:84 cites exactly this as why D9 must come before a typed stdlib",
+  },
+  {
+    name: "empty sees a nil",
+    source: `(console.log (empty nil))`,
+    expect: ["true"],
+    wasBroken: "FALSE -- `empty` checks `a === undefined` only, and is blind to null",
+  },
+
+  // --- Spellings. `nil` is the one; `null` the JS-interop alias; the other three are deleted. ---
+  {
+    name: "`undefined` is not a spelling of nil",
+    source: `(let x undefined)
+(console.log x)`,
+    expectDiagnostic: /LL0210/,
+    wasBroken:
+      "compiled, and emitted the JS identifier `undefined` -- the SECOND bottom value. Note it is " +
+      "also in JS_GLOBALS, so merely dropping it from NilKw silently re-admits it as a global with " +
+      "zero diagnostics. Both have to go",
+  },
+  {
+    name: "`none` is not a spelling of nil",
+    source: `(let x none)
+(console.log x)`,
+    expectDiagnostic: /LL0210/,
+    wasBroken: "compiled, and emitted `null` -- a third spelling of the same value",
+  },
+  {
+    name: "`void` is not a spelling of nil",
+    source: `(let x void)
+(console.log x)`,
+    expectDiagnostic: /LL0210/,
+    wasBroken: "compiled, and emitted `null` -- a fourth spelling",
+  },
+  {
+    name: "`null` survives as the JS-interop alias",
+    source: `(console.log (== nil null))`,
+    expect: ["true"],
+    wasBroken:
+      "not broken -- a guard. The ruling keeps `null` as an alias; it must remain the SAME value",
+  },
+  {
+    name: "`Void` the TYPE survives the deletion of `void` the spelling",
+    source: `(fn shout [] -> Void (console.log "hi"))
+(shout)`,
+    expect: ["hi"],
+    wasBroken:
+      "not broken -- a guard, and a live frontend divergence: NilKw is case-SENSITIVE in grammar_v2 " +
+      "and case-INSENSITIVE in the PEG, so `Void` is an Identifier in one and a nil keyword in the other",
+  },
+
+  // --- T? -- the door. --------------------------------------------------------------------------
+  {
+    name: "T? parses, and accepts nil",
+    source: `(let x <- String? nil)
+(console.log x)`,
+    expect: ["null"],
+    wasBroken:
+      "NOT a parse error, which is what I expected and is why the case got written. `?` is absent " +
+      "from the type grammar, so the annotation ends at `String` and the stray `?` is taken as an " +
+      "operator-identifier -- the program COMPILES and dies at run time with " +
+      "`ReferenceError: _3f is not defined`. A silent miscompile, not a refusal",
+  },
+  {
+    name: "T? accepts a value too (T widens to T?)",
+    source: `(let x <- String? "hi")
+(console.log x)`,
+    expect: ["hi"],
+    wasBroken:
+      "same `_3f` ReferenceError. `T -> T?` must WIDEN -- an optional is not a nil-only slot",
+  },
+  {
+    name: "T is non-nullable -- and already was",
+    source: `(let x <- String nil)
+(console.log x)`,
+    expectDiagnostic: /LL0200/,
+    wasBroken:
+      "not broken -- a GUARD, and the finding that reframed D9. I planned this as a tightening and " +
+      "had it backwards: nothing ever sets `nullable` on a target, so isAssignable(Null, String) is " +
+      "already false. The cage was always shut. D9 builds the door",
+  },
+  {
+    name: "an annotated binding keeps its DECLARED type, not its value's",
+    source: `(defclass Animal (fn speak [] -> String (return "...")))
+(defclass Dog :extends Animal (fn speak [] -> String (return "woof")))
+(defclass Cat :extends Animal (fn speak [] -> String (return "meow")))
+(mut pet <- Animal (Dog))
+(pet := (Cat))
+(console.log (pet.speak))`,
+    expect: ["meow"],
+    wasBroken:
+      "LL0202, a FALSE POSITIVE: the let-check binds the VALUE type (`Dog`) and throws the annotation " +
+      "away, so assigning a Cat to an Animal-declared binding reads as 'Cat is not a Dog'. The same " +
+      "line kills optionals -- `(let x <- String? nil)` would bind `Null`, not `String?`, so T? " +
+      "could not survive its own declaration",
+  },
+
+  // --- The indexer is PARTIAL: absence is an error, not a value. `get` is the total form. -------
+  {
+    name: "an out-of-bounds index THROWS",
+    source: `(let xs [1 2 3])
+(console.log xs[9999])`,
+    expectThrow: /IndexOutOfRange/,
+    wasBroken:
+      "printed `undefined` -- a hole straight through the type system. `xs[i]` is typed `Int` and " +
+      "hands you a bottom value. An out-of-bounds index is a BUG, and a bug must be loud",
+  },
+  {
+    name: "an absent map key THROWS",
+    source: `(let m {"host" "localhost"})
+(console.log m["absent"])`,
+    expectThrow: /KeyError/,
+    wasBroken: "printed `undefined` -- typed `String`, and not a String",
+  },
+  {
+    name: "an in-bounds read still works",
+    source: `(let xs [1 2 3])
+(let m {"host" "localhost"})
+(console.log xs[0] xs[2] m["host"])`,
+    expect: ["1 3 localhost"],
+    wasBroken: "not broken -- a guard. The bounds check must not cost a correct read its answer",
+  },
+  {
+    name: "writing to an absent key CREATES it",
+    source: `(mut m {})
+(m["k"] := 1)
+(console.log m["k"])`,
+    expect: ["1"],
+    wasBroken:
+      "not broken -- a guard. The indexer is partial for READS only. A write that refused to create " +
+      "would make every map build-up impossible",
+  },
+  {
+    name: "(get c k) is TOTAL, and answers nil",
+    source: `(let xs [1 2 3])
+(let m {"host" "localhost"})
+(console.log (get xs 9999) (get m "absent") (get xs 0))`,
+    expect: ["null null 1"],
+    wasBroken:
+      "`undefined undefined 1`. After D9 this is the ONLY way to ask 'is it there?' -- and it is what " +
+      "gives T? a PRODUCER. Without it, an optional only ever arises where someone typed a `?`",
+  },
+  {
+    name: "the memoization idiom: absence is asked with `get`, not by indexing",
+    source: `(mut memo {})
+(fn fib [n <- Int] -> Int (
+  (let cached (get memo n))
+  (if (!= cached nil) (return cached))
+  (if (<= n 1) (return n))
+  (let r (+ (fib (- n 1)) (fib (- n 2))))
+  (memo[n] := r)
+  (return r)))
+(console.log (fib 30))`,
+    expect: ["832040"],
+    wasBroken:
+      "the corpus spells this `(!= memo[n] undefined)` -- which after D9f THROWS on the first, " +
+      "uncached call. This is the migration the four memoization files have to make, and it is only " +
+      "CORRECT once D9b's loose-null clause has landed: otherwise `(!= (get memo n) nil)` reads " +
+      "'cached' for an absent key and memoized fib silently returns undefined",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------
@@ -515,7 +772,21 @@ function run(c: Case, tmp: string): Outcome {
     // THE case this harness exists for: the JS parsed, ran, and blew up.
     const stderr = String(proc.stderr).trim().split("\n").filter(Boolean);
     const blame = stderr.find((l) => /Error/.test(l)) ?? stderr[0] ?? "(no stderr)";
+    if (c.expectThrow) {
+      return c.expectThrow.test(String(proc.stderr))
+        ? { ok: true, detail: "" }
+        : { ok: false, detail: `expected a throw matching ${c.expectThrow}, got: ${blame.trim().slice(0, 76)}`, js: code };
+    }
     return { ok: false, detail: `RUNTIME ERROR: ${blame.trim().slice(0, 96)}`, js: code };
+  }
+  if (c.expectThrow) {
+    return {
+      ok: false,
+      detail: `expected a throw matching ${c.expectThrow}, but it exited 0 and printed ${JSON.stringify(
+        String(proc.stdout).trim()
+      )}`,
+      js: code,
+    };
   }
 
   const actual = String(proc.stdout).trim().split("\n").map((l) => l.trim()).filter(Boolean);
