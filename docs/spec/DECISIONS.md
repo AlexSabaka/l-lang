@@ -824,6 +824,47 @@ it produced itself.**
 `null`. This is the one place D9 changes an observed answer, it was signed off before the work started,
 and the diff is exactly those two lines.
 
+### `T?` (D9d, D9e)
+
+**An annotated binding used to bind its VALUE's type**, not its declared one (`bindType(varName,
+valueType)` — "the actual value type"). So `(mut pet <- Animal (Dog))` bound `Dog`, and `(pet :=
+(Cat))` was an LL0202 *false positive*. Annotating is precisely how you ask for the WIDER type, and
+the wider it was, the more wrong the binding became. It would also have killed D9 outright: `(let x <-
+String? nil)` binds `Null`, so the `?` evaporates one line after it is written.
+
+**Three rules are the whole of the feature**, and the first was already in force:
+
+| | |
+|---|---|
+| `nil` → `T` | refused — *this always was* |
+| `nil` → `T?` | accepted |
+| `T` → `T?` | **widens** — an optional is a superset, not a nil-only slot |
+| `T?` → `T` | **refused** — the forced unwrap |
+
+`Void` and `Nil` are **the same type**. In a Lisp everything is an expression, so "returns nothing"
+and "returns the bottom value" are one statement — a function that runs off its end emits `null` and
+is declared `-> Void`. Keeping them apart would mean `(fn f [] -> Void)` could not return the only
+value it *can* return. (The nil literal was called `Null`, a name invented at one site and known
+nowhere else — `isKnownPrimitive("Null")` is false — so `-> nil` returning `nil` was "declares Void,
+returns Null". It survived only because `checkReturns` bailed on both names before comparing them.)
+
+Two things that would each have made `T?` parse, type-check, and mean nothing:
+
+- **`typesEqual` compares by NAME**, and runs FIRST in `isAssignable`. `String?` and `String` were
+  equal, so the forced unwrap short-circuited to `true` before its own rule was consulted.
+- **`formatType` had no optional branch**, so the unwrap's message would have read *"cannot assign
+  String to String"* — not an error message, a koan.
+
+**Optionality is a FLAG, not `T | Nil`.** That is the ruling's own reasoning: `T?` is a memory-layout
+decision for the native backend (`T` = a raw value, no null check; `T?` = tagged), and a flag is what
+that lowers to.
+
+**`?` binds outside `[]`**: `T[]?` is an optional array, `(T?)[]` an array of optionals. Adjacency-gated
+exactly like the array suffix — `String?` is optional, `String ?` is a `String` and then something
+else — which is why the PEG's `TypeName` had to stop eating the whitespace in front of its own
+suffixes. That single trailing `_` is also why the PEG could never gate its ARRAY suffix either
+(`Expr []` was an array type there and a vector VALUE in grammar_v2).
+
 ### PEG: `void` the spelling vs `Void` the type
 
 The PEG's `NilKw` was `"void"i` — **case-insensitive** — so `Void`, the return TYPE used across
@@ -912,10 +953,19 @@ It is the only one of the four papercuts that adds a FEATURE rather than fixing 
   and **cannot fire**. Read from the source it looked live; built as a test case, it did not exist.
   Fixing it would have been indistinguishable, in the commit log, from fixing something.
 
-- **A `nil` match pattern is a live frontend divergence.** grammar_v2 refuses it outright ("Expecting
-  RBracket but found 'nil'"). PEG emits `let nil; ... (nil = tmp[0], true)` — it binds **a variable
-  named `nil`** and matches *anything*, silently. Both `19_optional_and_mutability` and
-  `21_nil_handling` lean on nil patterns. Needed by D9g.
+- **A boolean cannot be a match pattern.** `constantPattern` is `StringLiteral | number` — so
+  `(match x { true => …})` does not parse. Found while adding `nil` to the same rule; the same two
+  lines would fix it, but nothing in the corpus proved it broken, so it is a finding, not a commit.
+
+- **A bare operator-identifier compiles to an undefined reference.** `(let x <- String ? 1)` emits
+  `const x = _3f;` — LL0210 does not check the operators-as-identifiers form (which exists so
+  `(fn :operator + …)` can be declared). Pre-existing, and orthogonal to `T?`: adjacency gating means
+  a spaced `?` correctly does NOT become optionality, it just falls into this older hole.
+
+- **`expectDiagnostic` in the codegen harness could only ever match the CODE.** It built its
+  diagnostic string from `String(m.message).split("\n").pop()` — the LAST line, which is usually
+  empty. Asserting on message TEXT silently could not work. Fixed in D9e, which is the first phase
+  that needed it (the point of `T? -> T` is that the message *says* `String?`).
 
 - **`if` / `when` / `cond` as a CALL ARGUMENT emit invalid JavaScript** (LL0101). A `let` initializer
   is an expression context and a call argument is not, so `(console.log (when false 1))` emits

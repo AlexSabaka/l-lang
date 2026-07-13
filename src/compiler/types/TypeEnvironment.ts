@@ -254,6 +254,29 @@ export class TypeEnvironment {
   static any(): InferredType {
     return { kind: "unknown", name: "Any" };
   }
+
+  /**
+   * `T?` -- a type that also admits nil (D9).
+   *
+   * A FLAG on the type, not a wrapper and not `T | Nil`. That is deliberate, and it is the ruling's
+   * own reasoning: `T?` is a memory-layout decision for the native backend (`T` = a raw value with no
+   * null check, `T?` = tagged or niche-packed), and a flag is what that lowers to. A union would also
+   * have made `T?` structurally equal to a one-armed union of `T`, which it is not.
+   *
+   * Idempotent: `T??` is `T?`.
+   */
+  static optional(type: InferredType): InferredType {
+    return type.optional ? type : { ...type, optional: true };
+  }
+
+  /**
+   * The type of the `nil` LITERAL. Assignable only to an optional target -- that rule is the whole of
+   * "non-nullable by default", and it was already in force before D9: nothing ever set the flag on a
+   * target, so `(let x <- String nil)` has always been an LL0200.
+   */
+  static nil(): InferredType {
+    return { kind: "primitive", name: "Nil" };
+  }
 }
 
 /**

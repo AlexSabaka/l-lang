@@ -549,6 +549,11 @@ class LLangParser extends CstParser {
                 this.CONSUME(t.RBracket);
               },
             });
+            // `(Int | String)?` -- optionality on a parenthesized type, OUTSIDE any array suffix.
+            this.OPTION3({
+              GATE: () => this.isAdjacentQuestion(),
+              DEF: () => this.CONSUME(t.Question),
+            });
           },
         },
         {
@@ -563,6 +568,11 @@ class LLangParser extends CstParser {
                 this.CONSUME2(t.LBracket);
                 this.CONSUME2(t.RBracket);
               },
+            });
+            // `Int | String?` -- optionality on the whole union.
+            this.OPTION4({
+              GATE: () => this.isAdjacentQuestion(),
+              DEF: () => this.CONSUME2(t.Question),
             });
           },
         },
@@ -600,6 +610,13 @@ class LLangParser extends CstParser {
           this.CONSUME(t.LBracket);
           this.CONSUME(t.RBracket);
         },
+      });
+      // `String?` -- the optional suffix (D9), and the one that actually fires for a plain `T?`.
+      // AFTER the array suffix, so `T[]?` is an OPTIONAL ARRAY. An array of optionals is `(T?)[]`,
+      // which reaches this same site through the parenthesized alternative in `type`.
+      this.OPTION2({
+        GATE: () => this.isAdjacentQuestion(),
+        DEF: () => this.CONSUME(t.Question),
       });
     });
 
@@ -1299,6 +1316,12 @@ class LLangParser extends CstParser {
     this.constantPattern = this.RULE("constantPattern", () => {
       this.OR([
         { ALT: () => this.CONSUME(t.StringLiteral) },
+        // `nil` is a CONSTANT to match against, not a name to bind (D9). It reached
+        // `identifierPattern` before, which wants an Identifier and gets a NilKw -- "Expecting
+        // RBracket but found 'nil'". The PEG had the opposite bug and it was the dangerous one: `nil`
+        // IS an identifier char sequence there, so `[nil 2]` bound a VARIABLE NAMED `nil`, matched
+        // ANYTHING, and shadowed the literal -- silently.
+        { ALT: () => this.CONSUME(t.NilKw) },
         { ALT: () => this.SUBRULE(this.number) },
       ]);
     });
@@ -1366,6 +1389,25 @@ class LLangParser extends CstParser {
     const prev = this.LA(0); // last consumed token
     const next = this.LA(1);
     if (!prev || !next || next.tokenType !== t.LBracket) return false;
+    if (typeof prev.endOffset !== "number" || typeof next.startOffset !== "number") return false;
+    return next.startOffset === prev.endOffset + 1;
+  }
+
+  /**
+   * `String?` -- the optional-type suffix (D9). Same adjacency rule as the array suffix, and needed
+   * for the same reason: `?` is ALSO a legal operator-identifier (see `simpleIdentifier`, where the
+   * OR block admits operators so that `(fn :operator ? ...)` can be declared). So a spaced `?` after
+   * a type must NOT be swallowed as optionality -- `(let x <- String ? a b)` is a `String`, and then
+   * something else entirely.
+   *
+   * The suffix binds OUTSIDE the array suffix: `T[]?` is an optional array, and an array of optionals
+   * is `(T?)[]` -- which the parenthesized alternative of `type` already reaches, since `basicType`
+   * carries its own `?`.
+   */
+  private isAdjacentQuestion(): boolean {
+    const prev = this.LA(0);
+    const next = this.LA(1);
+    if (!prev || !next || next.tokenType !== t.Question) return false;
     if (typeof prev.endOffset !== "number" || typeof next.startOffset !== "number") return false;
     return next.startOffset === prev.endOffset + 1;
   }
@@ -1456,6 +1498,7 @@ class LLangParser extends CstParser {
     const first = this.LA(1);
     return (
       first?.tokenType === t.StringLiteral ||
+      first?.tokenType === t.NilKw ||
       first?.tokenType === t.IntegerNumber ||
       first?.tokenType === t.FloatNumber ||
       first?.tokenType === t.HexNumber ||

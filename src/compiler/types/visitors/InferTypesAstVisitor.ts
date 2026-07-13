@@ -83,7 +83,29 @@ function collectTypeNames(typeNode: ast.ASTNode | undefined): Set<string> {
   return names;
 }
 
+/**
+ * `String?` -- the annotation admits nil (D9e).
+ *
+ * Applied OUTSIDE the conversion rather than inside its branches, for one concrete reason: the
+ * compound-unwrap below returns EARLY (`return recur(inner)`), so `(A | B)?` and `Box<T>?` would have
+ * skipped any per-branch handling entirely and silently dropped the `?`.
+ *
+ * The flag can sit on the wrapper OR the inner node, exactly as `array` can, because both the `type`
+ * and `basicType` grammar rules carry the suffix: `(A | B)?` lands on the wrapper, a plain `String?`
+ * on the inner simple-type.
+ */
 function convertAstType(
+  typeNode: ast.TypeNode,
+  symbolTable: SymbolTable,
+  typeEnv: TypeEnvironment
+): InferredType {
+  const converted = convertAstTypeCore(typeNode, symbolTable, typeEnv);
+  const isOptional =
+    !!(typeNode as any)?.optional || !!(typeNode as any)?.type?.optional;
+  return isOptional ? TypeEnvironment.optional(converted) : converted;
+}
+
+function convertAstTypeCore(
   typeNode: ast.TypeNode,
   symbolTable: SymbolTable,
   typeEnv: TypeEnvironment
@@ -1360,8 +1382,9 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const declared = this.convertAstTypeToInferred(node.returns);
     if (TypeChecker.isUnknown(declared)) return;
 
-    // A Void/nil declaration says nothing useful about the value's type here.
-    if (declared.name === "Void" || declared.name === "Nil" || declared.name === "Null") return;
+    // A Void/nil declaration says nothing useful about the value's type here. `Void` and `Nil` are
+    // the same type (D9e) -- see TypeChecker.isNil.
+    if (TypeChecker.isNil(declared)) return;
 
     const funcName = node.name ? ast.symbolName(node.name) : "<anonymous>";
 
@@ -1758,7 +1781,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         break;
       
       case "null":
-        inferredType = { kind: "primitive", name: "Null", nullable: true };
+        // `Nil`, not `Null` (D9e). The old name was invented at this one site and known NOWHERE else
+        // -- `isKnownPrimitive("Null")` is false, and `typesEqual` compares by NAME -- so a function
+        // declared `-> nil` and returning `nil` was "declares Void, returns Null". It survived only
+        // because checkReturns bailed out on both names before comparing them.
+        inferredType = TypeEnvironment.nil();
         break;
 
       // Identifiers

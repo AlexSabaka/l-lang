@@ -97,7 +97,12 @@ export class LlangTransformerAstVisitor extends BaseAstVisitor {
 
   visitType(node: ast.TypeNode): any {
     const base = this.visit(node.type);
-    return `${base}${node.array ? '[]' : ''}`;
+    // The `?` must round-trip (D9), or `--language llang` silently reprints `String?` as `String` --
+    // a pretty-printer that drops a type's meaning is a lossy one. `optional` can sit on either node,
+    // as `array` can; the inner one is where a plain `String?` lands.
+    const inner: any = node.type;
+    const optional = (node as any).optional || inner?.optional;
+    return `${base}${node.array || inner?.array ? '[]' : ''}${optional ? '?' : ''}`;
   }
 
   visitUnionType(node: ast.UnionTypeNode): any {

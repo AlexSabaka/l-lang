@@ -61,7 +61,19 @@ export interface InferredType {
   valueType?: InferredType; // For map types
   inner?: InferredType;     // For array element type (alternative to generics[0])
   isArray?: boolean;
-  nullable?: boolean;
+  /**
+   * `T?` -- this type admits nil (D9).
+   *
+   * Replaces `nullable`, which carried TWO meanings in one field: it was set on the nil LITERAL
+   * ("this IS the bottom value", a fact about a source expression) and read on a TARGET ("this
+   * ACCEPTS the bottom value", a fact about a declaration). Nothing ever set it on a target, so the
+   * one rule that read it -- `isAssignable`'s `source.name === "Null" && target.nullable` -- was dead
+   * code, and the field looked live while meaning nothing.
+   *
+   * The two are now distinct: the literal has `{kind:"primitive", name:"Nil"}`, and a declaration
+   * that admits it has `optional: true`.
+   */
+  optional?: boolean;
   /**
    * Declaration-site variance, on a `generic` that is a type PARAMETER: the `:out` of
    * `(definterface Producer<:out T>)`. Absent means invariant.

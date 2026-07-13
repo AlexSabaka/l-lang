@@ -595,6 +595,26 @@ const CASES: Case[] = [
       "same `_3f` ReferenceError. `T -> T?` must WIDEN -- an optional is not a nil-only slot",
   },
   {
+    name: "T? is NOT T -- the unwrap is forced",
+    source: `(let a <- String? "hi")
+(let b <- String a)`,
+    expectDiagnostic: /LL0200.*String\?.*String/,
+    wasBroken:
+      "unparseable. Note the message must SAY `String?` -- formatType had no optional branch, so this " +
+      "would have read 'cannot assign String to String', which is not an error message, it is a koan",
+  },
+  {
+    name: "an optional array is T[]?, and a spaced `?` is not optionality at all",
+    source: `(mut xs <- Int[]? nil)
+(console.log xs)`,
+    expect: ["null"],
+    wasBroken:
+      "unparseable. `?` binds OUTSIDE `[]`, so `T[]?` is an optional array and an array of optionals " +
+      "is `(T?)[]`. Adjacency-gated exactly like the `[]` suffix: `String?` is optional, `String ?` " +
+      "is a String followed by something else. The PEG could not make that distinction at all until " +
+      "TypeName stopped eating the whitespace in front of its own suffixes",
+  },
+  {
     name: "T is non-nullable -- and already was",
     source: `(let x <- String nil)
 (console.log x)`,
@@ -716,7 +736,19 @@ function run(c: Case, tmp: string): Outcome {
 
     diagnostics = context.results.all
       .filter((m: any) => String(m.code).startsWith("LL"))
-      .map((m: any) => `${m.code}: ${String(m.message).split("\n").pop()!.trim()}`);
+      // The WHOLE message, flattened -- not `.split("\n").pop()`, which kept only the LAST line and
+      // was usually the empty one. Every expectDiagnostic here could therefore only ever match the
+      // CODE; asserting on the message TEXT silently could not work. D9's forced unwrap is the first
+      // case that needs to (the point of `T? -> T` is that the message SAYS `String?`), which is how
+      // this surfaced at all.
+      .map((m: any) => {
+        const text = String(m.message)
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .join(" ");
+        return `${m.code}: ${text}`;
+      });
 
     if (c.expectDiagnostic) {
       const hit = diagnostics.some((d) => c.expectDiagnostic!.test(d));

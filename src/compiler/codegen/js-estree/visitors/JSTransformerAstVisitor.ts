@@ -369,8 +369,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       }
     }
     
-    result.nullable = false;
-    
+    // Reflection reported `nullable: false` UNCONDITIONALLY -- for every type, including one that had
+    // just been annotated `?`. It could hardly do otherwise: until D9 nothing ever set the flag, so
+    // the constant was as true as anything else available. It reads the real thing now.
+    //
+    // The metadata KEY keeps its name. `nullable: false` is printed by a passing golden
+    // (02_fn_types.expect), the value is unchanged for every non-optional type, and renaming a
+    // public reflection field is a separate call from making it honest.
+    result.nullable = !!metadata.optional;
+
     return result;
   }
   

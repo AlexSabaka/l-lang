@@ -43,9 +43,33 @@ export class TypeChecker {
       return true;
     }
 
-    // Null can be assigned to nullable types
-    if (sourceUnwrapped.name === "Null" && targetUnwrapped.nullable) {
-      return true;
+    // --- nil, and `T?` (D9) ---------------------------------------------------------------------
+    //
+    // These three rules ARE "non-nullable by default". Note the first was already in force before D9
+    // -- nothing ever set the flag on a target, so `isAssignable(Nil, String)` fell through to
+    // `return false` and `(let x <- String nil)` was already an LL0200. What did not exist was any
+    // way to say YES.
+
+    // nil goes into an optional slot, and nowhere else.
+    if (this.isNil(sourceUnwrapped)) {
+      return !!targetUnwrapped.optional;
+    }
+
+    // `T?` does NOT go into a `T`. This is the forced unwrap, and it is the whole point of the
+    // feature: the value might be nil, and the target promises it never is.
+    if (sourceUnwrapped.optional && !targetUnwrapped.optional) {
+      return false;
+    }
+
+    // `T` WIDENS into a `T?`. An optional is a superset, not a nil-only slot -- `(let x <- String?
+    // "hi")` is ordinary code. Compare the underlying types with the flag set aside on both sides, so
+    // that `Dog -> Animal?` still gets subtyping, promotion and the rest of the ladder below.
+    if (targetUnwrapped.optional) {
+      return this.isAssignable(
+        { ...sourceUnwrapped, optional: false },
+        { ...targetUnwrapped, optional: false },
+        symbolTable
+      );
     }
 
     // Numeric promotion: Int -> Real (like C# int -> double)
@@ -257,6 +281,14 @@ export class TypeChecker {
       return false;
     }
 
+    // `String?` is NOT `String` (D9). Without this, typesEqual -- which runs FIRST in isAssignable --
+    // compares the two by name, finds them equal, and returns true before the optional rules below
+    // are ever consulted. The forced unwrap would have been silently dead, and `T?` would have been
+    // an annotation that parsed, type-checked, and meant nothing.
+    if (!!a.optional !== !!b.optional) {
+      return false;
+    }
+
     // Generic ARGUMENTS must match. The old guard was `if (a.generics && b.generics)`, so a type
     // with generics compared EQUAL to the same type without them -- `Box<Int>` === bare `Box` --
     // by falling through to the `return true` at the end.
@@ -381,6 +413,13 @@ export class TypeChecker {
       return JSON.stringify(type).substring(0, 50) || "Unknown";
     }
 
+    // `String?` (D9). Without this every diagnostic about an optional prints it as `String` -- so
+    // "cannot assign String to String" would be the message for the forced unwrap, which is the one
+    // error the feature exists to produce.
+    if (type.optional) {
+      return `${this.formatType({ ...type, optional: false })}?`;
+    }
+
     if (type.isArray) {
       return `${this.formatType(type.generics![0])}[]`;
     }
@@ -493,6 +532,19 @@ export class TypeChecker {
     // A generic (including an array) whose every argument is unknown is itself uninformative.
     if (type.generics?.length && type.generics.every((g) => this.isUnknown(g))) return true;
     return false;
+  }
+
+  /**
+   * The type of the `nil` literal (D9).
+   *
+   * `Void` is accepted as the same thing. In a Lisp everything is an expression, so "returns nothing"
+   * and "returns the bottom value" are one statement -- a function that runs off its end emits `null`
+   * and is declared `-> Void`. Keeping them distinct would mean `(fn f [] -> Void)` could not return
+   * `nil`, which is the only value it CAN return.
+   */
+  static isNil(type: InferredType | undefined): boolean {
+    if (!type) return false;
+    return type.kind === "primitive" && (type.name === "Nil" || type.name === "Void");
   }
 
   /**

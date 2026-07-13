@@ -505,7 +505,11 @@ export class LLangAstBuilder extends BaseCstVisitor {
     // Chevrotain keys CST children by rule name rather than occurrence index.
     const type = this.visit(ctx.unionType[0]);
     const array = !!ctx.LBracket;
-    return this.makeNode("type", ctx, { type, array });
+    // `optional` sits on this wrapper for `(A | B)?` and `A | B?`. For a plain `String?` it sits on
+    // the INNER node instead (basicType carries its own `?`), exactly as `array` already does --
+    // convertAstType reads both positions.
+    const optional = !!ctx.Question;
+    return this.makeNode("type", ctx, { type, array, optional });
   }
 
   unionType(ctx: any): ast.ASTNode {
@@ -534,7 +538,8 @@ export class LLangAstBuilder extends BaseCstVisitor {
       throw new Error(`Unknown basic type: ${Object.keys(ctx)}`);
     }
     const array = !!ctx.LBracket;
-    return { ...type, array };
+    const optional = !!ctx.Question;
+    return { ...type, array, optional };
   }
 
   simpleType(ctx: any): ast.SimpleTypeNode {
@@ -1097,6 +1102,8 @@ export class LLangAstBuilder extends BaseCstVisitor {
       constant = this.makeNode("string", ctx, {
         value: ctx.StringLiteral[0].image.slice(1, -1),
       });
+    } else if (ctx.NilKw) {
+      constant = this.makeNode("null", ctx, { keyword: "nil" });
     } else {
       constant = this.visit(ctx.number[0]);
     }

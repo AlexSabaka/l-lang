@@ -232,6 +232,19 @@ export type TypeVariance = "in" | "out";
 export interface TypeNode extends ASTNode<"type"> {
   type: TypeNameNode;
   array: boolean;
+  /**
+   * `String?` -- the type admits nil (D9).
+   *
+   * Like `array`, this can sit on EITHER this wrapper or the inner node, because both `type` and
+   * `basicType` carry the suffix: `(A | B)?` lands here, a plain `String?` lands on the inner
+   * simple-type. `convertAstType` reads both positions. Optionality binds OUTSIDE the array suffix,
+   * so `T[]?` is an optional array and an array of optionals is `(T?)[]`.
+   *
+   * Non-nullable is the default and always was -- nothing ever set `nullable` on a target type, so
+   * `(let x <- String nil)` has always been an error. This is the flag that lets a declaration OPT
+   * IN, which is the thing that did not exist.
+   */
+  optional?: boolean;
 }
 
 export interface UnionTypeNode extends ASTNode<"union-type"> {

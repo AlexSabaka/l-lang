@@ -221,8 +221,15 @@ ImportSource
 
 
 // Type definitions
+//
+// TypeName does NOT consume trailing whitespace (D9e). It used to, and that single `_` was why the
+// PEG could never gate a type SUFFIX: by the time BasicTypes looked for `[]`, the space was already
+// gone, so `Expr []` was an array type here and a vector VALUE in grammar_v2. `T?` turns on exactly
+// that distinction -- `String?` is optional, `String ?` is a String and then something else -- so it
+// had to go. Every call site below re-adds its own `_`; the two that RELIED on the trailing one
+// (SimpleType, GenericType) are noted where they changed.
 TypeName "type name"
-  = _ name:$(Alpha (Alpha / Digit)*) _ {
+  = name:$(Alpha (Alpha / Digit)*) {
     return makeNode("type-name", { name });
   }
 
@@ -230,8 +237,9 @@ Type "type"
   = type:UnionType {
     return makeNode("type", { type, array: false });
   }
-  / "(" _ type:UnionType _ ")" _ array:"[]"? _ {
-    return makeNode("type", { ...type, array: !!array });
+  // `(A | B)[]`, `(A | B)?` -- the suffixes must butt against the `)`, as in grammar_v2.
+  / "(" _ type:UnionType _ ")" array:"[]"? optional:"?"? _ {
+    return makeNode("type", { ...type, array: !!array, optional: !!optional });
   }
 
 UnionType
@@ -257,8 +265,11 @@ IntersectionType
   }
 
 BasicTypes
-  = _ type:(FunctionType / MapType / GenericType / SimpleType) array:"[]"? _ {
-    return makeNode("", { ...type, array: !!array });
+  // `array` then `optional`, in that order and both un-spaced: `T[]?` is an OPTIONAL ARRAY, and an
+  // array of optionals is `(T?)[]`. This is the site that fires for a plain `String?`, and it is
+  // adjacency-gated for free now that TypeName no longer eats the whitespace before it.
+  = _ type:(FunctionType / MapType / GenericType / SimpleType) array:"[]"? optional:"?"? _ {
+    return makeNode("", { ...type, array: !!array, optional: !!optional });
   }
 
 
@@ -270,15 +281,19 @@ FunctionType
 
 
 // Simple types
+// NO trailing `_`: BasicTypes' `[]` / `?` suffixes must see whether whitespace intervened.
 SimpleType
-  = _ name:TypeName _ {
+  = _ name:TypeName {
     return makeNode("simple-type", { name });
   }
 
 
 // Generic types
+// The `_` before `<` is re-added explicitly -- TypeName used to supply it, and `Foo <Int>` parses in
+// grammar_v2 (Chevrotain discards whitespace), so tightening it here would be a NEW divergence in the
+// other direction. No trailing `_`, for the same reason as SimpleType: `Box<Int>?` must be gateable.
 GenericType
-  = _ name:TypeName "<" generics:Type|1.., ","?| ">" _ {
+  = _ name:TypeName _ "<" generics:Type|1.., ","?| ">" {
     return makeNode("generic-type", { name, generics });
   }
 
@@ -636,7 +651,8 @@ Catch
   }
 
 CatchFilter
-  = name:SimpleIdentifier _ type:(OfModKw _ @TypeName)? {
+  // The trailing `_` is explicit now -- TypeName no longer consumes it (D9e).
+  = name:SimpleIdentifier _ type:(OfModKw _ @TypeName)? _ {
     return { name, type };
   }
 
@@ -724,6 +740,11 @@ MatchCase
     return makeNode("match-case", { pattern, body });
   }
 
+// ConstantPattern BEFORE IdentifierPattern (D9). `nil` is a legal identifier character sequence here,
+// so IdentifierPattern got it first and `[nil 2]` bound a VARIABLE NAMED `nil` -- which matched
+// ANYTHING and shadowed the literal, silently. grammar_v2 had the opposite bug and simply refused to
+// parse it. The reorder is safe: a Number cannot start an identifier, a String cannot either, and
+// NilKw is boundary-guarded (D9c), so `nilish` is still an identifier.
 Pattern
   = AnyPattern
   / FunctionalPattern
@@ -731,8 +752,8 @@ Pattern
   / VectorPattern
   / MapPattern
   / TypePattern
-  / IdentifierPattern
   / ConstantPattern
+  / IdentifierPattern
 
 AnyPattern
   = "_" _ { return makeNode("any-pattern"); }
@@ -773,7 +794,7 @@ IdentifierPattern
   }
 
 ConstantPattern
-  = constant:(String / Number) {
+  = constant:(String / Number / Nil) {
     return makeNode("constant-pattern", { constant });
   }
 
