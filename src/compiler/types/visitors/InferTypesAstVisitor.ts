@@ -1031,7 +1031,18 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    * Nothing calls this yet -- the six existing checks still log. Arming them is P4b, and it must
    * not happen until the false positives are gone, or 19 passing tests break at once.
    */
+  /**
+   * While > 0, only LL0205 is reported. See `inferArgumentsForNilOnly`.
+   *
+   * A blunt instrument, and a deliberate one: it exists so that D9g can look INSIDE call arguments
+   * for a nil dereference without also switching on every OTHER check in there, all of which are
+   * blocked on scope resolution (P6) and produce a measured 16-diagnostic false-positive flood.
+   */
+  private nilChecksOnly = 0;
+
   protected reportTypeError(node: ast.ASTNode, code: string, message: string): void {
+    if (this.nilChecksOnly > 0 && code !== "LL0205") return;
+
     const rule = createRule<ast.ASTNode>()
       .addSeverity(RuleSeverity.Error)
       .addCode(code)
@@ -1040,6 +1051,31 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       .build();
 
     this.context.results.add(node, rule, this.context);
+  }
+
+  /**
+   * Type the arguments of a call whose CALLEE we could not resolve -- `(console.log h.length)`, a
+   * member call, a JS global -- but report only LL0205 from inside them.
+   *
+   * The arguments were previously never visited at all, so EVERY check living in inferExpressionType
+   * silently skipped anything handed to `console.log`. That is most of the corpus's I/O, and exactly
+   * where a dereference gets written: `(let z h.length)` reported LL0205 while `(console.log
+   * h.length)` -- the same expression -- reported nothing.
+   *
+   * Making them fully visible is the RIGHT fix and is not this phase's. Measured: 16 new diagnostics
+   * on passing tests, and they are not nil bugs -- they are LL0210 on locally-scoped names (symbol
+   * resolution is top-level-only; the audit's P6) and LL0211 on a headless member call. Turning those
+   * on here would mean shipping a false-positive flood under a nil-safety banner.
+   *
+   * So: the arguments become visible to the NIL check, and to nothing else, until P6 lands.
+   */
+  private inferArgumentsForNilOnly(args: ast.ASTNode[]): void {
+    this.nilChecksOnly++;
+    try {
+      args.forEach((arg) => this.inferExpressionType(arg));
+    } finally {
+      this.nilChecksOnly--;
+    }
   }
 
   constructor(context: any, typeEnv: TypeEnvironment, symbolTable: SymbolTable) {
@@ -1061,6 +1097,132 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const methodName = getVisitMethodName(node._type);
     // Only call the visitXxx method, don't do automatic recursive traversal
     return (this as any)[methodName]?.(node) ?? node;
+  }
+
+  /**
+   * LL0205 -- a possibly-nil value, USED as though it were not (D9g).
+   *
+   * This is the error the whole ruling exists to produce. Everything before it made `T?` sayable,
+   * producible and unassignable-to-`T`; without this, a program could still take an optional and
+   * dereference it, which is the null-dereference D9 is meant to make unsayable.
+   *
+   * It is a DEREFERENCE check, not an assignability one. The assignability sites (`let`, argument,
+   * return) already refuse `T? -> T` and report LL0200/LL0203/LL0213; adding LL0205 there would just
+   * be a second name for the same error. What had no check at all is USING the thing: reading a
+   * member off it, indexing into it, doing arithmetic with it.
+   */
+  private checkNotNil(
+    type: InferredType | undefined,
+    node: ast.ASTNode,
+    what: string
+  ): boolean {
+    if (!type?.optional) return true;
+    this.reportTypeError(
+      node,
+      "LL0205",
+      `${what} is possibly nil (${TypeChecker.formatType(type)}). Check it against nil first, ` +
+        `or use a non-optional value.`
+    );
+    return false;
+  }
+
+  /**
+   * `(!= x nil)` / `(== x nil)` -- the only conditions that narrow (D9g).
+   *
+   * Deliberately SYNTACTIC, and deliberately small. There is no flow analysis anywhere in this
+   * compiler, and inventing one here would be a phase of its own (D5 owns narrowing proper). What
+   * this recognises is exactly the shape the corpus already writes by hand, everywhere it touches a
+   * nil -- and it has to exist, because LL0205 without an escape hatch does not make `T?` unsafe, it
+   * makes it UNUSABLE: the nil-check you just wrote would not be believed.
+   *
+   * Returns the identifier proved NON-nil when the condition is true, or when it is false.
+   */
+  private nilGuard(cond: ast.ASTNode): { name: string; nonNilWhen: boolean } | undefined {
+    if (!cond || cond._type !== "list") return undefined;
+    const nodes = (cond as ast.ListNode).nodes;
+    if (nodes.length !== 3) return undefined;
+
+    const head = nodes[0];
+    if (head._type !== "simple-identifier") return undefined;
+    const op = (head as ast.IdentifierNode).id;
+    if (op !== "==" && op !== "!=" && op !== "≠") return undefined;
+
+    // `(!= x nil)` or `(!= nil x)` -- either order.
+    const [a, b] = [nodes[1], nodes[2]];
+    const idNode =
+      b._type === "null" && a._type === "simple-identifier"
+        ? a
+        : a._type === "null" && b._type === "simple-identifier"
+          ? b
+          : undefined;
+    if (!idNode) return undefined;
+
+    return { name: (idNode as ast.IdentifierNode).id, nonNilWhen: op !== "==" };
+  }
+
+  /**
+   * Visit `body` with `name` narrowed to its non-optional type.
+   *
+   * The mechanism already existed: `resolveIdentifier` consults the type environment's scope stack
+   * BEFORE the symbol table, so a binding pushed into a fresh scope simply shadows the declaration --
+   * exactly how P7b bound generic type parameters. Narrowing needed no new machinery, only a scope.
+   */
+  private withNarrowed(name: string, at: ast.ASTNode, body: () => void): void {
+    const current = this.typeEnv.resolveIdentifier(name);
+    if (!current?.optional) {
+      body();
+      return;
+    }
+    this.typeEnv.enterScope(at);
+    this.typeEnv.bindInScope(name, { ...current, optional: false });
+    try {
+      body();
+    } finally {
+      this.typeEnv.exitScope();
+    }
+  }
+
+  /** Does this statement leave the block unconditionally? `(return x)` / `(throw e)`. */
+  private alwaysExits(node: ast.ASTNode | undefined): boolean {
+    if (!node || !ast.isListNode(node)) return false;
+    const nodes = (node as ast.ListNode).nodes;
+    if (!nodes.length) return false;
+
+    const head = nodes[0];
+    if (head._type === "simple-identifier") {
+      const id = ast.symbolName(head as ast.IdentifierNode);
+      if (id === "return" || id === "throw") return true;
+    }
+    // A block: its LAST statement decides.
+    return this.alwaysExits(nodes[nodes.length - 1]);
+  }
+
+  /**
+   * `(if (== h nil) (return 0))` -- after this statement, `h` is not nil for the REST of the block.
+   *
+   * The guard-and-return is the shape the corpus actually writes, everywhere it touches an optional
+   * (19_optional_and_mutability, 21_nil_handling). Recognising only the `if`-BRANCH form would have
+   * left the idiom people reach for first unsupported, and LL0205 would have read as the compiler
+   * refusing to believe a check that is right there on the line above.
+   *
+   * Note the direction. We reach the code after the `if` only when the condition was FALSE -- so it
+   * is `(== h nil)` that proves non-nil here, not `(!= h nil)`. An `else` disqualifies it: both paths
+   * continue, so nothing is proven.
+   */
+  private provenNonNilAfter(item: ast.ASTNode): string | undefined {
+    const ifNode: ast.IfNode | undefined =
+      item._type === "if"
+        ? (item as ast.IfNode)
+        : ast.isListNode(item) && (item as ast.ListNode).nodes[0]?._type === "if"
+          ? ((item as ast.ListNode).nodes[0] as ast.IfNode)
+          : undefined;
+    if (!ifNode || ifNode.else) return undefined;
+
+    const guard = this.nilGuard(ifNode.condition);
+    if (!guard || guard.nonNilWhen) return undefined;
+    if (!this.alwaysExits(ifNode.then)) return undefined;
+
+    return guard.name;
   }
 
   /** What you get OUT of a container: a map's value type, or an array's element type. */
@@ -1247,36 +1409,60 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       }
     }
 
-    for (const item of node.nodes) {
-      if (this.isDeclaration(item)) {
-        this.visit(item);
-        continue;
-      }
+    // Narrowings proved by an early-return guard hold for the REST of the block, so their scopes stay
+    // open until the loop ends. Counted, and unwound in a `finally`, so an exception mid-block cannot
+    // desync enterScope/exitScope -- the failure mode SymbolTable already had to be fixed for in D3b.
+    let openNarrowings = 0;
+    try {
+      for (const item of node.nodes) {
+        this.visitStatement(item);
 
-      if (ast.isListNode(item) && item.nodes.length > 0) {
-        const head = item.nodes[0];
-
-        // The list-wrapping quirk: a parenthesised form arrives wrapped in a `list`. `(let x 5)`
-        // is list{[variable]}, and `(if c a b)` is list{[if]}. Look at the head to tell what the
-        // list actually IS:
-        if (this.isDeclaration(head)) {
-          this.visit(head);
-        } else if (head._type === "simple-identifier" || head._type === "composite-identifier") {
-          // A real call: `(console.log x)`. Inferring it runs the argument and operator checks.
-          this.inferExpressionType(item);
-        } else {
-          // A wrapped special form -- if / for / while / match / when / cond / try. Visiting it
-          // reaches its own visitor (visitIf) or onUnhandled, which walks its children. Treating
-          // these as call expressions is what made `(if "str" 1 2)` report nothing at all.
-          this.visit(head);
+        // `(if (== h nil) (return 0))` -- from here to the end of the block, `h` is not nil.
+        const proven = this.provenNonNilAfter(item);
+        if (proven) {
+          const current = this.typeEnv.resolveIdentifier(proven);
+          if (current?.optional) {
+            this.typeEnv.enterScope(item);
+            this.typeEnv.bindInScope(proven, { ...current, optional: false });
+            openNarrowings++;
+          }
         }
-        continue;
       }
-
-      // Control flow, identifiers, literals. visit() routes to a real visitor where one exists
-      // (visitIf), and otherwise to onUnhandled, which walks the children.
-      this.visit(item);
+    } finally {
+      for (let i = 0; i < openNarrowings; i++) this.typeEnv.exitScope();
     }
+  }
+
+  /** One statement of a block. Extracted from visitList so the narrowing loop has a single exit. */
+  private visitStatement(item: ast.ASTNode): void {
+    if (this.isDeclaration(item)) {
+      this.visit(item);
+      return;
+    }
+
+    if (ast.isListNode(item) && item.nodes.length > 0) {
+      const head = item.nodes[0];
+
+      // The list-wrapping quirk: a parenthesised form arrives wrapped in a `list`. `(let x 5)`
+      // is list{[variable]}, and `(if c a b)` is list{[if]}. Look at the head to tell what the
+      // list actually IS:
+      if (this.isDeclaration(head)) {
+        this.visit(head);
+      } else if (head._type === "simple-identifier" || head._type === "composite-identifier") {
+        // A real call: `(console.log x)`. Inferring it runs the argument and operator checks.
+        this.inferExpressionType(item);
+      } else {
+        // A wrapped special form -- if / for / while / match / when / cond / try. Visiting it
+        // reaches its own visitor (visitIf) or onUnhandled, which walks its children. Treating
+        // these as call expressions is what made `(if "str" 1 2)` report nothing at all.
+        this.visit(head);
+      }
+      return;
+    }
+
+    // Control flow, identifiers, literals. visit() routes to a real visitor where one exists
+    // (visitIf), and otherwise to onUnhandled, which walks the children.
+    this.visit(item);
   }
 
   visitVariable(node: ast.VariableNode) {
@@ -1709,11 +1895,21 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         `'if' condition must be Boolean, got ${TypeChecker.formatType(condType)}.`
       );
     }
-    
-    this.visit(node.then);
-    if (node.else) {
-      this.visit(node.else);
-    }
+
+    // `(if (!= h nil) (h.length))` -- inside the branch the guard proves, `h` is not optional (D9g).
+    const guard = this.nilGuard(node.condition);
+
+    const visitBranch = (branch: ast.ASTNode | undefined, proven: boolean) => {
+      if (!branch) return;
+      if (guard && guard.nonNilWhen === proven) {
+        this.withNarrowed(guard.name, branch, () => this.visit(branch));
+      } else {
+        this.visit(branch);
+      }
+    };
+
+    visitBranch(node.then, true);
+    visitBranch(node.else, false);
   }
 
   /**
@@ -1840,6 +2036,16 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         // TYPE comes from the type environment...
         const resolvedType = this.typeEnv.resolveIdentifier(id);
         inferredType = resolvedType ?? TypeEnvironment.unknown();
+
+        // `h.length` where `h` is `String?` -- the null dereference (D9g). The BASE of a dot path is
+        // the thing being dereferenced, so that is what has to be non-nil. `resolveIdentifier` walks
+        // the path and returns undefined when it cannot, which is why this had to be checked here
+        // rather than inferred from the result: the failure is silent and looks exactly like an
+        // ordinary un-inferable member.
+        if (id.includes(".")) {
+          const base = id.slice(0, id.indexOf("."));
+          this.checkNotNil(this.typeEnv.resolveIdentifier(base), node, `'${base}'`);
+        }
 
         // ...but EXISTENCE comes from the symbol table, which is the thing that actually knows
         // about scopes. The type environment has its own, shallower notion of scope and fails on
@@ -1999,6 +2205,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             // Checked here rather than in inferExpressionType's identifier case, because a call
             // head never passes through it -- the list dispatch reads `funcName` directly.
             this.checkIdentifierResolves(firstNode as ast.IdentifierNode, funcName);
+
+            // The arguments were never visited at all, so a nil dereference INSIDE one was invisible
+            // -- `(let z h.length)` reported LL0205 while `(console.log h.length)`, the same
+            // expression, reported nothing. Nil-only, deliberately; see inferArgumentsForNilOnly.
+            this.inferArgumentsForNilOnly(listNode.nodes.slice(1));
+
             inferredType = TypeEnvironment.unknown();
           }
         } else {
@@ -2057,6 +2269,9 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       case "indexer": {
         const indexerNode = node as ast.IndexerNode;
         const containerType = this.inferExpressionType(indexerNode.id as any);
+
+        // Indexing into a possibly-nil container is a dereference like any other (D9g).
+        this.checkNotNil(containerType, indexerNode.id, "the indexed value");
 
         // NOT optional, deliberately (D9f). `c[k]` is PARTIAL: it asserts the thing is there, and
         // throws if it is not. That is what lets `xs[i]` be a plain `Int` and stay honest -- it used
@@ -2263,6 +2478,17 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       // Binary operator
       const leftType = this.inferExpressionType(args[0]);
       const rightType = this.inferExpressionType(args[1]);
+
+      // An optional OPERAND (D9g) -- but never for equality, which is how you DISCHARGE the
+      // obligation. If `(== h nil)` were itself an error the feature would eat its own tail: the
+      // only way to satisfy LL0205 would be the one expression LL0205 forbids.
+      //
+      // Needed because `Int?` is still NAMED `Int`, so `isNumeric` says yes and `(+ h 1)` sailed
+      // straight through getBinaryOpType to produce "null1" or NaN at run time.
+      if (op !== "==" && op !== "!=" && op !== "≠") {
+        this.checkNotNil(leftType, args[0], `the left operand of '${op}'`);
+        this.checkNotNil(rightType, args[1], `the right operand of '${op}'`);
+      }
 
       // Check for user-defined operator first on the left operand
       const userOpType = TypeChecker.findOperator(leftType, op, 1, this.symbolTable);

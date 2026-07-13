@@ -76,17 +76,31 @@ export class TypeEnvironment {
   }
 
   /**
-   * Bind a generic type parameter to a type in the current scope
+   * Bind a name to a type in the CURRENT SCOPE ONLY. It disappears at `exitScope`, and
+   * `resolveIdentifier` consults it BEFORE the symbol table, so it shadows the declaration.
+   *
+   * The distinction from `bindIdentifier` is load-bearing and easy to get wrong: `bindIdentifier`
+   * writes THROUGH to the symbol table, which is neither scoped nor reversible. Narrowing bound with
+   * it would narrow `h` for the rest of the PROGRAM -- the nil-check believed everywhere, which is
+   * strictly worse than not believing it at all, because it reports nothing while proving nothing.
+   *
+   * `bindTypeParameter` has always done exactly this -- it is how a generic `T` gets bound. This is
+   * the same operation under a name that says what it does.
    */
-  bindTypeParameter(name: string, type: InferredType): void {
+  bindInScope(name: string, type: InferredType): void {
     if (this.scopeStack.length === 0) {
       return;
     }
     this.scopeStack[this.scopeStack.length - 1].localIdentifiers.set(name, type);
   }
 
+  /** Bind a generic type parameter to a type in the current scope. */
+  bindTypeParameter(name: string, type: InferredType): void {
+    this.bindInScope(name, type);
+  }
+
   /**
-   * Bind an identifier to a type in the symbol table
+   * Bind an identifier to a type in the symbol table. PERMANENT and scope-blind -- see `bindInScope`.
    */
   bindIdentifier(name: string, type: InferredType, node: ast.ASTNode): void {
     this.symbolTable.bindType(name, type);

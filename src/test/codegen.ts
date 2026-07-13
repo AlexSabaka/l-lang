@@ -688,6 +688,72 @@ const CASES: Case[] = [
       "`undefined undefined 1`. After D9 this is the ONLY way to ask 'is it there?' -- and it is what " +
       "gives T? a PRODUCER. Without it, an optional only ever arises where someone typed a `?`",
   },
+  // --- The unwrap is FORCED (D9g). An optional you never check is the bug optionals exist to stop.
+  {
+    name: "a possibly-nil value cannot be dereferenced",
+    source: `(let xs <- String[] ["abc"])
+(let h (head xs))
+(console.log h.length)`,
+    expectDiagnostic: /LL0205/,
+    wasBroken:
+      "compiled, and `h.length` on an empty array is a TypeError at run time -- the null-dereference " +
+      "this entire ruling exists to make unsayable. `T?` without a forced unwrap is a comment",
+  },
+  {
+    name: "narrowing: a nil-check unwraps it",
+    source: `(let xs <- String[] ["abc"])
+(let h (head xs))
+(if (!= h nil) (console.log h.length))`,
+    expect: ["3"],
+    wasBroken:
+      "there is NO narrowing anywhere in the compiler -- visitIf visits both branches with the " +
+      "environment untouched. Without it LL0205 has no escape hatch, and `T?` becomes unusable " +
+      "rather than merely unsafe: the check you just wrote would not be believed",
+  },
+  {
+    name: "narrowing: an early-return guard unwraps the REST of the block",
+    source: `(fn first-len [xs <- String[]] -> Int (
+  (let h (head xs))
+  (if (== h nil) (return 0))
+  (return h.length)))
+(console.log (first-len ["abcd"]))
+(console.log (first-len []))`,
+    expect: ["4", "0"],
+    wasBroken:
+      "the guard-and-return is the shape the corpus actually writes (19_optional_and_mutability, " +
+      "21_nil_handling), and it narrows nothing without flow-sensitivity across a block",
+  },
+  {
+    name: "narrowing does NOT leak past the branch",
+    source: `(let xs <- String[] ["abc"])
+(let h (head xs))
+(if (!= h nil) (console.log h.length))
+(console.log h.length)`,
+    expectDiagnostic: /LL0205/,
+    wasBroken:
+      "a guard on the narrowing: outside the branch that checked it, `h` is optional again. An " +
+      "over-eager narrowing is worse than none -- it would report nothing while proving nothing",
+  },
+  {
+    name: "arithmetic on a possibly-nil value",
+    source: `(let xs [1 2 3])
+(let n (head xs))
+(console.log (+ n 1))`,
+    expectDiagnostic: /LL0205/,
+    wasBroken:
+      "`Int?` is still NAMED Int, so isNumeric said yes and `(+ nil 1)` sailed through to produce " +
+      "the string \"null1\" or NaN at run time",
+  },
+  {
+    name: "comparing an optional to nil is ALWAYS allowed",
+    source: `(let xs <- String[] [])
+(let h (head xs))
+(console.log (== h nil) (!= h nil))`,
+    expect: ["true false"],
+    wasBroken:
+      "not broken -- a GUARD, and the one exemption LL0205 must carve out. `(== h nil)` is how you " +
+      "DISCHARGE the obligation; if the check itself were an error the feature would eat its own tail",
+  },
   {
     name: "the memoization idiom: absence is asked with `get`, not by indexing",
     source: `(mut memo {})
