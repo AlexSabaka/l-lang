@@ -913,6 +913,114 @@ const CASES: Case[] = [
       "synonym and never was: it exists only inside a `:where T :inherits Base` CONSTRAINT, so the " +
       "grammar has always agreed with D11 -- it is the README and the reference doc that are wrong)",
   },
+
+  // ===============================================================================================
+  // STRUCT VALUE SEMANTICS   (D11: "`defstruct` becomes a real value type: by-copy semantics")
+  //
+  // `visitStruct` is `return this.visitClass(node)`, so a struct IS a class and assignment ALIASES.
+  //
+  // THE CORPUS CANNOT SEE THIS PHASE, AND CANNOT SEE THE WAY IT WOULD GO WRONG. Every passing struct
+  // golden -- 06_structs, 04_enums, 08_operators, 09_operators, 01_interfacses, complex_math_test --
+  // has ALL-PRIMITIVE fields (every one is Real or Int). A shallow copy gives correct value semantics
+  // for exactly that set and silently keeps aliasing everything else. A green suite would have proved
+  // nothing. These cases are the only thing standing between the ruling and a lie.
+  // ===============================================================================================
+
+  {
+    name: "value semantics: assignment COPIES a struct",
+    source: `(defstruct P (mut :ctor x <- Int 0))
+(mut a (P 1))
+(mut b a)
+(b.x := 99)
+(console.log a.x b.x)`,
+    expect: ["1 99"],
+    wasBroken: "`99 99` -- a struct is a class, so `(mut b a)` aliased it",
+  },
+  {
+    name: "value semantics: a struct FIELD copies, a reference field SHARES",
+    source: `(defstruct Inner (mut :ctor n <- Int 0))
+(defstruct Outer (let :ctor i <- Inner) (let :ctor xs <- Int[]))
+(mut a (Outer (Inner 1) [7 8]))
+(mut b a)
+(b.i.n := 99)
+(b.xs[0] := 99)
+(console.log a.i.n a.xs[0])`,
+    // BOTH halves of the ruling, in one case, and the corpus contains NOTHING like it.
+    //   a.i.n  -> 1   the nested STRUCT was copied         (memberwise, recursing into structs)
+    //   a.xs[0]-> 99  the ARRAY was SHARED, not copied      (reference types are shared -- the C# rule)
+    // The second half is asserted deliberately: it pins the ruling so that a later, well-meaning
+    // "make the copy deep" cannot drift in without this going red and someone having to argue for it.
+    expect: ["1 99"],
+    wasBroken:
+      "`99 99` -- and a SHALLOW copy would have printed `99 99` too, for the nested struct. This is the " +
+      "case that decides whether by-copy is real or is a lie that every golden agrees with",
+  },
+  {
+    name: "value semantics: a struct is passed BY VALUE",
+    source: `(defstruct P (mut :ctor x <- Int 0))
+(fn bump [p <- P] -> Int ((p.x := 100) (return p.x)))
+(mut a (P 1))
+(console.log (bump a) a.x)`,
+    expect: ["100 1"],
+    wasBroken: "`100 100` -- the callee mutated the caller's struct",
+  },
+  {
+    name: "value semantics: a struct in an array literal is a copy",
+    source: `(defstruct P (mut :ctor x <- Int 0))
+(mut a (P 1))
+(let xs [a])
+(a.x := 99)
+(console.log xs[0].x a.x)`,
+    expect: ["1 99"],
+    wasBroken: "`99 99` -- the array held the SAME object",
+  },
+  {
+    name: "value semantics: `for :each` binds a copy",
+    source: `(defstruct P (mut :ctor x <- Int 0))
+(let ps [(P 1) (P 2)])
+(for :each p :from ps :then (p.x := 99))
+(console.log ps[0].x ps[1].x)`,
+    expect: ["1 2"],
+    wasBroken:
+      "`99 99` -- visitForEach emits a ForOfStatement whose loop variable is a plain identifier, so it " +
+      "binds each element BY REFERENCE. Not a let/assign/arg/literal site; easy to miss entirely",
+  },
+  {
+    name: "value semantics: a method still mutates its receiver",
+    source: `(defstruct C (mut :ctor n <- Int 0)
+  (fn bump [] -> Int ((this.n := (+ this.n 1)) (return this.n))))
+(mut c (C 0))
+(c.bump)
+(c.bump)
+(console.log c.n)`,
+    expect: ["2"],
+    wasBroken:
+      "not broken -- THE guard on this phase. `this` must NOT be a copy: construct-mutate-return is the " +
+      "corpus's only way to build a struct (~30 sites in std/math and 09_operators). Copy the receiver " +
+      "and every one of them silently returns an unmutated value",
+  },
+  {
+    name: "a defclass still ALIASES (guard)",
+    source: `(defclass Box (mut :ctor v <- Int 0))
+(let a (Box 1))
+(let b a)
+(b.v := 99)
+(console.log a.v b.v)`,
+    expect: ["99 99"],
+    wasBroken:
+      "not broken -- a guard, and the other half of the ruling. A class is a REFERENCE type. If the copy " +
+      "fires on classes too, value semantics has simply been applied to the whole language",
+  },
+  {
+    name: "a struct :operator may not mutate `this`",
+    source: `(defstruct W (mut :ctor n <- Int 0)
+  (fn :operator * [k <- Int] -> W ((this.n := (* this.n k)) (return this))))`,
+    expectDiagnostic: /LL0207/,
+    wasBroken:
+      "compiled silently, and the mutation ESCAPES: the runtime routes `(* w 2)` to `w['*_1'](2)`, so " +
+      "`this` IS the caller's struct. Under pass-by-value a mutating operator is incoherent -- in C# an " +
+      "operator is static and takes its operands by value. 07_structs does exactly this",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------
