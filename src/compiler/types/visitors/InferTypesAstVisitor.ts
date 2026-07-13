@@ -1055,16 +1055,21 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    * not happen until the false positives are gone, or 19 passing tests break at once.
    */
   /**
-   * While > 0, only LL0205 is reported. See `inferArgumentsForNilOnly`.
+   * While > 0, only the MEMBER-ACCESS checks are reported. See `inferArgumentsForMembersOnly`.
    *
-   * A blunt instrument, and a deliberate one: it exists so that D9g can look INSIDE call arguments
-   * for a nil dereference without also switching on every OTHER check in there, all of which are
-   * blocked on scope resolution (P6) and produce a measured 16-diagnostic false-positive flood.
+   * A blunt instrument, and a deliberate one: it exists so the checks that look INSIDE call arguments
+   * can do so without also switching on every OTHER check in there, all of which are blocked on scope
+   * resolution (P6) and produce a measured 16-diagnostic false-positive flood.
+   *
+   * The allowed set is exactly the checks that key off a RESOLVED BASE TYPE -- LL0205 (possibly nil)
+   * and LL0206 (private) -- and therefore cannot flood for the same reason the others do: if we could
+   * not type the base, they report nothing.
    */
-  private nilChecksOnly = 0;
+  private static readonly MEMBER_CHECKS = new Set(["LL0205", "LL0206"]);
+  private membersChecksOnly = 0;
 
   protected reportTypeError(node: ast.ASTNode, code: string, message: string): void {
-    if (this.nilChecksOnly > 0 && code !== "LL0205") return;
+    if (this.membersChecksOnly > 0 && !InferAndCheckPass.MEMBER_CHECKS.has(code)) return;
 
     const rule = createRule<ast.ASTNode>()
       .addSeverity(RuleSeverity.Error)
@@ -1078,26 +1083,28 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
   /**
    * Type the arguments of a call whose CALLEE we could not resolve -- `(console.log h.length)`, a
-   * member call, a JS global -- but report only LL0205 from inside them.
+   * member call, a JS global -- but report only the MEMBER-ACCESS checks from inside them.
    *
    * The arguments were previously never visited at all, so EVERY check living in inferExpressionType
    * silently skipped anything handed to `console.log`. That is most of the corpus's I/O, and exactly
-   * where a dereference gets written: `(let z h.length)` reported LL0205 while `(console.log
-   * h.length)` -- the same expression -- reported nothing.
+   * where a member access gets written: `(let z h.length)` reported LL0205 while `(console.log
+   * h.length)` -- the same expression -- reported nothing. LL0206 arrived with the same blind spot:
+   * `(console.log v.secret)` is the obvious way to try to read a private field.
    *
-   * Making them fully visible is the RIGHT fix and is not this phase's. Measured: 16 new diagnostics
-   * on passing tests, and they are not nil bugs -- they are LL0210 on locally-scoped names (symbol
-   * resolution is top-level-only; the audit's P6) and LL0211 on a headless member call. Turning those
-   * on here would mean shipping a false-positive flood under a nil-safety banner.
+   * Making the arguments FULLY visible is the right fix and is not this phase's. Measured: 16 new
+   * diagnostics on passing tests, and none are member bugs -- they are LL0210 on locally-scoped names
+   * (symbol resolution is top-level-only; the audit's P6) and LL0211 on a headless member call.
+   * Turning those on here would mean shipping a false-positive flood under someone else's banner.
    *
-   * So: the arguments become visible to the NIL check, and to nothing else, until P6 lands.
+   * So: the arguments become visible to the checks that key off a resolved base type, and to nothing
+   * else, until P6 lands.
    */
-  private inferArgumentsForNilOnly(args: ast.ASTNode[]): void {
-    this.nilChecksOnly++;
+  private inferArgumentsForMembersOnly(args: ast.ASTNode[]): void {
+    this.membersChecksOnly++;
     try {
       args.forEach((arg) => this.inferExpressionType(arg));
     } finally {
-      this.nilChecksOnly--;
+      this.membersChecksOnly--;
     }
   }
 
@@ -1147,6 +1154,59 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         `or use a non-optional value.`
     );
     return false;
+  }
+
+  /**
+   * The class we are lexically inside, if any. A stack, because a class body can contain another
+   * class declaration.
+   *
+   * The type pass had no notion of this at all -- codegen has `runInScope(ScopeType.class)`, and the
+   * checker had nothing. Without it LL0206 cannot be written: "is this access from OUTSIDE the
+   * declaring class" is the entire question.
+   */
+  private classStack: string[] = [];
+
+  /**
+   * LL0206 -- a `:private` member, reached from outside the class that declared it (D11c).
+   *
+   * `:private` was enforced NOWHERE. `Symbol.visibility` is computed correctly (SymbolTable.ts:661,
+   * via the colon-tolerant getVisibility) and read by literally nothing -- D10's `mutable: false`
+   * pathology, verbatim. The only visibility diagnostic that existed was LL0022, which merely rejects
+   * TWO visibility modifiers on one declaration.
+   *
+   * D11 rules visibility TYPE-CHECK-ONLY: the `#` is erased at codegen (D11b), so this check is the
+   * only thing that makes `:private` mean anything at all. Without it, D11b would have been a pure
+   * downgrade -- swapping a wrong ANSWER (NaN) for no enforcement whatsoever.
+   *
+   * `this.secret` inside the class is fine; so is `other.secret` inside the class, where `other` is
+   * another instance of the SAME class -- privacy is per-CLASS, not per-instance, which is the rule in
+   * C#, Java and TypeScript alike.
+   */
+  private checkMemberVisibility(id: string, node: ast.ASTNode): void {
+    const parts = id.split(".");
+    if (parts.length < 2) return;
+
+    const [baseName, memberName] = parts;
+
+    // A base we cannot type tells us nothing -- `console.log`, `Math.floor`, an import. Gradual
+    // typing holds here exactly as everywhere else.
+    const baseType = this.typeEnv.resolveIdentifier(baseName);
+    if (!baseType) return;
+
+    const owner = TypeChecker.unwrapType(baseType, this.symbolTable);
+    if (!owner?.members?.length) return;
+
+    const member = owner.members.find((m: any) => m.name === memberName);
+    if (!member?.isPrivate) return;
+
+    // Inside the declaring class. `this.secret` is the overwhelmingly common case.
+    if (this.classStack[this.classStack.length - 1] === owner.name) return;
+
+    this.reportTypeError(
+      node,
+      "LL0206",
+      `'${memberName}' is private to '${owner.name}' and cannot be accessed from here.`
+    );
   }
 
   /**
@@ -1690,6 +1750,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   visitClass(node: ast.ClassNode) {
     const className = typeof node.name === 'string' ? node.name : ((node.name as any).id || (node.name as any).name);
     this.typeEnv.enterScope(node);
+    this.classStack.push(className);
 
     // Bind generic type parameters to the scope
     if (node.generics && node.generics.length > 0) {
@@ -1718,8 +1779,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         this.typeEnv.bindIdentifier("this", thisType, node);
     }
 
-    node.body.forEach(member => this.visit(member));
-    this.typeEnv.exitScope();
+    try {
+      node.body.forEach(member => this.visit(member));
+    } finally {
+      this.classStack.pop();
+      this.typeEnv.exitScope();
+    }
   }
 
   visitInterface(node: ast.InterfaceNode) {
@@ -2068,6 +2133,8 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         if (id.includes(".")) {
           const base = id.slice(0, id.indexOf("."));
           this.checkNotNil(this.typeEnv.resolveIdentifier(base), node, `'${base}'`);
+          // The same dot path, asked a different question: may we SEE this member? (D11c)
+          this.checkMemberVisibility(id, node);
         }
 
         // ...but EXISTENCE comes from the symbol table, which is the thing that actually knows
@@ -2229,10 +2296,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             // head never passes through it -- the list dispatch reads `funcName` directly.
             this.checkIdentifierResolves(firstNode as ast.IdentifierNode, funcName);
 
-            // The arguments were never visited at all, so a nil dereference INSIDE one was invisible
-            // -- `(let z h.length)` reported LL0205 while `(console.log h.length)`, the same
-            // expression, reported nothing. Nil-only, deliberately; see inferArgumentsForNilOnly.
-            this.inferArgumentsForNilOnly(listNode.nodes.slice(1));
+            // The arguments were never visited at all, so a member access INSIDE one was invisible --
+            // `(let z h.length)` reported LL0205 while `(console.log h.length)`, the same expression,
+            // reported nothing. Member checks only; see inferArgumentsForMembersOnly.
+            this.inferArgumentsForMembersOnly(listNode.nodes.slice(1));
 
             inferredType = TypeEnvironment.unknown();
           }
