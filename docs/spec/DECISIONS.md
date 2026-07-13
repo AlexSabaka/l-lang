@@ -777,6 +777,64 @@ caught a consumer that had assumed the array and was emitting `'((+ 1 2))` — a
 
 **This is code as DATA, not code as CODE.** There is no `eval`.
 
+## Operators — language, not library
+
+**`SYMBOL_MAP` was two different things wearing one coat**, and the conflation was a live bug:
+
+| | | fate |
+|---|---|---|
+| `+ - * / % ! == != ≠ < > <= >= && \|\|` | **language operators.** Not names. Cannot be shadowed, imported or redefined — only **overloaded**, via `:operator`. | stay in the compiler forever |
+| `get head tail empty elem cons list call eval type set! set?` | **proto-stdlib functions.** Ordinary, user-definable, **importable** names. | **the D7 worklist** — what a real stdlib replaces, so JS interop lives behind a library boundary rather than inside the code generator |
+
+The two need **opposite** treatment, and nothing could tell them apart. `visitIdentifier` checks import
+*before* runtime — which is **exactly right** for the library half (an imported `head` *should* shadow
+the builtin) and nonsense for the operator half. So an imported `(fn :operator + …)` was resolved as an
+ordinary imported symbol and **inlined**; re-visiting its own body, `(+ a.amount b.amount)` — adding two
+Ints — hit the same memo key and compiled to **a call to the function currently being defined**. It
+crashed, and the `+` shim was never emitted at all.
+
+> Guarding on `isRuntimeReference` is the obvious fix and is a **landmine**: it would silently shadow an
+> imported user `head` with the runtime one. One silent wrong answer traded for another, passing the
+> suite today and biting later. `isOperatorSymbol` is narrow by construction — those names cannot be
+> user identifiers, so guarding on them cannot capture anything a program meant as its own.
+
+### Three things that were only visible once the one before was fixed
+
+1. **The registration condition asked where the VISITOR was, not what the NODE was** —
+   `scope.length === 2 && scope[1] === program`. An imported operator is visited from its call site, so
+   the test failed and `:operator` was silently ignored.
+2. **An imported operator is never referenced BY NAME.** `(+ a b)` means the shim, and the shim finds
+   the overload by *dispatch* — so on-demand inlining had nothing to trigger it and the definition
+   simply did not exist. (Invisible before: the old bug dragged it in *as a side effect of miscompiling
+   it*.)
+3. **`__ll_is_type` compares `constructor.name`, and the inliner RENAMES classes.** Right for the
+   *binding*, wrong for the *type*: an overload registered on `["Money","Money"]` could never match an
+   **imported** Money. Classes now carry `static __ll_name` — the source name, immune to the rename.
+
+### LL0208 — the two ways to declare an operator
+
+```lisp
+;; inside a type -- ONE parameter. `this` IS the left operand. (Or NONE, for a unary operator.)
+(fn :operator + [other <- C] -> C ...)
+(fn :operator - []           -> C ...)
+
+;; at top level -- TWO parameters. Registered in __ll_op_registry.
+(fn :operator + [a <- C b <- C] -> C ...)
+```
+
+A **two-param METHOD** was a third form that compiled, emitted `+_2`, and was **never called** — the
+shim probes `+_1` (binary) and `+_0` (unary). Silently dead code. It is *refused*, not made to work:
+`this` is bound and meaningless inside it, and which of the three names is the left operand is anybody's
+guess. (The arity suffix cannot simply be dropped — `08_operators` declares both `- [other]` and `- []`,
+which would collide on one JS key.)
+
+### `+=` had always MEANT `x = x + y`. It just did not compile to it.
+
+`visitCompoundAssignment` emitted raw JS `x += y`, which never touches the `+` shim — so it never
+reaches the registry or an `_1` method, and a user **overload is never found**. The **type checker
+already modelled it correctly** (its own comment reads *"x += y means x = x + y"*). The two halves of
+the compiler disagreed about what `+=` means, and the type checker was right.
+
 ## D11 — the class surface
 
 **Two of this ruling's own claims were wrong**, and both are recorded here rather than quietly fixed.
@@ -1144,19 +1202,16 @@ It is the only one of the four papercuts that adds a FEATURE rather than fixing 
   and **cannot fire**. Read from the source it looked live; built as a test case, it did not exist.
   Fixing it would have been indistinguishable, in the commit log, from fixing something.
 
-- **`__ll_is_type` and the operator registry are keyed on `constructor.name`** — and the import inliner
-  **renames** structs (`class inlined_Vector3_7`). So a free-operator overload is **already broken** for
-  every imported struct today. Found while choosing the value-type marker; `std/math` escapes it only
-  because its operators are declared at top level and reach the registry by a different path.
+- ~~`__ll_is_type` and the operator registry are keyed on `constructor.name`~~ — **FIXED.** Classes carry
+  `static __ll_name`; `__ll_is_type` prefers it.
+- ~~An `:operator` METHOD with two parameters is never called~~ — **FIXED**, by refusing it (LL0208).
+- ~~DESTRUCTURING binds by reference~~ — **FIXED** (`__ll_copy_each` / `__ll_map_copy_each`).
+- ~~An imported top-level operator crashes~~ — **FIXED.**
+- ~~`a += b` never reaches the operator shim~~ — **FIXED.**
 
-- **An `:operator` METHOD with two parameters is never called.** A method is emitted as `+_2` (name +
-  arity) but the runtime shim looks for `+_1`, so a two-operand operator declared *inside* a struct or
-  class body is dead code, silently. The corpus declares its operators at top level, which is why
-  nothing has noticed.
-
-- **DESTRUCTURING binds by reference.** `(let [a b] structs)` and `(for :each [a b] :from pts)` bind
-  through a pattern, so the value copied is the *array* — which carries no marker, making the copy a
-  no-op and leaving the elements aliased. Needs a per-bound-name copy inside the pattern.
+- **A compound assignment evaluates a side-effecting target TWICE.** `xs[f()] += 1` now calls `f()`
+  twice, because `+=` desugars to `xs[f()] = (+ xs[f()] 1)`. Avoiding it needs a temporary, which needs
+  statement context, which an assignment in expression position does not have.
 
 - **An identifier beginning with TWO underscores does not lex.** `_foo` and `a_b` are fine; `__bar` is a
   parse error. `Underscore` is `/_(?![a-zA-Z0-9])/` and `_` is not in that lookahead class, so the first

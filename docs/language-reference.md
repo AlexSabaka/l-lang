@@ -262,6 +262,35 @@ silently escapes to the caller. Build a new value and return it.
 
 See `examples/04-data-types/10_value_semantics.lisp`.
 
+#### Operator overloads
+
+There are exactly **two** ways to declare one, and the difference is *where* it lives:
+
+```lisp
+;; INSIDE a type -- ONE parameter. `this` IS the left operand.
+(defstruct Complex
+    (let :ctor real <- Real 0.0)
+    (let :ctor imag <- Real 0.0)
+
+    (fn :operator + [other <- Complex] -> Complex
+        (return (Complex (+ this.real other.real) (+ this.imag other.imag))))
+
+    (fn :operator - [] -> Complex          ;; a UNARY operator takes NONE
+        (return (Complex (- 0 this.real) (- 0 this.imag)))))
+
+;; AT TOP LEVEL -- TWO parameters, one per operand.
+(fn :operator + [a <- Complex b <- Complex] -> Complex
+    (return (Complex (+ a.real b.real) (+ a.imag b.imag))))
+```
+
+An operator declared **inside** a type with two parameters is an error (**LL0208**): `this` is already
+the left operand, so a second one is ambiguous. Declare it at top level instead.
+
+`x += y` means `x = x + y`, so a compound assignment finds your overload too.
+
+**An operator is not a name.** It cannot be shadowed, imported or redefined — only overloaded. `+` at a
+call site always means the operator, even if a module you imported happens to define one.
+
 ---
 
 ## 🏗️ Object-Oriented Programming

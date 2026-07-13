@@ -1816,6 +1816,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
   visitClass(node: ast.ClassNode) {
     const className = typeof node.name === 'string' ? node.name : ((node.name as any).id || (node.name as any).name);
+    this.checkOperatorMethodArity(className, node.body);
     this.typeEnv.enterScope(node);
     this.classStack.push(className);
 
@@ -1988,6 +1989,53 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   }
 
   /**
+   * LL0208 -- an `:operator` declared INSIDE a type takes one parameter, or none.
+   *
+   * There are exactly two ways to declare an operator, and both work:
+   *
+   *   inside a type, ONE param   `(fn :operator + [other <- C])`   -- `this` IS the left operand.
+   *                              (or ZERO, for a unary operator: `(fn :operator - [])`)
+   *   at top level, TWO params   `(fn :operator + [a <- C b <- C])` -- registered in __ll_op_registry.
+   *
+   * A two-param METHOD is a third form that compiled, emitted `+_2` (name + arity), and was NEVER
+   * CALLED -- the runtime shim probes `+_1` for a binary and `+_0` for a unary, and nothing on earth
+   * looks for `+_2`. Silently dead code.
+   *
+   * It is refused rather than made to work, because it is genuinely ambiguous: `this` is bound and
+   * meaningless inside it, and which of the three names is the left operand is anybody's guess. The
+   * arity suffix itself cannot simply be dropped -- 08_operators declares both `- [other]` (binary) and
+   * `- []` (unary), which without it collide on one JS key.
+   */
+  private checkOperatorMethodArity(
+    typeName: string,
+    body: ast.ASTNode[] | undefined
+  ): void {
+    for (const item of body ?? []) {
+      const target = ast.isListNode(item) && item.nodes.length ? item.nodes[0] : item;
+      if (target._type !== "function") continue;
+
+      const fn = target as ast.FunctionNode;
+      const isOperator = (fn.modifiers ?? []).some(
+        (m: any) => m.modifier === "operator" || m.modifier === ":operator"
+      );
+      if (!isOperator) continue;
+
+      const arity = fn.params?.length ?? 0;
+      if (arity <= 1) continue;
+
+      const opName = fn.name ? ast.symbolName(fn.name as ast.IdentifierNode) : "<operator>";
+      this.reportTypeError(
+        fn,
+        "LL0208",
+        `The operator '${opName}' is declared inside '${typeName}' with ${arity} parameters. An ` +
+          `operator declared inside a type takes ONE parameter -- 'this' is the left operand -- or ` +
+          `NONE for a unary operator. For a two-operand form, declare it at top level: ` +
+          `(fn :operator ${opName} [a <- ${typeName} b <- ${typeName}] ...).`
+      );
+    }
+  }
+
+  /**
    * LL0207 -- a struct `:operator` may not mutate `this`.
    *
    * A struct is a VALUE TYPE (D11), so an operator receives its operands BY VALUE. In C# an operator
@@ -2031,6 +2079,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
   visitStruct(node: ast.StructNode) {
     this.checkStructOperatorsArePure(node);
+    this.checkOperatorMethodArity(ast.symbolName(node.name), node.body);
 
     // Similar to visitTypeDef, resolve any type references in struct members
     const structName = ast.symbolName(node.name);
