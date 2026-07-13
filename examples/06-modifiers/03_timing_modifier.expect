@@ -1,4 +1,5 @@
 Testing timing modifier:
+[timed] elapsed >= 0: true
 Fast function result: 30
-Slow fibonacci fib(10): 89
-Another call fib(8): 34
+[timed] elapsed >= 0: true
+Square of 12: 144

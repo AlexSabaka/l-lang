@@ -250,13 +250,24 @@ class ResolvePassVisitor extends BaseAstTreeWalker {
   }
 
   visitModifierDef(node: ast.ModifierDefNode) {
-    // Modifier already defined in ScanPass
-    // Only enter scope if there are params or body items that need scope
-    if (node.params.length > 0 || node.body.length > 0) {
-      this.symbolTableBuilder.enterScope(node);
-      [...node.params, ...node.body].map(x => this.visitIfNotNull(x));
-      this.symbolTableBuilder.exitScope();
-    }
+    // Modifier already defined in ScanPass.
+    //
+    // Unconditionally scoped, not `if (params.length || body.length)`. That guard existed because an
+    // enterScope on an unregistered node type was a silent no-op while the exitScope popped anyway,
+    // so entering at all crashed the compiler -- and it is precisely why every defmodifier in the
+    // corpus has no params and no body. Both are fixed: `modifier-def` is a registered scope, and
+    // the enter/exit pair can no longer desync.
+    this.symbolTableBuilder.enterScope(node);
+
+    // DECLARE the parameters, do not merely visit them. `visitFunction` calls defineParameter and
+    // this did not, so a modifier's own parameter -- the `times` of `(defmodifier retry [times])` --
+    // resolved to nothing, and referencing it in the body was an unresolved identifier (LL0210).
+    node.params.forEach((param) => {
+      this.symbolTableBuilder.defineParameter(param);
+    });
+
+    [...node.params, ...node.body].map((x) => this.visitIfNotNull(x));
+    this.symbolTableBuilder.exitScope();
   }
 
   visitSpread(node: ast.SpreadNode) {

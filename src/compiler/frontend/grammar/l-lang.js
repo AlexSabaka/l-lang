@@ -638,7 +638,13 @@ function peg$parse(input, options) {
       return makeNode("for", { initial: init, condition: cond, step, then, else: elseFor });
     }
   }
-  function peg$f69(cond, then) {
+  function peg$f69(cond, body) {
+    const exprs = body ?? [];
+    const then = exprs.length === 0
+      ? null
+      : exprs.length === 1
+        ? exprs[0]
+        : makeNode("list", { nodes: exprs });
     return makeNode("while", { condition: cond, then });
   }
   function peg$f70(expression, cases) {
@@ -5831,16 +5837,13 @@ function peg$parse(input, options) {
         if (s7 === peg$FAILED) {
           s7 = null;
         }
-        s8 = peg$parseExpression();
-        if (s8 !== peg$FAILED) {
-          s6 = s8;
-        } else {
-          peg$currPos = s6;
-          s6 = peg$FAILED;
+        s8 = [];
+        s9 = peg$parseExpression();
+        while (s9 !== peg$FAILED) {
+          s8.push(s9);
+          s9 = peg$parseExpression();
         }
-        if (s6 === peg$FAILED) {
-          s6 = null;
-        }
+        s6 = s8;
         peg$savedPos = s0;
         s0 = peg$f69(s4, s6);
       } else {

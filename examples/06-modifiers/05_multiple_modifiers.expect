@@ -1,7 +1,11 @@
 Testing multiple modifiers:
-First call fib(8) - should time, log, and memoize:
-34
-\nSecond call fib(8) - should hit cache:
-34
-\nComparison - simple-fib(8) without memoization:
-34
+First call square(8) -- misses the cache, so it logs and computes:
+[log] call: [ 8 ]
+  computing 8
+64
+Second call square(8) -- cache HIT, so no log and no compute:
+64
+A different argument -- misses again, so it logs and computes:
+[log] call: [ 3 ]
+  computing 3
+9

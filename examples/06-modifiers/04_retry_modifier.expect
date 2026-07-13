@@ -1,4 +1,5 @@
-Testing retry modifier (demo):
-Task 1: Task one completed
-Task 2: Task two completed
-Task 1 again: Task one completed
+Testing retry modifier:
+[retry] attempt 1 failed
+[retry] attempt 2 failed
+Task: Task completed
+Attempts made: 3

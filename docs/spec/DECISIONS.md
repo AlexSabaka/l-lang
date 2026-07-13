@@ -643,6 +643,59 @@ Goldens **authored** for `04_when` and `07-async/00`, which had none. No existin
 
 Suite: **59 → 63**, zero FAILs, under both frontends.
 
+## D3 — metaprogramming: `defmodifier` (D3b)
+
+**A `defmodifier` body is a RUNTIME DECORATOR.** It evaluates to a function taking the original
+function and returning its replacement:
+
+```lisp
+(defmodifier logged []
+  (fn [original]
+    (fn [...args]
+      (console.log "[log] call:" args)
+      (original ...args))))
+```
+
+emits `function __ll_modifier_logged() { return original => (...args) => {...}; }`, which is exactly
+the shape the application site already called. **Modifier ARGUMENTS are the modifier function's
+parameters** — `:retry[4]` emits `__ll_modifier_retry(4)(originalFn)`. **An EMPTY body is an identity
+pass-through**, not a memoizer.
+
+### What it was
+
+`visitModifierDef` never read `node.body` or `node.params`. It emitted **the same hardcoded memoizer
+for every modifier in the language**, under a comment that admitted it. `(defmodifier identity [])` —
+an explicitly do-nothing modifier — emitted a `Map`-backed cache. `modifierDefinitions` was written
+and read nowhere.
+
+Nobody noticed for two compounding reasons. Memoizing a pure function is **observationally
+identical** to leaving it alone — so only an assertion on the emitted TEXT can catch it, which is why
+the harness grew one. And every `defmodifier` in the corpus had an empty body, because **any other
+shape crashed the compiler**: `enterScope` silently no-ops on an unregistered node type while
+`exitScope` pops unconditionally, and `modifier-def` was not registered. The corpus had been written
+around the bug.
+
+**Four goldens certified it** and are re-authored from intent: `02_logging_modifier.expect` contained
+no log lines, `03_timing_modifier.expect` no timings. `05_multiple_modifiers.expect` even contained a
+literal `\n` — a backslash and an `n`, not a newline — which is what recording rather than authoring
+gets you. Approved before the edit; the same category as P7c's `requiredCount`.
+
+### Order of application
+
+Modifiers apply left to right, each wrapping the last, so the **rightmost ends up outermost**:
+`(fn :logged :memoized f)` is `memoized(logged(f))`. The cache therefore sits in front of the logger
+and a cache HIT never reaches it. `05_multiple_modifiers.lisp` demonstrates exactly this.
+
+### Two bugs found on the way
+
+- **A modifier's own parameters were never declared.** `visitFunction` calls `defineParameter`;
+  `visitModifierDef` only *visited* its params. So the `times` of `(defmodifier retry [times])` was an
+  unresolved identifier (`LL0210`) the moment the body referenced it.
+- **PEG's `while` took only ONE body expression.** `(while c (a) (b) (c))` put `(a)` in the loop and
+  hoisted `(b)` and `(c)` *outside* it — they ran once, after the loop finished. A silent miscompile,
+  and a divergence from grammar_v2, which has always taken many. `When`, two rules above it, already
+  did it correctly; `While` was simply missed.
+
 ## Open findings
 
 - ~~**`:comptime` is accepted and IGNORED.**~~ **RETRACTED — this was false.**
@@ -671,6 +724,20 @@ Suite: **59 → 63**, zero FAILs, under both frontends.
   `:comptime` variable that cannot be folded raises `LL0099` (correct), while a `:comptime` *call*
   that cannot be folded degrades **silently** to run time. That is the "silently degrades" class,
   and it is what the phase should kill.
+
+- **A function body that is ONE parenthesized block silently loses its implicit return.**
+
+  ```
+  (fn f [n] ((console.log "side") (* n 2)))   ->  undefined
+  (fn f [n]  (console.log "side") (* n 2))    ->  8
+  ```
+
+  The same program, two spellings, two different answers. A multi-item body returns its last
+  expression; a single-item body that happens to be a block does not, because the block emits a
+  `BlockStatement` and `visitFunction`'s implicit-return only fires on an expression. The corpus
+  works around it by writing an explicit `(return …)` inside such blocks — every function in
+  `01-basics/01_function_types.lisp` does. An `if` as the last body item has the same problem, for the
+  same reason. `withTrailingReturn` (added in P5c) is exactly the helper this needs.
 
 - **`fn` parameter defaults are unrepresentable.** `ast.ParameterNode` has no default slot at all, so
   `(fn f [x 5])` is not merely unemitted. Grammar + AST + codegen. The `AssignmentPattern` support

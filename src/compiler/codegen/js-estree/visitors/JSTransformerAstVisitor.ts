@@ -998,6 +998,14 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     // For each custom modifier, wrap the function
     for (const modifierRef of customModifiers) {
       const modifierName = modifierRef.modifier;
+
+      // `:tagged["A"]` -- the modifier's ARGUMENTS become the arguments of the modifier function:
+      // `__ll_modifier_tagged("A")(originalFn)`. Both frontends have always parsed these and handed
+      // codegen a `modifier` node carrying `args`; the call site passed `arguments: []` regardless,
+      // so every modifier argument in the language was silently discarded.
+      const modifierArgs = (modifierRef.args ?? []).map(
+        (a) => this.visit(a) as ESTree.Expression
+      );
       
       if (declaration.type === "FunctionDeclaration") {
         // Transform function declaration to variable declaration with modifier application
@@ -1017,7 +1025,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
                     type: "Identifier",
                     name: `__ll_modifier_${modifierName}`
                   },
-                  arguments: [],
+                  arguments: modifierArgs,
                   optional: false
                 },
                 arguments: [
@@ -1049,7 +1057,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
               type: "Identifier",
               name: `__ll_modifier_${modifierName}`
             },
-            arguments: [],
+            arguments: modifierArgs,
             optional: false
           },
           arguments: [declarator.init as ESTree.Expression],
@@ -1256,157 +1264,65 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     };
   }
 
+  /**
+   * `(defmodifier tagged [tag] (fn [original] (fn [...args] ... )))`
+   *
+   * A modifier is a FUNCTION OF ITS PARAMETERS THAT RETURNS A DECORATOR:
+   *
+   *     function __ll_modifier_tagged(tag) {
+   *       return original => (...args) => { ...; return original(...args); };
+   *     }
+   *
+   * which is exactly the shape `applyModifiersToDeclaration` already calls --
+   * `__ll_modifier_tagged("A")(originalFn)`. The body simply supplies the decorator, instead of
+   * codegen inventing one.
+   *
+   * IT USED TO INVENT ONE. `node.body` and `node.params` were never read, and this emitted the SAME
+   * HARDCODED MEMOIZER for every modifier in the language, under a comment that admitted it ("For
+   * now, implement a simple memoization transformer"). `(defmodifier identity [])` -- an explicitly
+   * do-nothing modifier -- emitted a Map-backed cache. `this.modifierDefinitions` was written and
+   * read nowhere.
+   *
+   * Nobody noticed because every defmodifier in the corpus has an EMPTY body -- the only shape that
+   * did not crash the compiler (see the enterScope/exitScope fix) -- and memoizing a pure function
+   * is observationally identical to leaving it alone. Four goldens certified the bug:
+   * 02_logging_modifier.expect contains no log lines.
+   */
   visitModifierDef(node: ast.ModifierDefNode): ESTree.FunctionDeclaration {
-    // Store modifier definition for later use
     this.modifierDefinitions.set(node.name, node);
-    
-    const modifierName = `__ll_modifier_${node.name}`;
-    
-    // For now, implement a simple memoization transformer
-    return {
-      type: "FunctionDeclaration",
-      id: { type: "Identifier", name: modifierName },
-      params: [],
-      body: {
-        type: "BlockStatement",
-        body: [
-          {
-            type: "ReturnStatement", 
-            argument: {
-              type: "ArrowFunctionExpression",
-              expression: false,
-              params: [{ type: "Identifier", name: "originalFunction" }],
-              body: {
-                type: "BlockStatement",
-                body: [
-                  {
-                    type: "VariableDeclaration",
-                    kind: "const",
-                    declarations: [{
-                      type: "VariableDeclarator",
-                      id: { type: "Identifier", name: "cache" },
-                      init: {
-                        type: "NewExpression",
-                        callee: { type: "Identifier", name: "Map" },
-                        arguments: []
-                      }
-                    }]
-                  },
-                  {
-                    type: "ReturnStatement",
-                    argument: {
-                      type: "ArrowFunctionExpression",
-                      expression: false,
-                      params: [{ type: "RestElement", argument: { type: "Identifier", name: "args" } }],
-                      body: {
-                        type: "BlockStatement",
-                        body: [
-                          {
-                            type: "VariableDeclaration",
-                            kind: "const",
-                            declarations: [{
-                              type: "VariableDeclarator",
-                              id: { type: "Identifier", name: "key" },
-                              init: {
-                                type: "CallExpression",
-                                callee: {
-                                  type: "MemberExpression",
-                                  object: { type: "Identifier", name: "JSON" },
-                                  property: { type: "Identifier", name: "stringify" },
-                                  computed: false,
-                                  optional: false
-                                },
-                                arguments: [{ type: "Identifier", name: "args" }],
-                                optional: false
-                              }
-                            }]
-                          },
-                          {
-                            type: "IfStatement",
-                            test: {
-                              type: "CallExpression",
-                              callee: {
-                                type: "MemberExpression",
-                                object: { type: "Identifier", name: "cache" },
-                                property: { type: "Identifier", name: "has" },
-                                computed: false,
-                                optional: false
-                              },
-                              arguments: [{ type: "Identifier", name: "key" }],
-                              optional: false
-                            },
-                            consequent: {
-                              type: "ReturnStatement",
-                              argument: {
-                                type: "CallExpression",
-                                callee: {
-                                  type: "MemberExpression",
-                                  object: { type: "Identifier", name: "cache" },
-                                  property: { type: "Identifier", name: "get" },
-                                  computed: false,
-                                  optional: false
-                                },
-                                arguments: [{ type: "Identifier", name: "key" }],
-                                optional: false
-                              }
-                            }
-                          },
-                          {
-                            type: "VariableDeclaration",
-                            kind: "const", 
-                            declarations: [{
-                              type: "VariableDeclarator",
-                              id: { type: "Identifier", name: "result" },
-                              init: {
-                                type: "CallExpression",
-                                callee: {
-                                  type: "MemberExpression",
-                                  object: { type: "Identifier", name: "originalFunction" },
-                                  property: { type: "Identifier", name: "apply" },
-                                  computed: false,
-                                  optional: false
-                                },
-                                arguments: [
-                                  { type: "ThisExpression" },
-                                  { type: "Identifier", name: "args" }
-                                ],
-                                optional: false
-                              }
-                            }]
-                          },
-                          {
-                            type: "ExpressionStatement",
-                            expression: {
-                              type: "CallExpression",
-                              callee: {
-                                type: "MemberExpression",
-                                object: { type: "Identifier", name: "cache" },
-                                property: { type: "Identifier", name: "set" },
-                                computed: false,
-                                optional: false
-                              },
-                              arguments: [
-                                { type: "Identifier", name: "key" },
-                                { type: "Identifier", name: "result" }
-                              ],
-                              optional: false
-                            }
-                          },
-                          {
-                            type: "ReturnStatement",
-                            argument: { type: "Identifier", name: "result" }
-                          }
-                        ]
-                      }
-                    }
-                  }
-                ]
-              }
-            }
-          }
-        ]
+
+    return this.runInScope(ScopeType.function, () => {
+      const params = node.params.map((p) => this.visit(p) as ESTree.Pattern);
+
+      let body: ESTree.Statement[];
+      if (node.body.length === 0) {
+        // An empty body is a PASS-THROUGH -- `original => original` -- not a memoizer.
+        body = [
+          ESTreeBuilder.returnStatement(node, {
+            type: "ArrowFunctionExpression",
+            params: [ESTreeBuilder.identifier(node, "original")],
+            body: ESTreeBuilder.identifier(node, "original"),
+            expression: true,
+            async: false,
+          } as ESTree.ArrowFunctionExpression),
+        ];
+      } else {
+        // The body's VALUE is the decorator, so its last expression is returned -- the same implicit
+        // return every function body in the language has.
+        const statements = node.body.map((x) => this.asStatement(this.visit(x), x));
+        body = this.withTrailingReturn(statements, node);
       }
-    };
+
+      return {
+        type: "FunctionDeclaration",
+        id: ESTreeBuilder.identifier(node, `__ll_modifier_${node.name}`),
+        params,
+        body: ESTreeBuilder.blockStatement(node, body),
+        generator: false,
+        async: false,
+        loc: ESTreeBuilder.loc(node),
+      } as ESTree.FunctionDeclaration;
+    });
   }
 
   visitParameter(node: ast.ParameterNode): ESTree.Pattern {

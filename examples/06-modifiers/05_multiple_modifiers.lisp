@@ -1,34 +1,49 @@
+;; Stacking modifiers -- and why the ORDER matters.
+;;
+;; Before D3b every modifier emitted the same canned memoizer, so `:logged :memoized` was two
+;; identical memoizers nested, and this file's golden -- recorded from that output rather than
+;; authored from intent -- showed neither a log line nor a cache hit. It even contained a literal
+;; `\n` (a backslash and an n, not a newline), which is what recording rather than authoring gets you.
+;;
+;; Modifiers are applied left to right, each wrapping the result of the last -- so the RIGHTMOST
+;; modifier ends up OUTERMOST:
+;;
+;;     (fn :logged :memoized square ...)   ==>   memoized(logged(square))
+;;
+;; The cache therefore sits in front of the logger, and a cache HIT never reaches it. The second
+;; call below prints no log line at all. Swap the two modifiers and it would.
+
 (
-    ;; Multiple modifiers on the same function
-    (defmodifier logged [])
-    (defmodifier memoized [])
-    (defmodifier timed [])
-    
-    ;; Function with multiple modifiers (logged, memoized, and timed)
-    (fn :logged :memoized :timed fibonacci [n <- Int] -> Int
-        (match n {
-            0 => 1
-            1 => 1  
-            _ => (+ (fibonacci (- n 1)) (fibonacci (- n 2)))
-        })
+    (defmodifier logged []
+        (fn [original]
+            (fn [...args]
+                (console.log "[log] call:" args)
+                (original ...args))))
+
+    (defmodifier memoized []
+        (fn [original]
+            (let cache {})
+            (fn [n]
+                (if (== cache[n] undefined)
+                    (cache[n] := (original n)))
+                cache[n])))
+
+    ;; A deliberately visible computation, so a cache hit is observable: "computing" appears once
+    ;; per distinct argument, never twice.
+    (fn :logged :memoized square [n <- Int] -> Int
+        (console.log "  computing" n)
+        (* n n)
     )
-    
-    ;; Function with just logging for comparison
-    (fn :logged simple-fib [n <- Int] -> Int
-        (match n {
-            0 => 1
-            1 => 1
-            _ => (+ (simple-fib (- n 1)) (simple-fib (- n 2)))
-        })
-    )
-    
+
     (console.log "Testing multiple modifiers:")
-    (console.log "First call fib(8) - should time, log, and memoize:")
-    (console.log (fibonacci 8))
-    
-    (console.log "\nSecond call fib(8) - should hit cache:")  
-    (console.log (fibonacci 8))
-    
-    (console.log "\nComparison - simple-fib(8) without memoization:")
-    (console.log (simple-fib 8))
+
+    (console.log "First call square(8) -- misses the cache, so it logs and computes:")
+    (console.log (square 8))
+
+    ;; The cache is the OUTER wrapper, so a hit short-circuits before the logger runs.
+    (console.log "Second call square(8) -- cache HIT, so no log and no compute:")
+    (console.log (square 8))
+
+    (console.log "A different argument -- misses again, so it logs and computes:")
+    (console.log (square 3))
 )

@@ -218,22 +218,30 @@ const CASES: Case[] = [
       (if (== cache[n] undefined)
           (cache[n] := (original n)))
       cache[n])))
-(fn :memoized slow [n <- Int] -> Int ((console.log "computing" n) (* n 2)))
+(fn :memoized slow [n <- Int] -> Int (console.log "computing" n) (* n 2))
 (console.log (slow 4))
 (console.log (slow 4))`,
     // "computing 4" must appear ONCE -- the second call is served from the cache.
     expect: ["computing 4", "8", "8"],
+    // NOTE the body is written as multiple items, NOT as one parenthesized block. A single-block
+    // body -- `((console.log …) (* n 2))` -- silently loses its implicit return and yields undefined,
+    // while the identical multi-item body returns 8. That is a real bug, it is NOT a modifier bug,
+    // and it is recorded as an open finding rather than absorbed into this phase. Writing the case
+    // in the broken spelling would have tested that bug instead of this one.
     wasBroken: "every modifier was a memoizer; this one is a memoizer because its body says so",
   },
   {
     name: "defmodifier: arguments reach the modifier",
-    source: `(defmodifier repeated [n <- Int]
+    source: `(defmodifier tagged [tag <- String]
   (fn [original]
     (fn [...args]
-      (for :init i 0 :cond (< i n) :step (i := (+ i 1)) :then (original ...args)))))
-(fn :repeated[3] ping [] -> Void (console.log "ping"))
+      (console.log "tag:" tag)
+      (original ...args))))
+(fn :tagged["A"] ping [] -> Void (console.log "ping"))
 (ping)`,
-    expect: ["ping", "ping", "ping"],
+    expect: ["tag: A", "ping"],
+    // Both frontends already PARSE `:tagged["A"]` and hand codegen a modifier node carrying
+    // `args: ["A"]`, and the defmodifier's `params: ["tag"]`. Only codegen throws both away.
     wasBroken:
       "modifier args parsed and were discarded; getModifierArgs exists in helpers/modifiers.ts and is dead",
   },

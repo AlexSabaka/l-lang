@@ -637,9 +637,27 @@ For
     }
   }
 
+// The body is EVERY expression after the condition, not just the first.
+//
+// This took a single `@Expression`, so
+//
+//     (while c (a) (b) (c))
+//
+// put `(a)` inside the loop and left `(b)` and `(c)` OUTSIDE it -- they ran once, after the loop had
+// finished. A silent miscompile, and a divergence from grammar_v2, whose whileExpr has always taken
+// MANY. `When` two rules up already does it correctly (`@Expression*`); `While` was simply missed.
+//
+// Multiple expressions are wrapped in a `list`, exactly as AstBuilder.whileExpr does, so both
+// frontends hand codegen the same shape.
 While
   = _ WhileKw __ cond:((CondModKw __)? @Expression)?
-               _ then:((ThenModKw __)? @Expression)? {
+               _ body:((ThenModKw __)? @Expression*)? {
+    const exprs = body ?? [];
+    const then = exprs.length === 0
+      ? null
+      : exprs.length === 1
+        ? exprs[0]
+        : makeNode("list", { nodes: exprs });
     return makeNode("while", { condition: cond, then });
   }
 
