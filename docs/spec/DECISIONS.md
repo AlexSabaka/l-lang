@@ -777,6 +777,78 @@ caught a consumer that had assumed the array and was emitting `'((+ 1 2))` — a
 
 **This is code as DATA, not code as CODE.** There is no `eval`.
 
+## D11 — the class surface
+
+**Two of this ruling's own claims were wrong**, and both are recorded here rather than quietly fixed.
+
+### `:private` was a silent wrong answer (D11b, D11c)
+
+```lisp
+(defclass Counter (let :private count 0)
+  (fn bump [] -> Int (this.count := (+ this.count 1)) (return this.count)))
+(c.bump) (c.bump)      ;; -> NaN, NaN.  Zero diagnostics.
+```
+
+A `:private` field was emitted as a JS private field, `#count = 0` — and **nothing else in the
+compiler had ever heard of `#`**. Every read and write goes through `visitCompositeIdentifier`, which
+emits a plain `this.count`. Two declaration-side sites decided privacy; the entire reference side
+never found out. The `#` slot kept its initializer forever and `this.count` was `undefined`.
+
+**Erasure is the ruling, and the only coherent option.** `#` is a *runtime* enforcement mechanism;
+D11 puts enforcement in the **type checker** (LL0206), where it produces a located error instead of a
+wrong number. Without LL0206, erasing the `#` would have been a pure downgrade — swapping a wrong
+answer for no enforcement at all.
+
+**Privacy is per-CLASS, not per-instance** (the C#/Java/TypeScript rule): a `Vault` method may read
+another `Vault`'s private field.
+
+### The `:static` claim is REFUTED, and the real bug is the inverse
+
+The ruling says *"`:static` is hardcoded `false` in codegen while reflection reports `isStatic: true`"*.
+It reports no such thing. Codegen *did* hardcode it — but **reflection reported every `:private` field
+as `isPublic: true`**, so codegen called a field private (emitting `#secret`) while reflection called
+it public.
+
+Cause: seven comparisons of the form `mod === ':private'` — **with a colon** — against a value both
+parsers strip it from. All seven were **dead**, so `visibility`, `isStatic`, `isConstructorParam` and
+`isOperator` never left their defaults. The one line in the same loop that *did* work
+(`modifiers.add(mod.replace(':', ''))`) stripped defensively — which is precisely what kept the bug
+invisible.
+
+Only **two** of the three hardcoded `static: false` were bugs. The third is the **constructor**, where
+`false` is correct by construction; "fixing" it would emit `static constructor()`, which is not
+JavaScript.
+
+### `defstruct` had no class surface — four gaps, not one (D11d)
+
+`(defstruct Rect :implements Shape …)` was the **last ERROR in the suite**. Fixing the grammar alone
+would have fixed nothing:
+
+1. **grammar_v2** refused it — `:implements` is its own token, so `MANY(modifier)` could never eat it.
+2. **The PEG parsed it** and dumped the clause into the struct **body** as two junk bare identifiers.
+   The interface was forgotten, nothing enforced it, and the program ran. **The loud frontend was the
+   correct one** — and the golden, recorded under that silent misparse, asserted that the struct
+   implements nothing.
+3. **`isSubtype` walks `implementedInterfaces`**, and a struct's type never had one — so a struct
+   could never satisfy an interface even once the clause parsed.
+4. **`getAllClassMetadata()` requires `codegenMetadata`**, which a struct never got — so `(type p)`
+   fell through to a runtime constructor-name guess and answered `kind: 'object'`.
+
+### `:inherits` was never accepted by the compiler
+
+`(defclass Dog :inherits Animal)` is a **parse error**. `:inherits` exists only inside a generic
+constraint (`:where T :inherits Base`). The grammar has always agreed with D11 — it was the README and
+the reference doc that taught the wrong word, and they are corrected.
+
+### Deferred: `defstruct` by-copy value semantics
+
+Not a fix — a **from-scratch feature**, and its own phase. There is no clone helper, no value-type
+marker, and codegen has **no per-node type information at all** (`typeEnv` is a dead local at
+`Context.ts:345`; the per-node types are keyed into a scope stack that is popped during inference), so
+it cannot answer "is this expression a struct?" for anything but a bare identifier. A runtime
+`__ll_copy` shim sidesteps that. Shallow-vs-deep, whether `this` is a copy, and whether instances
+freeze are all undecided and should be decided *up front*.
+
 ## D9 — what is `nil`?
 
 ### The premise was backwards (D9a)
@@ -1033,6 +1105,23 @@ It is the only one of the four papercuts that adds a FEATURE rather than fixing 
   because `__ll_match_list` does `if (pattern === null) continue`" — which is *true of the shim text*
   and **cannot fire**. Read from the source it looked live; built as a test case, it did not exist.
   Fixing it would have been indistinguishable, in the commit log, from fixing something.
+
+- **A method call on a PARENTHESISED expression emits invalid JavaScript** (LL0101). `((Dog).speak)`,
+  `(type p).kind`. Loud, not silent. Bind to a `let` first.
+
+- **`InferAndCheckPass.visitStruct` never visits the struct BODY** — it only resolves member types — so
+  struct method bodies are not type-checked by that pass at all.
+
+- **`(defstruct Box<T> …)` does not parse** in either frontend: a struct has no generics. Nothing in
+  the corpus asks for one.
+
+- **Reflection does not report a method's staticness.** `result.methods` is `{name, params, returns}`
+  and `MethodSignature` has no `isStatic`. An omission, not a lie — but adding it would move two
+  goldens, so it is a call, not a drive-by.
+
+- **`getVisibility()` defaults to `internal`; the reflection path defaults to `public`.** Two
+  different answers for an *unannotated* member, in one compiler. What the default should be is a
+  language ruling — D11b deliberately left it alone rather than change it in passing.
 
 - **Call arguments are invisible to the type checker when the callee cannot be resolved.** Measured at
   **16 diagnostics** on passing tests once made visible — LL0210 on locally-scoped names (symbol

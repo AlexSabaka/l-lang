@@ -148,12 +148,19 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "ruling, not a bug. It also has no golden.",
   },
   "04-data-types/06_structs.lisp": {
-    status: "xfail",
-    reason: "D11: defstruct value-type semantics",
+    status: "test",
   },
   "04-data-types/07_structs.lisp": {
     status: "xfail",
-    reason: "D11: defstruct value-type semantics (parse failure)",
+    reason:
+      "NOT defstruct, and NOT unblockable by D11 -- the old reason ('D11: defstruct value-type " +
+      "semantics (parse failure)') named the wrong cause entirely. It dies at :2:42, on line TWO, " +
+      "inside `(deftype uint8 Int :where Int :is (0 .. 255))`: the `..` RANGE operator, which neither " +
+      "frontend has ever lexed. Behind that sit three more things it wants and nothing has: " +
+      "`uint8[256]` SIZED array types (grammar_v2 rejects them, PEG accepts -- a divergence), `:stack` " +
+      "on a field (a D15 RESERVED_NATIVE_MODIFIER, hard error on a JS target, correctly), and " +
+      "`(fn :operator * [...] (return this))` which returns `this` -- the one thing in the corpus that " +
+      "by-copy value semantics would actually change. Its struct declaration is the least of it.",
   },
   "08-types/01_arguments.lisp": {
     status: "xfail",

@@ -25,7 +25,7 @@ It's a general-purpose language currently transpiling to JavaScript (LLVM backen
 ## Sample of l-lang
 
 ```lisp
-(defclass :internal FoodsController :inherits ControllerBase
+(defclass :internal FoodsController :extends ControllerBase
     (let :ctor _repo <- IFoodsRepository<Food>)
 
     ;; Async + strict typing + pipelines

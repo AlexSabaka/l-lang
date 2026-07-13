@@ -262,8 +262,12 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 
 ### Inheritance
 
+Inheritance is spelled `:extends`. There is no `:inherits` synonym (D11) — the compiler has never
+accepted one, and `(defclass Dog :inherits Animal ...)` is a parse error. `:inherits` exists only
+inside a generic *constraint*: `:where T :inherits Base`.
+
 ```lisp
-(defclass Dog :inherits Animal
+(defclass Dog :extends Animal
     ;; Override method
     (fn speak [msg] (
         (+ this.name " barks: " msg)
