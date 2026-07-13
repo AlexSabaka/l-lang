@@ -308,6 +308,18 @@ export interface ParameterNode extends ASTNode<"parameter"> {
   modifiers: ModifierNode[];
   type: TypeNode;
   spread?: boolean;
+  /**
+   * NO DEFAULT SLOT, deliberately -- see the open finding in DECISIONS.md.
+   *
+   * `(fn greet [name <- String "World"])` cannot work: a parameter list is space-separated, so
+   * `[a b]` is unresolvably "two parameters" or "a defaulting to b". Measured, not assumed --
+   * `[a <- Int b <- Int]` parsed as `a` defaulting to `b`, plus a parameter named `<-`.
+   *
+   * Common Lisp hit the same wall and solved it with a MARKER (`&optional (name "World")`), which is
+   * what l-lang will need too. Deferred until after D9: a defaulted parameter is OMITTABLE WITHOUT
+   * BEING NULLABLE, so how it composes with `T?` optionals is a question best answered once those
+   * exist. It also needs LL0211 taught the difference between required and total arity.
+   */
 }
 
 export interface ClassNode extends ASTNode<"class"> {

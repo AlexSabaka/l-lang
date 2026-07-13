@@ -394,22 +394,18 @@ const CASES: Case[] = [
     wasBroken: "guards the fix -- adding an implicit return must not override an explicit one",
   },
 
-  // --- `fn` parameter defaults. ParameterNode has no default slot AT ALL. ---
+  // --- `fn` parameter DEFAULTS are DEFERRED, not fixed. See the open finding in DECISIONS.md:
+  // `(fn greet [name <- String "World"])` cannot work -- a parameter list is space-separated, so
+  // `[a b]` is unresolvably "two parameters" or "a defaulting to b". This case guards the fact that
+  // a bare trailing expression must NOT be silently accepted as a default, which is what my first
+  // attempt did: `[a <- Int b <- Int]` parsed as `a` defaulting to `b`, plus a parameter named `<-`.
   {
-    name: "fn parameter defaults",
-    source: `(fn greet [name <- String "World"] -> String (+ "Hello, " name))
-(console.log (greet))
-(console.log (greet "Sloth"))`,
-    expect: ["Hello, World", "Hello, Sloth"],
-    wasBroken: "unparseable -- `ast.ParameterNode` has no slot for a value, so it could not be said",
-  },
-  {
-    name: "fn parameter defaults: default before required is LL0102",
-    source: `(fn f [a <- Int 1 b <- Int] -> Int (+ a b))
-(console.log (f 1 2))`,
-    expectDiagnostic: /LL0102/,
+    name: "a parameter list is NOT ambiguous: [a b] is two parameters",
+    source: `(fn add [a <- Int b <- Int] -> Int (+ a b))
+(console.log (add 2 3))`,
+    expect: ["5"],
     wasBroken:
-      "the same trap as a ctor's: `f(a = 1, b)` can only be called as f(1, 2), so the default is unreachable",
+      "guards the deferral -- a trailing expression in a parameter would silently eat the NEXT parameter",
   },
 
   // --- String keys in map literals. `keyValue` requires a leading colon. ---

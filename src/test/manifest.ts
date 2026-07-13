@@ -53,7 +53,12 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "01-basics/07_memoization_fixed.lisp": {
     status: "xfail",
-    reason: "D3: :comptime/defmodifier metaprogramming broken",
+    reason:
+      "NOT D3 -- the old reason (':comptime/defmodifier metaprogramming broken') is stale; both work " +
+      "now. This is D4 doing its job: the file applies `:memoized` at :29 while declaring no such " +
+      "modifier (LL0015), and its own comment says 'Future: Using custom :memoized modifier " +
+      "(placeholder for now)'. The example is at fault. Fixing it means adding a real " +
+      "(defmodifier memoized ...) -- which examples/06-modifiers/ now has -- and authoring a golden.",
   },
   "01-basics/09_more_for_loops.lisp": {
     status: "xfail",
@@ -117,10 +122,12 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "04-data-types/02_maps.lisp": {
     status: "xfail",
     reason:
-      "NOT a codegen crash -- the old reason ('D13: map-key codegen crash') was stale. D13's codegen " +
-      "half is fixed (P5b: `{ :my-key 1 }` now emits `{ \"my-key\": 1 }`, unmangled). This file " +
-      "never REACHES codegen: it fails at parse, :17, on `{\"host\" \"localhost\"}` -- the grammar's " +
-      "`keyValue` rule requires a leading colon, so a bare STRING key is unparseable. A grammar gap.",
+      "The string-key gap is FIXED (P8d): `{\"host\" \"localhost\"}` parses now, which was the last " +
+      "reason given. It is blocked one line further on, at :30 `nested:user:name` -- a COLON-PATH map " +
+      "access. grammar_v2 rejects it; PEG parses it and then type-errors, so the frontends diverge. " +
+      "Note the very NEXT line uses `nested[\"user\"][\"contact\"][\"email\"]`, which works (P8b), so " +
+      "the file does not need the colon form. Whether `map:key:key` is a language feature at all is a " +
+      "ruling, not a bug. It also has no golden.",
   },
   "04-data-types/06_structs.lisp": {
     status: "xfail",
@@ -155,7 +162,14 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "modifiers_demo.lisp": {
     status: "xfail",
-    reason: "D3: __ll_modifier_memoized not implemented (its old .expect was two literal prose lines, not real expected stdout -- deleted)",
+    reason:
+      "It COMPILES AND RUNS clean now -- the old reason ('__ll_modifier_memoized not implemented') is " +
+      "stale. But it must not be given a golden as it stands: it declares `(defmodifier memoized [])` " +
+      "with an EMPTY body, which after D3b is an identity pass-through, so its 'memoized' fibonacci " +
+      "recomputes every call. A golden recorded from that output would certify a test that " +
+      "demonstrates nothing -- which is exactly the bug D3b found in four other modifier goldens. It " +
+      "needs a real modifier body, as examples/06-modifiers/ now has, and is largely redundant with " +
+      "06-modifiers/05_multiple_modifiers.lisp, which demonstrates memoization properly.",
   },
   "modifiers_test.lisp": {
     status: "xfail",

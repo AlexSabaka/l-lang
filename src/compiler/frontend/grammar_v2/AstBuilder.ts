@@ -467,7 +467,8 @@ export class LLangAstBuilder extends BaseCstVisitor {
   }
 
   keyValue(ctx: any): ast.KeyValueNode {
-    const key = this.visit(ctx.key[0]);
+    // Two forms: `:key value` (ctx.key) and `"key" value` (ctx.string -- a bare string key).
+    const key = ctx.key ? this.visit(ctx.key[0]) : this.visit(ctx.string[0]);
     const value = ctx.expression ? this.visit(ctx.expression[0]) : null;
     return this.makeNode("key-value", ctx, { key, value });
   }

@@ -469,12 +469,35 @@ class LLangParser extends CstParser {
       this.CONSUME(t.RBrace);
     });
 
+    /**
+     * `{ :name "x" }` -- the colon form -- and `{ "host" "localhost" }` -- a bare STRING key.
+     *
+     * Only the colon form existed, so `{"host" "localhost"}` was a parse error. That, not codegen, is
+     * what actually blocked 04-data-types/02_maps.lisp: its old xfail blamed a "D13 map-key codegen
+     * crash", but D13's codegen half was fixed in P5b and the file never reached codegen at all.
+     *
+     * A string key needs no colon to be unambiguous. The colon exists to let a BARE IDENTIFIER be a
+     * key -- `:name` rather than `name`, which would read as a variable reference. A string literal
+     * is already unmistakably a key.
+     */
     this.keyValue = this.RULE("keyValue", () => {
-      this.CONSUME(t.Colon);
-      this.SUBRULE(this.key);
-      this.OPTION(() => {
-        this.SUBRULE(this.expression);
-      });
+      this.OR([
+        {
+          ALT: () => {
+            this.CONSUME(t.Colon);
+            this.SUBRULE(this.key);
+            this.OPTION(() => {
+              this.SUBRULE(this.expression);
+            });
+          },
+        },
+        {
+          ALT: () => {
+            this.SUBRULE(this.string);
+            this.SUBRULE2(this.expression);
+          },
+        },
+      ]);
     });
 
     this.key = this.RULE("key", () => {

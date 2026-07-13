@@ -1376,6 +1376,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return identifier;
   }
 
+
   // =========================================================================
   // Control Flow
   // =========================================================================

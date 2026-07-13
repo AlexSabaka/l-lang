@@ -136,8 +136,20 @@ MapBody
   = KeyValue
   / Comment
 
+// `{ :name "x" }` -- the colon form -- and `{ "host" "localhost" }` -- a bare STRING key.
+//
+// Only the colon form existed, so `{"host" "localhost"}` was a parse error. That, not codegen, is
+// what actually blocked 04-data-types/02_maps.lisp: its old xfail blamed a "D13 map-key codegen
+// crash", but D13's codegen half was fixed in P5b and the file never reached codegen at all.
+//
+// A string key needs no colon to be unambiguous: the colon form exists to let a BARE IDENTIFIER be a
+// key (`:name` rather than `name`, which would be a variable reference). A string literal is already
+// unmistakably a key.
 KeyValue "key-value"
   = _ ":" _ key:Key _ value:Expression? _ {
+    return makeNode("key-value", { key, value });
+  }
+  / _ key:String _ value:Expression _ {
     return makeNode("key-value", { key, value });
   }
 

@@ -777,6 +777,72 @@ caught a consumer that had assumed the array and was emitting `'((+ 1 2))` — a
 
 **This is code as DATA, not code as CODE.** There is no `eval`.
 
+## P8 — papercuts: ordinary code that silently did the wrong thing
+
+Not missing features. **Wrong answers**, in code anyone would write in their first hour.
+
+### Member access after an indexer (P8b)
+
+```lisp
+(console.log xs[0].name)   ->   console.log(xs[0], name)   ->   ReferenceError, ZERO diagnostics
+```
+
+`primaryExpr` was `identifier indexerSuffix*` — no member access after an index — so `.name` fell out
+of the loop and parsed as a **headless composite-identifier**, which is a real form (`05_matching.lisp`
+pipes with `(.apply evt)`). It became a separate ARGUMENT. `LL0210` cannot catch it: `name` is a
+perfectly good identifier that resolves to nothing.
+
+**Adjacency is the discriminator**, exactly as it already was for the indexer: `xs [0]` is an
+identifier and a vector, `xs[0]` an index; `foo .bar` is an identifier and a member-ref, `foo.bar` is
+one name.
+
+**A member suffix is a computed index with a string key** — `obj.name` and `obj["name"]` are the same
+thing in JavaScript — so no new AST shape and no new codegen was needed. **But the SPELLING has to
+survive**: D1 rules `(obj.m)` a CALL and `(obj["m"])` a READ, and those emit identical JS. Erasing the
+distinction would have silently turned every `(xs["key"])` into a call — the opposite of what D1 is
+for. `IndexerNode.members` records which suffixes were written `.name`, and with it D1 finally extends
+to an indexer head: `(gs[0].hi)` calls, `(gs[0])` and `(gs["hi"])` read.
+
+### A single-block body kept its implicit return (P8c)
+
+```lisp
+(fn f [n] ((console.log "side") (* n 2)))   ;; -> undefined
+(fn f [n]  (console.log "side") (* n 2))    ;; -> 8
+```
+
+The same program, two spellings, two answers. `visitFunction`'s implicit return only fired on an
+EXPRESSION; a block emits a `BlockStatement` and its value was dropped. Now `withTrailingReturn` — the
+helper `visitWhen` and `visitMatch` already use.
+
+**32 corpus functions (of 68 single-block bodies) newly return a value, and not one golden moved.**
+That is the honest reading: nothing was CONSUMING those values, so the bug was latent in the corpus
+and live for anyone writing new code.
+
+### Bare string keys in map literals (P8d)
+
+`{"host" "localhost"}` did not parse — `keyValue` required a leading colon. The colon exists so a BARE
+IDENTIFIER can be a key (`:name`, not `name`, which would read as a variable); a string literal is
+already unmistakably a key.
+
+### `fn` parameter defaults — DEFERRED, and why
+
+`(fn greet [name <- String "World"])` **cannot work**, and this was measured, not assumed: a parameter
+list is space-separated, so `[a b]` is unresolvably "two parameters" or "`a` defaulting to `b`". The
+first attempt parsed `[a <- Int b <- Int]` as `a` defaulting to `b`, plus a parameter named `<-`.
+
+**Common Lisp hit the same wall and solved it with a marker** — `&optional (name "World")`. l-lang
+will need one too; `:=` is the natural candidate, being D2's one assignment operator, and a default IS
+an assignment.
+
+Deferred until **after D9**, for a reason worth recording: a defaulted parameter is **omittable
+without being nullable**. Inside the body `name` is always a `String`. Without defaults, every
+omittable argument must become `T?` and be unwrapped for something that is never actually absent — so
+defaults make D9 *better*, not worse, and how the two compose is best decided once optionals exist. It
+also needs `LL0211` taught the difference between *required* and *total* arity, or the type checker
+will reject `(greet)` as "too few arguments".
+
+It is the only one of the four papercuts that adds a FEATURE rather than fixing a wrong answer.
+
 ## Open findings
 
 - ~~**`:comptime` is accepted and IGNORED.**~~ **RETRACTED — this was false.**
@@ -806,11 +872,6 @@ caught a consumer that had assumed the array and was emitting `'((+ 1 2))` — a
   that cannot be folded degrades **silently** to run time. That is the "silently degrades" class,
   and it is what the phase should kill.
 
-- **Member access after an indexer does not parse.** `expr.nodes[0].id` emits
-  `expr.nodes[0], id` — a comma expression, with `id` as a separate (undefined) identifier. The `.id`
-  is simply lost. `primaryExpr` allows `identifier indexerSuffix*` with no member access afterwards.
-  Reaching into quoted data, or any nested structure, wants this constantly.
-
 - **`eval` / a runtime AST interpreter does not exist.** `RuntimeProvider` registers `"eval": ""`, so
   `(eval x)` falls through to host JavaScript's `eval`. Quote is now code-as-DATA; executing a quoted
   form is code-as-CODE, and needs a second evaluator — at run time this time, on top of the
@@ -819,19 +880,10 @@ caught a consumer that had assumed the array and was emitting `'((+ 1 2))` — a
 - **Quasiquote / unquote do not exist.** `QuoteNode.mode` is written by both parsers, declared nowhere
   and read nowhere; the PEG's `Unquoted` rule matches *whitespace* and is referenced by zero rules.
 
-- **A function body that is ONE parenthesized block silently loses its implicit return.**
-
-  ```
-  (fn f [n] ((console.log "side") (* n 2)))   ->  undefined
-  (fn f [n]  (console.log "side") (* n 2))    ->  8
-  ```
-
-  The same program, two spellings, two different answers. A multi-item body returns its last
-  expression; a single-item body that happens to be a block does not, because the block emits a
-  `BlockStatement` and `visitFunction`'s implicit-return only fires on an expression. The corpus
-  works around it by writing an explicit `(return …)` inside such blocks — every function in
-  `01-basics/01_function_types.lisp` does. An `if` as the last body item has the same problem, for the
-  same reason. `withTrailingReturn` (added in P5c) is exactly the helper this needs.
+- **An `if` as the last body item still loses its implicit return.** P8c fixed the parenthesized-block
+  case; a trailing `if` emits an `IfStatement`, which `withTrailingReturn` leaves alone by design. The
+  corpus writes `(return …)` in both branches. Whether an `if` should be an expression in tail position
+  is a ruling, not a bug.
 
 - **`fn` parameter defaults are unrepresentable.** `ast.ParameterNode` has no default slot at all, so
   `(fn f [x 5])` is not merely unemitted. Grammar + AST + codegen. The `AssignmentPattern` support
