@@ -696,6 +696,50 @@ and a cache HIT never reaches it. `05_multiple_modifiers.lisp` demonstrates exac
   and a divergence from grammar_v2, which has always taken many. `When`, two rules above it, already
   did it correctly; `While` was simply missed.
 
+## D3 — metaprogramming: `:comptime` (D3c)
+
+`:comptime` folds, and always has (see the retraction above). Its bugs were not in the folding but in
+what happened when folding **failed** — and in one case, in what happened when it **succeeded**.
+
+### A fold disagreed with the runtime
+
+The sharpest bug in the phase, and invisible to every kind of test except one that compares them:
+
+```lisp
+(let :comptime folded (+ 1 2 3))   ;; -> 3
+(let ran (+ 1 2 3))                ;; -> 6
+```
+
+The sandbox **hand-rolled its own operators**, and its `+` was BINARY — `(a, b) => a + b` — while the
+real runtime's `+` is VARIADIC. So the identical expression gave two different answers depending on
+*when* it was evaluated. **`:comptime` silently changed the answer.**
+
+A compile-time evaluator that disagrees with the run-time one is worse than no compile-time evaluator
+at all: the bug only appears in the builds where the fold happens to fire. The sandbox now runs
+`RuntimeProvider.getRuntimeShim()` — the single source both paths already use — so the two cannot
+diverge. It also hand-rolled only ten operators, so `%`, `&&`, `||` and `!` were simply missing.
+
+### An unfoldable call shipped a ReferenceError
+
+Worse than the "silent downgrade to run time" it was described as. A `:comptime` function's
+declaration is **deleted** from the output unconditionally, while a *call* to it was only replaced
+when the fold succeeded. So:
+
+```lisp
+(fn :comptime twice [n <- Int] -> Int (* n 2))
+(let x 5)
+(let y (twice x))      ;; x is a runtime binding -- the fold cannot fire
+```
+
+left the callee gone and the call standing, and shipped `ReferenceError: twice is not defined` with
+**zero diagnostics**. Every failure path in the pass returned the node unchanged and said nothing;
+the sandbox's actual complaint went to a logger the harness discards.
+
+**A call to a `:comptime` function must fold.** It is not optional — asking for compile-time
+evaluation and passing a run-time value is a contradiction, and it is now `LL0099`, located, naming
+what defeated the fold. `evaluateExpression` returns a RESULT rather than `undefined`-means-failure,
+so a genuine `undefined` is no longer mistaken for an error, and the reason reaches the diagnostic.
+
 ## Open findings
 
 - ~~**`:comptime` is accepted and IGNORED.**~~ **RETRACTED — this was false.**

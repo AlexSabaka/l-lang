@@ -260,13 +260,39 @@ const CASES: Case[] = [
     wasBroken: "not broken -- a guard, and the case that would have caught my false retraction",
   },
   {
-    name: "comptime: a call that CANNOT be folded is an error, not a silent downgrade",
-    source: `(fn :comptime describe [s <- String] -> Int (s.length))
-(let n (describe "abc"))
-(console.log n)`,
+    name: "comptime: a FOLD agrees with the RUNTIME",
+    source: `(let :comptime folded (+ 1 2 3))
+(let ran (+ 1 2 3))
+(console.log folded ran)`,
+    expect: ["6 6"],
+    // The sharpest bug in D3, and invisible to every other kind of test: the comptime sandbox
+    // hand-rolled its own operators, and its `+` was BINARY while the real runtime's is VARIADIC. So
+    // the identical expression gave 3 when folded and 6 when run. `:comptime` silently changed the
+    // ANSWER. A compile-time evaluator that disagrees with the run-time one is worse than none --
+    // the bug appears only in the builds where the fold happens to fire.
+    emitted: { must: [/\b6\b/] },
+    wasBroken: "folded to 3, ran to 6 -- the sandbox's `+` dropped every argument after the second",
+  },
+  {
+    name: "comptime: operators beyond the hand-rolled ten (%, &&) fold",
+    source: `(fn :comptime is-even [n <- Int] -> Boolean (== (% n 2) 0))
+(console.log (is-even 4))`,
+    expect: ["true"],
+    wasBroken: "the sandbox defined 10 operators; `%`, `&&`, `||` and `!` were not among them",
+  },
+  {
+    name: "comptime: a call that CANNOT be folded is an error, not a ReferenceError",
+    source: `(fn :comptime twice [n <- Int] -> Int (* n 2))
+(let x 5)
+(let y (twice x))
+(console.log y)`,
     expectDiagnostic: /LL0099/,
+    // NOT merely a "silent downgrade to run time" -- worse. The comptime function is DELETED from the
+    // output unconditionally, while the call is only replaced when every argument is a literal. `x`
+    // is a runtime binding, so the fold does not fire: the callee is gone, the call remains, and the
+    // program ships a guaranteed `ReferenceError: twice is not defined` with ZERO diagnostics.
     wasBroken:
-      "evaluateExpression caught every failure, logged to a discarded logger, returned undefined -- and the call quietly ran at RUN time instead",
+      "the comptime fn was deleted and the unfoldable call left behind -> ReferenceError at run time, reported by nothing",
   },
 
   // --- defmacro: D3 rules macros OUT, and demands a located error, "never a silent call". ---

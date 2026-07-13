@@ -8,7 +8,7 @@ import { DesugarAstVisitor } from "./DesugarAstVisitor";
 import { hasModifier } from "../../helpers/modifiers";
 import * as vm from "node:vm";
 import { generate } from "astring";
-import { encodeIdentifier } from "../../utils/encodeIdentifier";
+import { RuntimeProvider } from "../../runtime";
 
 export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
   private runtimeCode = "";
@@ -55,31 +55,31 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
     };
   }
 
+  /**
+   * The sandbox runs THE REAL RUNTIME. It must, or folding is not evaluation -- it is a different
+   * language that happens to agree most of the time.
+   *
+   * This used to hand-roll ten operators. Two consequences, and the second is the serious one:
+   *
+   *   MISSING. `%`, `&&`, `||`, `!` are all real l-lang operators and none of them were here, so a
+   *   `:comptime` body using one blew up in the sandbox -- and, before the fix in this same commit,
+   *   blew up SILENTLY.
+   *
+   *   WRONG. The hand-rolled `+` was BINARY -- `(a, b) => a + b` -- while the real runtime's `+` is
+   *   VARIADIC. So the identical expression gave two different answers depending on when it ran:
+   *
+   *       (let :comptime folded (+ 1 2 3))   ->  3        <- the sandbox dropped the third argument
+   *       (let ran (+ 1 2 3))                ->  6        <- the real runtime
+   *
+   *   `:comptime` silently changed the ANSWER. A compile-time evaluator that disagrees with the
+   *   run-time one is worse than no compile-time evaluator at all: the bug only appears in the
+   *   builds where the fold fires.
+   *
+   * Taking the shim from RuntimeProvider -- the single source both paths already use -- makes the two
+   * impossible to diverge. It is never emitted; it exists only inside the vm sandbox.
+   */
   private prepareRuntime() {
-    this.runtimeCode = `
-      const __ll_op_registry = {
-        operators: {},
-        register: function(symbol, params, fn) {
-          if (!this.operators[symbol]) this.operators[symbol] = [];
-          this.operators[symbol].push({ params, fn });
-        },
-        lookup: function(symbol, args) {
-          const list = this.operators[symbol];
-          if (!list) return null;
-          return null; // Simplified
-        }
-      };
-      const ${encodeIdentifier("+")} = (a, b) => a + b;
-      const ${encodeIdentifier("-")} = (a, b) => a - b;
-      const ${encodeIdentifier("*")} = (a, b) => a * b;
-      const ${encodeIdentifier("/")} = (a, b) => a / b;
-      const ${encodeIdentifier("<=")} = (a, b) => a <= b;
-      const ${encodeIdentifier(">=")} = (a, b) => a >= b;
-      const ${encodeIdentifier("<")} = (a, b) => a < b;
-      const ${encodeIdentifier(">")} = (a, b) => a > b;
-      const ${encodeIdentifier("==")} = (a, b) => a === b;
-      const ${encodeIdentifier("!=")} = (a, b) => a !== b;
-    `;
+    this.runtimeCode = RuntimeProvider.getRuntimeShim();
   }
 
   visitVariable(node: ast.VariableNode): ast.VariableNode {
@@ -89,27 +89,27 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
     const visitedValue = this.visit(node.value) as ast.ASTNode;
 
     if (isComptime) {
-      // Check if value is already a literal or if it's an expression we can evaluate
+      const varName = (node.name as any).id ?? (node.name as any).name;
+
+      // A literal is already the value it folds to -- nothing to evaluate, and nothing to report.
+      if (this.isLiteral(visitedValue)) {
+        return { ...node, value: visitedValue };
+      }
+
       const result = this.evaluateExpression(visitedValue);
-      if (result !== undefined) {
+      if (result.ok) {
         return {
           ...node,
-          value: this.createLiteralNode(result, visitedValue),
+          value: this.createLiteralNode(result.value, visitedValue),
         };
-      } else if (!this.isLiteral(visitedValue)) {
-        this.context.results.add(
-          node,
-          {
-            code: "LL0099",
-            severity: RuleSeverity.Error,
-            message: `Failed to evaluate comptime variable: ${
-              (node.name as any).id ?? (node.name as any).name
-            }`,
-            test: () => true,
-          },
-          this.context
-        );
       }
+
+      // The diagnostic now says WHY. It used to be "Failed to evaluate comptime variable: x", full
+      // stop -- the sandbox's actual complaint went to a logger the test harness discards.
+      this.reportUnfoldable(
+        node,
+        `Cannot evaluate comptime variable '${varName}' at compile time: ${result.error}`
+      );
     }
 
     return {
@@ -150,16 +150,39 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
       if (symbolName) {
         const symbol = this.context.symbolTable?.resolveSymbol(symbolName);
         if (symbol && symbol.isComptime && symbol.nodeType === "function") {
-          // ONLY evaluate if all arguments are literals (resolved)
+          // A call to a `:comptime` function MUST fold. It is not optional, and failing to fold is
+          // not a graceful downgrade to run time -- it is a guaranteed crash.
+          //
+          // The declaration is DELETED from the output unconditionally (see the top of this method),
+          // while the call was only replaced when the fold succeeded. So an unfoldable call left the
+          // callee gone and the call standing, and the program shipped
+          //
+          //     ReferenceError: twice is not defined
+          //
+          // with ZERO diagnostics. Every failure path here used to `return newNode` and say nothing.
           const args = visitedNodes.slice(1);
-          const allLiterals = args.every(arg => this.isLiteral(arg));
-          
-          if (allLiterals) {
-            const result = this.evaluateExpression(newNode);
-            if (result !== undefined) {
-              return this.createLiteralNode(result, newNode);
-            }
+          const nonLiteral = args.find((arg) => !this.isLiteral(arg));
+
+          if (nonLiteral) {
+            this.reportUnfoldable(
+              nonLiteral,
+              `Cannot evaluate '${symbolName}' at compile time: argument is a '${nonLiteral._type}', ` +
+                `not a compile-time constant. A ':comptime' function can only be called with literals ` +
+                `-- that is what asking for compile-time evaluation means.`
+            );
+            return newNode;
           }
+
+          const result = this.evaluateExpression(newNode);
+          if (!result.ok) {
+            this.reportUnfoldable(
+              newNode,
+              `Cannot evaluate '${symbolName}' at compile time: ${result.error}`
+            );
+            return newNode;
+          }
+
+          return this.createLiteralNode(result.value, newNode);
         }
       }
     }
@@ -174,7 +197,17 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
     ].includes(node._type);
   }
 
-  private evaluateExpression(expr: ast.ASTNode): any {
+  /**
+   * The outcome of a fold. Explicitly a RESULT, not a bare value.
+   *
+   * This used to return `any`, with `undefined` meaning "it failed" -- and it swallowed the reason
+   * into a logger the test harness discards. So a caller could not tell a genuine failure from an
+   * expression that legitimately evaluated to `undefined`, and could not say WHY anything failed.
+   * Both callers now get the reason and put it in the diagnostic.
+   */
+  private evaluateExpression(
+    expr: ast.ASTNode
+  ): { ok: true; value: any } | { ok: false; error: string } {
     let fullCode = "";
     try {
       const transformer = new JSTransformerAstVisitor(this.context);
@@ -196,15 +229,28 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
 
       const result = vm.runInContext(fullCode, sandbox);
       this.context.log(LogLevel.Info, "[comptime] Evaluated: " + code + " -> " + result);
-      return result;
+      return { ok: true, value: result };
     } catch (e: any) {
       this.context.log(LogLevel.Error, `Comptime evaluation error: ${e.message}`);
-      // Log the code if error
       if (fullCode) {
         this.context.log(LogLevel.Error, "Full code was: \n" + fullCode);
       }
-      return undefined;
+      return { ok: false, error: String(e?.message ?? e) };
     }
+  }
+
+  /** LL0099 -- this thing was declared `:comptime` and could not be evaluated at compile time. */
+  private reportUnfoldable(node: ast.ASTNode, message: string): void {
+    this.context.results.add(
+      node,
+      {
+        code: "LL0099",
+        severity: RuleSeverity.Error,
+        message,
+        test: () => true,
+      },
+      this.context
+    );
   }
 
   private collectComptimeDependencies(node: ast.ASTNode): string {
