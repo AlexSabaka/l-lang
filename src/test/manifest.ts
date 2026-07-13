@@ -12,13 +12,21 @@
  *   the exact mistake this manifest exists to stop repeating.
  * - 'test': redundant for a file that already has a matching .expect (that's the default),
  *   but declaring it explicitly forces a hard error if the golden ever goes missing.
+ * - 'negative': the file is SUPPOSED to fail. It must not compile, and it must report every
+ *   code in `codes`. Without this status such a file has nowhere to live: run as a positive
+ *   test it is a permanent ERROR (which is how 02-errors/01_errors.lisp spent the whole audit),
+ *   and marked 'fixture' it would be skipped -- so a corpus file whose entire purpose is to
+ *   demonstrate a diagnostic would assert nothing at all. Asserting the CODES is what makes it
+ *   a test rather than an excuse: if a diagnostic silently stops firing, this goes red.
  */
 
-export type ExampleStatus = "test" | "library" | "fixture" | "xfail";
+export type ExampleStatus = "test" | "library" | "fixture" | "xfail" | "negative";
 
 export interface ManifestEntry {
   status: ExampleStatus;
   reason?: string;
+  /** 'negative' only: every diagnostic code the file must report. */
+  codes?: string[];
 }
 
 // Keyed by path relative to examples/.
@@ -41,6 +49,18 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "W99_L_sloth_design_v1.lisp": {
     status: "fixture",
     reason: "design scratchpad, not a feature demonstration",
+  },
+
+  // --- negative: the file MUST fail, with exactly these diagnostics ---
+  "02-errors/01_errors.lisp": {
+    status: "negative",
+    codes: ["LL0002", "LL0006", "LL0007"],
+    reason:
+      "It demonstrates diagnostics ON PURPOSE -- the codes are written in its own comments -- so it " +
+      "can never produce stdout, and running it as a POSITIVE test made it a permanent ERROR for the " +
+      "entire audit. Its .expect was a captured stderr DUMP with this machine's absolute paths baked " +
+      "in (/Volumes/2TB/repos/l-lang/...), so it could not have matched anywhere else either; it is " +
+      "deleted in favour of asserting the CODES, which is machine-independent and strictly stronger.",
   },
 
   // --- xfail: real examples, no golden authored yet ---

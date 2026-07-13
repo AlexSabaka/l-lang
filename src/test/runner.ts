@@ -65,7 +65,7 @@ interface TestResult {
   stderr?: string;
 }
 
-type Classification = { status: ExampleStatus | 'undeclared'; reason?: string };
+type Classification = { status: ExampleStatus | 'undeclared'; reason?: string; codes?: string[] };
 
 // Every .lisp is either declared in the manifest, or has a matching .expect (implicitly
 // 'test'), or it's undeclared -- a hard error, not a silent skip.
@@ -113,6 +113,58 @@ function normalizeOutput(output: string): string {
   return output
     .replace(/\r\n/g, '\n')  // Normalize line endings
     .trim();                  // Remove trailing whitespace
+}
+
+/**
+ * A file that is SUPPOSED to fail. It must not compile, and it must report every code it advertises.
+ *
+ * Without this, such a file has nowhere to live. `02-errors/01_errors.lisp` demonstrates LL0002 /
+ * LL0006 / LL0007 on purpose -- it CANNOT produce stdout, because it never compiles -- and it was
+ * being run as a POSITIVE test, so it read as a permanent ERROR for the whole audit. Its `.expect`
+ * was a captured stderr dump with absolute filesystem paths baked into it, which could never have
+ * matched on another machine anyway.
+ *
+ * Asserting the CODES is what makes this a test rather than an excuse: mark it 'fixture' and it would
+ * be skipped, and a corpus file whose entire purpose is to demonstrate a diagnostic would assert
+ * nothing. If one of these diagnostics silently stops firing, this goes red.
+ */
+function runNegativeTest(lispPath: string, codes: string[]): TestResult {
+  const fileName = path.basename(lispPath);
+
+  let reported: string[] = [];
+  try {
+    const context = new Context(lispPath, COMPILE_OPTIONS);
+    context.process(lispPath);
+    reported = context.results.all
+      .map((m: any) => String(m.code))
+      .filter((c) => c.startsWith('LL'));
+
+    if (!context.results.hasErrors) {
+      return {
+        name: fileName,
+        status: 'fail',
+        message: `expected it to FAIL with ${codes.join(', ')}, but it compiled clean`,
+      };
+    }
+  } catch (e: any) {
+    // A parse CRASH is not a located diagnostic, and this file's whole point is that they ARE.
+    return {
+      name: fileName,
+      status: 'fail',
+      message: `expected ${codes.join(', ')}, but the compiler THREW: ${String(e.message).split('\n')[0]}`,
+    };
+  }
+
+  const missing = codes.filter((c) => !reported.includes(c));
+  if (missing.length) {
+    return {
+      name: fileName,
+      status: 'fail',
+      message: `expected ${missing.join(', ')} -- not reported. Got: ${reported.join(', ') || '(none)'}`,
+    };
+  }
+
+  return { name: fileName, status: 'pass' };
 }
 
 function runTest(lispPath: string): TestResult {
@@ -319,11 +371,16 @@ function main() {
   const results: TestResult[] = [];
   const total = testFiles.length;
 
-  classifications.forEach(({ filePath, status, reason }, index) => {
+  classifications.forEach(({ filePath, status, reason, codes }, index) => {
     // 'undeclared' already exited above -- everything reaching here is a real ExampleStatus.
-    const result: TestResult = status === 'test'
-      ? runTest(filePath)
-      : { name: path.basename(filePath), status: status as ExampleStatus, message: reason };
+    let result: TestResult;
+    if (status === 'test') {
+      result = runTest(filePath);
+    } else if (status === 'negative') {
+      result = runNegativeTest(filePath, codes ?? []);
+    } else {
+      result = { name: path.basename(filePath), status: status as ExampleStatus, message: reason };
+    }
     results.push(result);
     printTestResult(result, index + 1, total);
   });

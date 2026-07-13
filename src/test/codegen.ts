@@ -772,6 +772,147 @@ const CASES: Case[] = [
       "CORRECT once D9b's loose-null clause has landed: otherwise `(!= (get memo n) nil)` reads " +
       "'cached' for an absent key and memoized fib silently returns undefined",
   },
+
+  // ===============================================================================================
+  // D11 -- the class surface   (DECISIONS.md:120-131)
+  //
+  // "Visibility is TYPE-CHECK-ONLY and ERASED at codegen -- no `#private` emission. `:extends` only.
+  //  `defstruct` becomes a real value type."
+  //
+  // (Value semantics is a separate phase. This one is the class SURFACE.)
+  // ===============================================================================================
+
+  // --- `:private` is a silent wrong answer in the most ordinary OOP code there is. --------------
+  {
+    name: ":private field -- a counter that counts",
+    source: `(defclass Counter
+  (let :private count 0)
+  (fn bump [] -> Int (this.count := (+ this.count 1)) (return this.count)))
+(let c (Counter))
+(console.log (c.bump))
+(console.log (c.bump))`,
+    expect: ["1", "2"],
+    emitted: {
+      // D11 rules visibility ERASED at codegen. No `#` may survive anywhere.
+      mustNot: [/#count/],
+    },
+    wasBroken:
+      "NaN, twice, with zero diagnostics. The field is DECLARED `#count = 0` (JSClassBuilder emits a " +
+      "PrivateIdentifier for `:private`) and every read/write emits `this.count` -- visitCompositeIdentifier " +
+      "knows nothing about visibility. Two disconnected code paths that never meet: the `#` slot keeps " +
+      "its initializer forever, `this.count` is undefined, and undefined + 1 is NaN",
+  },
+  {
+    name: ":private is still readable from INSIDE the class",
+    // NOTE the `(let v (Vault))`. `((Vault).reveal)` -- a method call directly on a parenthesised
+    // expression -- emits INVALID JavaScript (LL0101). Loud, not silent, unrelated to visibility, and
+    // surfaced as an open finding rather than absorbed here.
+    source: `(defclass Vault
+  (let :private secret 42)
+  (fn reveal [] -> Int (return this.secret)))
+(let v (Vault))
+(console.log (v.reveal))`,
+    expect: ["42"],
+    wasBroken:
+      "returned undefined -- `#secret = 42` was declared and `this.secret` was read. The same split",
+  },
+  {
+    name: ":private is NOT readable from outside the class",
+    source: `(defclass Vault (let :private secret 42))
+(let v (Vault))
+(console.log v.secret)`,
+    expectDiagnostic: /LL0206/,
+    wasBroken:
+      "compiled silently. `:private` was enforced NOWHERE -- `Symbol.visibility` is computed correctly " +
+      "(SymbolTable.ts:661) and read by literally nothing, which is D10's `mutable: false` pathology " +
+      "verbatim. The only visibility diagnostic that exists is LL0022, and it merely rejects TWO " +
+      "visibility modifiers on one declaration",
+  },
+  {
+    name: ":public members stay reachable (guard)",
+    source: `(defclass Open (let :public value 7))
+(let o (Open))
+(console.log o.value)`,
+    expect: ["7"],
+    wasBroken: "not broken -- a guard. LL0206 must refuse `:private` and nothing else",
+  },
+
+  // --- Reflection reports the opposite of what codegen does. -------------------------------------
+  {
+    name: "reflection tells the truth about :private",
+    source: `(defclass Box (let :private secret 1) (let :public open 2))
+(let b (Box))
+(let m (type b))
+(console.log (JSON.stringify m.properties))`,
+    expect: [
+      '[{"name":"secret","type":"Any","isPublic":false,"isPrivate":true,"isStatic":false},' +
+        '{"name":"open","type":"Any","isPublic":true,"isPrivate":false,"isStatic":false}]',
+    ],
+    wasBroken:
+      "reported `isPublic:true, isPrivate:false` for a `:private` field -- so codegen called it PRIVATE " +
+      "(emitting `#secret`) while reflection called it PUBLIC. D11's own text says the disagreement is " +
+      "`:static` hardcoded false vs reflection reporting true; it is neither. InferTypesAstVisitor:832-838 " +
+      "compares `mod === ':private'` WITH a colon, and both parsers STRIP it -- so all seven comparisons " +
+      "are dead and visibility/isStatic/isConstructorParam/isOperator never leave their defaults",
+  },
+
+  // --- `:static` ---------------------------------------------------------------------------------
+  {
+    name: ":static is a static member",
+    source: `(defclass MathUtil (fn :static twice [n <- Int] -> Int (return (* n 2))))
+(console.log (MathUtil.twice 21))`,
+    expect: ["42"],
+    wasBroken:
+      "TypeError: MathUtil.twice is not a function -- it was emitted as an INSTANCE method. `static:` is " +
+      "hardcoded `false` at all three ESTree sites (JSClassBuilder:333, :356; JSTransformerAstVisitor:951) " +
+      "and nothing in codegen ever reads the `:static` modifier",
+  },
+
+  // --- `defstruct` has no class surface at all. ---------------------------------------------------
+  {
+    name: "defstruct :implements parses, and satisfies the interface",
+    source: `(definterface Shape (fn area [] -> Int))
+(defstruct Rect :implements Shape
+  (let :ctor w <- Int 0)
+  (fn area [] -> Int (return (* this.w this.w))))
+(fn describe [s <- Shape] -> Int (return (s.area)))
+(let r (Rect 5))
+(console.log (describe r))`,
+    expect: ["25"],
+    wasBroken:
+      "grammar_v2: PARSE ERROR (\"Expecting RParen but found ':implements'\") -- that IS the last ERROR " +
+      "in the suite, examples/05-oop/01_interfacses.lisp. The PEG is WORSE: it parses, and dumps the " +
+      "`:implements Shape` clause into the struct BODY as two junk bare identifiers. A divergence where " +
+      "the silent frontend is the one that 'works'. And even once it parses, a struct's InferredType " +
+      "never gets `implementedInterfaces`, which isSubtype WALKS -- so a struct could still never satisfy " +
+      "an interface",
+  },
+  {
+    name: "(type s) on a struct says struct",
+    source: `(defstruct Point (let :ctor x <- Int 0))
+(let p (Point 3))
+(let m (type p))
+(console.log m.kind)`,
+    expect: ["struct"],
+    wasBroken:
+      "'object'. A struct never gets `codegenMetadata` (CollectTypesPass.visitStruct builds only " +
+      "{kind, name, members, ctorInfo}), so it is absent from __ll_type_metadata entirely and `type` " +
+      "falls through to its runtime constructor-name guess",
+  },
+
+  // --- The live inheritance path must not regress. -----------------------------------------------
+  {
+    name: ":extends inheritance still works (guard)",
+    source: `(defclass Animal (fn speak [] -> String (return "...")))
+(defclass Dog :extends Animal (fn speak [] -> String (return "woof")))
+(let d (Dog))
+(console.log (d.speak))`,
+    expect: ["woof"],
+    wasBroken:
+      "not broken -- a guard. Three passing goldens ride the `:extends` path. (`:inherits` is NOT a " +
+      "synonym and never was: it exists only inside a `:where T :inherits Base` CONSTRAINT, so the " +
+      "grammar has always agreed with D11 -- it is the README and the reference doc that are wrong)",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------
