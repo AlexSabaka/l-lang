@@ -52,6 +52,37 @@ function __ll_deep_eq(a, b) {
 // Arrays and maps answer differently ON PURPOSE, and it is the distinction that makes a second bottom
 // value unnecessary: an out-of-range INDEX is a defect (you computed it), while an absent KEY is
 // ordinary control flow ("is this configured?"). The first throws; the second is what \`get\` is for.
+// A STRUCT IS A VALUE TYPE (D11). This is the copy.
+//
+// MEMBERWISE, recursing into struct-typed fields; reference types are SHARED. That is the C# rule and
+// it is what a native struct lowers to: the struct's own storage is copied, and a field that holds a
+// POINTER copies the pointer.
+//
+//   (defstruct Outer (let :ctor i <- Inner) (let :ctor xs <- Int[]))
+//   (mut b a)  (b.i.n := 99)  (b.xs[0] := 99)
+//     a.i.n   unchanged   -- the nested STRUCT was copied
+//     a.xs[0] IS 99       -- the ARRAY was shared
+//
+// The recursion is the whole point, and it is invisible to the corpus: every passing struct golden has
+// all-primitive fields, so a SHALLOW copy would pass every one of them while silently aliasing any
+// struct that contained another struct. A green suite would have proved nothing.
+//
+// \`Object.create(proto, getOwnPropertyDescriptors)\` rather than \`Object.assign\`: assign uses [[Set]],
+// which is correct for the plain data fields the class builder emits today and breaks silently the day
+// anyone adds a getter. The descriptor form costs nothing and cannot.
+//
+// The null guard is not defensive padding -- \`Object.getPrototypeOf(null)\` throws, and this is called
+// on every binding in the program.
+function __ll_copy(v) {
+  if (v === null || typeof v !== 'object') return v;
+  if (!v.constructor || v.constructor.__ll_struct !== true) return v;
+
+  const out = Object.create(Object.getPrototypeOf(v), Object.getOwnPropertyDescriptors(v));
+  for (const k of Object.keys(out)) {
+    out[k] = __ll_copy(out[k]);
+  }
+  return out;
+}
 function __ll_index(obj, key) {
   if (obj == null) throw new TypeError('cannot index into nil');
   if (Array.isArray(obj) || typeof obj === 'string') {

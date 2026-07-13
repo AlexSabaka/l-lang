@@ -378,8 +378,54 @@ export class ClassBuilder {
     return this.otherBody.map(b => this.visitor.visit(b));
   }
 
+  /**
+   * `static __ll_struct = true` -- the marker that makes a struct a VALUE TYPE at run time.
+   *
+   * The whole of by-copy turns on one question the code generator cannot otherwise answer: "is this
+   * object a struct?" Codegen has NO per-node type information (`typeEnv` is a dead local at
+   * Context.ts:345), so it cannot know the type of an arbitrary expression -- the discrimination has
+   * to happen at RUN TIME, and it needs a mark on the object.
+   *
+   * INTRINSIC to the class, and deliberately not any of the alternatives:
+   *
+   *   - NOT `__ll_type_metadata`, which already records `kind: 'struct'` and is the obvious choice.
+   *     It is conditional on `includeRuntimeShim`, so value semantics would vanish under a codegen
+   *     option -- and, fatally, the import inliner RENAMES structs (`class inlined_Vector3_7`,
+   *     ensureSymbolInlined), so a name-keyed lookup silently misses EVERY IMPORTED STRUCT. That is
+   *     all of std/math.lisp, which is the passing golden complex_math_test.
+   *   - NOT a sibling statement (`Point.prototype.__ll_struct = true`). visitClass returns a single
+   *     ClassDeclaration; the only precedent for a sibling UNSHIFTS to the front of the program,
+   *     which for a class is a TDZ ReferenceError.
+   *   - NOT an INSTANCE field: it would be own+enumerable, and show up in Object.keys, console.log,
+   *     and the runtime's `properties` reflection.
+   *
+   * A STATIC field survives renaming (it rides on the class object itself), stays off the instance,
+   * and is inherited by subclasses. `v.constructor.__ll_struct` is the test.
+   */
+  private buildValueTypeMarker(): ESTree.PropertyDefinition[] {
+    // The cast is unavoidable, and it documents a lie the compiler already tells: `visitStruct` is
+    // `this.visitClass(node as unknown as ast.ClassNode)`, so this builder's `node` is DECLARED
+    // ClassNode and is at RUN TIME sometimes a StructNode. TypeScript therefore insists `_type` can
+    // only ever be "class". It cannot; that is the entire premise of this phase.
+    if ((this.node as ast.ASTNode)._type !== "struct") return [];
+    return [
+      {
+        type: "PropertyDefinition",
+        key: { type: "Identifier", name: "__ll_struct" },
+        value: { type: "Literal", value: true },
+        computed: false,
+        static: true,
+        loc: loc(this.node),
+      } as ESTree.PropertyDefinition,
+    ];
+  }
+
   public build(): ESTree.ClassDeclaration {
     const body: (ESTree.MethodDefinition | ESTree.PropertyDefinition)[] = [];
+
+    // The value-type marker, before anything else -- a static field, so ordering is immaterial, but
+    // it reads first and that is where a human looks.
+    body.push(...this.buildValueTypeMarker());
 
     // Add fields
     body.push(...this.buildFields());
