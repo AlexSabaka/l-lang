@@ -865,7 +865,16 @@ class LLangParser extends CstParser {
       });
     });
 
-    // defstruct Name :modifiers? body*
+    // defstruct Name :extends Type :implements Type body*
+    //
+    // The `:extends` / `:implements` clauses are D11. A struct had NO class surface: `:implements` is
+    // its own token (not a generic modifier), so `MANY(modifier)` could never consume it and neither
+    // could `expression` -- `(defstruct Rect :implements Shape ...)` was a hard parse error, and it is
+    // the last ERROR in the suite (05-oop/01_interfacses.lisp).
+    //
+    // The PEG was WORSE, and silent: it parsed the same source and dumped `:implements Shape` into the
+    // struct BODY as two junk bare identifiers, so the interface was simply forgotten and the program
+    // ran. The loud frontend was the correct one.
     this.structDecl = this.RULE("structDecl", () => {
       this.CONSUME(t.DefStructKw);
       this.MANY(() => {
@@ -875,6 +884,22 @@ class LLangParser extends CstParser {
         this.SUBRULE(this.typeName);
       });
       this.MANY2(() => {
+        this.OR([
+          {
+            ALT: () => {
+              this.CONSUME(t.ExtendsModKw);
+              this.SUBRULE(this.typeRef);
+            },
+          },
+          {
+            ALT: () => {
+              this.CONSUME(t.ImplementsModKw);
+              this.SUBRULE2(this.typeRef);
+            },
+          },
+        ]);
+      });
+      this.MANY3(() => {
         this.SUBRULE(this.expression);
       });
     });

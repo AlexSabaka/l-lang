@@ -545,8 +545,10 @@ function peg$parse(input, options) {
   function peg$f42(key, value) {
     return makeNode("enum-key", { key, value })
   }
-  function peg$f43(modifiers, name, body) {
-    return makeNode("struct", { name, modifiers, body });
+  function peg$f43(modifiers, name, ext, body) {
+    const _implements = ext.filter(x => x._type === "implements");
+    const _extends = ext.filter(x => x._type === "extends");
+    return makeNode("struct", { name, modifiers, implements: _implements, extends: _extends, body });
   }
   function peg$f44(modifiers, name, type) {
     return makeNode("type-def", { name, type, modifiers });
@@ -3874,7 +3876,7 @@ function peg$parse(input, options) {
   }
 
   function peg$parseStruct() {
-    let s0, s1, s2, s3, s4, s5, s6, s7, s8, s9;
+    let s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11;
 
     const key = peg$currPos * 165 + 45;
     const cached = peg$resultsCache[key];
@@ -3920,13 +3922,26 @@ function peg$parse(input, options) {
         }
         s7 = peg$parse_();
         s8 = [];
-        s9 = peg$parseExpression();
+        s9 = peg$parseImplements();
+        if (s9 === peg$FAILED) {
+          s9 = peg$parseExtends();
+        }
         while (s9 !== peg$FAILED) {
           s8.push(s9);
-          s9 = peg$parseExpression();
+          s9 = peg$parseImplements();
+          if (s9 === peg$FAILED) {
+            s9 = peg$parseExtends();
+          }
+        }
+        s9 = peg$parse_();
+        s10 = [];
+        s11 = peg$parseExpression();
+        while (s11 !== peg$FAILED) {
+          s10.push(s11);
+          s11 = peg$parseExpression();
         }
         peg$savedPos = s0;
-        s0 = peg$f43(s4, s6, s8);
+        s0 = peg$f43(s4, s6, s8, s10);
       } else {
         peg$currPos = s0;
         s0 = peg$FAILED;

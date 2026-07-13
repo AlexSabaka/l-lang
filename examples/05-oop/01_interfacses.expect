@@ -26,5 +26,6 @@ Shape Perim: 31.4159
     { name: 'perimeter', params: [], returns: 'Any' }
   ],
   constructor: { params: [], requiredCount: 0 },
+  implements: [ 'Shape' ],
   nullable: false
 }

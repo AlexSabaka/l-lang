@@ -663,17 +663,32 @@ class CollectTypesPass extends BaseAstTreeWalker {
 
   visitStruct(node: ast.StructNode) {
     const structName = ast.symbolName(node.name);
-    
+
     // Extract constructor parameters and member fields
     const members: any[] = [];
+    const detailedMembers: DetailedMember[] = [];
+    const methodSignatures = new Map<string, MethodSignature>();
     const ctorParams: any[] = [];
     let requiredCount = 0;
-    
+
     if (node.body && node.body.length > 0) {
-      for (const item of node.body) {
+      for (let i = 0; i < node.body.length; i++) {
+        const item = node.body[i];
         let target = item;
         if (ast.isListNode(item) && item.nodes.length > 0) {
           target = item.nodes[0];
+        }
+
+        // A struct's type carried `members` and nothing else -- no detailedMembers, no
+        // methodSignatures, no codegenMetadata (D11d). The consequence was invisible until you asked
+        // for it: `getAllClassMetadata()` requires codegenMetadata, so a struct never appeared in
+        // __ll_type_metadata at all, and `(type p)` fell through to the runtime's constructor-name
+        // guess and answered `kind: 'object'`.
+        const detailed = this.buildDetailedMember(item, i);
+        if (detailed) detailedMembers.push(detailed);
+        if (target._type === "function") {
+          const sig = this.buildMethodSignature(target as ast.FunctionNode);
+          methodSignatures.set(sig.name, sig);
         }
 
         if (target._type === "variable") {
@@ -737,6 +752,52 @@ class CollectTypesPass extends BaseAstTreeWalker {
       }
     }
     
+    // `:implements` / `:extends` on a struct (D11d).
+    //
+    // Two independent gaps, and fixing the grammar alone fixes neither. `isSubtype` WALKS
+    // `implementedInterfaces` and `parentClass` -- and a struct's InferredType never had either --
+    // so a struct could never satisfy an interface even once `:implements Shape` parsed. The clause
+    // would have been accepted and then ignored, which is the same class of lie D11 exists to end.
+    const implementedInterfaces: InterfaceImplementation[] = [];
+    for (const impl of node.implements ?? []) {
+      if (impl.type && impl.type.name) {
+        const typeArgs = (impl.generics ?? []).map((g) => this.convertAstTypeToInferred(g));
+        implementedInterfaces.push({
+          interfaceName: impl.type.name,
+          interfaceType: {
+            kind: "interface",
+            name: impl.type.name,
+            ...(typeArgs.length ? { generics: typeArgs } : {}),
+          },
+          methodMappings: new Map(),
+        });
+      }
+    }
+
+    const parentClass = node.extends?.[0]?.type?.name;
+
+    const codegenMetadata: CodegenMetadata = {
+      typeName: structName,
+      kind: "struct",
+      detailedMembers,
+      methodSignatures,
+      operatorOverloads: [],
+      implementedInterfaces,
+      typeParameters: [],
+      parentClass,
+      requiresRuntimeMetadata: true,
+      constructorSignature: {
+        parameters: ctorParams.map((p) => ({
+          name: p.name,
+          type: p.type,
+          hasDefault: p.hasDefault,
+          defaultValue: p.defaultValue,
+          isRest: false,
+        })),
+        requiredCount,
+      },
+    };
+
     // Register struct type
     const structType: InferredType = {
       kind: "struct",
@@ -746,8 +807,14 @@ class CollectTypesPass extends BaseAstTreeWalker {
         params: ctorParams,
         requiredCount: requiredCount,
       },
+      detailedMembers,
+      methodSignatures,
+      implementedInterfaces,
+      parentClass,
+      requiresRuntimeMetadata: true,
+      codegenMetadata,
     };
-    
+
     this.typeEnv.bindIdentifier(structName, structType, node);
     this.context.log(LogLevel.Debug, `Collected struct type '${structName}' with ${members.length} members`);
   }

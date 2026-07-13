@@ -675,15 +675,35 @@ export class LLangAstBuilder extends BaseCstVisitor {
       generics = nameData.generics || [];
     }
 
-    // Pair each `:extends` / `:implements` keyword with the type reference that FOLLOWS it, by
-    // source offset.
-    //
-    // The CST hands back `ExtendsModKw`, `ImplementsModKw` and `typeRef` as three flat arrays with
-    // no linkage between them. The old code walked them by index, assuming every `:extends` came
-    // before every `:implements` -- so `(defclass D :implements I :extends B)` assigned `I` to the
-    // extends clause and `B` to the implements clause. Offsets have no such assumption.
+    const { extendsNodes, implementsNodes } = this.pairInheritanceClauses(ctx);
+    const body = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
+
+    return this.makeNode("class", ctx, {
+      name,
+      modifiers,
+      implements: implementsNodes,
+      extends: extendsNodes,
+      generics,
+      body,
+    });
+  }
+
+  /**
+   * Pair each `:extends` / `:implements` keyword with the type reference that FOLLOWS it, by source
+   * offset.
+   *
+   * The CST hands back `ExtendsModKw`, `ImplementsModKw` and `typeRef` as three flat arrays with no
+   * linkage between them. The old code walked them by INDEX, assuming every `:extends` came before
+   * every `:implements` -- so `(defclass D :implements I :extends B)` assigned `I` to the extends
+   * clause and `B` to the implements clause. Offsets have no such assumption.
+   *
+   * Shared by `classDecl` and `structDecl` (D11d). A struct had no inheritance clauses at all until
+   * D11; giving it a second copy of this would have given it a second copy of the bug to rediscover.
+   */
+  private pairInheritanceClauses(ctx: any): { extendsNodes: any[]; implementsNodes: any[] } {
     const extendsNodes: any[] = [];
     const implementsNodes: any[] = [];
+
     const clauses = [
       ...(ctx.ExtendsModKw ?? []).map((k: any) => ({ kind: "extends", at: k.startOffset })),
       ...(ctx.ImplementsModKw ?? []).map((k: any) => ({ kind: "implements", at: k.startOffset })),
@@ -699,16 +719,7 @@ export class LLangAstBuilder extends BaseCstVisitor {
       (clauses[i].kind === "extends" ? extendsNodes : implementsNodes).push(node);
     }
 
-    const body = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
-
-    return this.makeNode("class", ctx, {
-      name,
-      modifiers,
-      implements: implementsNodes,
-      extends: extendsNodes,
-      generics,
-      body,
-    });
+    return { extendsNodes, implementsNodes };
   }
 
   classOrInterfaceName(ctx: any): { name: ast.TypeNameNode; generics: ast.TypeNameNode[] } {
@@ -745,8 +756,15 @@ export class LLangAstBuilder extends BaseCstVisitor {
   structDecl(ctx: any): ast.StructNode {
     const modifiers = ctx.modifier ? ctx.modifier.map((m: any) => this.visit(m)) : [];
     const name = ctx.typeName ? this.visit(ctx.typeName[0]) : null;
+    const { extendsNodes, implementsNodes } = this.pairInheritanceClauses(ctx);
     const body = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
-    return this.makeNode("struct", ctx, { name, modifiers, body });
+    return this.makeNode("struct", ctx, {
+      name,
+      modifiers,
+      implements: implementsNodes,
+      extends: extendsNodes,
+      body,
+    });
   }
 
   enumDecl(ctx: any): ast.EnumNode {

@@ -457,9 +457,17 @@ EnumKeyName
   / String
 
 // Struct
+//
+// `:implements` / `:extends` are D11. Without them this rule fell straight through to StructBody,
+// which is `Expression` -- so `(defstruct Rect :implements Shape ...)` PARSED, and dumped the clause
+// into the body as two junk bare identifiers (`:implements` and `Shape`). The interface was simply
+// forgotten and the program ran. grammar_v2 refused the same source outright; the LOUD frontend was
+// the correct one, and this silent acceptance is what made the divergence dangerous.
 Struct
-  = _ DefStructKw __ modifiers:(@Modifier _)* _ name:TypeName? _ body:StructBody* {
-    return makeNode("struct", { name, modifiers, body });
+  = _ DefStructKw __ modifiers:(@Modifier _)* _ name:TypeName? _ ext:(Implements / Extends)* _ body:StructBody* {
+    const _implements = ext.filter(x => x._type === "implements");
+    const _extends = ext.filter(x => x._type === "extends");
+    return makeNode("struct", { name, modifiers, implements: _implements, extends: _extends, body });
   }
 
 StructBody

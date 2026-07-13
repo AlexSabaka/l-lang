@@ -359,6 +359,19 @@ export interface EnumKeyNode extends ASTNode<"enum-key"> {
 export interface StructNode extends ASTNode<"struct"> {
   name: TypeNameNode;
   modifiers: ModifierNode[];
+  /**
+   * `:implements` / `:extends` on a struct (D11).
+   *
+   * A struct had NO class surface at all -- no inheritance clauses in either the AST or the grammar.
+   * grammar_v2 refused `(defstruct Rect :implements Shape ...)` outright; the PEG parsed it and
+   * dumped the clause into `body` as two junk bare identifiers, so the interface was forgotten and the
+   * program ran.
+   *
+   * No `generics` yet: `(defstruct Box<T> ...)` is still a parse error in both frontends, and nothing
+   * in the corpus asks for it.
+   */
+  implements: ImplementsNode[];
+  extends: ExtendsNode[];
   body: ASTNode[];
 }
 
