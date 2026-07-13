@@ -740,6 +740,43 @@ evaluation and passing a run-time value is a contradiction, and it is now `LL009
 what defeated the fold. `evaluateExpression` returns a RESULT rather than `undefined`-means-failure,
 so a genuine `undefined` is no longer mistaken for an error, and the reason reaches the diagnostic.
 
+## D3 — metaprogramming: `defmacro` and `quote` (D3d)
+
+### `defmacro` is reserved, and refused BY NAME
+
+D3: macros are OUT for 1.0, and `(defmacro ...)` is *"a hard 'not implemented in 0.x' error, never a
+silent call."* Never a silent call — and equally, never an **unlocated** one.
+
+`DefMacroKw` was lexed by both frontends and consumed by no rule, so `(defmacro foo [x] ...)` gave
+either a bewildering parse error about an unexpected `)` (grammar_v2) or a parse as a **call to an
+undefined function named `defmacro`** (PEG) — exactly the "compiles with zero errors into
+syntactically invalid JavaScript" D3 complains of.
+
+**Reserving a keyword means PARSING it.** Both frontends now accept the form, purely so the compiler
+can refuse it by name, with a location: **`LL0023`**, which also says what metaprogramming *is*
+today (`:comptime` and `defmodifier`).
+
+### `quote` emits DATA
+
+`'(+ 1 2)` used to compile to `JSON.stringify(node)` — the **string**
+`"{\"_type\":\"quote\",...}"` — so `expr.nodes[0]` was a `TypeError`, because a string has no
+`.nodes`. Code-as-data was code-as-**text**, which is code-as-nothing. It now emits an object
+literal you can walk.
+
+The value is the quoted **datum**, not the quote wrapper: `'x` is a symbol, `'(a b)` is a list. The
+`quote` node is a compile-time marker with no business surviving into the program's data.
+
+**`QuoteNode.nodes` was declared `ASTNode[]` and was an array in neither frontend consistently** —
+grammar_v2 *unwrapped* the list (an array for `'(a b)`, a bare node for `'x`), PEG kept the list node.
+Another declared-type-is-a-lie, in the family of `TypeDefNode` (Phase 2) and `ClassNode.generics`
+(P7a). Normalised to PEG's shape, which preserves the structure. Fixing the declared type immediately
+caught a consumer that had assumed the array and was emitting `'((+ 1 2))` — a different program.
+
+`'"Hello {(name)}"` is **not** a quote — it is a `formatted-string`, split off by a negative lookahead
+(`/'(?!")/`) in both frontends. They share a leading `'` and nothing else. Pinned by a harness case.
+
+**This is code as DATA, not code as CODE.** There is no `eval`.
+
 ## Open findings
 
 - ~~**`:comptime` is accepted and IGNORED.**~~ **RETRACTED — this was false.**
@@ -768,6 +805,19 @@ so a genuine `undefined` is no longer mistaken for an error, and the reason reac
   `:comptime` variable that cannot be folded raises `LL0099` (correct), while a `:comptime` *call*
   that cannot be folded degrades **silently** to run time. That is the "silently degrades" class,
   and it is what the phase should kill.
+
+- **Member access after an indexer does not parse.** `expr.nodes[0].id` emits
+  `expr.nodes[0], id` — a comma expression, with `id` as a separate (undefined) identifier. The `.id`
+  is simply lost. `primaryExpr` allows `identifier indexerSuffix*` with no member access afterwards.
+  Reaching into quoted data, or any nested structure, wants this constantly.
+
+- **`eval` / a runtime AST interpreter does not exist.** `RuntimeProvider` registers `"eval": ""`, so
+  `(eval x)` falls through to host JavaScript's `eval`. Quote is now code-as-DATA; executing a quoted
+  form is code-as-CODE, and needs a second evaluator — at run time this time, on top of the
+  compile-time one `:comptime` already has. `01_quoting.lisp` wants it.
+
+- **Quasiquote / unquote do not exist.** `QuoteNode.mode` is written by both parsers, declared nowhere
+  and read nowhere; the PEG's `Unquoted` rule matches *whitespace* and is referenced by zero rules.
 
 - **A function body that is ONE parenthesized block silently loses its implicit return.**
 

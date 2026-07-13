@@ -79,6 +79,7 @@ export type NodeType =
   | "mapped-type"
   | "modifier"
   | "modifier-def"
+  | "macro-def"
   | "variable"
   | "function"
   | "parameter"
@@ -147,8 +148,23 @@ export interface ListNode extends ASTNode<"list"> {
   nodes: ASTNode[];
 }
 
+/**
+ * `'(+ 1 2)`, `'sym`.
+ *
+ * `nodes` is the quoted DATUM -- ONE node. In a Lisp, quote returns the datum: `'(a b)` is a list,
+ * `'x` is a symbol. So `'(+ 1 2)` carries a `list` node, not the list's elements.
+ *
+ * It was declared `ASTNode[]` and was an array in neither frontend consistently: grammar_v2 UNWRAPPED
+ * the list (yielding an array for `'(a b)` and a bare node for `'x`), while PEG kept the list node.
+ * Another declared-type-is-a-lie, in the same family as `TypeDefNode` (Phase 2) and `ClassNode.generics`
+ * (P7a). Normalised to PEG's shape, which is the one that preserves the structure.
+ *
+ * NOTE `'"Hello {(name)}"` is NOT a quote -- it is a `formatted-string`, split off by a negative
+ * lookahead (`/'(?!")/`) in both frontends. Quote and string interpolation share a leading `'` and
+ * nothing else.
+ */
 export interface QuoteNode extends ASTNode<"quote"> {
-  nodes: ASTNode[];
+  nodes: ASTNode;
 }
 
 export interface VectorNode extends ASTNode<"vector"> {
@@ -330,6 +346,23 @@ export interface TypeDefNode extends ASTNode<"type-def"> {
 export interface ModifierDefNode extends ASTNode<"modifier-def"> {
   name: string;
   params: ParameterNode[];
+  body: ASTNode[];
+}
+
+/**
+ * `(defmacro ...)` / `(defsyntax ...)`.
+ *
+ * D3 rules macros OUT for 1.0, and reserves the keywords: `(defmacro ...)` is a hard
+ * "not implemented in 0.x" error, NEVER a silent call. So the form is PARSED -- that is what
+ * "reserved" means -- and then rejected by name (LL0023), which is the only way to give it a located
+ * diagnostic rather than a mystifying parse error about an unexpected `)`.
+ *
+ * Nothing consumes this node beyond that check. It exists to be refused clearly.
+ */
+export interface MacroDefNode extends ASTNode<"macro-def"> {
+  /** `defmacro` or `defsyntax` -- so the diagnostic can quote what was actually written. */
+  keyword: string;
+  name?: IdentifierNode;
   body: ASTNode[];
 }
 

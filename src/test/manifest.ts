@@ -105,7 +105,14 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "04-data-types/01_quoting.lisp": {
     status: "xfail",
-    reason: "D3: homoiconicity/quote is broken (compiles to a JSON string)",
+    reason:
+      "Quote is no longer 'broken (compiles to a JSON string)' -- D3d fixed that, and this file now " +
+      "compiles and runs. It is blocked on two things it asks for that do not exist. (1) It wants a " +
+      "CONS/LIST representation -- its own comment says `'(+ 1 2)` should be `[\"+\", 1, 2]` -- and " +
+      "quote emits the AST datum, `{_type:'list', nodes:[...]}`. Which of those homoiconicity means " +
+      "is a language decision, not a bug. (2) It wants `(eval logic)`, which needs a runtime AST " +
+      "interpreter: `RuntimeProvider` registers `\"eval\": \"\"`, so it falls through to host JS eval. " +
+      "Both are out of scope for D3, whose ruling is ':comptime + defmodifier'.",
   },
   "04-data-types/02_maps.lisp": {
     status: "xfail",

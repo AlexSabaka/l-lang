@@ -2578,11 +2578,64 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return { type: "Literal", value: null, raw: `/* ${node.comment} */` };
   }
 
-  visitQuote(node: ast.QuoteNode): ESTree.Literal {
-    const serialized = JSON.stringify(node, (key, val) =>
-      ["_location", "_parent"].includes(key) ? undefined : val
-    );
-    return ESTreeBuilder.literal(node, serialized);
+  /**
+   * Quote emits DATA. `'(+ 1 2)` becomes an object you can walk:
+   *
+   *     { _type: "list", nodes: [ { _type: "simple-identifier", id: "+" }, ... ] }
+   *
+   * It used to emit `JSON.stringify(node)` -- so `'(+ 1 2)` compiled to the STRING
+   * `"{\"_type\":\"quote\",\"nodes\":{...}}"`, and `expr.nodes[0]` was a TypeError, because a string
+   * has no `.nodes`. Code-as-data was code-as-TEXT, which is code-as-nothing.
+   *
+   * The value is the quoted DATUM, not the quote wrapper: the `quote` node is a compile-time marker
+   * and has no business surviving into the program's data. `'x` is a symbol; `'(a b)` is a list.
+   *
+   * `_location` and `_parent` are dropped. `_parent` is cyclic and would not serialise at all; and
+   * neither is data ABOUT the program -- they are bookkeeping about the compile.
+   *
+   * This is code as DATA, not code as CODE: there is no `eval`. Executing a quoted form needs a
+   * runtime AST interpreter, which is out of scope (see the open findings).
+   */
+  visitQuote(node: ast.QuoteNode): ESTree.Expression {
+    return this.dataToESTree(node.nodes, node);
+  }
+
+  /** A plain JS value -> the ESTree expression that reconstructs it. */
+  private dataToESTree(value: any, at: ast.ASTNode): ESTree.Expression {
+    if (value === null || value === undefined) {
+      return ESTreeBuilder.literal(at, null);
+    }
+
+    if (Array.isArray(value)) {
+      return {
+        type: "ArrayExpression",
+        elements: value.map((v) => this.dataToESTree(v, at)),
+        loc: ESTreeBuilder.loc(at),
+      } as ESTree.ArrayExpression;
+    }
+
+    if (typeof value === "object") {
+      const properties = Object.keys(value)
+        .filter((key) => key !== "_location" && key !== "_parent")
+        .map((key) => ({
+          type: "Property",
+          key: ESTreeBuilder.literal(at, key),
+          value: this.dataToESTree(value[key], at),
+          kind: "init",
+          method: false,
+          shorthand: false,
+          computed: false,
+        })) as ESTree.Property[];
+
+      return {
+        type: "ObjectExpression",
+        properties,
+        loc: ESTreeBuilder.loc(at),
+      } as ESTree.ObjectExpression;
+    }
+
+    // string | number | boolean
+    return ESTreeBuilder.literal(at, value);
   }
 
   visitNull(node: ast.NullNode) {

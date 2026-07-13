@@ -23,6 +23,29 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
   }
 
   /**
+   * D3: `defmacro` / `defsyntax` are OUT for 1.0, and the keywords are RESERVED --
+   * "a hard 'not implemented in 0.x' error, never a silent call."
+   *
+   * Never a silent call, and equally never an UNLOCATED one. `DefMacroKw` was lexed by both
+   * frontends and consumed by no rule, so `(defmacro foo [x] ...)` gave you either a bewildering
+   * parse error about an unexpected `)` (grammar_v2) or -- worse, and exactly what D3 complains of --
+   * a parse as a CALL to an undefined function named `defmacro` (PEG). Both frontends now parse the
+   * form, purely so that it can be refused here, by name, with a location.
+   */
+  visitMacroDef(node: ast.MacroDefNode) {
+    const name = (node.name as any)?.id;
+    this.reportModifierError(
+      node,
+      "LL0023",
+      `'${node.keyword}' is not implemented in 0.x. Macros are planned, and the keyword is ` +
+        `reserved${name ? ` -- '${name}' is not defined` : ""}. ` +
+        `Metaprogramming today is ':comptime' (compile-time evaluation) and ` +
+        `'defmodifier' (a decorator).`
+    );
+    return node;
+  }
+
+  /**
    * D4: an unknown `:modifier` is a hard error, whitelisted per construct, with a did-you-mean.
    *
    * This replaces two blocks that sat commented out here for a long time. They could never have

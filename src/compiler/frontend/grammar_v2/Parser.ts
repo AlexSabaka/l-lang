@@ -63,6 +63,7 @@ class LLangParser extends CstParser {
   interfaceDecl: ParserMethod<[], CstNode>;
   typeDefDecl: ParserMethod<[], CstNode>;
   modifierDefDecl: ParserMethod<[], CstNode>;
+  macroDecl: ParserMethod<[], CstNode>;
   importExpr: ParserMethod<[], CstNode>;
   importDefinition: ParserMethod<[], CstNode>;
   importSymbols: ParserMethod<[], CstNode>;
@@ -154,6 +155,7 @@ class LLangParser extends CstParser {
         { ALT: () => this.SUBRULE(this.interfaceDecl) },
         { ALT: () => this.SUBRULE(this.typeDefDecl) },
         { ALT: () => this.SUBRULE(this.modifierDefDecl) },
+        { ALT: () => this.SUBRULE(this.macroDecl) },
         // Control flow (keywords: when, if, cond, for, while, try, match)
         { ALT: () => this.SUBRULE(this.whenExpr) },
         { ALT: () => this.SUBRULE(this.ifExpr) },
@@ -872,6 +874,26 @@ class LLangParser extends CstParser {
     });
 
     // defmodifier name [params] body*
+    /**
+     * `(defmacro name [params] body)`.
+     *
+     * D3 rules macros OUT for 1.0 and RESERVES the keyword: `(defmacro ...)` must be a hard
+     * "not implemented in 0.x" error, never a silent call. Reserving it means PARSING it -- so the
+     * compiler can refuse it by name, with a location, instead of dying on a bewildering
+     * "Expecting RParen but found ..." three tokens later.
+     *
+     * `DefMacroKw` has always been lexed by both frontends and consumed by no rule. Deliberately
+     * permissive about what follows: the form is rejected outright, so there is nothing to be gained
+     * by being strict about the shape of something we will not compile.
+     */
+    this.macroDecl = this.RULE("macroDecl", () => {
+      this.CONSUME(t.DefMacroKw);
+      this.OPTION(() => this.CONSUME(t.Identifier));
+      this.MANY(() => {
+        this.SUBRULE(this.expression);
+      });
+    });
+
     this.modifierDefDecl = this.RULE("modifierDefDecl", () => {
       this.CONSUME(t.DefModifierKw);
       this.CONSUME(t.Identifier);

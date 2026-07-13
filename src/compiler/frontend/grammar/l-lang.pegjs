@@ -55,6 +55,9 @@ Expression "expression"
   // Custom modifier definitions
   / DefModifier
 
+  // Reserved, and refused: see Macro above
+  / Macro
+
   // Control flow expressions
   / When
   / If
@@ -443,6 +446,19 @@ TypeDef
   }
 
 // Custom modifier definition
+// `(defmacro ...)`. D3 rules macros OUT for 1.0 and RESERVES the keyword: it must be a hard
+// "not implemented in 0.x" error, never a silent call. Reserving it means PARSING it, so the
+// compiler can refuse it BY NAME with a location.
+//
+// PEG had no rule, so `defmacro` fell through to Identifier and `(defmacro foo ...)` parsed as a CALL
+// to an undefined function -- which is how it "compiled with zero errors into syntactically invalid
+// JavaScript" (D3's words). Deliberately permissive about what follows: the form is rejected, so
+// there is nothing to gain by being strict about the shape of something we will not compile.
+Macro
+  = _ DefMacroKw __ name:Identifier? _ body:Expression* {
+    return makeNode("macro-def", { keyword: "defmacro", name, body });
+  }
+
 DefModifier
   = _ DefModifierKw __ name:ModifierName _ params:("[" _ @FunctionParameter|.., ","?| _ "]" _)?
     _ body:Expression* _ {

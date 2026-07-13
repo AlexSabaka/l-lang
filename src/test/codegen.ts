@@ -308,8 +308,14 @@ const CASES: Case[] = [
   {
     name: "quote is DATA, not a JSON string",
     source: `(let expr '(+ 1 2))
-(console.log expr.nodes[0].id)`,
-    expect: ["+"],
+(let op expr.nodes[0])
+(console.log op.id)
+(console.log expr._type)`,
+    expect: ["+", "list"],
+    // Written in two steps deliberately. `expr.nodes[0].id` -- member access AFTER an indexer --
+    // does not parse: it emits `expr.nodes[0], id`, a comma expression, and `id` becomes a separate
+    // argument. That is a real grammar bug, it has nothing to do with quote, and it is recorded as
+    // an open finding rather than absorbed here.
     wasBroken: "visitQuote emitted JSON.stringify(node), so `expr` was a STRING and expr.nodes a TypeError",
   },
   {

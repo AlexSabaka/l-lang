@@ -34,7 +34,10 @@ export class LlangTransformerAstVisitor extends BaseAstVisitor {
   }
 
   visitQuote(node: ast.QuoteNode): any {
-    return `'(${this.mapVisitJoinNodes(node.nodes || [])})`;
+    // `nodes` is the quoted DATUM -- one node, which for `'(a b)` is itself a `list` and prints its
+    // own parentheses. This used to wrap it in a second pair, so round-tripping `'(+ 1 2)` emitted
+    // `'((+ 1 2))` -- and for `'x`, `'(x)`, which is a different program.
+    return `'${this.visit(node.nodes)}`;
   }
 
   visitVector(node: ast.VectorNode): any {

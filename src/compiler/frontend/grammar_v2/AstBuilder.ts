@@ -104,7 +104,7 @@ export class LLangAstBuilder extends BaseCstVisitor {
     const alternatives = [
       "comment", "importExpr", "exportExpr", "variable", "functionExpr",
       "classDecl", "structDecl", "enumDecl", "interfaceDecl", "typeDefDecl",
-      "modifierDefDecl", "whenExpr", "ifExpr", "condExpr", "forExpr",
+      "modifierDefDecl", "macroDecl", "whenExpr", "ifExpr", "condExpr", "forExpr",
       "whileExpr", "tryCatchExpr", "matchExpr", "awaitExpr", "spreadExpr",
       "assignmentOrExpr", "quoteExpr", "nil", "boolean", "number", "string",
     ];
@@ -457,15 +457,14 @@ export class LLangAstBuilder extends BaseCstVisitor {
   }
 
   quoteExpr(ctx: any): ast.QuoteNode {
-    let nodes;
-    if (ctx.list) {
-      // '(...)
-      const listNode = this.visit(ctx.list[0]);
-      nodes = listNode.nodes;
-    } else {
-      // 'expr
-      nodes = this.visit(ctx.expression[0]);
-    }
+    // The quoted DATUM -- one node. `'(a b)` is a LIST; `'x` is a symbol.
+    //
+    // The list branch used to return `listNode.nodes`, unwrapping the list into a bare array of its
+    // elements -- so `'(a b)` and `'x` had different shapes, and neither matched the declared
+    // `ASTNode[]`. PEG kept the list node; this now agrees with it.
+    const nodes = ctx.list
+      ? this.visit(ctx.list[0])
+      : this.visit(ctx.expression[0]);
     return this.makeNode("quote", ctx, { mode: "default", nodes });
   }
 
@@ -765,6 +764,15 @@ export class LLangAstBuilder extends BaseCstVisitor {
     const name = ctx.identifier ? this.visit(ctx.identifier[0]) : null;
     const type = ctx.type ? this.visit(ctx.type[0]) : null;
     return this.makeNode("type-def", ctx, { name, type, modifiers });
+  }
+
+  /** `(defmacro ...)` -- parsed so it can be REFUSED by name (LL0023). See ast.MacroDefNode. */
+  macroDecl(ctx: any): ast.MacroDefNode {
+    const name = ctx.Identifier ? this.makeNode("simple-identifier", ctx, {
+      id: ctx.Identifier[0].image,
+    }) : undefined;
+    const body = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
+    return this.makeNode("macro-def", ctx, { keyword: "defmacro", name, body });
   }
 
   modifierDefDecl(ctx: any): ast.ModifierDefNode {

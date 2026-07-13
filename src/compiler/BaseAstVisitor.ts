@@ -63,6 +63,7 @@ export class BaseAstVisitor {
         "mapped-type": this.visitMappedType.bind(this),
         "modifier": this.visitModifier.bind(this),
         "modifier-def": this.visitModifierDef?.bind(this),
+        "macro-def": this.visitMacroDef?.bind(this),
         "variable": this.visitVariable.bind(this),
         "function": this.visitFunction.bind(this),
         "parameter": this.visitParameter.bind(this),
@@ -239,6 +240,10 @@ export class BaseAstVisitor {
 
   visitModifier(node: ast.ModifierNode): any {
     return this.onUnhandled(node, "visitModifier");
+  }
+
+  visitMacroDef?(node: ast.MacroDefNode): any {
+    return this.onUnhandled(node, "visitMacroDef");
   }
 
   visitModifierDef?(node: ast.ModifierDefNode): any {
