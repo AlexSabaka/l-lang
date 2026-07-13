@@ -884,6 +884,30 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
             bodyStatements.push(
               ESTreeBuilder.returnStatement(x, visited as ESTree.Expression)
             );
+          } else if ((visited as ESTree.Node).type === "BlockStatement") {
+            // A body written as ONE PARENTHESIZED BLOCK emits a BlockStatement, and its value was
+            // simply dropped -- the implicit return above only fired on an EXPRESSION. So:
+            //
+            //     (fn f [n] ((console.log "side") (* n 2)))   ->  undefined
+            //     (fn f [n]  (console.log "side") (* n 2))    ->  8
+            //
+            // The same program, two spellings, two different answers. The corpus works around it by
+            // writing an explicit `(return ...)` inside such blocks -- every function in
+            // 01-basics/01_function_types.lisp does.
+            //
+            // `withTrailingReturn` is the same helper visitWhen and visitMatch already use to give a
+            // multi-statement body a value. The block's statements are SPLICED into the function
+            // body rather than left nested, so the two spellings emit the same JavaScript, which is
+            // the whole point: they are the same program.
+            //
+            // Note it returns the statements untouched when the tail is not an expression (an `if`,
+            // a loop, a `return`), so this adds a value where one was written and nowhere else.
+            bodyStatements.push(
+              ...this.withTrailingReturn(
+                (visited as ESTree.BlockStatement).body as ESTree.Statement[],
+                x
+              )
+            );
           } else {
             bodyStatements.push(visited as ESTree.Statement);
           }
