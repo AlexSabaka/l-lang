@@ -83,6 +83,37 @@ function __ll_copy(v) {
   }
   return out;
 }
+// DESTRUCTURING binds by reference, and \`__ll_copy\` alone cannot fix it.
+//
+// \`(let [a b] structs)\` wraps the INITIALIZER -- which is the ARRAY. An array carries no struct
+// marker, so \`__ll_copy\` returns it unchanged and the bound names alias its elements: a no-op that
+// LOOKS like a fix. The elements are what need copying, so the container has to be opened first.
+//
+// A fresh container is returned rather than mutating the original: the original is the caller's array,
+// and copy-on-destructure must not write to it. The container itself is transient -- destructuring
+// immediately takes it apart -- so the allocation costs nothing that matters.
+function __ll_copy_each(v) {
+  if (v === null || typeof v !== 'object') return v;
+  if (Array.isArray(v)) return v.map(__ll_copy);
+
+  // An object PATTERN -- \`(let {:x a} p)\`. A struct's own fields are already deep-copied by __ll_copy,
+  // so this only fires for a plain map, whose values still need it.
+  if (v.constructor && v.constructor.__ll_struct === true) return __ll_copy(v);
+
+  const out = {};
+  for (const k of Object.keys(v)) out[k] = __ll_copy(v[k]);
+  return out;
+}
+// \`(for :each [a b] :from pairs)\` -- a DESTRUCTURING loop variable.
+//
+// The pattern binds each element's MEMBERS, so every element is itself a container to open. Applying
+// __ll_copy_each to the collection would copy the elements (which are arrays, not structs, and so come
+// back unchanged); it has to be applied TO each element. \`Array.from\` rather than \`.map\` so a Map, a
+// string or a generator works too -- \`:from\` is not required to be an array.
+function __ll_map_copy_each(coll) {
+  if (coll == null) return coll;
+  return Array.from(coll, __ll_copy_each);
+}
 function __ll_index(obj, key) {
   if (obj == null) throw new TypeError('cannot index into nil');
   if (Array.isArray(obj) || typeof obj === 'string') {

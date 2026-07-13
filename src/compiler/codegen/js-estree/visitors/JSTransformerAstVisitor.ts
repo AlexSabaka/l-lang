@@ -1279,8 +1279,14 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       ? this.bindingPatternToESTree(node.name as ast.ASTNode)
       : (this.visit(node.name) as ESTree.Identifier);
     // `(mut b a)` COPIES the struct (D11). This is the binding that made value semantics a lie.
+    //
+    // A DESTRUCTURING binding needs the other helper. `asValue` wraps the initializer -- which here is
+    // the CONTAINER, and a container carries no struct marker, so `__ll_copy` would hand it straight
+    // back and the bound names would alias its elements. `__ll_copy_each` opens it first.
     const value = node.value
-      ? this.asValue(this.visit(node.value) as ESTree.Expression, node.value)
+      ? destructuring
+        ? this.asValueEach(this.visit(node.value) as ESTree.Expression, node.value)
+        : this.asValue(this.visit(node.value) as ESTree.Expression, node.value)
       : null;
     this.popScope();
 
@@ -1800,8 +1806,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     // The copy goes in the BODY, per iteration -- wrapping `right` would copy the ARRAY, which carries
     // no marker and would therefore be a no-op that looks like a fix.
     //
-    // Destructuring (`:each [a b]`) is not covered: the names are bound through a pattern, not a single
-    // identifier. Surfaced as an open finding rather than half-done here.
+    // A DESTRUCTURING loop variable (`:each [a b]`) cannot use the prologue -- the names are bound
+    // through a pattern, not a single identifier there is anything to re-assign. It is handled on the
+    // COLLECTION side instead: see the `right` below.
     const perIterationCopy: ESTree.Statement[] = destructuring
       ? []
       : this.parameterCopyPrologue([variable]);
@@ -1816,7 +1823,17 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     const forOfStmt: ESTree.ForOfStatement = {
       type: "ForOfStatement",
       left: variable,
-      right: collection,
+      // A destructuring loop variable binds each element's MEMBERS, so each element is a container to
+      // open -- `__ll_map_copy_each` applies the copy TO each element rather than to the collection.
+      // (Copying the collection would copy the ELEMENTS, which are arrays, not structs, and would come
+      // back unchanged: another no-op that looks like a fix.)
+      right: destructuring
+        ? (ESTreeBuilder.callExpression(
+            node,
+            ESTreeBuilder.identifier(node, "__ll_map_copy_each"),
+            [collection]
+          ) as ESTree.Expression)
+        : collection,
       body: loopBody,
       await: false,
       loc: ESTreeBuilder.loc(node),
@@ -2810,6 +2827,28 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return ESTreeBuilder.callExpression(
       (source ?? emitted) as any,
       ESTreeBuilder.identifier((source ?? emitted) as any, "__ll_copy"),
+      [emitted]
+    ) as ESTree.Expression;
+  }
+
+  /**
+   * Wrap an emitted expression in `__ll_copy_each(...)` -- the DESTRUCTURING form.
+   *
+   * `(let [a b] structs)` binds the container's ELEMENTS, so it is the elements that must be copied.
+   * `asValue` would wrap the container, which carries no struct marker, and `__ll_copy` would return it
+   * unchanged -- a no-op that looks exactly like a fix.
+   *
+   * Unconditional: `needsValueCopy` cannot help here. A vector literal `[a b]` is on its NEVER_A_STRUCT
+   * list (a vector is not a struct) and would be skipped -- but its ELEMENTS may well be structs, which
+   * is the entire case.
+   */
+  private asValueEach(
+    emitted: ESTree.Expression,
+    source: ast.ASTNode | undefined | null
+  ): ESTree.Expression {
+    return ESTreeBuilder.callExpression(
+      (source ?? emitted) as any,
+      ESTreeBuilder.identifier((source ?? emitted) as any, "__ll_copy_each"),
       [emitted]
     ) as ESTree.Expression;
   }
