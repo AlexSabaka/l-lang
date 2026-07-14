@@ -288,6 +288,41 @@ const CASES: Case[] = [
   },
 
   {
+    // Tg: the per-node TYPE CHANNEL. Codegen can ask "is this a struct?" instead of guessing.
+    //
+    // `__ll_copy` is D11's value semantics: a struct is copied on the way into a binding. Codegen had
+    // no type information at all -- `typeEnv` was assigned in Context.ts and never read -- so it
+    // wrapped EVERY value on the chance it might be a struct, and let the runtime marker check decide.
+    // In a program with no struct types anywhere, every one of those calls is provably dead.
+    //
+    // The asymmetry is deliberate and must stay: a type proving NOT-a-struct elides the copy; NO type
+    // keeps it. An empty channel must never read as "not a struct" -- that turns a missing type into
+    // an aliasing bug.
+    name: "a program with no structs emits no __ll_copy",
+    source: `(fn add [a <- Int b <- Int] -> Int (+ a b))
+(let x <- Int (add 2 3))
+(console.log x)`,
+    expect: ["5"],
+    // The CALL shapes, not the bare name -- the runtime shim necessarily contains `__ll_copy(` in its
+    // own definition and in `__ll_copy_each`. These two are what codegen used to emit here:
+    //     const x = __ll_copy(add(2, 3));   return __ll_copy(_2b(a, b));
+    emitted: { mustNot: [/__ll_copy\(add\(/, /__ll_copy\(_2b\(/] },
+    wasBroken: "codegen had no type channel, so it wrapped every value on the chance it was a struct",
+  },
+  {
+    // ...and the guard for the other direction: a STRUCT still gets copied. The elision must never
+    // reach a value that can actually carry the marker.
+    name: "a struct is still copied on the way into a binding",
+    source: `(defstruct P (mut :ctor x <- Int 0))
+(let a (P 1))
+(let b a)
+(b.x := 99)
+(console.log a.x b.x)`,
+    expect: ["1 99"],
+    emitted: { must: [/__ll_copy\(/] },
+    wasBroken: "not broken -- the guard that stops the type channel from eliding a REAL copy",
+  },
+  {
     // D17. `(x |> (.m a))` is a METHOD CALL on the piped value -- `x.m(a)` -- not a free call
     // `m(x, a)`.
     //

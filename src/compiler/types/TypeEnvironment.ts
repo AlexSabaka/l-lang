@@ -9,6 +9,31 @@ export class TypeEnvironment {
   private symbolTable: SymbolTable;
   private scopeStack: Scope[] = [];
 
+  /**
+   * THE TYPE CHANNEL: what type does THIS expression have?
+   *
+   * The scope frames above are a traversal stack -- `exitScope` pops them and their `localTypes` go
+   * with them, so when the pass ends every type it inferred is gone. That is why `typeEnv` was a dead
+   * local in `Context`: there was nothing behind the door. Codegen consequently had NO per-node type
+   * information at all, and had to guess -- with source-order lists, a hardcoded blacklist of field
+   * names lifted from the example corpus, and a `__ll_copy` wrapped around every value on the chance
+   * it might be a struct.
+   *
+   * This map is the answer to that question, and it OUTLIVES the pass. Identity-keyed, because the
+   * same node objects flow desugar -> types -> codegen, and because a source span is not an identity
+   * (see `setType`).
+   *
+   * It is deliberately SEPARATE from the symbol table's `inferredType`, which answers a different
+   * question -- "what is the shape of the type named `Dog`?" -- and is keyed by symbol, not by node.
+   * Both are needed. Neither substitutes for the other.
+   */
+  private readonly nodeTypes: Map<ast.ASTNode, InferredType> = new Map();
+
+  /** The per-node type channel, for codegen. Empty until the types stage has run. */
+  getNodeTypes(): ReadonlyMap<ast.ASTNode, InferredType> {
+    return this.nodeTypes;
+  }
+
   // Built-in primitive types
   private static PRIMITIVES: Map<string, InferredType> = new Map([
     ["Int", { kind: "primitive", name: "Int" }],
@@ -65,9 +90,13 @@ export class TypeEnvironment {
    * Two distinct nodes are two distinct nodes, whatever they point at in the source.
    */
   setType(node: ast.ASTNode, type: InferredType): void {
-    if (this.scopeStack.length === 0) {
-      return;
-    }
+    // The CHANNEL first, and unconditionally. The early-return below is about the memo -- and it used
+    // to guard this write too, so every expression at module top level, outside any entered scope, was
+    // recorded nowhere at all.
+    this.nodeTypes.set(node, type);
+
+    // The memo, which is scoped and is popped with its frame.
+    if (this.scopeStack.length === 0) return;
     this.scopeStack[this.scopeStack.length - 1].localTypes.set(node, type);
   }
 

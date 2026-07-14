@@ -4,7 +4,7 @@ import { generate } from "astring";
 import * as ast from "../../../frontend/ast";
 import { BaseAstVisitor } from "../../../BaseAstVisitor";
 import { Context, LogLevel, VERSION } from "../../../Context";
-import { ScopeType, SymbolEntry } from "../../../analysis/SymbolTable";
+import { ScopeType, SymbolEntry, InferredType } from "../../../analysis/SymbolTable";
 import { RuntimeProvider } from "../../../runtime";
 import {
   uniqueIdentifier,
@@ -2843,14 +2843,23 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   /**
    * Does this expression need a copy on the way into a binding, a parameter, or a collection slot?
    *
-   * Codegen has no type information (there is no per-node type channel; `typeEnv` is a dead local in
-   * Context.ts), so this cannot ask "is it a struct?" -- only "could it possibly be?". The runtime
-   * `__ll_copy` makes the real decision by looking for the marker; this is purely about not emitting a
-   * call that provably cannot do anything.
+   * Codegen CAN ask now -- see the channel below. The `NEVER_A_STRUCT` deny-list stays as the cheap
+   * syntactic answer for the cases no type is needed for (a literal is not a struct).
    */
   private needsValueCopy(node: ast.ASTNode | undefined | null): boolean {
     if (!node) return false;
     if (JSTransformerAstVisitor.NEVER_A_STRUCT.has(node._type)) return false;
+
+    // ASK. `context.nodeTypes` is the per-node type channel the types stage fills, so this is no
+    // longer "could it POSSIBLY be a struct?" but "is it one?".
+    //
+    // The asymmetry is the design: a type proving NOT-a-struct elides the copy; NO type says nothing,
+    // and the copy stays. Gradual typing means the channel is often empty, and an empty channel must
+    // never read as "not a struct" -- that turns a missing type into an aliasing bug, the exact class
+    // D11 exists to kill. Erring the other way merely leaves a redundant call around a value that
+    // cannot carry the marker.
+    const known = this.context.nodeTypes?.get(node);
+    if (known && this.provablyNotAStruct(known)) return false;
 
     // A FRESH construction is already a brand-new object -- `(let result (Complex))`. Copying it would
     // duplicate an object nobody else can reach. This is not just an optimisation: the corpus's whole
@@ -2873,6 +2882,35 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * Public because JSClassBuilder needs it too -- field initializers are emitted there, and the
    * builder reaches the visitor through an `any` to dodge a circular import.
    */
+  /**
+   * Does this inferred type PROVE the value is not a struct?
+   *
+   * Only `true` when we are certain. `Unknown` proves nothing. A `type-ref` is resolved through the
+   * symbol table, because that is where "what is the SHAPE of `Complex`?" lives -- the node channel and
+   * the symbol channel answer different questions, and both are needed right here.
+   */
+  private provablyNotAStruct(type: InferredType): boolean {
+    if (TypeChecker.isUnknown(type)) return false;
+
+    let t: InferredType = type;
+    if (t.kind === "type-ref" && t.refName) {
+      const resolved = this.context.symbolTable?.resolveSymbol(t.refName)?.inferredType;
+      if (!resolved) return false;
+      t = resolved;
+    }
+
+    // A struct -- or anything we cannot pin down -- keeps its copy.
+    return (
+      t.kind === "primitive" ||
+      t.kind === "function" ||
+      t.kind === "interface" ||
+      t.kind === "class" ||
+      t.kind === "map" ||
+      t.kind === "array" ||
+      (t.kind === "generic" && t.isArray === true)
+    );
+  }
+
   public asValue(
     emitted: ESTree.Expression,
     source: ast.ASTNode | undefined | null
@@ -2985,7 +3023,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     if ((type as any).optional || inner?.optional) return false;
 
     const name = typeof inner?.name === "string" ? inner.name : inner?.name?.name;
-    return typeof name === "string" && JSTransformerAstVisitor.PRIMITIVE_TYPE_NAMES.has(name);
+    if (typeof name !== "string") return false;
+    if (JSTransformerAstVisitor.PRIMITIVE_TYPE_NAMES.has(name)) return true;
+
+    // Not just the PRIMITIVES. A parameter annotated with a CLASS cannot hold a struct either -- and
+    // the symbol table has known which is which since the types stage ran. This used to consult a
+    // hardcoded list of primitive NAMES and nothing else, so every class-typed parameter in the corpus
+    // got a copy that provably could not do anything.
+    const declared = this.context.symbolTable?.resolveSymbol(name)?.inferredType;
+    return declared ? this.provablyNotAStruct(declared) : false;
   }
 
   /** A plain JS value -> the ESTree expression that reconstructs it. */

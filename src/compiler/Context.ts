@@ -22,7 +22,7 @@ import {
 } from "./codegen";
 
 import { ASTNode } from "./frontend/ast";
-import { SymbolTable } from "./analysis/SymbolTable";
+import { SymbolTable, InferredType } from "./analysis/SymbolTable";
 import { AstProvider } from "./frontend/AstProvider";
 import { DependencyGraph } from "./analysis/DependencyGraph";
 import { formatLogMessage, getCaller } from "./utils";
@@ -103,6 +103,15 @@ export class Context {
   public dependencyGraph: DependencyGraph;
   public astProvider: AstProvider;
   public symbolTable: SymbolTable = new SymbolTable(undefined);
+
+  /**
+   * What type does THIS expression node have? The types stage fills it; codegen reads it.
+   *
+   * Empty before the types stage runs -- and empty is a legitimate answer, not an error: gradual
+   * typing means codegen must still work when it knows nothing. Every consumer has to treat "no entry"
+   * as "I do not know", never as "it is not a struct".
+   */
+  public nodeTypes: ReadonlyMap<ASTNode, InferredType> = new Map();
   public performanceMetrics: PerformanceMetrics =
     new PerformanceMetrics();
   public results: RuleValidationResultsCollection =
@@ -368,7 +377,17 @@ export class Context {
     this.performanceMetrics.startTimer("types");
     const inferTypesVisitor = new InferTypesAstVisitor(this, this.symbolTable);
     inferTypesVisitor.inferTypes(ast);
-    const typeEnv = inferTypesVisitor.getTypeEnvironment();
+    // THE TYPE CHANNEL, finally read.
+    //
+    // This line has existed, assigned and NEVER READ, for the whole life of the type system -- codegen
+    // says so itself: "Codegen has no type information (there is no per-node type channel; `typeEnv`
+    // is a dead local in Context.ts)". So codegen guessed: source-order lists of what it had visited
+    // so far, a hardcoded blacklist of field names lifted from the example corpus, and a `__ll_copy`
+    // wrapped around EVERY value on the chance it might be a struct.
+    //
+    // It can ask now.
+    this.nodeTypes =
+      inferTypesVisitor.getTypeEnvironment()?.getNodeTypes() ?? new Map();
 
     // TypeCheckingValidatorAstVisitor used to run here. It was deleted: its dispatch built
     // `visit${node._type}` with no capitalisation at all, so even "variable" resolved to
