@@ -29,6 +29,7 @@
 import { CompilerOptions, LogLevel } from "../compiler/Context";
 import { ReplSession, ReplResult } from "../cli/repl/ReplSession";
 import { MultiLineBuffer } from "../cli/repl/MultiLineBuffer";
+import { ReplCompleter } from "../cli/repl/ReplCompleter";
 
 const VERBOSE = process.argv.includes("--verbose");
 const FRONTEND = (process.argv.find((a) => a.startsWith("--frontend="))?.split("=")[1] ??
@@ -40,7 +41,13 @@ type Step =
   /** Lines fed through the multi-line buffer; the completed form (if any) is then evaluated. */
   | { lines: string[] }
   | { reset: true }
-  | { delete: string };
+  | { delete: string }
+  /** `.type <expr>` -- must NOT enter history. */
+  | { type: string }
+  /** `.load <file>` -- path is relative to src/. */
+  | { load: string }
+  /** Tab-complete this line. */
+  | { complete: string };
 
 interface Expect {
   /** The value, rendered by `show()`. Structural -- never a chalk string. */
@@ -66,6 +73,16 @@ interface Expect {
   buffer?: "complete" | "incomplete" | "unbalanced" | "empty";
   /** For `{delete}` steps: what the deletion must have taken with it. */
   deleted?: { broke?: number; alsoRemoved?: string[] };
+  /** For `{type}` steps: the inferred type. */
+  inferred?: string;
+  /** For `{load}` steps: how many forms must have loaded cleanly. */
+  loaded?: number;
+  /** For `{complete}` steps: what must, and must not, be offered. */
+  completions?: { has?: string[]; hasNot?: string[] };
+  /** After an eval: what the emitted JavaScript must look like. */
+  js?: RegExp[];
+  /** After an eval: what `.symbols` must, and must not, report. */
+  symbols?: { has?: string[]; hasNot?: string[] };
 }
 
 interface Case {
@@ -317,6 +334,72 @@ const CASES: Case[] = [
   // -----------------------------------------------------------------------------------------
   // Multi-line.
   // -----------------------------------------------------------------------------------------
+  // -----------------------------------------------------------------------------------------
+  // Phase 5. Inspection, loading, and a completer that reads the language instead of guessing.
+  // -----------------------------------------------------------------------------------------
+  {
+    name: ".symbols lists what YOU defined -- not function parameters",
+    steps: [{ input: "(fn add [a <- Int b <- Int] -> Int (+ a b))" }],
+    expect: [{ symbols: { has: ["add"], hasNot: ["a", "b"] } }],
+    wasBroken:
+      "`.symbols` read symbolTable.getAllSymbols(), which holds EVERY symbol in the program -- so it " +
+      "listed `a, b` from inside `(fn add [a b] ...)` as though you had defined them at the prompt. " +
+      "Asking the cells what they declared is both correct and cheaper.",
+  },
+  {
+    name: ".js shows the JavaScript a form compiles to",
+    steps: [{ input: "(let x 5)" }],
+    expect: [{ js: [/var x = 5/] }],
+    wasBroken:
+      "there was no way to see the emitted code. For a COMPILER's own REPL that is the highest-value " +
+      "thing it can show you -- half the bugs in this refactor would have been obvious on sight.",
+  },
+  {
+    name: ".type infers without running, and without entering history",
+    steps: [
+      { input: "(fn add [a <- Int b <- Int] -> Int (+ a b))" },
+      { type: "(add 1 2)" },
+    ],
+    expect: [null, { inferred: "Int" }],
+    cells: 1, // the probe must leave no trace
+    wasBroken:
+      "there was no .type. The probe binds the expression to a throwaway name and reads that name's " +
+      "type back -- so it works for a bare identifier and an arbitrary expression alike. It must not " +
+      "enter history, or a `.type` would silently grow the session.",
+  },
+  {
+    name: ".load unwraps the conventional file wrapper",
+    steps: [{ load: "test/fixtures/repl/wrapped.lisp" }, { input: "(+ a b)" }],
+    expect: [{ loaded: 2 }, { value: "3" }],
+    cells: 3,
+    wasBroken:
+      "a file is written wrapped in ONE outer list, and that outer list is a BLOCK (D17). Loaded as a " +
+      "single cell, every binding in it would be block-scoped and invisible at the next prompt -- so " +
+      "`.load` unwraps the wrapper into sibling cells, which is what a session IS. Two traps: the " +
+      "wrapper's children include COMMENT nodes (so 'are they all lists?' must ignore them), and " +
+      "`_location.end.offset` is INCLUSIVE, so slicing to `end` drops the closing paren and the form " +
+      "no longer parses.",
+  },
+  {
+    name: "completion is derived from the language, not a stale list",
+    steps: [
+      { complete: "(defm" },
+      { complete: "(let :p" },
+      { complete: "ma" },
+    ],
+    expect: [
+      { completions: { has: ["defmodifier"] } },
+      { completions: { has: [":private"], hasNot: [":then", ":else", ":cond"] } },
+      { completions: { hasNot: ["map"] } },
+    ],
+    wasBroken:
+      "four hand-maintained arrays, all drifted. It offered `:cond`/`:then`/`:else`/`:each`/`:from` " +
+      "as MODIFIERS -- none of them are, and since D4 an unknown `:modifier` is a HARD ERROR, so the " +
+      "completer was proposing forms that cannot compile. It never learned `defmodifier`. And it " +
+      "offered `map`, `filter`, `reduce`, `fold` and `print` as builtins: MEASURED against " +
+      "RuntimeProvider.SYMBOL_MAP, not one of them exists. Now: keywords from the lexer's token " +
+      "table, modifiers from the D4 whitelist the checker enforces, builtins from the runtime shim.",
+  },
   {
     name: "a multi-line form is one cell",
     steps: [
@@ -468,6 +551,45 @@ function run(c: Case): string[] {
         continue;
       }
 
+      if ("type" in step) {
+        const out = session.inferType(step.type);
+        if (out.kind === "refused") {
+          bad.push(`step ${i + 1}: .type ${step.type} refused: ` +
+            out.diagnostics.map((d) => `${d.code} ${d.text}`).join("; "));
+        } else if (e?.inferred !== undefined && out.type !== e.inferred) {
+          bad.push(`step ${i + 1}: expected type ${e.inferred}, got ${out.type}`);
+        }
+        continue;
+      }
+
+      if ("load" in step) {
+        const out = session.load(step.load);
+        if (out.kind === "error") {
+          bad.push(`step ${i + 1}: .load ${step.load} failed: ${out.message}`);
+          continue;
+        }
+        const ok = out.results.filter((r) => r.result.kind === "value").length;
+        if (e?.loaded !== undefined && ok !== e.loaded) {
+          const why = out.results
+            .filter((r) => r.result.kind !== "value")
+            .map((r) => r.source.split("\n")[0])
+            .join(" | ");
+          bad.push(`step ${i + 1}: expected ${e.loaded} form(s) loaded, got ${ok}. failed: ${why || "(none)"}`);
+        }
+        continue;
+      }
+
+      if ("complete" in step) {
+        const [hits] = new ReplCompleter(session).complete(step.complete);
+        for (const want of e?.completions?.has ?? []) {
+          if (!hits.includes(want)) bad.push(`step ${i + 1}: expected \`${want}\` offered, got: ${hits.slice(0, 8).join(", ") || "(none)"}`);
+        }
+        for (const nope of e?.completions?.hasNot ?? []) {
+          if (hits.includes(nope)) bad.push(`step ${i + 1}: \`${nope}\` must NOT be offered, and was`);
+        }
+        continue;
+      }
+
       if ("lines" in step) {
         let completed: string | undefined;
         for (const line of step.lines) {
@@ -483,6 +605,21 @@ function run(c: Case): string[] {
       if (!e) continue;
       const problems = checkStep(e, res ?? ({ buffer: bufKind ?? "" } as any), bufKind);
       for (const p of problems) bad.push(`step ${i + 1}: ${p}`);
+
+      for (const re of e.js ?? []) {
+        if (!re.test(session.emittedJs)) {
+          bad.push(`step ${i + 1}: emitted JS must match ${re}, got ${JSON.stringify(session.emittedJs)}`);
+        }
+      }
+      if (e.symbols) {
+        const names = [...session.symbols().keys()];
+        for (const want of e.symbols.has ?? []) {
+          if (!names.includes(want)) bad.push(`step ${i + 1}: .symbols must list '${want}', got ${names.join(", ") || "(none)"}`);
+        }
+        for (const nope of e.symbols.hasNot ?? []) {
+          if (names.includes(nope)) bad.push(`step ${i + 1}: .symbols must NOT list '${nope}', and does`);
+        }
+      }
     }
 
     if (c.cells !== undefined && session.cells.length !== c.cells) {

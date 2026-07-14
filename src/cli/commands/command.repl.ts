@@ -6,7 +6,7 @@ import { getCompilerOptions } from "../getCompilerOptions";
 import { ReplSession } from "../repl/ReplSession";
 import { ReplRenderer } from "../repl/ReplRenderer";
 import { MultiLineBuffer } from "../repl/MultiLineBuffer";
-import { REPLCompleter } from "../repl/REPLCompleter";
+import { ReplCompleter } from "../repl/ReplCompleter";
 
 /**
  * The REPL's readline plumbing. Nothing else.
@@ -19,7 +19,7 @@ export function repl(command: Command) {
   const session = new ReplSession(getCompilerOptions(command));
   const render = new ReplRenderer();
   const buffer = new MultiLineBuffer();
-  const completer = new REPLCompleter(session.getContext());
+  const completer = new ReplCompleter(session);
 
   const PROMPT = chalk.green("> ");
   const CONTINUE = chalk.dim("· ");
@@ -30,7 +30,7 @@ export function repl(command: Command) {
     input: process.stdin,
     output: process.stdout,
     prompt: PROMPT,
-    completer: (line: string) => completer.getCompletions(line),
+    completer: (line: string) => completer.complete(line),
     terminal: true,
     historySize: 1000,
   });
@@ -76,7 +76,6 @@ export function repl(command: Command) {
     }
 
     const result = session.eval(fed.source);
-    completer.updateContext(session.getContext());
 
     switch (result.kind) {
       case "value":
@@ -132,6 +131,41 @@ function dotCommand(input: string, session: ReplSession, render: ReplRenderer): 
       }
       console.log(render.deleted(arg, session.delete(arg)));
       return;
+
+    case ".js": {
+      // The emitted JavaScript. For a compiler's own REPL this is the highest-value command in the
+      // list: you type a form and see exactly what codegen did with it.
+      if (!arg) {
+        console.log(render.js(session.emittedJs));
+        return;
+      }
+      const out = session.compileOnly(arg);
+      if (out.kind === "refused") out.diagnostics.forEach((d) => console.error(render.diagnostic(d)));
+      else console.log(render.js(out.js));
+      return;
+    }
+
+    case ".type": {
+      if (!arg) {
+        console.error(chalk.red("error: ") + ".type needs an expression, e.g. `.type (+ 1 2)`");
+        return;
+      }
+      const out = session.inferType(arg);
+      if (out.kind === "refused") out.diagnostics.forEach((d) => console.error(render.diagnostic(d)));
+      else console.log(render.type(out.type));
+      return;
+    }
+
+    case ".load": {
+      if (!arg) {
+        console.error(chalk.red("error: ") + ".load needs a file, e.g. `.load examples/x.lisp`");
+        return;
+      }
+      const out = session.load(arg);
+      if (out.kind === "error") console.error(chalk.red("error: ") + out.message);
+      else console.log(render.loaded(out.results));
+      return;
+    }
 
     case ".symbols":
       console.log(render.symbols(session.symbols()));

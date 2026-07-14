@@ -1,7 +1,7 @@
 import chalk from "chalk";
 import highlight from "cli-highlight";
 
-import { ReplDiagnostic, DeleteOutcome, Cell } from "./ReplSession";
+import { ReplDiagnostic, DeleteOutcome, Cell, ReplSymbol, ReplResult } from "./ReplSession";
 
 /**
  * Everything the user sees. The ONLY place chalk is allowed.
@@ -137,35 +137,62 @@ export class ReplRenderer {
     return lines.join("\n");
   }
 
-  symbols(symbols: Map<string, any>): string {
+  symbols(symbols: Map<string, ReplSymbol>): string {
     if (symbols.size === 0) return chalk.dim("nothing defined yet");
 
     const grouped = new Map<string, string[]>();
-    for (const [name, entry] of symbols) {
-      const kind = entry.type || "value";
-      if (!grouped.has(kind)) grouped.set(kind, []);
-      grouped.get(kind)!.push(name);
+    for (const [name, s] of symbols) {
+      if (!grouped.has(s.kind)) grouped.set(s.kind, []);
+      grouped.get(s.kind)!.push(name);
     }
 
     return [...grouped.entries()]
-      .map(
-        ([kind, names]) =>
-          chalk.bold(`  ${kind}`) + "\n" + chalk.dim(`    ${names.sort().join(", ")}`)
-      )
+      .map(([kind, names]) => chalk.bold(`  ${kind}`) + "\n" + chalk.dim(`    ${names.sort().join(", ")}`))
       .join("\n");
   }
 
-  types(symbols: Map<string, any>): string {
+  types(symbols: Map<string, ReplSymbol>): string {
     if (symbols.size === 0) return chalk.dim("nothing defined yet");
 
     const width = Math.max(...[...symbols.keys()].map((n) => n.length));
     return [...symbols.entries()]
-      .map(([name, entry]) => {
-        const t = entry.inferredType;
-        const shown = typeof t === "string" ? t : (t?.name ?? "?");
-        return `  ${name.padEnd(width)}  ${chalk.green(shown)}`;
-      })
+      .map(
+        ([name, s]) =>
+          `  ${name.padEnd(width)}  ${chalk.green(s.type)}` +
+          (s.mutable ? chalk.dim("  mut") : "")
+      )
       .join("\n");
+  }
+
+  /** The emitted JavaScript. The single most useful thing a compiler's REPL can show you. */
+  js(code: string): string {
+    if (!code.trim()) return chalk.dim("nothing compiled yet");
+    try {
+      return highlight(code, { language: "javascript", ignoreIllegals: true });
+    } catch {
+      return code;
+    }
+  }
+
+  type(t: string): string {
+    return chalk.green(t);
+  }
+
+  /** What a `.load` did, form by form. Failures are named; they are not swallowed. */
+  loaded(results: Array<{ source: string; result: ReplResult }>): string {
+    const ok = results.filter((r) => r.result.kind === "value").length;
+    const lines = [chalk.green(`loaded ${ok}/${results.length} form${results.length === 1 ? "" : "s"}`)];
+
+    for (const { source, result } of results) {
+      if (result.kind === "value") continue;
+      const why =
+        result.kind === "refused"
+          ? result.diagnostics.map((d) => `${d.code} ${d.text}`).join("; ")
+          : result.error.message;
+      lines.push(chalk.red("  failed: ") + this.code(source.split("\n")[0]) + chalk.dim(`\n    ${why}`));
+    }
+
+    return lines.join("\n");
   }
 
   history(cells: readonly Cell[]): string {

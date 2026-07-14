@@ -76,6 +76,12 @@ export type ReplResult =
   /** It compiled, but the emitted JavaScript threw. The session is exactly as it was. */
   | { kind: "runtime-error"; error: Error; output: string[] };
 
+export interface ReplSymbol {
+  kind: string;
+  type: string;
+  mutable: boolean;
+}
+
 export interface Cell {
   index: number;
   source: string;
@@ -125,6 +131,8 @@ export class ReplSession {
   private cellList: Cell[] = [];
   /** name -> the type it was first bound at. Enforces D17's one-name-one-type. See retypes(). */
   private types = new Map<string, string>();
+  /** The JavaScript the last accepted cell compiled to. Powers a bare `.js`. */
+  private lastJs = "";
   private readonly file: string;
 
   /**
@@ -152,18 +160,29 @@ export class ReplSession {
     return this.cellList;
   }
 
+  /** The JavaScript the last accepted form compiled to. */
+  get emittedJs(): string {
+    return this.lastJs;
+  }
+
   getContext(): Context {
     return this.context;
   }
 
-  eval(source: string): ReplResult {
-    this.output = [];
-
+  /**
+   * Compile `source` as the session's next form. Does not run it and does not touch history.
+   *
+   * Shared by eval(), `.js` and `.type` -- all three need exactly this and nothing more.
+   */
+  private build(
+    source: string
+  ):
+    | { ok: true; ctx: Context; js: string; tail: ast.ASTNode[]; spans: Span[] }
+    | { ok: false; diagnostics: ReplDiagnostic[] } {
     const spans = this.layout(source);
     const tailStart = spans[spans.length - 1].startOffset;
-    const program = spans.map((s) => s.source).join("\n\n");
 
-    fs.writeFileSync(this.file, program);
+    fs.writeFileSync(this.file, spans.map((s) => s.source).join("\n\n"));
 
     const ctx = new Context(this.file, this.options);
     this.context = ctx;
@@ -173,22 +192,57 @@ export class ReplSession {
       root = ctx.process(this.file, "types").ast as ast.ProgramNode;
     } catch (e: any) {
       // The lexer and the parser THROW rather than reporting; everything after them reports.
-      return { kind: "refused", diagnostics: [this.fromThrow(e, spans)], output: [] };
+      return { ok: false, diagnostics: [this.fromThrow(e, spans)] };
     }
 
     // B2: the thing the old REPL never did. `Context.processModule` deliberately does not log --
     // the CLI is meant to (see command.run.ts) -- and the REPL never read `results`, so a refusal
     // printed nothing at all and the prompt just came back.
     if (ctx.results.hasErrors) {
-      return { kind: "refused", diagnostics: this.collect(ctx, spans), output: [] };
+      return { ok: false, diagnostics: this.collect(ctx, spans) };
     }
 
-    let emitted: { js: string; tail: ast.ASTNode[] };
     try {
-      emitted = this.emitTail(ctx, root, tailStart);
+      const { js, tail } = this.emitTail(ctx, root, tailStart);
+      return { ok: true, ctx, js, tail, spans };
     } catch (e: any) {
-      return { kind: "refused", diagnostics: [this.fromThrow(e, spans)], output: [] };
+      return { ok: false, diagnostics: [this.fromThrow(e, spans)] };
     }
+  }
+
+  /** The JavaScript `source` compiles to, without running it. Powers `.js`. */
+  compileOnly(source: string): { kind: "js"; js: string } | { kind: "refused"; diagnostics: ReplDiagnostic[] } {
+    const built = this.build(source);
+    return built.ok ? { kind: "js", js: built.js } : { kind: "refused", diagnostics: built.diagnostics };
+  }
+
+  /**
+   * The type `source` infers to, without running it. Powers `.type`.
+   *
+   * Binds the expression to a throwaway name and reads that name's type back out -- which works for
+   * a bare identifier (`.type x`) and an arbitrary expression (`.type (+ 1 2)`) alike. The probe
+   * never enters history, so it cannot collide with anything or trip the REPL0001 guard.
+   *
+   * The name deliberately has no leading underscores: `__probe` would not tokenize (grammar_v2's
+   * Underscore token eats the first `_` of a `__`-prefixed identifier -- the bug that killed the old
+   * REPL, still live in the compiler, see docs/inbox/).
+   */
+  inferType(source: string): { kind: "type"; type: string } | { kind: "refused"; diagnostics: ReplDiagnostic[] } {
+    const probe = "replTypeProbe";
+    const built = this.build(`(let ${probe} ${source})`);
+    if (!built.ok) return { kind: "refused", diagnostics: built.diagnostics };
+    return { kind: "type", type: typeOf(built.ctx, probe) ?? "?" };
+  }
+
+  eval(source: string): ReplResult {
+    this.output = [];
+
+    const built = this.build(source);
+    if (!built.ok) return { kind: "refused", diagnostics: built.diagnostics, output: [] };
+
+    const ctx = built.ctx;
+    const emitted = { js: built.js, tail: built.tail };
+    const spans = built.spans;
 
     const declares = declaredNames(emitted.tail);
     const clash = this.retypes(ctx, declares);
@@ -204,6 +258,7 @@ export class ReplSession {
       return { kind: "runtime-error", error, output: this.output };
     }
 
+    this.lastJs = emitted.js;
     this.cellList.push({ index: this.cellList.length, source, declares });
     for (const name of declares) {
       const t = typeOf(ctx, name);
@@ -318,20 +373,103 @@ export class ReplSession {
     return broke;
   }
 
-  symbols(): Map<string, any> {
-    const symbols = new Map<string, any>();
-    const table = this.context.symbolTable;
-    if (!table) return symbols;
+  /**
+   * What THIS SESSION has defined.
+   *
+   * Built from the cells, not from `symbolTable.getAllSymbols()`. The symbol table holds every
+   * symbol in the program -- including function PARAMETERS and locals -- so `.symbols` used to list
+   * `a, b` from inside `(fn add [a b] ...)` as though you had defined them at the prompt. You had
+   * not. Asking the cells what they declared is both correct and cheaper.
+   */
+  symbols(): Map<string, ReplSymbol> {
+    const out = new Map<string, ReplSymbol>();
+    const all = this.context.symbolTable?.getAllSymbols?.() ?? new Map();
 
-    for (const [name, entry] of table.getAllSymbols().entries()) {
-      symbols.set(name, {
-        type: entry.nodeType,
-        mutability: entry.mutability,
-        visibility: entry.visibility,
-        inferredType: entry.inferredType,
-      });
+    for (const cell of this.cellList) {
+      for (const name of cell.declares) {
+        const entry: any = all.get(name);
+        out.set(name, {
+          kind: entry?.nodeType ?? "value",
+          type: this.types.get(name) ?? typeOf(this.context, name) ?? "?",
+          mutable: Boolean(entry?.mutability && String(entry.mutability) !== "immutable"),
+        });
+      }
     }
-    return symbols;
+    return out;
+  }
+
+  /**
+   * Read a `.lisp` file and feed its top-level forms in as cells.
+   *
+   * A file written the conventional way is wrapped in ONE outer list -- and that outer list is a
+   * BLOCK (D17). Loaded as a single cell, every binding in it would be block-scoped and invisible to
+   * the next prompt, which is exactly the wrong thing. So a wrapper is unwrapped and its forms
+   * become sibling cells, which is what a session is.
+   *
+   * Known limit: a relative `import` inside the loaded file resolves against the session's working
+   * directory, not the file's own -- the session compiles one program, and it lives at the cwd.
+   */
+  load(file: string): { kind: "loaded"; results: Array<{ source: string; result: ReplResult }> } | { kind: "error"; message: string } {
+    const abs = path.resolve(file);
+    if (!fs.existsSync(abs)) return { kind: "error", message: `no such file: ${file}` };
+
+    const text = fs.readFileSync(abs, { encoding: "utf-8" });
+
+    let top: ast.ASTNode[];
+    try {
+      const ctx = new Context(abs, { ...this.options, stage: "parse" });
+      top = (ctx.process(abs, "parse").ast as ast.ProgramNode).program;
+    } catch (e: any) {
+      return { kind: "error", message: String(e?.message ?? e).split("\n")[0] };
+    }
+
+    // Unwrap the conventional `( ...forms... )` file wrapper -- but ONLY that. A single form whose
+    // children are not all lists (a call, an operator application) is left alone. Comments are
+    // children too, and must not be counted when deciding.
+    if (top.length === 1 && top[0]._type === "list") {
+      const kids: any[] = ((top[0] as any).nodes ?? []).filter((k: any) => k?._type !== "comment");
+      if (kids.length > 1 && kids.every((k) => k?._type === "list")) top = kids;
+    }
+
+    const results: Array<{ source: string; result: ReplResult }> = [];
+    for (const node of top) {
+      if (node._type === "comment") continue;
+
+      const start = node._location?.start?.offset;
+      const end = node._location?.end?.offset;
+      if (start === undefined || end === undefined) continue;
+
+      // `end.offset` is INCLUSIVE -- it indexes the form's last character, not one past it. Slicing
+      // to `end` drops the closing paren and the form no longer parses. (RuleBuilder.getSource has
+      // the same off-by-one, which is why a diagnostic's source excerpt loses its last character;
+      // see docs/inbox/.)
+      const source = text.slice(start, end + 1).trim();
+      if (!source) continue;
+
+      results.push({ source, result: this.eval(source) });
+    }
+
+    return { kind: "loaded", results };
+  }
+
+  /**
+   * The members of `name`'s type, for member completion.
+   *
+   * Read from `__ll_type_metadata` -- the table the program itself compiled and the runtime's own
+   * `(type ...)` reflection reads. The old completer guessed from a hardcoded list of JavaScript
+   * methods (`push`, `hasOwnProperty`, ...), which is not what an l-lang class has.
+   */
+  membersOf(name: string): string[] {
+    const sym = this.symbols().get(name);
+    if (!sym) return [];
+
+    const table: any = (this.sandbox as any)[RuntimeProvider.TYPES_METADATA_VAR] ?? {};
+    const meta = table[sym.type];
+    if (!meta) return [];
+
+    return [...(meta.properties ?? []), ...(meta.methods ?? [])]
+      .map((m: any) => (typeof m === "string" ? m : m?.name))
+      .filter((m: any): m is string => typeof m === "string");
   }
 
   dispose(): void {

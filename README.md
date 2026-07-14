@@ -102,7 +102,7 @@ See [ROADMAP.md](docs/planning/ROADMAP.md) for the details.
 - **[docs/INDEX.md](docs/INDEX.md)** - Documentation hub (role-based pathways)
 - **[docs/SIDEBAR.md](docs/SIDEBAR.md)** - Navigation sidebar for all topics
 - **[docs/compiler/TYPE_SYSTEM.md](docs/compiler/TYPE_SYSTEM.md)** - Type inference deep dive
-- **[docs/development/REPL_GUIDE.md](docs/development/REPL_GUIDE.md)** - Interactive REPL features
+- **[docs/repl.md](docs/repl.md)** - Interactive REPL features
 - **[docs/planning/ROADMAP.md](docs/planning/ROADMAP.md)** - Future roadmap
 
 **See [TABLE_OF_CONTENTS.md](TABLE_OF_CONTENTS.md) for the complete documentation index.**
@@ -158,7 +158,7 @@ ts-node src/index.ts repl
 - ⌨️ Command history (↑/↓ arrows)
 - 🔧 Built-in commands (`.help`, `.symbols`, `.types`, `.reset`)
 
-See [docs/development/REPL_GUIDE.md](docs/development/REPL_GUIDE.md) for complete documentation.
+See [docs/repl.md](docs/repl.md) for complete documentation.
 
 ### Test Status
 

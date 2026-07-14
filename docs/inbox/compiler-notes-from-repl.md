@@ -217,6 +217,43 @@ REPL had been leaning on LL0200 without knowing it. The REPL now enforces one-na
 
 ---
 
+## 8. `_location.end.offset` is INCLUSIVE, and `getSource` slices as if it were not
+
+**`src/compiler/rules/RuleBuilder.ts:57`** → `AstProvider.getSource` (`AstProvider.ts:147`):
+
+```ts
+const res = source.slice(start, end);   // end === location.end.offset
+```
+
+Measured: for `(let x 10)` at offset 0, `end.offset` is **9** — the index of the closing paren, not
+one past it. So `slice(start, end)` yields `"(let x 10"`. **Every diagnostic's source excerpt is
+truncated by one character.** It is cosmetic, and it has been hiding in plain sight because a
+missing trailing `)` in an error message reads as a wrapping artefact.
+
+`.load` hit the same edge and has to slice `end + 1`. Either fix `getSource` to `end + 1`, or make
+`end.offset` exclusive — but one of the two, because right now the field's meaning is decided
+differently in different places.
+
+---
+
+## 9. `RuntimeProvider.SYMBOL_MAP` is private, so nothing can enumerate the builtins
+
+The REPL's completer wants to offer the runtime's symbols (`head`, `tail`, `cons`, `list`, `get`,
+`type`, …). They live in `private static readonly SYMBOL_MAP`, and the only accessor,
+`getRuntimeShimForSymbols(symbols)`, wants the names as an *argument*. So the completer reaches in
+with `(RuntimeProvider as any).SYMBOL_MAP`.
+
+A `public static symbolNames(): string[]` would remove the cast. Worth it for a second reason: the
+old hand-written completer offered `map`, `filter`, `reduce`, `fold` and `print` as builtins, and
+**not one of them exists** — which is exactly the drift you get when a list cannot be derived.
+
+Same shape, same ask, for `JSTransformerAstVisitor`'s `inlinedDefinitions`, `operatorRegistrations`
+and `populateTypesMetadata` — the REPL drives codegen from outside the compiler and needs all three
+after visiting, but `visitProgram`/`compile` (which it deliberately does not call) are what normally
+drain them. Three more `as any` casts that a `public` would delete.
+
+---
+
 ## Summary
 
 | # | Item | Kind | Blocks REPL? |
@@ -228,6 +265,8 @@ REPL had been leaning on LL0200 without knowing it. The REPL now enforces one-na
 | 5 | `SymbolTable.join` blind concat | missing seam | caps REPL at O(n²) |
 | 6 | Dead README links | housekeeping | no |
 | 7 | Forward ref to a top-level `let` is unchecked | **bug** | worked around (REPL0001) |
+| 8 | `end.offset` inclusive, but `getSource` slices exclusive | **bug** (cosmetic) | worked around (`end + 1`) |
+| 9 | `SYMBOL_MAP` / codegen internals private, unenumerable | missing seam | worked around (`as any`) |
 
 1 and 2 are worth fixing regardless of the REPL. 3, 4 and 5 are the price of the REPL being a
 second-class embedder of this compiler; none is urgent.
