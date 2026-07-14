@@ -1221,6 +1221,69 @@ const CASES: Case[] = [
       "not broken -- a guard, and the form 06_structs, 09_operators and 10_value_semantics use. It " +
       "registers in __ll_op_registry. LL0208 must refuse the METHOD form and leave this one alone",
   },
+
+  // ===============================================================================================
+  // Sd -- `:extern`. An ambient global is DECLARED, never DEFINED.
+  //
+  // These live here rather than in test:type-errors for a reason worth stating: that harness collects
+  // only `LL02*` codes, so `:extern`'s actual failure -- LL0013, a syntax rule -- is INVISIBLE to it.
+  // A gate written there would have reported SILENT, i.e. green, while the build was aborting. The
+  // proof has to be the emitted JavaScript.
+  // ===============================================================================================
+  {
+    // The declaration must produce NO DEFINITION. That is the whole point, and getting it wrong is
+    // worse than having no `:extern` at all: codegen's visitFunction never looked at `extern`, so it
+    // would emit `function btoa(s) {}` -- an empty stub that SHADOWS the real global and silently
+    // turns every call into a no-op returning undefined.
+    //
+    // `btoa` is a REAL host global (node provides it) and is NOT in JS_GLOBALS, so this case is red
+    // twice over today: the name does not resolve (LL0210), and LL0013 rejects the declaration that
+    // would make it resolve.
+    name: "Sd: an `:extern` fn is declared, not defined",
+    source: `(fn :extern btoa [s <- String] -> String)
+(console.log (btoa "hi"))`,
+    expect: ["aGk="],
+    emitted: {
+      mustNot: [/function\s+btoa/, /\bbtoa\s*=\s*(function|\()/, /(const|let|var)\s+btoa\b/],
+      must: [/btoa\(/], // ...but it IS still called
+    },
+    wasBroken:
+      "`:extern` was unusable. LL0013 `ExternFunctionCannotHaveBody` tests `!!node.body`, and a " +
+      "bodyless fn has `body: []` in BOTH frontends -- `!![]` is TRUE -- so EVERY correctly written " +
+      "extern was rejected as having a body. Had it compiled, codegen would have emitted an empty " +
+      "stub over the top of the real global",
+  },
+  {
+    // An ambient VALUE -- `mouseX`, `frameCount`, `width`. Two rules stood in the way, not one:
+    // LL0006 `ConstantVariableMustHaveInitializer` also fires, because an extern `let` has no value
+    // BY DEFINITION. A declaration is a promise about the host, not a definition, so it has nothing
+    // to initialise.
+    //
+    // `Infinity` is a real host global. A stub would emit `const Infinity = undefined`, which either
+    // shadows it with `undefined` or is an outright redeclaration -- loud either way, which is the
+    // point of asserting on the emitted text.
+    name: "Sd: an `:extern` let is declared, not defined",
+    source: `(let :extern Infinity <- Real)
+(console.log Infinity)`,
+    expect: ["Infinity"],
+    emitted: { mustNot: [/(const|let|var)\s+Infinity\b/] },
+    wasBroken:
+      "`extern` existed only on FunctionNode. `:extern` was already LEGAL on a `let` (the modifier " +
+      "whitelist admits it) and meant NOTHING -- a silent no-op. So an ambient VALUE could not be " +
+      "declared at all, and LL0006 refused the bodyless form anyway",
+  },
+  {
+    // ...and the rule must still do its actual job. A `:extern` WITH a body is a contradiction: a
+    // declaration that also defines. Fixing LL0013's test must not amount to deleting the check.
+    name: "Sd: an `:extern` fn WITH a body is still refused (guard)",
+    source: `(fn :extern bad-fn [x <- Int] -> Int (return x))
+(console.log 1)`,
+    expectDiagnostic: /LL0013/,
+    wasBroken:
+      "not broken -- a guard. LL0013's test is fixed from `!!node.body` to `node.body.length > 0` " +
+      "(exactly what its sibling LL0012 already does). A fix that made the rule stop firing " +
+      "altogether would look identical on every other gate",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

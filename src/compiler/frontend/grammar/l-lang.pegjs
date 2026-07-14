@@ -389,7 +389,11 @@ ModifierArgs
 Variable
   = _ mutable:LetMutMode __ modifiers:Modifier* _ name:(VectorPattern / MapPattern / Identifier)?
     _ type:(LeftArrowKw _ @Type)? _ value:Expression? {
-    return makeNode("variable", { name, mutable, modifiers, type, value });
+    // `:extern` -- an ambient global, DECLARED and never defined (Sd). Derived from the generic
+    // modifier list, exactly as the Function rule below derives its own, because modifiers cannot be
+    // fixed tokens: `defmodifier` lets a program mint new ones.
+    const extern = !!modifiers.find(x => x.modifier === "extern");
+    return makeNode("variable", { name, mutable, extern, modifiers, type, value });
   }
 
 LetMutMode

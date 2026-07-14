@@ -499,7 +499,11 @@ function peg$parse(input, options) {
   function peg$f30() {    return text().toLowerCase();  }
   function peg$f31(args) {    return args;  }
   function peg$f32(mutable, modifiers, name, type, value) {
-    return makeNode("variable", { name, mutable, modifiers, type, value });
+    // `:extern` -- an ambient global, DECLARED and never defined (Sd). Derived from the generic
+    // modifier list, exactly as the Function rule below derives its own, because modifiers cannot be
+    // fixed tokens: `defmodifier` lets a program mint new ones.
+    const extern = !!modifiers.find(x => x.modifier === "extern");
+    return makeNode("variable", { name, mutable, extern, modifiers, type, value });
   }
   function peg$f33() {    return false;  }
   function peg$f34() {    return true;  }

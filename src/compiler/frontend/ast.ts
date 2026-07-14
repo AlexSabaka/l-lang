@@ -294,6 +294,14 @@ export interface VariableNode extends ASTNode<"variable"> {
   /** A name, or a destructuring pattern: `(let [x y] point)`, `(let {:name :age} person)`. */
   name: BindingTarget;
   mutable: boolean;
+  /**
+   * `:extern` -- an ambient global. DECLARED, never defined (Sd).
+   *
+   * `mouseX`, `frameCount`, `Infinity`: names the host provides and l-lang must not emit. The flag
+   * lived only on FunctionNode, while `:extern` was already LEGAL on a `let` (the modifier whitelist
+   * admits it) and meant nothing at all -- so an ambient VALUE was unsayable, silently.
+   */
+  extern: boolean;
   modifiers: ModifierNode[];
   type: TypeNode;
   value: ASTNode;

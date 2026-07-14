@@ -63,6 +63,10 @@ const ConstantVariableMustHaveInitializer = createRule<ast.VariableNode>()
   .addTest((node) => !node.mutable)
   .addTest((node) => !node.value)
   .addTest((node) => !node.modifiers.find((x) => x.modifier === "ctor"))
+  // ...nor an EXTERN (Sd). An ambient global -- `mouseX`, `Infinity` -- is a promise about the host,
+  // not a definition, so it has nothing to initialise. Without this exemption an extern `let` is
+  // unwritable, exactly as LL0013 made an extern `fn` unwritable.
+  .addTest((node) => !node.extern)
   .build();
 
 const TryCatchHasEitherCatchOrFinally = createRule<ast.TryCatchNode>()
@@ -122,7 +126,13 @@ const ExternFunctionCannotHaveBody = createRule<ast.FunctionNode>()
   .addCode("LL0013")
   .addMessage("Extern function cannot have a body")
   .addTest((node) => node.extern)
-  .addTest((node) => !!node.body)
+  // `.length > 0`, not `!!node.body`. A bodyless `fn` gets `body: []` in BOTH frontends, and `!![]`
+  // is TRUE -- so this rule fired on every CORRECTLY written extern and rejected it for having the
+  // body it did not have. `:extern` was not merely unwired; its own validation rule forbade the only
+  // way to write it, which is why the corpus contains zero uses of a feature both grammars parse.
+  //
+  // Its sibling LL0012 (InterfaceMembersCannotHaveBodyDeclarations) has always had this line.
+  .addTest((node) => node.body.length > 0)
   .build();
 
 const FunctionParameterMustHaveName = createRule<ast.ParameterNode>()

@@ -843,7 +843,22 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     | ESTree.FunctionDeclaration
     | ESTree.VariableDeclaration
     | ESTree.MethodDefinition
-    | ESTree.ArrowFunctionExpression {
+    | ESTree.ArrowFunctionExpression
+    | ESTree.EmptyStatement {
+    // `:extern` -- DECLARED, never DEFINED (Sd).
+    //
+    // A declaration is a promise about the HOST. Emitting anything for it is worse than not having
+    // `:extern` at all: `(fn :extern createCanvas [w h] -> Void)` would become
+    // `function createCanvas(w, h) {}` -- an empty stub that SHADOWS the real p5 global and turns
+    // every call into a silent no-op returning undefined.
+    //
+    // Nothing else is needed. An identifier that resolves to no emitted binding already falls
+    // through to a bare JS reference in visitIdentifier, which is the mechanism ambient globals have
+    // always relied on. Same shape as visitInterface: a declaration, not a definition.
+    if (node.extern) {
+      return { type: "EmptyStatement", loc: ESTreeBuilder.loc(node) } as ESTree.EmptyStatement;
+    }
+
     const nextScope = this.inScope(ScopeType.class)
       ? ScopeType.method
       : ScopeType.function;
@@ -1240,7 +1255,14 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     }
   }
 
-  visitVariable(node: ast.VariableNode): ESTree.VariableDeclaration {
+  visitVariable(node: ast.VariableNode): ESTree.VariableDeclaration | ESTree.EmptyStatement {
+    // `:extern` -- an ambient VALUE. `(let :extern mouseX <- Int)` declares that the host provides
+    // `mouseX`; emitting `const mouseX = undefined` would shadow it with the bottom value. See
+    // visitFunction.
+    if (node.extern) {
+      return { type: "EmptyStatement", loc: ESTreeBuilder.loc(node) } as ESTree.EmptyStatement;
+    }
+
     this.pushScope(ScopeType.variable);
     const destructuring = ast.isBindingPattern(node.name);
     const id: ESTree.Pattern = destructuring

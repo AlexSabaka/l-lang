@@ -620,9 +620,13 @@ export class LLangAstBuilder extends BaseCstVisitor {
     const name = this.bindingTarget(ctx);
     const type = ctx.type ? this.visit(ctx.type[0]) : null;
     const value = ctx.expression ? this.visit(ctx.expression[0]) : null;
+    // Derived post-hoc from the generic modifier list, exactly as `functionExpr` derives its own
+    // `extern` -- modifiers cannot be fixed tokens, because `defmodifier` lets users mint new ones.
+    const extern = modifiers.some((m: any) => m.modifier === "extern");
     return this.makeNode("variable", ctx, {
       name,
       mutable,
+      extern,
       modifiers,
       type,
       value,
