@@ -54,7 +54,18 @@ const minimumPaddingLength = 10;
 const totalTerminalWidth = process.stdout.isTTY ? process.stdout.columns : 80;
 
 function formatMessage(node: ast.ASTNode, rule: Rule<ast.ASTNode>, context: Context) {
-  const text = context.astProvider.getSource(node._parent?._location ?? node._location);
+  // `getSource` THROWS ("File ... not found in the AST cache") when the node's file is not in THIS
+  // Context's cache -- so a RuleValidationMessage was not safely renderable outside the Context that
+  // produced it, and merely READING `.message` could take the process down. A missing excerpt is a
+  // cosmetic loss; a throw from a getter is not. The sentence, the code and the location are all still
+  // there, and `.text` now exposes the first of them directly.
+  let text: string;
+  try {
+    text = context.astProvider.getSource(node._parent?._location ?? node._location);
+  } catch {
+    return `\n\t${chalk.inverse(`${rule.severity[0].toUpperCase()}${rule.code}`)} ${rule.message}\n`;
+  }
+
   const textLength = text.length;
   const startColumn =
     node._location.start.column + (textLength - text.length);
@@ -94,6 +105,29 @@ export interface RuleValidationMessage {
   severity: RuleSeverity;
   source: string;
   line: number;
+
+  /**
+   * The RAW human sentence -- "'x' is not defined." -- with no colour, no excerpt, no `at <path>`.
+   *
+   * `message` below is a fully RENDERED blob: chalk-coloured, `process.stdout.columns`-aware, with a
+   * source excerpt and a trailing `at <abs-path>:<line>:<col>`. That is right for the CLI and wrong
+   * for everyone else, and until now it was the ONLY way out -- `rule.message` was captured in the
+   * closure and never exposed.
+   *
+   * So the REPL recovered the sentence by STRIPPING ANSI CODES FROM ANOTHER MODULE'S OUTPUT FORMAT
+   * and slicing after the code (`sentenceOf`, docs/inbox/compiler-notes-from-repl.md #3). It worked,
+   * and it would have broken the day `formatMessage` changed a space. Anything wanting structured
+   * diagnostics -- an LSP, an editor plugin, a JSON reporter -- had the same problem, worse.
+   */
+  text: string;
+
+  /** The column, which `line` alone could never give. */
+  column: number;
+
+  /** The full location, for a consumer that wants to re-anchor the diagnostic (the REPL does). */
+  location: ast.Location;
+
+  /** The CLI's rendering. Chalk, terminal width, source excerpt, `at <path>:<line>:<col>`. */
   get message(): string;
 }
 
@@ -101,11 +135,14 @@ export class RuleValidationResultsCollection {
   private collection: RuleValidationMessage[] = [];
 
   public add(node: ast.ASTNode, rule: Rule<ast.ASTNode>, context: Context): RuleValidationMessage {
-    const message = {
+    const message: RuleValidationMessage = {
       code: rule.code,
       severity: rule.severity,
       source: node._location.source ?? "<unknown>",
       line: node._location.start.line,
+      column: node._location.start.column,
+      text: rule.message,
+      location: node._location,
       get message() {
         return formatMessage(node, rule, context);
       },
