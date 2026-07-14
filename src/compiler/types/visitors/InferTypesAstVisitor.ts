@@ -1257,7 +1257,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
     // A base we cannot type tells us nothing -- `console.log`, `Math.floor`, an import. Gradual
     // typing holds here exactly as everywhere else.
-    const baseType = this.typeEnv.resolveIdentifier(baseName);
+    const baseType = this.typeEnv.resolveIdentifier(baseName, node);
     if (!baseType) return;
 
     const owner = TypeChecker.unwrapType(baseType, this.symbolTable);
@@ -1318,7 +1318,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    * exactly how P7b bound generic type parameters. Narrowing needed no new machinery, only a scope.
    */
   private withNarrowed(name: string, at: ast.ASTNode, body: () => void): void {
-    const current = this.typeEnv.resolveIdentifier(name);
+    const current = this.typeEnv.resolveIdentifier(name, at);
     if (!current?.optional) {
       body();
       return;
@@ -1559,18 +1559,43 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       }
     }
 
-    // Narrowings proved by an early-return guard hold for the REST of the block, so their scopes stay
-    // open until the loop ends. Counted, and unwound in a `finally`, so an exception mid-block cannot
-    // desync enterScope/exitScope -- the failure mode SymbolTable already had to be fixed for in D3b.
+    this.visitBlock(node.nodes, (item) => this.visitStatement(item));
+  }
+
+  /**
+   * Visit a sequence of statements as a BLOCK: an early-return nil-guard proved by one of them holds
+   * for every statement after it.
+   *
+   * This was inlined in `visitList`, and a function BODY is not a list -- `visitFunction` walks
+   * `node.body` directly. So the guard idiom D9g exists to support
+   *
+   *     (fn describe [c <- String?] -> String
+   *         (if (== c nil) (return "empty"))
+   *         (return (+ "holding: " c)))
+   *
+   * was believed at top level and NOWHERE ELSE. It read as working only because a parameter had no
+   * type to narrow: before P6c `c` resolved to nothing, so LL0205 could not fire and there was
+   * nothing for the missing narrowing to be wrong about. Giving parameters their real types is what
+   * made an always-broken guard start reporting.
+   *
+   * Narrowings stay open until the block ends, and are counted and unwound in a `finally` so an
+   * exception mid-block cannot desync enterScope/exitScope -- the failure mode SymbolTable had to be
+   * fixed for in D3b.
+   */
+  private visitBlock(
+    items: ast.ASTNode[],
+    visitItem: (item: ast.ASTNode) => void,
+    afterBlock?: () => void
+  ): void {
     let openNarrowings = 0;
     try {
-      for (const item of node.nodes) {
-        this.visitStatement(item);
+      for (const item of items) {
+        visitItem(item);
 
         // `(if (== h nil) (return 0))` -- from here to the end of the block, `h` is not nil.
         const proven = this.provenNonNilAfter(item);
         if (proven) {
-          const current = this.typeEnv.resolveIdentifier(proven);
+          const current = this.typeEnv.resolveIdentifier(proven, item);
           if (current?.optional) {
             this.typeEnv.enterScope(item);
             this.typeEnv.bindInScope(proven, { ...current, optional: false });
@@ -1578,9 +1603,67 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           }
         }
       }
+
+      // Runs while the narrowings are still OPEN. `checkReturns` re-infers each `(return e)` from
+      // scratch, so without this it would judge `e` under the declaration rather than under what the
+      // block proved -- and every check inside inferExpressionType would fire a SECOND time, from
+      // outside the guard that makes it safe. That is the duplicate LL0205 on
+      // `(if (== c nil) (return "empty")) (return (+ "holding: " c))`.
+      afterBlock?.();
     } finally {
       for (let i = 0; i < openNarrowings; i++) this.typeEnv.exitScope();
     }
+  }
+
+  /**
+   * The statements of a function body, whether or not the body is wrapped in parentheses.
+   *
+   * Both forms are legal and the corpus uses both:
+   *
+   *     (fn f [c <- String?] -> String (if (== c nil) (return "e")) (return c))     ; body = 2 items
+   *     (fn f [c <- String?] -> String ( (if (== c nil) (return "e")) (return c) )) ; body = ONE list
+   *
+   * Unwrapped, they are the same block. Left wrapped, they are not: the guard's narrowing opens
+   * inside the WRAPPER's block and closes when that block ends -- which is before `checkReturns` runs
+   * at the function level. So the return was judged against the declaration rather than against what
+   * the guard proved, and the corpus's own `(if (== c nil) (return "empty")) (return (+ "..." c))`
+   * reported LL0205 on code that is correct by construction.
+   *
+   * A single-element body is a BLOCK only if its head is not an identifier; `(fn f [] (console.log
+   * "x"))` is a body of one CALL, and unwrapping that would read `console.log` and `"x"` as two
+   * separate statements. Same test `visitStatement` uses.
+   */
+  private blockItems(body: ast.ASTNode[]): ast.ASTNode[] {
+    if (body.length !== 1) return body;
+
+    const only = body[0];
+    if (!ast.isListNode(only) || only.nodes.length === 0) return body;
+
+    const head = only.nodes[0];
+    if (head._type === "simple-identifier" || head._type === "composite-identifier") return body;
+
+    return only.nodes;
+  }
+
+  /**
+   * The type an UNANNOTATED binding takes from its initializer.
+   *
+   * `nil` is the one value whose own type is the wrong answer. `(mut cache nil)` binds `Nil`, and
+   * then every later `(cache := "x")` is "cannot assign String to Nil" -- an LL0202 false positive on
+   * the single most ordinary use of a mutable optional there is. It stayed hidden only because a
+   * local had no type at all; P6 is what makes it fire.
+   *
+   * RULING (P6): an unannotated `nil` initializer is `T?` with an UNKNOWN payload. Assignable FROM
+   * anything, because we genuinely do not know what it will hold -- and still OPTIONAL, so D9's
+   * forced unwrap keeps applying and a dereference before a guard is still LL0205. The alternative,
+   * plain `Unknown`, would throw away the one thing the program did tell us: that it can be nil.
+   *
+   * An annotation still wins outright -- `(mut cache <- String? nil)` is `String?`, not this.
+   */
+  private initializerType(valueType: InferredType): InferredType {
+    return TypeChecker.isNil(valueType)
+      ? TypeEnvironment.optional(TypeEnvironment.unknown())
+      : valueType;
   }
 
   /** One statement of a block. Extracted from visitList so the narrowing loop has a single exit. */
@@ -1631,7 +1714,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitVariable] Inferred value type structure: ${JSON.stringify(valueType).substring(0, 200)}`);
       
       // If explicit type annotation exists, check compatibility
-      const declaredType = this.typeEnv.resolveIdentifier(varName);
+      const declaredType = this.typeEnv.resolveIdentifier(varName, node);
       if (declaredType) {
         this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitVariable] Declared type: ${JSON.stringify(declaredType).substring(0, 200)}`);
         
@@ -1684,14 +1767,14 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         );
       } else {
         // No explicit type - bind the inferred type
-        this.typeEnv.bindIdentifier(varName, valueType, node);
+        this.typeEnv.bindIdentifier(varName, this.initializerType(valueType), node);
         this.context.log(LogLevel.Info, `[InferAndCheckPass] Bound inferred type for '${varName}': ${TypeChecker.formatType(valueType)}`);
       }
       
       this.typeEnv.setType(node, valueType);
     } else {
       // No initial value - check if there's a declared type
-      const declaredType = this.typeEnv.resolveIdentifier(varName);
+      const declaredType = this.typeEnv.resolveIdentifier(varName, node);
       if (declaredType && declaredType.kind !== "unknown") {
         // Use the declared type
         this.symbolTable.bindType(varName, declaredType, node);
@@ -1735,10 +1818,14 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       this.context.log(LogLevel.Debug, `[InferAndCheckPass] Bound parameter '${paramName}' with type ${TypeChecker.formatType(paramType)}; scope=${chain}`);
     });
     
-    // Infer types in function body
-    node.body.forEach(stmt => this.visit(stmt));
-
-    this.checkReturns(node);
+    // Infer types in function body -- as a BLOCK, so an early-return nil-guard on a PARAMETER is
+    // believed for the rest of the body. `forEach(stmt => this.visit(stmt))` skipped the narrowing
+    // loop entirely; see visitBlock.
+    this.visitBlock(
+      this.blockItems(node.body),
+      (stmt) => this.visit(stmt),
+      () => this.checkReturns(node)
+    );
 
     this.typeEnv.exitScope();
   }
@@ -2317,7 +2404,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         const id = (node as ast.IdentifierNode).id;
 
         // TYPE comes from the type environment...
-        const resolvedType = this.typeEnv.resolveIdentifier(id);
+        const resolvedType = this.typeEnv.resolveIdentifier(id, node);
         inferredType = resolvedType ?? TypeEnvironment.unknown();
 
         // `h.length` where `h` is `String?` -- the null dereference (D9g). The BASE of a dot path is
@@ -2327,7 +2414,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         // ordinary un-inferable member.
         if (id.includes(".")) {
           const base = id.slice(0, id.indexOf("."));
-          this.checkNotNil(this.typeEnv.resolveIdentifier(base), node, `'${base}'`);
+          this.checkNotNil(this.typeEnv.resolveIdentifier(base, node), node, `'${base}'`);
           // The same dot path, asked a different question: may we SEE this member? (D11c)
           this.checkMemberVisibility(id, node);
         }
@@ -2377,7 +2464,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         // Check if it's a function call
         if (firstNode._type === "simple-identifier" || firstNode._type === "composite-identifier") {
           const funcName = (firstNode as ast.IdentifierNode).id;
-          const funcType = this.typeEnv.resolveIdentifier(funcName);
+          const funcType = this.typeEnv.resolveIdentifier(funcName, firstNode);
 
           // The TOTAL container accessors are the ONLY things in the language that PRODUCE a `T?`.
           const totalAccessor = this.inferTotalAccessorType(funcName, listNode.nodes.slice(1));

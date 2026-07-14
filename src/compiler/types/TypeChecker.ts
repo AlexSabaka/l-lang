@@ -531,6 +531,18 @@ export class TypeChecker {
     if (type.kind === "unknown" || type.name === "Unknown") return true;
     // A generic (including an array) whose every argument is unknown is itself uninformative.
     if (type.generics?.length && type.generics.every((g) => this.isUnknown(g))) return true;
+    // A UNION with an unknown ALTERNATIVE is uninformative -- and note it is `some` here where it is
+    // `every` above, which is not an inconsistency but the actual rule:
+    //
+    //   a generic is narrowed by each argument, so one KNOWN argument still says something;
+    //   a union is widened by each alternative, so one UNKNOWN alternative says nothing.
+    //
+    // `(x <- String | Number)` -- `Number` names no l-lang type (the primitives are Int, Real,
+    // String, Char, Boolean, Void, Any), so this is `String | Unknown`. We cannot know what that
+    // Unknown admits, therefore we cannot know that a Boolean is NOT one of them. Reporting anyway
+    // is how a gradual checker becomes a noise generator, and it is the rule this type system has
+    // held to everywhere else.
+    if (type.alternatives?.length && type.alternatives.some((a) => this.isUnknown(a))) return true;
     return false;
   }
 

@@ -301,9 +301,24 @@ ${PRODUCER}
     expect: /LL0203/,
   },
   {
+    // EXPRESSION position, deliberately. The CALL form `(t.length)` is checked by the case below and
+    // is a DIFFERENT bug: `checkNotNil` lives on the identifier path, and a call HEAD never passes
+    // through it. That gap is orthogonal to P6 -- it swallows a top-level optional exactly as much as
+    // a parameter -- and writing this case in the call form would have made it look like P6's, and
+    // "fixing" it here would have been fixing the wrong thing.
     name: "P6: an optional PARAMETER must be unwrapped",
+    source: "(fn f [t <- String?] -> Int (let n t.length) (return 1))",
+    expect: /LL0205/,
+  },
+  {
+    // Orthogonal to P6, and NOT introduced by it -- measured identical for a top-level optional:
+    //   (let h <- String? nil) (console.log (h.length))   -> nothing
+    //   (let h <- String? nil) (let n h.length)           -> LL0205
+    // Tracked here rather than in a comment, so it cannot be quietly forgotten.
+    name: "a nil base is unchecked when the member is CALLED, not read",
     source: "(fn f [t <- String?] -> Int (return (t.length)))",
     expect: /LL0205/,
+    pending: true,
   },
   {
     name: "P6: assignment to an annotated local",

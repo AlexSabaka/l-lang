@@ -114,9 +114,23 @@ export class TypeEnvironment {
   }
 
   /**
-   * Resolve type for an identifier (generics, primitives, or symbol types)
+   * What type does `name` have, as seen FROM `from`?
+   *
+   * Four tiers, in order: this environment's own scope stack (narrowings and generic type
+   * parameters, which deliberately SHADOW the declaration), the built-in primitives, a dotted member
+   * walk, and finally the symbol table -- which is the thing that actually knows about scopes.
+   *
+   * `from` is what makes that last tier able to see a parameter or a local. Without it the lookup is
+   * flat: it searches the module ROOTS only, so it answers about a top-level symbol of the same name
+   * or about nothing at all. That is not a near-miss -- it is a wrong answer with the right shape,
+   * and it is why `(fn f [] (let x <- Int 5) ...)` believed its `x` was a top-level `x` declared
+   * String.
+   *
+   * A caller resolving a TYPE name may still omit `from`: a class, struct, interface or alias is
+   * top-level by construction (ScanPass only ever scans top-level items), so for those the flat
+   * search is not merely tolerable, it is the correct question.
    */
-  resolveIdentifier(name: string): InferredType | undefined {
+  resolveIdentifier(name: string, from?: ast.ASTNode): InferredType | undefined {
     // Check if it's a generic type parameter in current scope
     for (let i = this.scopeStack.length - 1; i >= 0; i--) {
       const typeParam = this.scopeStack[i].localIdentifiers.get(name);
@@ -124,23 +138,25 @@ export class TypeEnvironment {
         return typeParam;
       }
     }
-    
+
     // Check if it's a built-in primitive
     if (TypeEnvironment.PRIMITIVES.has(name)) {
       return TypeEnvironment.PRIMITIVES.get(name);
     }
-    
+
     // Support dot notation for member access
     if (name.includes('.')) {
         const parts = name.split('.');
-        let currentType = this.resolveIdentifier(parts[0]);
-        
+        // The BASE is a value -- a local, a parameter -- so it is resolved from `from` like any
+        // other. The member names after it are not; they are looked up in the base's type.
+        let currentType = this.resolveIdentifier(parts[0], from);
+
         if (!currentType) return undefined;
-        
+
         for (let i = 1; i < parts.length; i++) {
            if (!currentType) return undefined;
-           
-           // Resolve type-ref to actual type definition if needed
+
+           // Resolve type-ref to actual type definition if needed. A type name: top-level, flat.
            if (currentType.kind === 'type-ref' && currentType.refName) {
                const resolved = this.resolveIdentifier(currentType.refName);
                if (resolved) currentType = resolved;
@@ -166,7 +182,9 @@ export class TypeEnvironment {
     }
 
     // Check symbol table for user-defined types
-    const symbol = this.symbolTable.resolveSymbol(name);
+    const symbol = from
+      ? this.symbolTable.resolveSymbol(name, from)
+      : this.symbolTable.resolveSymbol(name);
     if (symbol && symbol.inferredType) {
       return symbol.inferredType;
     }
