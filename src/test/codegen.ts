@@ -75,6 +75,32 @@ const CASES: Case[] = [
   // Silent wrong answers. Valid JavaScript; wrong behaviour. LL0101 is blind to every one of these.
   // ---------------------------------------------------------------------------------------------
   {
+    // `(obj.m)` with no arguments is a call or a property read, and codegen decides by asking the
+    // symbol table what type `obj` is. That lookup was FLAT, so for a LOCAL receiver it found
+    // nothing and fell through to a blacklist of names that "aren't methods" -- which contains
+    // `name`. So this emitted `d.name`, printing the function object instead of calling it.
+    //
+    // Everything shields this: a receiver at top level resolves flat anyway, and a method whose
+    // class is declared BEFORE the call is caught by the `isKnownFunction` heuristic. It takes a
+    // local receiver, a blacklisted method name, and a class declared after, all at once -- so the
+    // corpus never hits it, and the emitted JS for all 97 files is byte-identical after the fix.
+    // Unexercised is not the same as dead.
+    // `(new Dog)` and not `(Dog)`, deliberately: a class used BEFORE its declaration emits a
+    // reference to the class rather than an instance (`__ll_copy(Dog)`), because codegen decides
+    // "is this a constructor call" from a list of classes it has visited SO FAR. That is a separate
+    // bug -- registered, not absorbed -- and writing this case the obvious way made it look like
+    // this one.
+    name: "a zero-arg method on a LOCAL receiver is CALLED, not read",
+    source: `(fn go [] -> Void (
+    (let d (new Dog))
+    (console.log (d.name))
+))
+(defclass Dog (fn name [] -> String (return "Rex")))
+(go)`,
+    expect: ["Rex"],
+    wasBroken: "emitted `d.name` -- a property read -- so it printed [Function: name] instead of calling it",
+  },
+  {
     name: ":ctor defaults are emitted",
     source: `(defclass Vec (let :ctor x <- Int 7) (let :ctor y <- Int 9))
 (let v (Vec))

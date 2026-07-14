@@ -2559,7 +2559,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // Check if this is a method call using type information from symbol table
       let isMethodCall = false;
       if (head._type === "composite-identifier" && objectName) {
-        isMethodCall = this.isMethodOnType(objectName, memberName);
+        isMethodCall = this.isMethodOnType(objectName, memberName, head);
       }
 
       // L-lang semantics: (expr) is a call, expr is a reference
@@ -3151,9 +3151,13 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * Check if a member name is a method on the given object type.
    * Uses symbol table type metadata for accurate detection.
    */
-  private isMethodOnType(objectName: string, memberName: string): boolean {
+  private isMethodOnType(objectName: string, memberName: string, from?: ast.ASTNode): boolean {
     try {
-      const symbol = this.context.symbolTable?.resolveSymbol(objectName);
+      // The OBJECT is a value -- a local, a parameter -- so it resolves lexically, from the node. The
+      // two lookups below it are TYPE names, which are top-level by construction, and stay flat.
+      const symbol = from
+        ? this.context.symbolTable?.resolveSymbol(objectName, from)
+        : this.context.symbolTable?.resolveSymbol(objectName);
       if (!symbol?.inferredType) return false;
 
       let typeInfo = symbol.inferredType;
