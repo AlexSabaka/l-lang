@@ -25,9 +25,15 @@
   (fn dec [n <- Number] -> Number (- n 1))
 
   (fn abs [n <- Number] -> Number (Math.abs n))
-  (fn floor [n <- Number] -> Number (Math.floor n))
-  (fn ceil [n <- Number] -> Number (Math.ceil n))
-  (fn round [n <- Number] -> Number (Math.round n))
+;; -> Int, not -> Number. `floor`, `ceil` and `round` MAP ONTO THE INTEGERS -- that is what they are
+  ;; for -- and declaring them `Number` (which is `Int | Real`) made every caller's `-> Int` a lie:
+  ;;     (fn random-int [...] -> Int (floor (rand min max)))   ->  LL0213
+  ;; The error was real and had been invisible, because `99-p5js` never resolved `floor` at all: an
+  ;; import earlier in the file errored, and the post-syntax gate then skipped std/math's symbols
+  ;; entirely. Fixing that cascade is what exposed this.
+  (fn floor [n <- Number] -> Int (Math.floor n))
+  (fn ceil [n <- Number] -> Int (Math.ceil n))
+  (fn round [n <- Number] -> Int (Math.round n))
   
   (fn pow [base <- Number exp <- Number] -> Number (Math.pow base exp))
   

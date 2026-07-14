@@ -106,9 +106,14 @@
     )
 
     ;; ==================== GAME STATE ====================
+    ;; `:boosters` was NEVER A KEY here, yet `reset-game` assigns it and `draw` iterates it. It
+    ;; happened to work only because a JS assignment to an absent property creates it -- so the map's
+    ;; declared shape and its actual shape had drifted apart, silently, and any read before the first
+    ;; write would have handed back the bottom value.
     (mut game-state {
         :player nil
         :platforms []
+        :boosters []
         :camera-y 0
         :score 0
         :high-score 0
@@ -131,12 +136,22 @@
     ))
 
     ;; Spawn new platform at top
+    ;;
+    ;; Two real bugs lived here, both leftovers from an abandoned platform-type feature, and both
+    ;; INVISIBLE -- they sat under 104 ambient-global diagnostics, and the checker cannot see either
+    ;; of them even now:
+    ;;
+    ;;   (random-platform-type)  -- called, defined NOWHERE. A ReferenceError the moment a platform
+    ;;                              spawns. It escapes LL0210 because it is an ARGUMENT to `new`, and
+    ;;                              inferNewExpression never visits args.slice(1) at all.
+    ;;   (platform.init)         -- Platform has no `init`. A TypeError, right behind it. Member
+    ;;                              existence is not checked on any receiver.
+    ;;
+    ;; Platform's constructor takes TWO parameters. It was being handed three.
     (fn spawn-platform [camera-y] -> Platform (
-        (let platform (new Platform 
+        (let platform (new Platform
             (rand 0 (- WIDTH PLATFORM-WIDTH))
-            (- camera-y 50)
-            (random-platform-type)))
-        (platform.init)
+            (- camera-y 50)))
         (return platform)
     ))
 

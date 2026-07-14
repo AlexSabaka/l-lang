@@ -687,6 +687,25 @@ ${PRODUCER}
     source: '(import { a } from "sc_sel.lisp")\n(console.log (a))',
     silent: true,
   },
+
+  {
+    // Sd, found by REMOVING NOISE: `new`'s ARGUMENTS are never type-checked, or even visited.
+    //
+    // `inferNewExpression` reads args[0] -- the class name -- and returns. `args.slice(1)` is never
+    // inferred, so an undefined function called as a constructor argument is completely invisible.
+    // `99-p5js/main.lisp` had exactly this, live: `(new Platform x y (random-platform-type))`, where
+    // `random-platform-type` is defined NOWHERE. A guaranteed ReferenceError the moment a platform
+    // spawned, sitting silently under 104 ambient-global diagnostics.
+    //
+    // The same blindness hides argument-type and arity errors on every constructor call. Not fixed
+    // here -- visiting those args is a checker change with its own blast radius, and Sd is about
+    // ambient globals. Tracked, so that removing the noise leaves a record of what it was covering.
+    name: "an argument to `new` is never checked",
+    source: "(defclass P (let :ctor x <- Int 0))\n(let p (new P (bogus-fn)))",
+    expect: /LL0210/,
+    pending: true,
+    why: "new's args are never visited -- surfaced by Sd",
+  },
 ];
 
 function runCases(): { failed: number; pending: number } {

@@ -333,10 +333,30 @@ export class Context {
     syntaxRulesVisitor.visit(ast as ASTNode);
     this.performanceMetrics.endTimer("syntax", nodeCount, (syntaxRulesVisitor as any).getVisitCount?.() || 0);
 
-    if (this.results.hasErrors) {
-      // Deliberately does NOT log here. The CLI (command.transform / command.run) logs whatever
-      // is in `results` before exiting 1, and it does so for EVERY stage -- including codegen,
-      // which this method never covered. Logging in both places printed every diagnostic twice.
+    // THIS module's errors, not the whole build's.
+    //
+    // It was `this.results.hasErrors` -- and `results` is a single Context-wide collection shared by
+    // every module in the build. So once ANY module reported an error, every module imported AFTER it
+    // returned right here, before its symbols stage, and its symbol table was never built or joined.
+    //
+    // The effect is a cascade of phantom diagnostics that point at the innocent file. Measured:
+    //
+    //     (import "./broken.lisp")     ;; has one LL0210
+    //     (import "std/math")          ;; never gets its symbols built
+    //     (floor 3.7)                  ;; -> LL0210 'floor' is not defined      <- A LIE
+    //
+    // `std/math` exports `floor` and resolves perfectly well on its own. This is exactly why the p5js
+    // example appeared to have an undefined `floor`, `abs` and `map`: `p5-bindings.lisp` is imported
+    // first and errors, so `std/math` and `std/enumerable` were silently never processed at all.
+    //
+    // A module's own errors stop that module. Somebody else's do not. Same rule as the LL0217 gate
+    // below -- and the same underlying bug, which is worth naming: a Context-wide collection used as
+    // a PER-MODULE signal will keep producing this shape until every such gate is per-module.
+    //
+    // Deliberately does NOT log here. The CLI (command.transform / command.run) logs whatever is in
+    // `results` before exiting 1, and it does so for EVERY stage -- including codegen, which this
+    // method never covered. Logging in both places printed every diagnostic twice.
+    if (this.results.all.some((m) => m.severity === RuleSeverity.Error && m.source === fullPath)) {
       return { ast: ast as ASTNode };
     }
 
