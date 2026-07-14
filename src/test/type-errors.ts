@@ -564,7 +564,11 @@ ${PRODUCER}
     source: '(import { a } from "sa_selective.lisp")\n(console.log (b))',
     expect: /LL0216|not bound|selective/,
     pending: true,
-    why: "D20 -- Sb",
+    // Reassigned Sb -> Sc. LL0215 is the EXPORT side (read `exportName`, symbol-side); LL0216 is the
+    // IMPORT side (read `ImportDefinition.symbols`, per-importer state that does not exist yet).
+    // Different mechanisms, no shared code -- so they are different sub-phases, and Sc touches the
+    // import statement anyway for the resolver and LL0217.
+    why: "D20 -- Sc",
   },
   {
     // Today this is a raw Node ENOENT thrown out of `fs.readFileSync` -- there is no `existsSync`
@@ -585,6 +589,63 @@ ${PRODUCER}
     expect: /LL0218|already defined|redefin/,
     pending: true,
     why: "D20 -- Sf",
+  },
+
+  // -------------------------------------------------------------------------------------------
+  // Sb (D20): the four doors, and the two things the boundary must NOT break.
+  //
+  // A name can reach a symbol from another module through more doors than `checkIdentifierResolves`,
+  // and the difference is not academic -- it is the difference between enforcing D20 and appearing to.
+  // -------------------------------------------------------------------------------------------
+  {
+    // THE HALF-FIX TRAP, and the reason this case exists at all.
+    //
+    // `new` does NOT go through `checkIdentifierResolves`. It routes to `inferNewExpression`, which
+    // returns Unknown on a miss. So an Sb wired only into the obvious door passes every OTHER gate
+    // in this file while a private class still leaks -- and the corpus proves it: the ONLY leaked
+    // reference in `20-stdlib/complex_math_test/main.lisp` (a LIVE golden test) is `Complex`, and it
+    // appears solely as `(new Complex 1.0 2.0)`.
+    //
+    // If this case is passing and that example is still green, the enforcement is a fiction.
+    name: "Sb/D20: an unexported class is private through `new` too",
+    deps: { "sb_new.lisp": "(\n(defstruct Pub (let :ctor v <- Int 0))\n(defstruct Priv (let :ctor v <- Int 0))\n(export Pub)\n)\n" },
+    source: '(import "sb_new.lisp")\n(let p (new Priv 1))',
+    expect: /LL0215|module-private|not exported/,
+    pending: true,
+    why: "D20 -- Sb",
+  },
+  {
+    // AN OPERATOR IS EXEMPT -- W's ruling, applied. "An operator is not a name. It cannot be
+    // shadowed, imported or redefined -- only OVERLOADED." A thing with no name has no export.
+    //
+    // This is not a nicety. `inlineImportedOperators()` -- the eager sweep that exists BECAUSE an
+    // operator is found by dispatch and never by name -- routes through `isImportedSymbol`. Add a
+    // blanket export check there and the operator stops being inlined, never reaches
+    // `__ll_op_registry.register`, and W's bug returns whole. `src/test/imports.ts:395` guards the
+    // codegen half with a lib that exports `Money` and NOT the operator; this guards the checker's.
+    name: "Sb/D20: an unexported OPERATOR is still visible (W)",
+    deps: { "sb_op.lisp": "(\n(defstruct Money (let :ctor amount <- Int 0))\n(fn :operator + [a <- Money b <- Money] -> Money\n  (return (Money (+ a.amount b.amount))))\n(export Money)\n)\n" },
+    source: '(import "sb_op.lisp")\n(let total (+ (Money 3) (Money 4)))\n(console.log total.amount)',
+    silent: true,
+  },
+  {
+    // A module's OWN privates are its own. A predicate that forgets the same-file case would flag
+    // every unexported top-level symbol in every program that happens to contain an `(export ...)` --
+    // i.e. it would make `export` mean "the ONLY things that exist", which is not a boundary, it is
+    // a wall. Silent now, and silent forever.
+    name: "Sb/D20: a module's own private symbol is visible to ITSELF",
+    source: '(fn helper [] -> Int (return 1))\n(fn main-fn [] -> Int (return (helper)))\n(export main-fn)\n(console.log (main-fn))',
+    silent: true,
+  },
+  {
+    // The type-annotation door. Zero corpus exposure today (measured: no example annotates with an
+    // imported type), which is exactly why it would rot unnoticed. Wire it, and pin it.
+    name: "Sb/D20: an unexported TYPE is private in an annotation",
+    deps: { "sb_type.lisp": "(\n(defclass Pub)\n(defclass Priv)\n(export Pub)\n)\n" },
+    source: '(import "sb_type.lisp")\n(fn f [x <- Priv] -> Int (return 1))',
+    expect: /LL0215|module-private|not exported/,
+    pending: true,
+    why: "D20 -- Sb",
   },
 ];
 
