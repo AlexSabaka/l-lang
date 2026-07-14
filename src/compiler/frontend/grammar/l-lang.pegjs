@@ -202,13 +202,31 @@ ImportDefinition
   / ImportSource
 
 ImportSymbolsDefinition
-  = "{" symbols:SymbolAlias|1.., ","? | "}" _ FromKw __ source:ImportSource {
+  = "{" _ symbols:SymbolAlias|1.., ","? | "}" _ FromKw __ source:ImportSource {
     return { ...source, symbols };
   }
 
 SymbolAlias
-  = _ symbol:TypeName _ as:(AsModKw __ @TypeName)? _ {
+  = _ symbol:SymbolName _ as:(AsModKw __ @SymbolName)? _ {
     return { symbol, as };
+  }
+
+// A name in an `{ ... }` import list, and NOT `TypeName`.
+//
+// `TypeName` is `Alpha (Alpha / Digit)*` with `Alpha = [_a-zA-Z]` -- NO HYPHEN. grammar_v2's
+// equivalent consumes an `Identifier`, which allows one. So `(import { starts-with } from "...")`
+// parsed under grammar_v2 and, under PEG, did something far worse than fail: SymbolAlias could not
+// take the hyphen, the whole ImportSymbolsDefinition backtracked, and `ImportSource / namespace:
+// Identifier` picked up the pieces -- `Ident` is permissive enough to lex `{` itself as an
+// identifier. The result was a SILENT MISPARSE into four separate NAMESPACE imports (`{`,
+// `starts-with`, `}`, `from`), with no error at all.
+//
+// Essentially every exported name in the corpus is hyphenated (`starts-with`, `sort-by`,
+// `dot-product`), so no real selective import was expressible in this frontend. A frontend
+// divergence is a bug, and LL0216 would have been meaningless without this.
+SymbolName "symbol name"
+  = name:$(Alpha (Alpha / Digit / "-")*) {
+    return makeNode("type-name", { name });
   }
 
 ImportSource

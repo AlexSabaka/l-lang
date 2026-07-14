@@ -15,13 +15,40 @@ export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
       // `_location`, so a diagnostic lands on the offending literal rather than on the whole
       // `(import …)` form. (`ImportDefinition` itself is a plain object -- no `_type`, no
       // `_location` -- so it cannot carry one.)
-      this.processFileImport(import_.source.file, node, currentFile);
+      this.processFileImport(import_, import_.source.file, node, currentFile);
     } else {
       this.processNamespaceImport(import_.source.namespace, node);
     }
   }
 
-  private processFileImport(fileNode: ast.StringNode, node: ast.ImportNode, currentFile: string) {
+  /**
+   * WHICH names did this import ask for? `null` means "the whole module".
+   *
+   * `undefined` and `[]` BOTH mean the whole module, and getting that wrong is not a subtle bug --
+   * it breaks every import in existence. The frontends disagree about how a plain
+   * `(import "x.lisp")` records "the importer named nothing":
+   *
+   *     grammar_v2 -> symbols: []          PEG -> no `symbols` key at all
+   *
+   * Read `[]` as "an empty set of bindings" and every grammar_v2 import in the corpus binds NOTHING.
+   * A whole-module import names no symbols precisely because it wants all of them.
+   */
+  private importedNames(import_: ast.ImportDefinition): Set<string> | null {
+    const symbols = import_.symbols;
+    if (!symbols || symbols.length === 0) return null;
+    return new Set(
+      symbols
+        .map((s) => (s.symbol as any)?.name ?? (s.symbol as any)?.id)
+        .filter((n): n is string => typeof n === "string")
+    );
+  }
+
+  private processFileImport(
+    import_: ast.ImportDefinition,
+    fileNode: ast.StringNode,
+    node: ast.ImportNode,
+    currentFile: string
+  ) {
     const resolvedFile = ModuleResolver.resolve(
       fileNode.value,
       currentFile,
@@ -38,6 +65,11 @@ export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
       );
       return;
     }
+
+    // D20, the IMPORT side: record what this file actually ASKED FOR. `ImportDefinition.symbols` is
+    // built by both AST builders and, until now, read by nobody -- so `(import { a } from "x")`
+    // behaved identically to importing the whole module.
+    this.context.recordImport(currentFile, resolvedFile, this.importedNames(import_));
 
     // Stop at `types`, not `codegen`. An imported module is compiled for its SYMBOLS and their
     // inferred types; its emitted JavaScript was generated in full and then thrown away, because

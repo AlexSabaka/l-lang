@@ -663,6 +663,30 @@ ${PRODUCER}
     pending: true,
     why: "D20 -- Sb",
   },
+
+  // --- Sc (D20), the IMPORT side. The two gates below are GUARDS, not targets. ---
+  {
+    // THE `symbols: []` TRAP, pinned.
+    //
+    // The frontends record "the importer named nothing" differently -- grammar_v2 writes
+    // `symbols: []`, PEG omits the key entirely -- and BOTH mean "the whole module". Read `[]` as
+    // "an empty set of bindings" instead, and every whole-module import in the language binds
+    // NOTHING. The corpus would catch it (loudly, all at once), but the corpus is not a spec: this
+    // is, and it says a whole-module import binds everything.
+    name: "Sc/D20: a WHOLE-MODULE import still binds everything",
+    deps: { "sc_whole.lisp": "(\n(fn a [] -> Int (return 1))\n(fn b [] -> Int (return 2))\n(export a b)\n)\n" },
+    source: '(import "sc_whole.lisp")\n(console.log (a) (b))',
+    silent: true,
+  },
+  {
+    // ...and a selective import must still bind what it DOES name. Refusing everything is not a
+    // boundary, it is a wall -- the same trap Sb's "own private symbol" gate guards against, on the
+    // other side of the module.
+    name: "Sc/D20: a selective import BINDS what it names",
+    deps: { "sc_sel.lisp": "(\n(fn a [] -> Int (return 1))\n(fn b [] -> Int (return 2))\n(export a b)\n)\n" },
+    source: '(import { a } from "sc_sel.lisp")\n(console.log (a))',
+    silent: true,
+  },
 ];
 
 function runCases(): { failed: number; pending: number } {

@@ -210,11 +210,12 @@ In dependency order. Each is a sub-phase of Phase S.
   truth. **An operator is exempt** (W: it is language, not library; it has no name to export).
   Codegen was deliberately *not* given the check: its `isImportedSymbol` asks a **reachability**
   question, and a module's own private helpers must still inline transitively.
-- **Sc — the import side.** `(import "std/math")` resolved by name (a real resolution layer at the
-  single choke point, with a search path); an unresolvable import is a **diagnostic, not an ENOENT**
-  (**LL0217**); and a **selective** import binds only what it names (**LL0216** — moved here from Sb:
-  `exportName` is the *export* side, `ImportDefinition.symbols` is the *import* side, and they share
-  no code).
+- ✅ **Sc — the import side.** `ModuleResolver`: `(import "std/math")` resolves **by name**, importer's
+  directory first (anti-shadowing). An unresolvable import — and a **namespace** import, which used to
+  log an error and *succeed anyway* — is now **LL0217**. A **selective** import binds only what it
+  names (**LL0216**). The stdlib moved to **`lib/std/`**, so the resolver is load-bearing rather than
+  ornamental, and `test:type-errors` walks `lib/` so it did not leave the harness on the way out.
+  `LL0004 ImportHasSymbols` **deleted** — dead, and it encoded a false invariant.
 - **Sd — ambient globals become declarable.** Kills the `JS_GLOBALS` allowlist and, with it, the
   104 hidden p5js diagnostics. This is the one that actually *hides the JS*: `console` and `Math`
   become **typed** instead of **waved through**.

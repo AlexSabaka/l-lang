@@ -2930,15 +2930,36 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    */
   private checkSymbolVisible(node: ast.ASTNode, name: string, entry: SymbolEntry): void {
     const askingFile = node._location?.source;
-    if (SymbolTable.isVisibleFrom(entry, askingFile)) return;
-
     const declaredIn = (entry.value as any)?._location?.source;
     const where = declaredIn ? path.basename(declaredIn) : "another module";
-    this.reportTypeError(
-      node,
-      "LL0215",
-      `'${name}' is defined in '${where}' but is not exported. Add it to that module's (export ...) list to make it public.`
-    );
+
+    // The EXPORT side (Sb): does that module offer this name?
+    if (!SymbolTable.isVisibleFrom(entry, askingFile)) {
+      this.reportTypeError(
+        node,
+        "LL0215",
+        `'${name}' is defined in '${where}' but is not exported. Add it to that module's (export ...) list to make it public.`
+      );
+      return;
+    }
+
+    // The IMPORT side (Sc): did THIS file ask for it?
+    //
+    // The symmetric question, and until now nobody asked it either -- `ImportDefinition.symbols` was
+    // built by both AST builders and read by nobody, so `(import { a } from "m")` behaved exactly
+    // like importing the whole of `m`. An operator is exempt here for the same reason it is exempt
+    // from LL0215 (W): it is not a name, so it cannot appear in an import list.
+    if (
+      !entry.isOperator &&
+      declaredIn !== askingFile &&
+      !this.context.importBinds(askingFile, declaredIn, name)
+    ) {
+      this.reportTypeError(
+        node,
+        "LL0216",
+        `'${name}' is exported by '${where}', but this file's import does not bind it. Add it to the import list: (import { ${name} } from ...).`
+      );
+    }
   }
 
   /**

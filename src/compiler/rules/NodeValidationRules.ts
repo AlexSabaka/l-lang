@@ -27,13 +27,25 @@ const ImportMustHaveSource = createRule<ast.ImportNode>()
     || node.imports.map(x => x.source).filter(ast.isNamespaceImportSource).some(x => !x.namespace))
   .build();
 
-const ImportHasSymbols = createRule<ast.ImportNode>()
-  .addTypeFilter("import")
-  .addSeverity(RuleSeverity.Error)
-  .addCode("LL0004")
-  .addMessage("Import symbol must have a name")
-  .addTest((node) => node.imports.some((x) => !x.symbols))
-  .build();
+// LL0004 `ImportHasSymbols` was DELETED here (Sc3).
+//
+//     .addSeverity(Error).addCode("LL0004").addMessage("Import symbol must have a name")
+//     .addTest((node) => node.imports.some((x) => !x.symbols))
+//
+// It was defined, exported from the rules barrel, and never wired into any visitor -- so it had
+// never run. Which is fortunate, because it was WRONG in two independent ways:
+//
+//   1. It encoded a FALSE INVARIANT. A whole-module `(import "x.lisp")` legitimately names no
+//      symbols; that is what makes it a whole-module import. The rule declared every one of them an
+//      error.
+//   2. It was FRONTEND-DIVERGENT. A whole-module import records `symbols: []` under grammar_v2 and
+//      no `symbols` key at all under PEG, so `!x.symbols` is `false` in one frontend and `true` in
+//      the other. Wired, it would have failed all 21 corpus imports under PEG and passed all 21
+//      under grammar_v2.
+//
+// A rule that has never run is not load-bearing, but it is a claim -- and this one was a claim that
+// the language works the opposite of the way it does. Deleted rather than fixed: the invariant it
+// wanted does not exist.
 
 const VariableMustHaveName = createRule<ast.VariableNode>()
   .addTypeFilter("variable")
@@ -202,7 +214,6 @@ export const Rules = {
   IdentifierHasName,
   FractionHasZeroDenominator,
   ImportMustHaveSource,
-  ImportHasSymbols,
   VariableMustHaveName,
   ConstantVariableMustHaveInitializer,
   TryCatchHasEitherCatchOrFinally,

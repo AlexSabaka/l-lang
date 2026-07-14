@@ -133,9 +133,11 @@ itself. Enforcing the boundary costs **one export list**.
         export list**. Two doors bypassed the obvious check — `new`, and *a call head that resolves* —
         and the proof of enforcement was a live golden test going red before the export list was
         fixed.
-*   [ ] **Sc — the import side.** A real resolver so `(import "std/math")` works; a missing import
-        becomes a **diagnostic, not an `ENOENT`** (**LL0217**); a selective import binds only what it
-        names (**LL0216**).
+*   [x] **Sc — the import side.** `ModuleResolver`: `(import "std/math")` resolves **by name**. A
+        missing import — and a **namespace** import, which used to log an error and *succeed anyway* —
+        is now **LL0217**. A selective import binds only what it names (**LL0216**). The stdlib moved
+        to **`lib/std/`**. Found on the way: PEG silently **misparsed** `(import { starts-with } … )`
+        into four namespace imports, and `LL0004` was a dead rule encoding a false invariant.
 *   [ ] **Sd — ambient globals become declarable.** Kills `JS_GLOBALS` and the 104 hidden p5js
         diagnostics. *This* is the step that actually hides the JS.
 *   [ ] **Se — `std/core`:** `SYMBOL_MAP`'s library half leaves codegen and becomes typed l-lang.
@@ -203,10 +205,12 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
 *   **Parse/lex gaps.** `__bar` does not lex; boolean match patterns; `\"` is not unescaped inside a
     string; `:is` type patterns; the `..` range operator; sized array types; `fn` parameter defaults;
     the numeric tower (octal/binary/hex/fraction/complex all lex, none emit).
-*   **The import side of a module is still fake.** (The *export* side is fixed — **Sb**, LL0215.) A
-    **selective** import (`(import { a } from …)`) is parsed and dropped, behaving identically to a
-    whole-module one. An **unresolvable** import is a raw Node `ENOENT`, not a diagnostic. Both are
-    **D20**, gated RED, and owned by **Sc**.
+*   **A module boundary is not transitive.** If A imports B and B imports C, A can still name C's
+    exports — `SymbolTable.join` splices every module's scopes in, and the import check declines to
+    invent a diagnostic where no *direct* import was recorded. Whether a boundary *should* be
+    transitive is a real question, and **D20 does not answer it**.
+*   **`:as` aliasing is unimplemented.** It parses in both frontends, on both the import and the
+    export side, and nothing honours it.
 *   **Harness.** `test:type-errors` and `test:imports` are pinned to grammar_v2, so "0 corpus
     diagnostics" is a single-frontend claim. Worse: that count covers **only `status: "test"` files**
     — `library` and `xfail` are excluded *entirely*, so the true corpus total is **115 across 6

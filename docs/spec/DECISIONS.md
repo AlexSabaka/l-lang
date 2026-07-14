@@ -1889,3 +1889,127 @@ before codegen when `results.hasErrors`, so codegen never sees a program that vi
 **One export list.** `std/math.lisp` omitted `abs floor ceil round pow min max inc dec` (all defined
 directly below it) and `Complex`. Nine leaked names; the entire corpus blast radius of the module
 boundary. 46 legitimate cross-module references were untouched, and no golden moved.
+
+## Sc — the import side (LL0216, LL0217, and a resolver)
+
+Sb made `export` real, so a module has a public surface. Sc makes `import` real: **resolution**,
+**failure**, and **selective binding**. `docs/spec/STDLIB.md` has the worklist.
+
+### There was no resolver, and no failure path
+
+Resolution was one line — `path.resolve(dirname(importer), literal)` — open-coded in three places,
+with no search path and no extension inference. **A missing import was a raw Node `ENOENT` stack
+trace**: `AstProvider.loadFile` calls `fs.readFileSync` with no `existsSync` guard, and nothing on
+the import path caught it. `std/` resolved at all only because every importing file happened to sit
+one directory above it.
+
+`ModuleResolver` is now the only thing that turns `(import "…")` into a file:
+
+```
+1. the importer's own directory     every corpus import lands here, and must keep landing here
+2. the search paths                 the shipped lib/, then any -I roots
+```
+
+**Importer-first is a deliberate anti-shadowing rule.** Consult the search path first and a project's
+own `std/io.lisp`, sitting next to its source, is silently displaced by the compiler's. A name
+resolves to the thing nearest whoever asked. An explicitly relative spec (`./x`, `../x`) or an
+absolute one never consults the search path at all: *"./config" means the one next to me; it is not a
+request the stdlib may answer.*
+
+### `(import foo.bar)` succeeded, and did nothing
+
+A namespace import **parses in both frontends** and used to reach
+`context.log(LogLevel.Error, "not supported yet")`. **A `LogLevel` call is not a diagnostic** — it
+touches the logger and never `results`, so `hasErrors` stayed false and **the build SUCCEEDED with
+the import silently dropped**. Unsupported is fine. Unsupported and quiet is not. It is **LL0217**.
+
+### The gate that hid sixteen diagnostics — mine
+
+A symbols-stage error does reach `hasErrors`, but the next gate is *after the type checker*. Without
+an earlier one, a single misspelled import runs TreeShake, Comptime, Desugar and the whole checker
+against a module whose symbols were never loaded, burying the one true diagnostic under a flood of
+spurious LL0210s. So Sc1 added a gate after the symbols stage.
+
+It was `if (this.results.hasErrors)` — and that collection is **Context-wide, shared across every
+module in the build**. So an error in any *imported* module skipped the *importing* module's type
+checking entirely. Measured: **`99-p5js/main.lisp` fell from 60 diagnostics to 44**, because
+`p5-bindings.lisp`'s 44 ambient-global LL0210s (a known gap) tripped the gate. Sixteen diagnostics did
+not get fixed — **they went silent**.
+
+Caught only because the harness reports a *number*. The gate now tests for **LL0217 specifically**: a
+missing symbol table is a reason to stop; somebody else's type error is not.
+
+### `symbols: []` vs `undefined` — and both mean "the whole module"
+
+| `(import "x.lisp")` | grammar_v2 | PEG |
+|---|---|---|
+| `symbols` | `[]` | **key absent** |
+
+Read `[]` as *"an empty set of bindings"* and **every whole-module import in the language binds
+nothing**. A whole-module import names no symbols precisely because it wants all of them. Normalised
+before anything else touches it, and pinned by a gate — the corpus would have caught it, but the
+corpus is not a spec.
+
+### A silent MISPARSE in PEG, not a parse error
+
+`SymbolAlias` used `TypeName` in both frontends, but they are not the same language: PEG's is
+`Alpha (Alpha / Digit)*` with `Alpha = [_a-zA-Z]` — **no hyphen** — while grammar_v2's consumes an
+`Identifier`, which allows one.
+
+The expectation was a parse error under PEG. **It was worse.** `SymbolAlias` could not take the
+hyphen, the whole `ImportSymbolsDefinition` backtracked, and `ImportSource / namespace: Identifier`
+picked up the pieces — PEG's `Ident` is permissive enough to lex **`{` itself as an identifier**. So
+
+```lisp
+(import { starts-with } from "std/string")
+```
+
+parsed, under PEG, into **four separate NAMESPACE imports** — `{`, `starts-with`, `}`, `from` — with
+no error at all. Essentially every exported name in the corpus is hyphenated, so **no real selective
+import was expressible in that frontend**, and it failed by quietly meaning something else. Fixed with
+a dedicated `SymbolName` rule; both frontends now agree.
+
+### `LL0004 ImportHasSymbols` — deleted
+
+```ts
+.addSeverity(Error).addCode("LL0004").addMessage("Import symbol must have a name")
+.addTest((node) => node.imports.some((x) => !x.symbols))
+```
+
+Defined, exported from the rules barrel, **never wired into any visitor**. Fortunately — because it
+was wrong twice over: it encoded a **false invariant** (a whole-module import legitimately names no
+symbols), and it was **frontend-divergent** (`!x.symbols` is `false` under grammar_v2 and `true` under
+PEG, so wiring it would have failed all 21 corpus imports in one frontend and passed all 21 in the
+other).
+
+**The seventh "written and never wired in".** A rule that never ran is not load-bearing — but it is a
+*claim*, and this one claimed the language works the opposite of the way it does. Deleted rather than
+fixed: the invariant it wanted does not exist.
+
+### The stdlib is a library now
+
+`examples/20-stdlib/std/` → **`lib/std/`**, imported **by name**. This is what makes the resolver
+load-bearing the day it lands rather than the eighth thing here that was built and never called.
+`test:type-errors` walks `lib/` alongside `examples/` — walking only `examples/` would have dropped
+the whole stdlib out of the diagnostic harness, recreating, *in the phase that named it*, the
+"compiled but never examined" hole Sa exists to expose.
+
+One hazard found by testing my own code: `defaultLibPaths()` ascends looking for `lib/`, and an
+unbounded climb reaches `/` — **where `/lib` EXISTS on Linux**. The compiler would have silently
+adopted the OS shared-library directory as its standard library: one platform, no error, only when
+its own `lib/` was missing. The ascent is bounded at `.git` (not `package.json` — that lives in
+`src/`, one level *below* the repo root where `lib/` sits, so it would stop one level too soon).
+
+## Open findings from this phase
+
+- **`:as` aliasing is unimplemented.** It parses in both frontends, on both the import and the export
+  side, and nothing honours it. `exportName` records the alias; no reader renames anything.
+- **`ImportExportAlias.as` is typed `IdentifierNode`** but both frontends emit a `TypeNameNode` on the
+  import side, and PEG yields `null` where grammar_v2 yields `undefined`. Latent divergences.
+- **Import cycles are a WARNING** (`LL0300`) — a cycle does not fail the build. `LL0300` also sits in
+  a different band from D20's `LL02xx` codes, which were reserved there because `type-errors.ts` reads
+  only `LL02*`. The banding is inconsistent.
+- **A transitive import is still visible.** If A imports B and B imports C, A can name C's exports:
+  `SymbolTable.join` splices every module's scopes in, and `importBinds` returns `true` when there is
+  no *direct* import record rather than inventing a diagnostic from missing information. Whether a
+  module boundary should be transitive is a real question, and D20 does not answer it.

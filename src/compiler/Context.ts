@@ -127,6 +127,46 @@ export class Context {
    * relative spec -- see ModuleResolver.
    */
   public libPaths: string[];
+
+  /**
+   * D20, the IMPORT side: importing file -> imported module -> the names it asked for.
+   *
+   * `null` means "the whole module". The EXPORT side (`SymbolEntry.exportName`, Sb) answers *does
+   * that module offer this name?*; this answers the symmetric question, *did this file ask for it?*
+   * Two questions, two codes -- LL0215 and LL0216.
+   *
+   * Keyed by absolute path on both sides.
+   */
+  private importBindings: Map<string, Map<string, Set<string> | null>> = new Map();
+
+  /** Called once per resolved `(import ...)`, from the dependency-graph pass. */
+  recordImport(importer: string, imported: string, names: Set<string> | null): void {
+    const byModule = this.importBindings.get(path.resolve(importer)) ?? new Map();
+
+    // A module imported TWICE widens: `(import {a} from "m")` and `(import "m")` in one file means
+    // the whole module. Narrowing on a re-import would make import order significant, which it is not.
+    const existing = byModule.get(path.resolve(imported));
+    if (existing === null) return; // already whole-module; nothing can narrow it
+    const merged = names === null ? null : new Set([...(existing ?? []), ...names]);
+
+    byModule.set(path.resolve(imported), merged);
+    this.importBindings.set(path.resolve(importer), byModule);
+  }
+
+  /**
+   * Did `importer` bind `name` from `declaredIn`?
+   *
+   * `true` when there is no record of a direct import at all -- the symbol reached this file some
+   * other way (transitively, or it is not really cross-module), and inventing a diagnostic from
+   * missing information is exactly what a gradual checker must never do.
+   */
+  importBinds(importer: string | undefined, declaredIn: string | undefined, name: string): boolean {
+    if (!importer || !declaredIn) return true;
+    const names = this.importBindings.get(path.resolve(importer))?.get(path.resolve(declaredIn));
+    if (names === undefined) return true; // no direct import recorded
+    if (names === null) return true;      // whole module
+    return names.has(name);
+  }
   
   private moduleCache: Map<string, { ast: ASTNode; symbols: SymbolTable }> = new Map();
 
