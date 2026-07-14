@@ -50,24 +50,34 @@ export class TypeEnvironment {
   }
 
   /**
-   * Set type for an expression node
+   * The within-pass memo for `inferExpressionType`, keyed by node IDENTITY.
+   *
+   * It used to be keyed by `${_type}_${start.offset}_${end.offset}` -- the SOURCE SPAN. That is not a
+   * key, it is a collision waiting for a desugarer: a synthesized node legitimately carries the
+   * location of the node it wraps, so `(return e)` and `e` hash to the same string whenever they
+   * share a `_type`. Which they do exactly when `e` is a CALL -- the common implicit return.
+   *
+   * The consequence was silent and precise: the return-list was typed `Unknown` first, `checkReturns`
+   * then asked for `e`'s type, got the poisoned entry, and gave up. So an implicit return of a
+   * LITERAL was checked (different `_type`, no collision) and an implicit return of a CALL was not --
+   * and a gate written with a literal would have passed while the check was dead.
+   *
+   * Two distinct nodes are two distinct nodes, whatever they point at in the source.
    */
   setType(node: ast.ASTNode, type: InferredType): void {
     if (this.scopeStack.length === 0) {
       return;
     }
-    const key = this.getNodeKey(node);
-    this.scopeStack[this.scopeStack.length - 1].localTypes.set(key, type);
+    this.scopeStack[this.scopeStack.length - 1].localTypes.set(node, type);
   }
 
   /**
    * Get type for an expression node
    */
   getType(node: ast.ASTNode): InferredType | undefined {
-    const key = this.getNodeKey(node);
     // Search from innermost scope outward
     for (let i = this.scopeStack.length - 1; i >= 0; i--) {
-      const type = this.scopeStack[i].localTypes.get(key);
+      const type = this.scopeStack[i].localTypes.get(node);
       if (type) {
         return type;
       }
@@ -205,9 +215,6 @@ export class TypeEnvironment {
   /**
    * Create a unique key for an AST node
    */
-  private getNodeKey(node: ast.ASTNode): string {
-    return `${node._type}_${node._location.start.offset}_${node._location.end.offset}`;
-  }
 
   /**
    * Helper to create primitive types
@@ -323,6 +330,6 @@ export class TypeEnvironment {
  */
 interface Scope {
   node: ast.ASTNode;
-  localTypes: Map<string, InferredType>;
+  localTypes: Map<ast.ASTNode, InferredType>;
   localIdentifiers: Map<string, InferredType>;  // For generic type parameters
 }

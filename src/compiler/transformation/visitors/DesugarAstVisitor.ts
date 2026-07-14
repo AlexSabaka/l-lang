@@ -239,57 +239,127 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     // desugar pass must not reach backwards into the tree an earlier pass indexed.
     const body = node.body.map((x) => this.visit(x) as ast.ASTNode);
 
-    if (this.injectImplicitReturns) {
-      const last = body.length - 1;
-      if (this.shouldWrapInReturn(body[last])) {
-        body[last] = this.wrapInReturn(body[last]);
-      }
-    }
-
-    return { ...node, body } as ast.FunctionNode;
+    return {
+      ...node,
+      body: this.injectImplicitReturns ? this.wrapTail(body) : body,
+    } as ast.FunctionNode;
   }
 
   /**
-   * Check if a node should be wrapped in an implicit return.
+   * The IMPLICIT RETURN: a function's tail expression becomes an explicit `(return e)`.
+   *
+   * This replicates codegen's rule EXACTLY -- codegen is the reference implementation, exercised by
+   * the whole corpus. The point is not to improve it here; it is to move it, so the TYPE CHECKER sees
+   * the return. Today `checkReturns` walks the body looking for `(return e)` lists, and an implicit
+   * return has none, so a declared return type is enforced only if you happened to write `return`
+   * yourself:
+   *
+   *     (fn f [] -> Int (return "str"))   ->  LL0213
+   *     (fn f [] -> Int "str")            ->  CLEAN
    */
-  private shouldWrapInReturn(node: ast.ASTNode): boolean {
-    // Never wrap control structures or explicit definitions
-    const excludedTypes: Set<ast.NodeType> = new Set([
+  private wrapTail(items: ast.ASTNode[]): ast.ASTNode[] {
+    if (items.length === 0) return items;
+
+    const last = items[items.length - 1];
+    const wrapped = this.wrapIfValue(last);
+    if (wrapped === last) return items;
+
+    return [...items.slice(0, -1), wrapped];
+  }
+
+  private wrapIfValue(node: ast.ASTNode): ast.ASTNode {
+    // A BODY WRITTEN AS ONE PARENTHESIZED BLOCK. Its value is its own tail:
+    //
+    //     (fn f [n] ((console.log "side") (* n 2)))
+    //
+    // The block is a `list` whose head is not a name -- so it is not a call -- and the return belongs
+    // INSIDE it, on its last statement. Wrapping the block itself would emit `return { ... }`.
+    if (this.isBlockList(node)) {
+      const block = node as ast.ListNode;
+      return { ...block, nodes: this.wrapTail(block.nodes) } as ast.ListNode;
+    }
+
+    // A trailing `if`: the return goes on each BRANCH, not around the `if`.
+    if (node._type === "if") {
+      const ifNode = node as ast.IfNode;
+      return {
+        ...ifNode,
+        then: this.wrapIfValue(ifNode.then),
+        else: ifNode.else ? this.wrapIfValue(ifNode.else) : undefined,
+      } as ast.IfNode;
+    }
+
+    return this.isValueTail(node) ? this.wrapInReturn(node) : node;
+  }
+
+  /** A `list` that is a BLOCK of statements, not a call. A call's head is a name. */
+  private isBlockList(node: ast.ASTNode): boolean {
+    if (!ast.isListNode(node)) return false;
+    const head = (node as ast.ListNode).nodes[0];
+    if (!head) return false;
+    return (
+      head._type !== "simple-identifier" && head._type !== "composite-identifier"
+    );
+  }
+
+  /**
+   * Does this tail node YIELD a value that should be returned?
+   *
+   * The exclusions mirror codegen's `isControlStatement` + its `x._type !== "variable"` guard.
+   *
+   * `if` / `when` / `cond` are EXCLUDED, and that is deliberate. Codegen emits them as statements in
+   * a function tail, so a function whose tail is an `if` yields `undefined` today -- its own comment
+   * says so ("nothing to convert. Leave it; the block's value is undefined"). The version of this
+   * method that shipped in the unwired desugarer wrapped BOTH BRANCHES of a trailing `if` in returns,
+   * which would silently start returning a value where nothing was returned before. Whether a
+   * trailing `if` should be an expression is a RULING, not a detail to slip into a refactor.
+   *
+   * `match` is NOT excluded: codegen emits it as an IIFE -- an expression -- and returns it.
+   */
+  private isValueTail(node: ast.ASTNode): boolean {
+    const notAValue: Set<ast.NodeType> = new Set([
+      // control flow -- statements in a tail, by codegen's rule
+      "when",
+      "cond",
       "while",
-      "try-catch",
       "for",
       "for-each",
+      "try-catch",
+      // declarations -- nothing to return
       "variable",
-      "function",
       "class",
+      "struct",
       "interface",
+      "enum",
+      "type-def",
+      "modifier-def",
+      "macro-def",
       "import",
       "export",
+      "comment",
     ]);
 
-    if (excludedTypes.has(node._type)) {
-      return false;
+    if (notAValue.has(node._type)) return false;
+
+    // A LAMBDA is a value; a named `fn` DECLARATION is not.
+    //
+    // Codegen draws exactly this line, and it draws it on the EMITTED node: an anonymous function
+    // becomes an ArrowFunctionExpression (an expression -- wrapped in a return) while a named one
+    // becomes a FunctionDeclaration (a statement -- left alone). Excluding `function` outright, as the
+    // unwired desugarer did, silently swallowed the return of every `defmodifier` -- whose whole body
+    // IS a trailing lambda, the wrapper it hands back. `TypeError: add is not a function`.
+    if (node._type === "function") {
+      return !(node as ast.FunctionNode).name;
     }
 
-    if (node._type === "if") {
-      return true; // We'll handle this recursively in wrapInReturn
-    }
-
-    // Check if it's already a return statement
-    if (node._type === "list") {
-      const listNode = node as ast.ListNode;
-      const nodes = Array.isArray(listNode.nodes)
-        ? listNode.nodes
-        : [listNode.nodes];
-      if (nodes.length > 0) {
-        const head = nodes[0];
-        if (
-          head._type === "simple-identifier" &&
-          ((head as ast.SimpleIdentifierNode).id === "return" ||
-            (head as ast.SimpleIdentifierNode).id === "throw")
-        ) {
-          return false;
-        }
+    // Already a `(return e)` or `(throw e)`.
+    if (ast.isListNode(node)) {
+      const head = (node as ast.ListNode).nodes[0];
+      if (
+        head?._type === "simple-identifier" &&
+        ["return", "throw"].includes((head as ast.SimpleIdentifierNode).id)
+      ) {
+        return false;
       }
     }
 
@@ -297,23 +367,13 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
   }
 
   /**
-   * Wrap a node in an explicit return.
-   * Returns are represented as (return value) lists.
+   * `e`  ->  `(return e)`.
+   *
+   * The synthesized nodes keep the ORIGINAL `_parent` object -- never `undefined`, never rebuilt. A
+   * node with no parent cannot reach a scope: `scopeOf` returns undefined and resolution falls back
+   * silently to the flat root search, which is the exact failure P6 exists to prevent.
    */
   private wrapInReturn(node: ast.ASTNode): ast.ASTNode {
-    if (!this.shouldWrapInReturn(node)) {
-      return node;
-    }
-
-    if (node._type === "if") {
-      const ifNode = node as ast.IfNode;
-      return {
-        ...ifNode,
-        then: this.wrapInReturn(ifNode.then),
-        else: ifNode.else ? this.wrapInReturn(ifNode.else) : undefined,
-      } as ast.IfNode;
-    }
-
     return {
       _type: "list",
       _location: { ...node._location },
@@ -323,13 +383,11 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
           _type: "simple-identifier",
           id: "return",
           _location: { ...node._location },
-          // The ORIGINAL parent, never `undefined`. A node with no parent cannot reach a scope --
-          // `scopeOf` returns undefined and resolution falls back to the flat search. Harmless for
-          // `return` itself (a special form, never resolved), but the invariant is the point.
           _parent: node._parent,
         } as ast.SimpleIdentifierNode,
         node,
       ],
     } as ast.ListNode;
   }
+
 }

@@ -336,7 +336,7 @@ export class Context {
     // every node at objects the scope index has never seen -- resolution then falls back silently to
     // the flat root search, and P6 is undone. Measured: 0 lexical misses when the original parent is
     // preserved, 1056 when the chain is rebuilt.
-    const desugarVisitor = new DesugarAstVisitor(this);
+    const desugarVisitor = new DesugarAstVisitor(this, true);
     ast = desugarVisitor.visit(ast) as ASTNode;
 
     const desugaredNodeCount = this.countNodes(ast);

@@ -459,6 +459,46 @@ ${PRODUCER}
     silent: true,
   },
 
+  // --- Te: an IMPLICIT return is type-checked. ---
+  //
+  // `checkReturns` walks the body looking for `(return e)` lists. An implicit return -- a function
+  // whose tail is bare -- has no such list, because CODEGEN adds the return and the type checker
+  // never sees it. So a declared return type was enforced only if you happened to write `return`
+  // yourself. The desugarer now injects it, so the return is THERE to be checked.
+  {
+    name: "Te: an implicit return is checked (literal tail)",
+    source: '(fn f [] -> Int "str")',
+    expect: /LL0213/,
+  },
+  {
+    // THE CALL, not the literal. A literal tail has a different `_type` from the `(return e)` list
+    // that wraps it, so their memo-cache keys (`${_type}_${start}_${end}`) differ. A CALL tail does
+    // NOT: the synthesized return-list and the call collide on the key, the return is typed Unknown
+    // first, and `checkReturns` then reads that poisoned entry and gives up. A literal-only gate
+    // passes while every call-tail check is silently dead.
+    name: "Te: an implicit return is checked (CALL tail)",
+    source: '(fn g [] -> String (return "s"))\n(fn f [] -> Int (g))',
+    expect: /LL0213/,
+  },
+  {
+    name: "Te: an implicit return is checked (operator tail)",
+    source: '(fn f [] -> Int (+ "a" "b"))',
+    expect: /LL0213/,
+  },
+  {
+    name: "Te: a CORRECT implicit return stays silent",
+    source: '(fn g [] -> Int (return 1))\n(fn f [] -> Int (g))',
+    silent: true,
+  },
+  {
+    // A trailing `if` yields `undefined` today -- codegen's `isControlStatement` refuses to wrap it,
+    // and its own comment says so. The desugarer must keep doing that, or a function whose tail is an
+    // `if` silently starts returning a value where it returned nothing.
+    name: "Te: a trailing `if` is NOT wrapped in a return",
+    source: '(fn f [] -> Void (if true (console.log "a") (console.log "b")))',
+    silent: true,
+  },
+
   // --- P7d: declaration-site variance (LL0214). ---
   { name: ":out in a parameter position", source: "(definterface P<:out T> (fn f [x <- T] -> Void))", expect: /LL0214/ },
   { name: ":in in a return position", source: "(definterface C<:in T> (fn f [] -> T))", expect: /LL0214/ },

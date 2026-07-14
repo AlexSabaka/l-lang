@@ -18,6 +18,7 @@ import { ClassBuilder } from "../JSClassBuilder";
 import { SourceMapGenerator } from "source-map";
 import path from "path";
 import { formatWithOptions } from "util";
+import { DesugarAstVisitor } from "../../../transformation/visitors/DesugarAstVisitor";
 
 /**
  * Helper to extract variable names declared within a pattern match
@@ -929,6 +930,13 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         ...this.parameterCopyPrologue(params, node.params.map((p) => p.type))
       );
 
+      // NO implicit-return injection here any more. The DESUGARER does it, on the AST, so the type
+      // checker sees the `(return e)` and can check it against the declared return type -- which is
+      // the entire point: an implicit return used to be enforced by nobody.
+      //
+      // The BlockStatement splice below stays. It is not the implicit return: it flattens a body
+      // written as ONE parenthesized block into the function body, so the two spellings emit the same
+      // JavaScript. The desugarer puts the `(return e)` INSIDE that block; this is what unwraps it.
       node.body.forEach((x, index) => {
         const visited = this.visit(x);
         const isLast = index === node.body.length - 1;
@@ -939,11 +947,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           !this.isControlStatement(visited) &&
           x._type !== "variable"
         ) {
-          if (this.isExpression(visited)) {
-            bodyStatements.push(
-              ESTreeBuilder.returnStatement(x, visited as ESTree.Expression)
-            );
-          } else if ((visited as ESTree.Node).type === "BlockStatement") {
+          if ((visited as ESTree.Node).type === "BlockStatement") {
             // A body written as ONE PARENTHESIZED BLOCK emits a BlockStatement, and its value was
             // simply dropped -- the implicit return above only fired on an EXPRESSION. So:
             //
@@ -3162,6 +3166,27 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     ) as T;
   }
 
+  /**
+   * A DESUGARED copy of a node held by the symbol table.
+   *
+   * `symbol.value` is the PRE-desugar parse tree -- the symbol table is built before the desugar
+   * stage runs -- so anything the inliner emits straight from it has never seen the desugarer, and
+   * therefore has no implicit return. An imported `(fn sqrt [x] (Math.sqrt x))` inlined as-is emitted
+   *
+   *     const __ll_inlined_sqrt_1 = x => { Math.sqrt(x) };     // returns undefined
+   *
+   * Codegen used to hide this by injecting the implicit return ITSELF, at emit time, so the inlined
+   * copy got one for free. Now that the return is injected on the AST -- which is the whole point, so
+   * the TYPE CHECKER can see it -- anything emitting from `symbol.value` has to desugar it first.
+   * `ComptimeEvaluationAstVisitor` has always done exactly this, for exactly this reason.
+   *
+   * It applies to CLASSES too, not just functions: an inlined class's methods are function bodies
+   * like any other, and their implicit returns went missing the same way.
+   */
+  private desugaredCopyOf(node: ast.ASTNode): ast.ASTNode {
+    return new DesugarAstVisitor(this.context, true).visit(this.cloneNode(node));
+  }
+
   private ensureSymbolInlined(symbol: SymbolEntry): string {
     const src =
       (symbol.value &&
@@ -3183,9 +3208,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       let defStmt: ESTree.Statement;
 
       if (symbol.nodeType === "function") {
-        const fn = this.cloneNode(
-          symbol.value as ast.FunctionNode
-        ) as ast.FunctionNode;
+        const fn = this.desugaredCopyOf(symbol.value) as ast.FunctionNode;
 
         // An OPERATOR keeps its own name. Everything else is renamed to a unique inlined name so two
         // modules' `helper` cannot collide -- but an operator is not referenced BY name, it is found by
@@ -3208,8 +3231,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         // A struct emits through visitClass (visitStruct delegates to it), so it is renamed exactly
         // like a class. It used to fall into the catch-all below and be cast to an Expression, which
         // survived only because `const X = class Vector3 {...}` -- a class EXPRESSION -- is valid JS.
-        const cls = this.cloneNode(
-          symbol.value as ast.ClassNode
+        const cls = this.desugaredCopyOf(symbol.value as ast.ClassNode
         ) as ast.ClassNode;
 
         // Remember what it was CALLED before the rename.
