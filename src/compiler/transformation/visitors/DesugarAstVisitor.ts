@@ -1,4 +1,5 @@
 import * as ast from "../../frontend/ast";
+import { valueIsTail } from "../../analysis/listForm";
 import { Context, LogLevel } from "../../Context";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { formatWithOptions } from "util";
@@ -320,7 +321,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     //
     // The block is a `list` whose head is not a name -- so it is not a call -- and the return belongs
     // INSIDE it, on its last statement. Wrapping the block itself would emit `return { ... }`.
-    if (this.isBlockList(node)) {
+    if (valueIsTail(node)) {
       const block = node as ast.ListNode;
       return { ...block, nodes: this.wrapTail(block.nodes) } as ast.ListNode;
     }
@@ -338,15 +339,6 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     return this.isValueTail(node) ? this.wrapInReturn(node) : node;
   }
 
-  /** A `list` that is a BLOCK of statements, not a call. A call's head is a name. */
-  private isBlockList(node: ast.ASTNode): boolean {
-    if (!ast.isListNode(node)) return false;
-    const head = (node as ast.ListNode).nodes[0];
-    if (!head) return false;
-    return (
-      head._type !== "simple-identifier" && head._type !== "composite-identifier"
-    );
-  }
 
   /**
    * Does this tail node YIELD a value that should be returned?

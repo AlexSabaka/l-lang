@@ -1,4 +1,5 @@
 import * as ast from "../../frontend/ast";
+import { isCallList, valueIsTail, classifyList, SPECIAL_FORMS } from "../../analysis/listForm";
 import { Context, LogLevel } from "../../Context";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { TypeEnvironment } from "../TypeEnvironment";
@@ -1592,12 +1593,13 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // `return`, which is Unknown -- and a `return` that infers as Unknown stops the function's
     // return type from propagating. Leave them to the statement loop, which walks their children,
     // so a call NESTED in one -- `(return (bogus-fn x))` -- is still reached and still checked.
+    // D25, asked ONCE -- `classifyList` is shared with codegen and the desugarer. This test used to be
+    // spelled out here, and again in three other places in this file, and again in each of the other
+    // two passes. A `special` form is NOT a call: routing `(return x)` through call inference types it
+    // as a call to a function named `return`, which is Unknown -- and a `return` that infers as Unknown
+    // stops the enclosing function's return type from propagating at all.
     const listHead = node.nodes[0];
-    if (
-      !this.isDeclaration(listHead) &&
-      (listHead._type === "simple-identifier" || listHead._type === "composite-identifier") &&
-      !InferAndCheckPass.SPECIAL_FORMS.has(ast.symbolName(listHead as ast.IdentifierNode))
-    ) {
+    if (!this.isDeclaration(listHead) && isCallList(node)) {
       this.inferExpressionType(node);
       return;
     }
@@ -1734,8 +1736,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const only = body[0];
     if (!ast.isListNode(only) || only.nodes.length === 0) return body;
 
-    const head = only.nodes[0];
-    if (head._type === "simple-identifier" || head._type === "composite-identifier") return body;
+    // NOT `isCallList`, which excludes SPECIAL forms -- and the old spelling here was "is the head a
+    // NAME", which includes them. A single-item body of `(return x)` must STAY the body; splice it and
+    // its head becomes a statement of its own. `valueIsTail` is the exact inverse: a block or redundant
+    // parens is a bag to splice open; a call, an apply or a special form IS the body.
+    if (!valueIsTail(only)) return body;
 
     return only.nodes;
   }
@@ -1776,7 +1781,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       // list actually IS:
       if (this.isDeclaration(head)) {
         this.visit(head);
-      } else if (head._type === "simple-identifier" || head._type === "composite-identifier") {
+      } else if (!valueIsTail(item)) {
         // A real call: `(console.log x)`. Inferring it runs the argument and operator checks.
         this.inferExpressionType(item);
       } else {
@@ -2711,18 +2716,17 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         // actually made in, and checking only the statement side reported nothing at all for it.
         this.checkComputedCallee(listNode);
 
-        // A single non-identifier element is a PARENTHESISED EXPRESSION, not a call -- `(let f (fn []
-        // 5))` reaches this pass as a `list` wrapping the lambda, not as the lambda itself. Codegen
-        // has always unwrapped exactly this (its own trivial-list unwrap, with the same D1 guard); the
-        // checker did not, so the lambda inside was never typed at all.
+        // A GROUPING is redundant parens, not a call -- `(let f (fn [] 5))` reaches this pass as a
+        // `list` wrapping the lambda, not as the lambda itself, and without unwrapping it the lambda
+        // inside is never typed at all.
         //
-        // The guard is D1's: an IDENTIFIER head is a call (`(solve-maze)`), and must not be unwrapped.
-        if (
-          listNode.nodes.length === 1 &&
-          listNode.nodes[0]._type !== "simple-identifier" &&
-          listNode.nodes[0]._type !== "composite-identifier"
-        ) {
-          inferredType = this.inferExpressionType(listNode.nodes[0]);
+        // Through `classifyList`, because this copy of the rule was subtly WRONG: it tested only "the
+        // head is not an identifier", missing codegen's dotted-member guard. So the checker unwrapped
+        // `(gs[0].hi)` into a member READ while codegen emitted a CALL -- two passes, two answers, one
+        // question. That is the divergence this module exists to make impossible.
+        const form = classifyList(listNode);
+        if (form.kind === "grouping") {
+          inferredType = this.inferExpressionType(form.inner);
           break;
         }
 
@@ -3031,11 +3035,6 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    * Special forms. These are not functions and are never declared: the parser hands them through
    * as a plain list whose head is an identifier, exactly as codegen recognises them.
    */
-  private static readonly SPECIAL_FORMS = new Set([
-    "return", "new", "throw", "quote", "await", "yield",
-    "typeof", "delete", "in", "instanceof",
-    "this", "super",
-  ]);
 
   /**
    * LL0210 -- an identifier in REFERENCE position that resolves to nothing.
@@ -3083,7 +3082,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // could not make the move; see its note.
     if (
       TypeChecker.isOperatorName(head) ||
-      InferAndCheckPass.SPECIAL_FORMS.has(head) ||
+      SPECIAL_FORMS.has(head) ||
       InferAndCheckPass.TYPE_NAMED_GLOBALS.has(head) ||
       RuntimeProvider.isRuntimeReference(head)
     ) {

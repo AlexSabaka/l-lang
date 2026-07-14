@@ -2,6 +2,7 @@ import * as ESTree from "estree";
 import { generate } from "astring";
 
 import * as ast from "../../../frontend/ast";
+import { classifyList, isDottedMemberIndexer } from "../../../analysis/listForm";
 import { BaseAstVisitor } from "../../../BaseAstVisitor";
 import { Context, LogLevel, VERSION } from "../../../Context";
 import { ScopeType, SymbolEntry, InferredType } from "../../../analysis/SymbolTable";
@@ -2589,104 +2590,50 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * An indexer whose LAST suffix was written `.name` -- `gs[0].hi`, but not `gs[0]` and not
    * `gs["hi"]`. See D1, and IndexerNode.members.
    */
-  private isDottedMemberIndexer(node: ast.ASTNode): boolean {
-    if (node._type !== "indexer") return false;
-    const members = (node as ast.IndexerNode).members;
-    return !!members?.length && members[members.length - 1] === true;
-  }
-
-  /**
-   * The lambda literal at `node`, looking THROUGH the parens it arrived in.
-   *
-   * `(fn [x] x)` is itself a parenthesised form, so in `((fn [x] x) 21)` the head is not a `function`
-   * node at all -- it is a one-element LIST wrapping one. Testing `head._type === "function"` finds
-   * nothing, and the applied lambda falls into the implicit-block path exactly as before. The tree you
-   * get is not the tree you wrote; peel until it stops being a wrapper.
-   *
-   * ANONYMOUS only. A NAMED `(fn f ...)` in head position is a DECLARATION -- and a block whose first
-   * form declares a function is most of the files in this repo.
-   */
-  private lambdaLiteralIn(node: ast.ASTNode): ast.FunctionNode | undefined {
-    let inner: ast.ASTNode | undefined = node;
-
-    while (inner && ast.isListNode(inner) && (inner as ast.ListNode).nodes.length === 1) {
-      inner = (inner as ast.ListNode).nodes[0];
-    }
-
-    return inner?._type === "function" && !(inner as ast.FunctionNode).name
-      ? (inner as ast.FunctionNode)
-      : undefined;
-  }
 
   visitList(node: ast.ListNode): ESTree.Expression | ESTree.Statement {
+    // D25, asked ONCE. `classifyList` is the single answer to "what is this list", shared with the
+    // type checker and the desugarer -- all three used to decide it independently, from the same proxy
+    // (`head._type === "simple-identifier"`) with their own subtly different exceptions.
+    //
+    // What stays HERE is everything that needs the SYMBOL TABLE, because none of it is the same
+    // question: whether a `call` actually calls (D1's zero-arg rule), whether it CONSTRUCTS, and
+    // whether `(obj.m)` is a method or a property read. Those are refinements OF a call, not
+    // alternatives to it.
+    const form = classifyList(node);
+
+    switch (form.kind) {
+      case "empty":
+        return ESTreeBuilder.literal(node, null);
+
+      case "grouping":
+        return this.visit(form.inner);
+
+      case "apply":
+        return ESTreeBuilder.callExpression(
+          node,
+          this.visitExpr(form.lambda),
+          form.args.map((a) => this.visitExpr(a))
+        );
+
+      case "block":
+        return this.emitBlock(node, form.items);
+    }
+
+    // A NAMED head: `call`, or a `special` whose name is reserved. Only `return` and `new` are given
+    // special treatment down here -- every other reserved name (`this`, `throw`, `await`, ...) reaches
+    // codegen as its own node type or falls through the call path, exactly as it always has.
     const nodes = Array.isArray(node.nodes) ? node.nodes : [node.nodes];
-    if (nodes.length === 0) return ESTreeBuilder.literal(node, null);
-    
-    // Special case: single element that's NOT an identifier is just wrapped in parens (return it as-is)
-    //
-    // ...unless it is a MEMBER access written with a dot. D1: `(obj.m)` is ALWAYS a call, and that
-    // does not stop being true because the object was reached through an index:
-    //
-    //     (gs[0].hi)      a call        -- exactly as `(g.hi)` is
-    //     (gs[0])         a read        -- there is no member
-    //     (gs["hi"])      a read        -- a string INDEX is not a member; D1 is about the `.m` form
-    //
-    // The `members` flag is what keeps those last two apart: they emit identical JavaScript, so the
-    // AST is the only place the distinction can live.
-    if (
-      nodes.length === 1 &&
-      nodes[0]._type !== "simple-identifier" &&
-      nodes[0]._type !== "composite-identifier" &&
-      !this.isDottedMemberIndexer(nodes[0])
-    ) {
-      return this.visit(nodes[0]);
-    }
-
-    // D25: an APPLIED LAMBDA LITERAL is a call. `((fn [x] (* x 2)) 21)` -> 42.
-    //
-    // The head is a lambda, not an identifier, so the call test below missed it and it fell all the
-    // way through to the implicit-block path -- which emitted the lambda and the argument as
-    // STATEMENTS into whatever expression slot the list sat in. `console.log(...21;...)`. The roadmap
-    // blamed the grammar; the grammar parses it fine.
-    //
-    // ANONYMOUS, and that word is doing all the work. A `function` node with a NAME in head position
-    // is a DECLARATION -- `((fn helper [] 1) (console.log (helper)))` -- and a block whose first form
-    // declares a function is most of the files in this repo. Only a lambda LITERAL is unambiguous,
-    // because a block whose first form is a bare lambda literal is a no-op: it builds a closure and
-    // throws it away. That is the entire licence for this rule, and it does not extend one inch further.
-    //
-    // `rest.length > 0` matters just as much. A one-element list holding a lambda is NOT an
-    // application: the desugarer wraps a `let`'s value in a list, so `(let f (fn [] 5))` arrives here
-    // as exactly that shape. Reading it as a zero-arg call would bind `f` to 5 instead of to the
-    // function -- silently. Zero-arg application is spelled `(call (fn [] 5))`.
-    const lambda = nodes.length > 1 ? this.lambdaLiteralIn(nodes[0]) : undefined;
-    if (lambda) {
-      return ESTreeBuilder.callExpression(
-        node,
-        this.visitExpr(lambda),
-        nodes.slice(1).map((a) => this.visitExpr(a))
-      );
-    }
-
-    // NO pipeline handling here any more. `|>` is desugared into core `call` / `member` nodes by
-    // DesugarAstVisitor, which now actually runs -- so codegen never sees a pipeline, and the type
-    // checker sees the SAME tree codegen does. That was the entire point.
     const [head, ...rest] = nodes;
 
-    // D1, for an indexer head. Stated, not guessed: the heuristic below (`isKnownFunction ||
-    // isMethodCall`) exists because D1 had not landed, and D1's own note says it should be deleted
-    // rather than migrated. There is nothing to guess here -- the source said `.hi`, so it is a call.
-    if (this.isDottedMemberIndexer(head)) {
+    // D1, for an indexer head. Stated, not guessed: the source said `.hi`, so it is a call.
+    if (isDottedMemberIndexer(head)) {
       const callee = this.visitExpr(head);
       const args = rest.map((a) => this.visitExpr(a));
       return ESTreeBuilder.callExpression(node, callee, args);
     }
 
-    const isHeadIdentifier =
-      head._type === "simple-identifier" ||
-      head._type === "composite-identifier";
-
-    if (isHeadIdentifier) {
+    {
       const headId = (head as any).id;
 
       if (head._type === "simple-identifier" && headId === "return") {
@@ -2808,15 +2755,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
       return callee;
     }
+  }
 
-    // Implicit block
+  /** D25's implicit block: `( (console.log 1) (console.log 2) )`. The file wrapper, and every body. */
+  private emitBlock(
+    node: ast.ListNode,
+    items: ast.ASTNode[]
+  ): ESTree.Expression | ESTree.Statement {
     const registrationsBefore = this.operatorRegistrations.length;
-    const statements = nodes.map((x) => {
-      const result = this.visit(x);
-      return this.isStatement(result)
-        ? (result as ESTree.Statement)
-        : ESTreeBuilder.expressionStatement(x, result as ESTree.Expression);
-    });
+    const statements = items.map((x) => this.asStatement(this.visit(x), x));
 
     // Capture registrations added in this scope
     if (this.operatorRegistrations.length > registrationsBefore) {
