@@ -266,10 +266,16 @@ export class SymbolTable {
   }
 
   /**
-   * Bind a type to an existing symbol
+   * Bind a type to an existing symbol, as seen FROM `from`.
+   *
+   * WITHOUT `from` this is the old flat write, and it is only sound for a name that really is at
+   * module root -- a function, a class, a struct. For anything nested it is the aliasing bug: see
+   * `resolveSymbolLexical`.
    */
-  bindType(name: string, type: InferredType): void {
-    const symbol = this.resolveSymbol(name);
+  bindType(name: string, type: InferredType, from?: ast.ASTNode): void {
+    const symbol = from
+      ? this.resolveSymbolLexical(name, from)
+      : this.resolveSymbol(name);
     if (symbol) {
       symbol.inferredType = type;
     }
@@ -390,6 +396,70 @@ export class SymbolTable {
     };
     this.scopes.forEach(walk);
     this.indexValid = true;
+  }
+
+  /**
+   * Resolve `name` STRICTLY lexically: the scope chain outward from `from`, and nothing else.
+   *
+   * `resolveSymbol(name, from)` falls through to the flat root union when the lexical walk misses,
+   * and for a READ that is correct -- symbols from other modules genuinely live in other roots, and
+   * they are legitimately visible here.
+   *
+   * For a WRITE it is catastrophic, and it is the bug this phase exists to fix. `bindType("x", Int)`
+   * on a local `x` misses lexically, falls through, finds the TOP-LEVEL `x`, and writes `Int` onto
+   * THAT. The local's type is not merely lost -- an unrelated symbol is corrupted with it. So a
+   * write asks this question instead, and a miss is a miss.
+   *
+   * `missed` is the phase's safety instrument. Because the fall-through exists, EVERY failure mode
+   * of the migration -- a broken `_parent` chain, an unindexed scope, a wrong `from` -- degrades
+   * into exactly the old behaviour: silent, green, and doing nothing. Counting the misses is the
+   * only way to tell a landed fix from a no-op that looks like one.
+   */
+  /**
+   * STATIC, deliberately. There is more than one `SymbolTable` alive per compile -- the checker is
+   * handed the MODULE's table (`moduleSymbols`) while codegen resolves against the CONTEXT's joined
+   * one -- so a per-instance counter reads zero on whichever table you happen to ask. That is not a
+   * clean result; it is the instrument missing the events. Process-wide is what makes it honest.
+   */
+  private static lexicalHits = 0;
+  private static lexicalMissNames: Map<string, number> = new Map();
+
+  /**
+   * Lexical-resolution stats. `misses` names the symbols a WRITE could not find a home for -- each
+   * one is a type the compiler inferred and then had nowhere to put. On a healthy corpus this is
+   * empty; anything in it is either a scope the builder never created or a `from` that cannot reach
+   * one, and both are bugs.
+   */
+  static getLexicalStats(): { hits: number; misses: number; missNames: Map<string, number> } {
+    let misses = 0;
+    for (const n of SymbolTable.lexicalMissNames.values()) misses += n;
+    return { hits: SymbolTable.lexicalHits, misses, missNames: SymbolTable.lexicalMissNames };
+  }
+
+  static resetLexicalStats(): void {
+    SymbolTable.lexicalHits = 0;
+    SymbolTable.lexicalMissNames = new Map();
+  }
+
+  resolveSymbolLexical(
+    name: ast.IdentifierNode | ast.TypeNameNode | string,
+    from: ast.ASTNode
+  ): SymbolEntry | undefined {
+    const symbolName = typeof name === "string" ? name : ast.symbolName(name);
+
+    for (let current = this.scopeOf(from); current !== undefined; current = current.parent) {
+      const found = current.table.get(symbolName);
+      if (found) {
+        SymbolTable.lexicalHits++;
+        return found;
+      }
+    }
+
+    SymbolTable.lexicalMissNames.set(
+      symbolName,
+      (SymbolTable.lexicalMissNames.get(symbolName) ?? 0) + 1
+    );
+    return undefined;
   }
 
   /**

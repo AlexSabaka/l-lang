@@ -22,6 +22,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
+import { SymbolTable } from "../compiler/analysis/SymbolTable";
 import { MANIFEST } from "./manifest";
 
 const EXAMPLES = path.resolve(__dirname, "../../examples");
@@ -395,8 +396,33 @@ function runCases(): { failed: number; pending: number } {
   return { failed, pending };
 }
 
+/**
+ * P6's safety instrument.
+ *
+ * A type is inferred for a name and then WRITTEN onto that name's symbol, lexically. A miss means
+ * the compiler inferred a type and had nowhere to put it -- a scope the builder never created, or a
+ * `from` that cannot reach one.
+ *
+ * It is reported because the failure mode it guards against is INVISIBLE: `resolveSymbol` falls back
+ * to a flat search when the lexical walk misses, so a half-landed migration -- a broken `_parent`, an
+ * unindexed scope -- degrades into exactly the old behaviour and passes every test while doing
+ * nothing. A hit count that collapses, or a miss count that grows, is the only way to see it.
+ */
+function reportLexicalStats(): void {
+  const { hits, misses, missNames } = SymbolTable.getLexicalStats();
+  console.log("\n=== lexical WRITES (P6) ===");
+  console.log(`  types bound to the right symbol: ${hits}`);
+  console.log(`  types with nowhere to go        : ${misses}`);
+  if (misses) {
+    const top = [...missNames.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+    for (const [name, n] of top) console.log(`      ${String(n).padStart(4)}x  ${name}`);
+  }
+}
+
 function main() {
+  SymbolTable.resetLexicalStats();
   const corpus = measureCorpus();
+  reportLexicalStats();
   const { failed, pending } = runCases();
 
   console.log("\n=== summary ===");

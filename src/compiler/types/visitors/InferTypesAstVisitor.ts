@@ -1679,7 +1679,8 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         // cannot resolve is Unknown, and Unknown must not ERASE a value type we did manage to infer.
         this.symbolTable.bindType(
           varName,
-          TypeChecker.isUnknown(declaredType) ? valueType : declaredType
+          TypeChecker.isUnknown(declaredType) ? valueType : declaredType,
+          node
         );
       } else {
         // No explicit type - bind the inferred type
@@ -1693,7 +1694,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       const declaredType = this.typeEnv.resolveIdentifier(varName);
       if (declaredType && declaredType.kind !== "unknown") {
         // Use the declared type
-        this.symbolTable.bindType(varName, declaredType);
+        this.symbolTable.bindType(varName, declaredType, node);
         this.context.log(LogLevel.Info, `[InferAndCheckPass] Bound declared type for '${varName}': ${TypeChecker.formatType(declaredType)}`);
       } else {
         // No explicit type - default to Any type

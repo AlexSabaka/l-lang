@@ -100,10 +100,17 @@ export class TypeEnvironment {
   }
 
   /**
-   * Bind an identifier to a type in the symbol table. PERMANENT and scope-blind -- see `bindInScope`.
+   * Bind an identifier to a type in the symbol table, on the symbol `name` denotes AS SEEN FROM
+   * `node`. PERMANENT (it survives the scope) but no longer scope-BLIND -- see `bindInScope` for the
+   * reversible, branch-local variant that narrowing needs.
+   *
+   * `node` was always in this signature and was always thrown away: the body was
+   * `this.symbolTable.bindType(name, type)`, a flat write. A parameter's type, a local `let`'s type
+   * -- every one of them was written to whatever top-level symbol happened to share the name, or to
+   * nowhere at all. The plumbing was drilled and never connected.
    */
   bindIdentifier(name: string, type: InferredType, node: ast.ASTNode): void {
-    this.symbolTable.bindType(name, type);
+    this.symbolTable.bindType(name, type, node);
   }
 
   /**
