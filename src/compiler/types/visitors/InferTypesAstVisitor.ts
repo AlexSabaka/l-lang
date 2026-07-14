@@ -1713,8 +1713,20 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       const valueType = this.inferExpressionType(node.value);
       this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitVariable] Inferred value type structure: ${JSON.stringify(valueType).substring(0, 200)}`);
       
-      // If explicit type annotation exists, check compatibility
-      const declaredType = this.typeEnv.resolveIdentifier(varName, node);
+      // If explicit type annotation exists, check compatibility.
+      //
+      // From the NODE, not from a name lookup. `resolveIdentifier(varName)` asks "what type is
+      // already recorded for this name" -- and for a nested `let` the answer is NOBODY'S:
+      // CollectTypesPass, the only thing that turns an annotation into a symbol type, never enters a
+      // function body. So `(fn f [] (let x <- Int "hello"))` had no declared type to check against
+      // and was checked by nothing at all, and a class field's annotation never reached its symbol
+      // either. Worse, where a top-level homonym existed the lookup answered with ITS type, so the
+      // annotation being enforced was some other variable's.
+      //
+      // The annotation is written right here on the node. Read it from there.
+      const declaredType = node.type
+        ? this.convertAstTypeToInferred(node.type)
+        : undefined;
       if (declaredType) {
         this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitVariable] Declared type: ${JSON.stringify(declaredType).substring(0, 200)}`);
         
@@ -1773,8 +1785,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       
       this.typeEnv.setType(node, valueType);
     } else {
-      // No initial value - check if there's a declared type
-      const declaredType = this.typeEnv.resolveIdentifier(varName, node);
+      // No initial value - check if there's a declared type. From the NODE; see above.
+      const declaredType = node.type
+        ? this.convertAstTypeToInferred(node.type)
+        : undefined;
       if (declaredType && declaredType.kind !== "unknown") {
         // Use the declared type
         this.symbolTable.bindType(varName, declaredType, node);

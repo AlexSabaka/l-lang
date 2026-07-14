@@ -181,8 +181,8 @@
         (let :ctor last-name <- String)
         (let :ctor birth-year <- Int)
 
-        (let :private full-name <- String nil)
-        (let :private age <- Int nil)
+        (mut :private full-name <- String "")
+        (mut :private age <- Int 0)
         
         (fn :private :ctor initialize-person [] -> Void (
             (this.full-name := (+ this.first-name " " this.last-name))
