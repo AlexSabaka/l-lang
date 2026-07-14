@@ -8,6 +8,29 @@ export class RuntimeProvider {
   // Global type metadata storage
   public static readonly TYPES_METADATA_VAR = '__ll_type_metadata';
 
+  /**
+   * The shim, spliced into every compiled program.
+   *
+   * ## `__ll_match_list` and `__ll_match_struct` were deleted from it
+   *
+   * They were emitted into every program and called by NOTHING. Not merely unreferenced --
+   * unreachable **by construction**. They speak a protocol in which a pattern is a runtime VALUE
+   * carrying sentinels: `null` = wildcard, `{type, __is_type_check}` = a type test, a nested
+   * array/object = recursive descent. `__is_type_check` appeared exactly twice in the entire compiler:
+   * on the two lines inside those functions that READ it. Nothing has ever constructed one. Their only
+   * callers were each other.
+   *
+   * And they could never have BEEN the matcher, because they return a boolean and cannot **bind a
+   * name** -- while every non-trivial l-lang pattern binds (`[a b]`, `{:name n}`). Codegen compiles
+   * patterns inline instead (`generateCondition`), emitting `(n = tmp["name"], true)` -- a comma
+   * expression that binds AND tests -- and it already recurses through nested maps and vectors. The
+   * helpers were not more capable; they were strictly less.
+   *
+   * The one thing they added was a type test, and that wants a `case "type-pattern"` in
+   * `generateCondition` calling `__ll_is_type`, not a reflective matcher.
+   *
+   * `__ll_is_type` STAYS. It is live: `__ll_op_registry.lookup` calls it to resolve operator overloads.
+   */
   private static readonly LL_RUNTIME: string = `let ${RuntimeProvider.TYPES_METADATA_VAR} = {};
 let _readline = null;
 try { _readline = require("readline-sync"); } catch (e) { /* optional */ }
@@ -157,61 +180,6 @@ const __ll_op_registry = {
     return null;
   }
 };
-function __ll_match_list(val, patterns) {
-  if (!Array.isArray(val)) return false;
-  if (val.length !== patterns.length) return false;
-  for (let i = 0; i < patterns.length; i++) {
-    const pattern = patterns[i];
-    const value = val[i];
-    if (pattern === null || pattern === undefined) continue; // Wildcard
-    // Handle Type Pattern: { type: 'string' }
-    // Note: The transformer generates these objects for typed patterns
-    if (typeof pattern === 'object' && pattern.type && pattern.__is_type_check) {
-       if (!__ll_is_type(value, pattern.type)) return false;
-    }
-    // Handle Recursive List Pattern
-    else if (Array.isArray(pattern)) {
-       if (!__ll_match_list(value, pattern)) return false;
-    }
-    // Handle Object Pattern (Deep match)
-    else if (typeof pattern === 'object') {
-       // Deep equality for objects in list patterns? Or recursive struct match?
-       // For now, let's assume recursive struct match
-       if (!__ll_match_struct(value, pattern)) return false;
-    }
-    // Constant
-    else {
-       if (value !== pattern) return false;
-    }
-  }
-  return true;
-}
-function __ll_match_struct(val, patterns) {
-  if (typeof val !== 'object' || val === null) return false;
-
-  for (const key in patterns) {
-    if (!(key in val)) return false; // Key existence check
-
-    const pattern = patterns[key];
-    const value = val[key];
-
-    if (pattern === null || pattern === undefined) continue;
-
-    if (typeof pattern === 'object' && pattern.type && pattern.__is_type_check) {
-       if (!__ll_is_type(value, pattern.type)) return false;
-    } 
-    else if (Array.isArray(pattern)) {
-       if (!__ll_match_list(value, pattern)) return false;
-    }
-    else if (typeof pattern === 'object') {
-       if (!__ll_match_struct(value, pattern)) return false;
-    } 
-    else {
-       if (value !== pattern) return false;
-    }
-  }
-  return true;
-}
 function __ll_is_type(val, type) {
   const t = type.toLowerCase();
   switch (t) {

@@ -45,23 +45,20 @@ Focused on technical debt, specifically in code generation and symbol resolution
       *imported* operator work)
 - [x] `defmodifier` metaprogramming
 
-## ⚠️ Phase 2.5: Compiler Architecture Refactor (v0.3.5)
+## ✅ Phase 2.5: Compiler Architecture Refactor (v0.3.5) — *completed retroactively by Phase 3*
 **Theme:** "Separate concerns, simplify generation."
 
 Moving from "analysis + codegen" to "analysis + desugaring + codegen".
 
 - [x] **Directory restructuring** by phase (`frontend`, `analysis`, `transformation`, `codegen`, …)
 - [x] **`ClassBuilder`** extracted, emits ESTree
-- [ ] ~~**DesugarAstVisitor:** move pipeline (`|>`) and implicit-return logic~~
-      ⚠️ **THE DESUGARER IS NOT IN THE PIPELINE.** The class exists and the logic really was moved
-      into it. It is never called: the "desugar stage" runs TreeShake and Comptime and nothing else,
-      and its only instantiation anywhere is *inside* `ComptimeEvaluationAstVisitor`. So **codegen
-      still desugars pipelines itself, and the type checker never sees the rewrite** — the two halves
-      of the compiler read different programs. Found in P6g, where `(account |> (.apply evt))` read as
-      a standalone call to a free function and produced three phantom `LL0211`s.
-- [ ] ~~**Runtime helpers:** `match.ts` / `types.ts`~~
-      ⚠️ `__ll_match_list` and `__ll_match_struct` are emitted into **every** program and called by
-      **zero** code. (`__ll_is_type` was dead too, until W gave it a caller.)
+- [x] **DesugarAstVisitor:** pipeline (`|>`) and implicit-return logic — **WIRED IN**, at last, in
+      Phase 3. It had been ticked complete and never called; codegen desugared pipelines itself and the
+      type checker never saw the rewrite. It was also *wrong* — its pipeline transform dropped the
+      middle stage of any three-stage pipeline. Codegen's was the reference implementation, and it is
+      the one that moved.
+- [x] **Runtime helpers** — `__ll_match_list` / `__ll_match_struct` **deleted**. Emitted into every
+      program, called by nothing, and unreachable by construction. `__ll_is_type` stays; it is live.
 
 ---
 
@@ -89,17 +86,23 @@ register; the short version:
 
 ---
 
-## 🚧 Phase 3: One Tree, One Truth (v0.3.7) — NEXT
+## ✅ Phase 3: One Tree, One Truth (v0.3.7)
 **Theme:** "The two halves of the compiler must read the same program."
 
-The precondition for everything below it, and it is made of the two ⚠️s above plus one more.
+*   [x] **`DesugarAstVisitor` is wired in.** One desugared tree, read by the type checker *and*
+        codegen. Codegen's duplicate pipeline transform and implicit-return injection are deleted.
+*   [x] **The types → codegen channel is open.** An identity-keyed `Map<ASTNode, InferredType>` that
+        outlives the pass. `typeEnv` was a memo cache popped with its scope — there was nothing behind
+        the door to open, so the channel had to be built.
+*   [x] **The dead runtime matchers are deleted.**
 
-*   [ ] **Wire `DesugarAstVisitor` into the pipeline.** One desugared tree, seen by the type checker
-        *and* codegen. Delete codegen's duplicate pipeline handling.
-*   [ ] **Open the types → codegen channel.** `typeEnv` is assigned at `Context.ts:358` and never
-        read. Codegen therefore has *no* per-node type information: it guesses (`isMethodOnType`), and
-        it cannot elide the struct value-copy wraps it currently emits unconditionally.
-*   [ ] **Make the dead runtime helpers live, or delete them.**
+**The headline:** an **implicit return was enforced by nobody**. `(fn f [] -> Int "str")` compiled
+clean, because codegen added the return and the checker never saw it. It is checked now.
+
+**Also fixed on the way:** a `:comptime` fold inside an `if` emitted a `ReferenceError` with zero
+diagnostics (the comptime pass never recursed into an `if` body, and the tree-shaker then deleted the
+function it failed to fold). **D17**: `(x |> (.m a))` is a method call. **D18**: a trailing `if` yields
+a value.
 
 ## 🔮 Phase 4: Stdlib (D7) (v0.4.0)
 **Theme:** "Hide the JS."
@@ -126,8 +129,8 @@ native `cstd`.
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."
 
-*   [ ] **HIR:** a *typed, desugared* tree — **blocked on Phase 3, which is what makes a typed
-        desugared tree possible at all**
+*   [ ] **HIR:** a *typed, desugared* tree — **unblocked by Phase 3**, which built both halves: there
+        is a desugared tree now, and a per-node type channel to type it with
 *   [ ] **Lowering:** AST → HIR
 *   [ ] **IR Codegen:** refactor JS codegen to consume HIR
 
@@ -146,7 +149,21 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
 
 *   **Expression vs statement.** `(console.log (when false 1))` and `((D).hi)` emit **invalid
     JavaScript** (`LL0101`). One shared root: `isExpressionContext()` is true only inside a
-    `variable` or `match` scope. A trailing `if` also loses its implicit return.
+    `variable` or `match` scope. (A trailing `if` no longer loses its value — that is **D18**.)
+*   **The type checker does not infer every expression.** 114 `list` nodes have no entry in the type
+    channel, which caps what codegen can prove and is why the struct-copy elision came in at 138
+    rather than the 353 predicted.
+*   **The call-vs-block rule is implemented three times** — codegen, the checker, and the desugarer.
+*   **`03_matching.lisp`'s golden asserts a bug.** `(< _ 0)` — a guard-shaped list pattern — parses as
+    a 3-element array *destructure* and falls through to `_`; the golden bakes in
+    `how da fck are you still alive?`. A **passing test that asserts the wrong answer**. Its `_3c`
+    (encoded `<`) is also emitted as an implicit global.
+*   **Pattern matching is half-built.** `:is` is not a grammar rule at all (the keyword is `:of`), and
+    `type-pattern`, `rest-pattern` and `functional-pattern` all compile to literal `false`.
+*   **`((fn [x] …) 21)` does not compile** (`LL0101`). The AST can represent it now (the `call` node);
+    the grammar cannot parse it.
+*   **No ambient-global declaration** — the p5 bindings reference `mouseX`, `frameCount` and friends,
+    which the language has no way to declare.
 *   **Codegen is source-order dependent.** A class used *before* its declaration emits a reference to
     the class object instead of constructing (`(Dog)` → `__ll_copy(Dog)`). Silent.
 *   **Missing diagnostics.** Assigning to a `let` (a *constant*) is not checked. `(new)` with no class

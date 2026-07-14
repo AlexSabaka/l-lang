@@ -1545,3 +1545,153 @@ credited P6 with a bug it did not cause, or "fixed" something that was not broke
 - **LL0212 was implemented syntactically** to route around the flat table. It can now be real.
 - **LL0211 does not know required-vs-total arity**, so `fn` parameter defaults will false-positive
   once they exist.
+
+# One Tree, One Truth — the two halves of the compiler read the same program now
+
+Three roadmap phases were ticked for code that was **written and never wired in**. Two of them were the
+same bug, and it was a correctness bug: `DesugarAstVisitor` owns pipelines and implicit returns, and the
+"desugar stage" ran TreeShake and Comptime and nothing else. **Codegen did both transforms itself, and
+the type checker never saw the result.**
+
+## The headline: an implicit return was enforced by nobody
+
+```
+(fn f [] -> Int (return "str"))   ->  LL0213     explicit: checked
+(fn f [] -> Int "str")            ->  CLEAN      implicit: UNCHECKED
+```
+
+`checkReturns` walks the body for `(return e)` lists. An implicit return has none — codegen added it at
+emit time. So a declared return type was enforced **only if you happened to write `return` yourself**.
+
+The fix is not to teach the checker about implicit returns; that would be a *third* implementation of one
+rule. It is to have one tree, so `checkReturns` sees the return **because it is there**.
+
+## The desugarer was not "unwired". It was abandoned, incomplete, and wrong.
+
+- **Its traversal reached three node types.** It dispatched on `(this as any)['visit' + Type]` — which is
+  **always truthy**, because `BaseAstVisitor` declares a `visitX` for every node type in the language,
+  each an `onUnhandled` no-op. Every type without an explicit rule dispatched to that no-op and **was
+  never recursed into**. It reached `program`, `list`, `function` — so a pipeline inside a `let`, which is
+  how the whole corpus writes them, was never seen.
+- **The same dispatch bug was live in `ComptimeEvaluationAstVisitor`, which DOES run.** It never entered
+  an `if` body, so a `:comptime` fold inside one silently did not happen — and the tree-shaker then
+  deleted the function, *correctly*, because a `:comptime` function is supposed to be folded away.
+  **`ReferenceError` at run time, zero diagnostics.** Two passes each doing their job, and a crash falling
+  out between them.
+- **Its pipeline transform had never produced a valid tree**: it folded `[seed, …args]` at every stage
+  instead of threading `current` (a three-stage pipeline dropped the middle), and emitted the callee
+  twice. Codegen's copy is correct and exercised by the corpus. **Codegen was the reference
+  implementation**, and it is the one that moved.
+
+## A rewriting visitor cannot use `BaseAstTreeWalker`'s walk
+
+It dispatches and *then re-walks the original node's children and overwrites the result*. That is fine for
+a pass that only READS (the analysis and type passes). A pass that REWRITES must own its recursion — and
+must therefore be able to tell a real visitor from the inherited no-op. `overridesVisitor` does that.
+
+## Two CORE nodes: `call` and `member`
+
+The missing vocabulary was the root cause, not the missing wiring. A `list` is a call **only** when its
+head is a name; an `indexer`'s base **must** be a name. So "call this *expression*" and "member of a
+*computed* value" — which is exactly what a pipeline stage means — were **inexpressible in the AST**. The
+desugarer had nothing to desugar *into*. (The same gap is user-visible: `((fn [x] (* x 2)) 21)` does not
+compile.)
+
+## Rulings
+
+- **D17 — `(x |> (.m a))` is a METHOD call**, `x.m(a)`. It used to compile to the *free* call `m(x, a)`:
+  codegen's member test was `simple-identifier && id.startsWith(".")`, while the parser produces a
+  headless `composite-identifier` whose `id` has no leading dot. **Doubly dead; it had never once
+  fired.** `05_matching.lisp` only worked because it defines `(fn apply [acc e] (acc.apply e))` **by
+  hand** — a free function whose entire job is to undo the mis-desugaring. Written without that shim, a
+  member pipeline reported `LL0210: 'add' is not defined` on a method that plainly exists. Exactly one
+  file's emission changed, and **its golden passed unchanged** — the proof that the two forms were always
+  supposed to mean the same thing.
+
+- **D18 — a trailing `if` YIELDS A VALUE.** The return goes on each branch. Codegen's rule was the
+  opposite ("nothing to convert. Leave it; the block's value is undefined"). It is **forced, not chosen**:
+  `10_comptime.lisp`'s factorial gets its only value from a trailing `if` and folded to `null` without it.
+  The language already depended on this — codegen simply disagreed with the desugarer, and comptime
+  silently relied on the desugarer's answer.
+
+## BLOCKER A — the memo cache was keyed on a SOURCE SPAN
+
+`TypeEnvironment` keyed its memo on `${_type}_${start}_${end}`. That is not a key; it is a collision
+waiting for a desugarer. A synthesized node legitimately carries the location of the node it wraps, so
+`(return e)` and `e` hash to the **same string** whenever they share a `_type` — which is exactly when `e`
+is a **call**, the common implicit return. The return typed `Unknown` first, `checkReturns` read the
+poisoned entry, and gave up.
+
+```
+implicit "str" tail  ->  LL0213    literal: different _type, no collision
+implicit (g)   tail  ->  CLEAN     call: COLLIDES -- the check silently dies
+```
+
+**A gate written with a literal would have passed while every call-tail check was dead.** Identity-keyed
+now. Two distinct nodes are two distinct nodes, whatever they point at in the source.
+
+## `symbol.value` IS THE PRE-DESUGAR TREE — three bugs, one shape
+
+The symbol table is built *before* the desugar stage, so anything emitting from `symbol.value` has never
+seen the desugarer.
+
+- **The inliner** emits imported functions and classes straight from it:
+  `const __ll_inlined_sqrt_1 = x => { Math.sqrt(x) };` — returns **undefined**. Codegen had been hiding
+  this by injecting the implicit return at *emit* time, so the inlined copy got one for free.
+- **Comptime** desugars `symbol.value` before handing it to the sandbox — and always has, for exactly this
+  reason. Switch it off and `(factorial 5)` folds to `null`.
+- **A LAMBDA is a value; a named `fn` DECLARATION is not.** The old desugarer excluded `function` outright
+  — and never ran, so nobody found out. Turning it on swallowed the return of every `defmodifier`, whose
+  body **is** a trailing lambda: the wrapper it hands back. `TypeError: add is not a function`.
+
+## The TYPE CHANNEL — there was nothing behind the door
+
+`Context.ts` assigned `typeEnv` and never read it. But `TypeEnvironment.setType` writes into a **scope
+frame**, and `exitScope` pops it — so every type the pass inferred was **gone when the pass ended**. It
+was a memo, not a channel. The channel had to be *built*: an identity-keyed `Map<ASTNode, InferredType>`,
+never scoped, never popped.
+
+```
+codegen asked "could this be a struct?"    : 537
+  ...the channel HAD a type                : 377   (70%)
+  ...and the type PROVED it is not a struct: 138   -> copy elided
+```
+
+**The asymmetry is the design.** A type proving NOT-a-struct elides the copy; **no type says nothing**,
+and the copy stays. Gradual typing means the channel is often empty, and an empty channel must never read
+as "not a struct" — that turns a missing type into an **aliasing bug**, the exact class D11 exists to
+kill. Both directions are pinned by tests.
+
+**The estimate was wrong and is recorded as wrong.** The plan predicted 353 elidable (61%), from counting
+`__ll_copy` in files declaring no `defstruct` — which quietly assumes a type exists for every node. It does
+not: **114 `list` nodes have no channel entry at all**, because the checker never inferred them. The honest
+number is 138.
+
+## `__ll_match_list` / `__ll_match_struct` — deleted
+
+Emitted into every program, called by nothing, and unreachable **by construction**: they speak a protocol
+where a pattern is a runtime value carrying `{type, __is_type_check}` sentinels, and `__is_type_check`
+appeared exactly twice in the compiler — on the two lines *inside them* that read it. Their only callers
+were each other. They also could never have been the matcher: they return a boolean and **cannot bind a
+name**, while every non-trivial l-lang pattern binds. Codegen compiles patterns inline, emitting
+`(n = tmp["name"], true)` — bind and test in one comma expression. **`__ll_is_type` stays**: it is live,
+called by `__ll_op_registry.lookup`.
+
+## Open findings from this phase
+
+- **The type checker does not infer every expression.** 114 `list` nodes had no entry in the type channel.
+  This caps what codegen can prove, and is the reason the copy elision came in at 138 rather than 353.
+- **The call-vs-block rule is implemented THREE times** — codegen's `visitList`, the checker's
+  `blockItems`, and now the desugarer's `isBlockList`.
+- **`03_matching.lisp`'s golden BAKES IN a silent wrong answer.** `(< _ 0)` — a guard-shaped list pattern —
+  parses as a 3-element array *destructure* and falls through to `_`; the golden asserts
+  `how da fck are you still alive?`. **A passing test that asserts the bug.** `_3c` (encoded `<`) is also
+  emitted as an implicit global — a `ReferenceError` under strict mode.
+- **`:is` is not a grammar rule at all** (the keyword is `:of`) — the real cause of the
+  `05_pattern_matching` xfail. And `type-pattern`, `rest-pattern` and `functional-pattern` all compile to
+  literal `false`.
+- **`((fn [x] …) 21)` does not compile** (LL0101). The AST can represent it now (`call`); the grammar
+  cannot parse it.
+- **`(|> a b c)`** — the prefix pipeline form, used in `W99` — is garbage in both implementations.
+- **No ambient-global declaration.** The p5 bindings reference `mouseX`, `mouseY`, `frameCount`, which are
+  browser globals the language has no way to declare.
