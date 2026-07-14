@@ -25,6 +25,7 @@ import { ASTNode } from "./frontend/ast";
 import { SymbolTable, InferredType } from "./analysis/SymbolTable";
 import { AstProvider } from "./frontend/AstProvider";
 import { DependencyGraph } from "./analysis/DependencyGraph";
+import { ModuleResolver } from "./analysis/ModuleResolver";
 import { formatLogMessage, getCaller } from "./utils";
 import chalk from "chalk";
 import { PerformanceMetrics } from "./PerformanceMetrics";
@@ -63,6 +64,8 @@ export interface CompilerOptions {
   language: CompilationLanguage;
   frontend: CompilationFrontend;
   noIIFE?: boolean; // For REPL and other use cases
+  /** Extra roots for `(import "std/…")`, after the importer's own directory. `-I`. Defaults to the shipped `lib/`. */
+  libPaths?: string[];
   perf?: boolean; // Performance tracking flag
   strictPhases?: boolean; // Enforce strict separation between compilation phases
   validateMetadata?: boolean; // Validate completeness of type metadata before codegen
@@ -116,6 +119,14 @@ export class Context {
     new PerformanceMetrics();
   public results: RuleValidationResultsCollection =
     new RuleValidationResultsCollection();
+
+  /**
+   * Where `(import "std/math")` is looked up, after the importing file's own directory (D19).
+   *
+   * Defaults to the `lib/` the compiler ships with; `-I` appends. Never consulted for an explicitly
+   * relative spec -- see ModuleResolver.
+   */
+  public libPaths: string[];
   
   private moduleCache: Map<string, { ast: ASTNode; symbols: SymbolTable }> = new Map();
 
@@ -135,6 +146,7 @@ export class Context {
     this.mainModule = path.basename(mainFile, ".lisp");
     this.options = options;
     this.astProvider = new AstProvider(options.frontend ?? "grammar_v2");
+    this.libPaths = options.libPaths ?? ModuleResolver.defaultLibPaths();
     // Initialize performance metrics with enabled flag from options
     this.performanceMetrics = new PerformanceMetrics(options.perf || false);
   }
@@ -321,6 +333,20 @@ export class Context {
 
     // Store symbols stage AST and symbols
     if (stopAt === "symbols") {
+      return { ast: ast as ASTNode, symbols: moduleSymbols };
+    }
+
+    // STOP HERE if the imports did not resolve (LL0217).
+    //
+    // `results` is one Context-wide collection, so an error raised while resolving an import DOES
+    // reach `hasErrors` and DOES stop codegen -- but the next gate is not until line ~420, after the
+    // type checker. Without this one, a single misspelled import runs TreeShake, Comptime, Desugar
+    // and the whole checker against a module whose symbols were never loaded, and buries the one
+    // diagnostic that explains everything under a flood of spurious LL0210s ("'print' is not
+    // defined", x N).
+    //
+    // The first error should be the true one.
+    if (this.results.hasErrors) {
       return { ast: ast as ASTNode, symbols: moduleSymbols };
     }
 

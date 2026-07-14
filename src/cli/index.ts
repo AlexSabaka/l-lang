@@ -24,6 +24,12 @@ program
     "--frontend <name>",
     "parser: grammar_v2 (Chevrotain, default) or peg (legacy scannerless grammar)"
   )
+  .option(
+    "-I, --lib <dir>",
+    "add a library search root for `(import \"std/...\")` (repeatable). The shipped lib/ is always searched.",
+    (dir: string, acc: string[]) => acc.concat(dir),
+    [] as string[]
+  )
   .option("--stdout", "output compiled JavaScript to stdout")
   .option("--runtime-shim", "include runtime shim in compiled output")
   .option("--stage <stage>", "compilation stage to stop at (parse, syntax, symbols, desugar, types, codegen)")

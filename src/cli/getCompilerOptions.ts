@@ -6,6 +6,7 @@ import {
   CompilationFrontend,
   LogLevel,
 } from "../compiler/Context";
+import { ModuleResolver } from "../compiler/analysis/ModuleResolver";
 
 const VALID_LANGUAGES: CompilationLanguage[] = ["js", "legacy-js"];
 const VALID_FRONTENDS: CompilationFrontend[] = ["grammar_v2", "peg"];
@@ -77,11 +78,19 @@ export function getCompilerOptions(
     );
   }
 
+  // `-I` APPENDS to the shipped lib/, it does not replace it. Passing `libPaths: []` would silently
+  // switch the stdlib off, so an absent flag must stay `undefined` and let Context take the default.
+  const extraLibs: string[] = Array.isArray(opts.lib) ? opts.lib : [];
+  const libPaths = extraLibs.length
+    ? [...ModuleResolver.defaultLibPaths(), ...extraLibs]
+    : undefined;
+
   return {
     minimumLogLevel: logLevel,
     logger: opts.logFile ? createFileLogger(opts.logFile) : console.log,
     language,
     frontend,
+    libPaths,
     stage: opts.stage || "codegen",
     includeRuntimeShim: opts.runtimeShim !== undefined ? !!opts.runtimeShim : true, // default to true
     stdout: !!opts.stdout,
