@@ -112,12 +112,38 @@ export class AstProvider {
     // 2. Read from the resolved path
     const source = fs.readFileSync(filePath, { encoding: "utf-8" });
 
-    const ast = this.parseSource(source, filePath);
+    this.loadSource(filePath, source);
+  }
 
-    assignParentNodeReferences(ast);
+  /**
+   * Compile a STRING. The entry point the compiler did not have.
+   *
+   * `loadFile` was the only way in, so there was no "compile this text" path anywhere -- and the REPL
+   * therefore **wrote a file to disk on every keystroke-batch**, purely to have something the
+   * AstProvider would read. That is the only reason it touched the filesystem at all.
+   *
+   * `virtualPath` need not exist. It still MATTERS: imports resolve against `path.dirname(currentFile)`
+   * (ModuleResolver), and `_location.source` is what every diagnostic points at. So a caller passes the
+   * path the text should PRETEND to live at -- for the REPL, the working directory, so that a relative
+   * `(import "./x.lisp")` typed at the prompt resolves the way the user expects.
+   *
+   * OVERWRITES, deliberately. `loadFile` early-returns on a cache hit, so re-reading the same path with
+   * new text silently returned the STALE AST -- which is why the REPL could not reuse a Context even if
+   * it wanted to, and had to throw the whole thing away per input. Same path, new text, new AST.
+   */
+  loadSource(virtualPath: string, source: string): ast.ProgramNode {
+    const filePath = path.resolve(virtualPath);
+    const parsed = this.parseSource(source, filePath);
 
-    // 3. Store using the Absolute Path
-    this.cache.set(filePath, { ast, source });
+    assignParentNodeReferences(parsed);
+
+    this.cache.set(filePath, { ast: parsed, source });
+    return parsed;
+  }
+
+  /** Forget a file, so the next `getAst` re-reads it. The other half of the stale-cache problem. */
+  invalidate(filePath: string): void {
+    this.cache.delete(path.resolve(filePath));
   }
 
   getAst(file: string, basedir?: string): ast.ProgramNode | undefined {
