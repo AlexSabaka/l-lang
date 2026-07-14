@@ -507,10 +507,23 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return scopes.includes(this.currentScope());
   }
 
-  private isExpressionContext(): boolean {
-    return this.scope.some(
-      (s) => s === ScopeType.variable || s === ScopeType.match
-    );
+  /**
+   * Visit a node that is being placed into an EXPRESSION slot, and guarantee an expression back.
+   *
+   * This replaces `isExpressionContext()`, which asked *"is there a `variable` or `match` scope
+   * anywhere above me on the stack"* -- a POSITIONAL property answered by an AMBIENT-STATE query. It
+   * is the same disease Phase F cured in the call decision (`this.functions`, a source-order list),
+   * and it had the same symptom: **the identical node compiled two different ways depending on what
+   * enclosed it.** `(let x (if true 1 2))` printed 1; `(console.log (if true 1 2))` emitted
+   * `console.log(if (true) {` -- not JavaScript at all.
+   *
+   * The fix is not a better query. A visitor CANNOT know its own position -- that is the whole bug.
+   * So each construct emits ONE canonical form, and the CONSUMER -- who is building the ESTree node
+   * and therefore knows the slot it is filling is an expression -- coerces. `asExpression` is
+   * idempotent, so this is safe to funnel every expression slot through, and it is: all 69 of them.
+   */
+  private visitExpr(node: ast.ASTNode): ESTree.Expression {
+    return this.asExpression(this.visit(node), node);
   }
 
   private runInScope<T>(scope: ScopeType, action: () => T): T {
@@ -814,7 +827,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       const key = `${enumName}:${ast.keyName(keyNode.key)}`;
       const value =
         keyNode.value !== null
-          ? (this.visit(keyNode.value) as ESTree.Expression)
+          ? (this.visitExpr(keyNode.value))
           : ESTreeBuilder.literal(keyNode, keyIndex);
 
       // Store the actual value for pattern matching, not the stringified ESTree node
@@ -1190,7 +1203,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // codegen a `modifier` node carrying `args`; the call site passed `arguments: []` regardless,
       // so every modifier argument in the language was silently discarded.
       const modifierArgs = (modifierRef.args ?? []).map(
-        (a) => this.visit(a) as ESTree.Expression
+        (a) => this.visitExpr(a)
       );
       
       if (declaration.type === "FunctionDeclaration") {
@@ -1354,8 +1367,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     // back and the bound names would alias its elements. `__ll_copy_each` opens it first.
     const value = node.value
       ? destructuring
-        ? this.asValueEach(this.visit(node.value) as ESTree.Expression, node.value)
-        : this.asValue(this.visit(node.value) as ESTree.Expression, node.value)
+        ? this.asValueEach(this.visitExpr(node.value), node.value)
+        : this.asValue(this.visitExpr(node.value), node.value)
       : null;
     this.popScope();
 
@@ -1521,10 +1534,60 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       return emitted as ESTree.Expression;
     }
 
+    // A SpreadElement is NOT an `Expression` in ESTree -- its type does not end in "Expression", so
+    // `isExpression` says no -- but it is legal in exactly the slots an expression goes in: call
+    // arguments and array elements. There is nothing here to coerce. Wrapping it would emit
+    // `(() => { ...args })()`, which is not a value but a syntax error, and that is precisely what
+    // this did to `(original ...args)` the moment the slots started funnelling through here.
+    if (emitted.type === "SpreadElement") {
+      return emitted as unknown as ESTree.Expression;
+    }
+
+    // An `if` in expression position is a TERNARY, with each branch independently coerced. This is
+    // NOT a new rule -- it is exactly what `visitIf` did when `isExpressionContext()` said yes, moved
+    // to where the position is actually known. Getting this right is what stops the corpus churning:
+    // route an `if` through the IIFE below instead and every ternary in ~100 codegen cases and every
+    // golden becomes `(() => { ... })()`. By the standing rule a moved golden is a FINDING, so a
+    // careless fix here manufactures a hundred false ones.
+    if (emitted.type === "IfStatement") {
+      const stmt = emitted as ESTree.IfStatement;
+      return {
+        type: "ConditionalExpression",
+        test: stmt.test,
+        consequent: this.asExpression(stmt.consequent, node),
+        alternate: stmt.alternate
+          ? this.asExpression(stmt.alternate, node)
+          : this.nilLiteral(node),
+        loc: ESTreeBuilder.loc(node),
+      } as ESTree.ConditionalExpression;
+    }
+
     const statements =
       emitted.type === "BlockStatement"
         ? ((emitted as ESTree.BlockStatement).body as ESTree.Statement[])
         : [emitted as ESTree.Statement];
+
+    // An empty body has no value. `(when true)` yielded nil before, and an IIFE over nothing would
+    // quietly hand back `undefined` instead -- a SECOND bottom value, which D9 exists to prevent.
+    if (statements.length === 0) {
+      return this.nilLiteral(node);
+    }
+
+    // A run of pure expressions is a SEQUENCE, not an IIFE: `(a, b)` evaluates both and yields the
+    // last -- exactly the semantics wanted, and far cheaper than a function call. A single one is
+    // just itself. `visitWhen` relied on this for a multi-expression `:then` body, and it must keep
+    // holding now that the coercion lives here instead of there.
+    if (
+      statements.length > 0 &&
+      statements.every((s) => s.type === "ExpressionStatement")
+    ) {
+      const exprs = statements.map(
+        (s) => (s as ESTree.ExpressionStatement).expression
+      );
+      return exprs.length === 1
+        ? exprs[0]
+        : ESTreeBuilder.sequenceExpression(node, exprs);
+    }
 
     return {
       type: "CallExpression",
@@ -1551,25 +1614,19 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       : ESTreeBuilder.expressionStatement(node, emitted as ESTree.Expression);
   }
 
-  visitIf(node: ast.IfNode): ESTree.IfStatement | ESTree.ConditionalExpression {
+  /**
+   * ONE canonical form: the statement. A consumer that needs a value calls `asExpression`, which turns
+   * it into the very ternary this method used to build itself.
+   *
+   * It used to build either, by asking `isExpressionContext()` -- and that query is answerable only
+   * from ambient scope, never from position, so `(let x (if true 1 2))` compiled and
+   * `(console.log (if true 1 2))` emitted `console.log(if (true) {`. Same node. Different neighbours.
+   */
+  visitIf(node: ast.IfNode): ESTree.IfStatement {
     return this.runInScope(ScopeType.if, () => {
-      const condition = this.visit(node.condition!) as ESTree.Expression;
+      const condition = this.visitExpr(node.condition!);
       const thenBranch = this.visit(node.then!);
       const elseBranch = node.else ? this.visit(node.else) : null;
-
-      if (this.isExpressionContext()) {
-        // asExpression, not a cast: a multi-statement branch is a BlockStatement, and
-        // `c ? { log(); "v"; } : "z"` is not JavaScript. It emitted LL0101.
-        return {
-          type: "ConditionalExpression",
-          test: condition,
-          consequent: this.asExpression(thenBranch, node.then!),
-          alternate: elseBranch
-            ? this.asExpression(elseBranch, node.else!)
-            : this.nilLiteral(node),
-          loc: ESTreeBuilder.loc(node),
-        } as ESTree.ConditionalExpression;
-      }
 
       const consequent = this.isStatement(thenBranch)
         ? (thenBranch as ESTree.Statement)
@@ -1602,87 +1659,84 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   /**
-   * `when` is an `if` WITHOUT an else -- `WhenNode { condition, then[] }`, and the reference calls it
-   * "a simple if without else". A false condition therefore yields `undefined`.
+   * `when` is an `if` WITHOUT an else -- `WhenNode { condition, then[] }`. A false condition yields nil.
    *
-   * It used to emit a ConditionalExpression unconditionally, in every context, and cast each body
-   * element to an Expression. Two consequences:
+   * ONE canonical form, exactly like `visitIf`, and every reading it used to produce is now produced
+   * by `asExpression` instead -- from the same IfStatement, at the slot that actually wants a value:
    *
-   *   - In STATEMENT position, a multi-statement body emitted `cond ? { log(); n = 1; } : undefined`
-   *     -- a BlockStatement inside a ternary, which is not JavaScript (LL0101). `visitIf` has always
-   *     consulted `isExpressionContext()`; `when` never did, and that asymmetry was the whole bug.
-   *   - In EXPRESSION position, a multi-statement body has to become a value, which needs an IIFE.
+   *   - a single-expression body   -> the expression itself (the old `asExpression(body[0])`)
+   *   - a multi-EXPRESSION body    -> a SEQUENCE, `("a", "b")` -- still not an IIFE, still cheaper
+   *   - anything with a statement  -> an IIFE whose tail is returned
+   *   - an empty body              -> nil, not `undefined` (D9: one bottom value, not two)
    *
-   * A multi-EXPRESSION body (`:then "a" "b"`) still emits a sequence expression. That was never
-   * broken: `("a", "b")` evaluates both and yields the last, which is exactly the semantics wanted,
-   * and it is cheaper than an IIFE.
+   * The asymmetry that was the whole bug -- `visitIf` consulted the context query and `when` did not,
+   * so a multi-statement `when` body in statement position emitted `cond ? { log(); n = 1; } : undefined`,
+   * a BlockStatement inside a ternary -- cannot recur, because there is no longer a context to consult.
    */
-  visitWhen(node: ast.WhenNode): ESTree.IfStatement | ESTree.ConditionalExpression {
+  visitWhen(node: ast.WhenNode): ESTree.IfStatement {
     return this.runInScope(ScopeType.when, () => {
-      const condition = this.visit(node.condition!) as ESTree.Expression;
+      const condition = this.visitExpr(node.condition!);
       const body = (node.then ?? []).map((x) => this.visit(x));
 
-      if (!this.isExpressionContext()) {
-        return {
-          type: "IfStatement",
-          test: condition,
-          consequent: ESTreeBuilder.blockStatement(
-            node,
-            body.map((b, i) => this.asStatement(b, node.then![i]))
-          ),
-          alternate: null,
-          loc: ESTreeBuilder.loc(node),
-        } as ESTree.IfStatement;
-      }
-
-      let consequent: ESTree.Expression;
-      if (body.length === 0) {
-        consequent = this.nilLiteral(node);
-      } else if (body.length === 1) {
-        consequent = this.asExpression(body[0], node.then![0]);
-      } else if (body.every((b) => this.isExpression(b))) {
-        consequent = ESTreeBuilder.sequenceExpression(node, body as ESTree.Expression[]);
-      } else {
-        consequent = this.asExpression(
-          ESTreeBuilder.blockStatement(
-            node,
-            body.map((b, i) => this.asStatement(b, node.then![i]))
-          ),
-          node
-        );
-      }
-
       return {
-        type: "ConditionalExpression",
+        type: "IfStatement",
         test: condition,
-        consequent,
-        alternate: this.nilLiteral(node),
+        consequent: ESTreeBuilder.blockStatement(
+          node,
+          body.map((b, i) => this.asStatement(b, node.then![i]))
+        ),
+        alternate: null,
         loc: ESTreeBuilder.loc(node),
-      } as ESTree.ConditionalExpression;
+      } as ESTree.IfStatement;
     });
   }
 
-  visitCond(node: ast.CondNode): ESTree.Expression | ESTree.SwitchStatement {
-    const cases = node.cases.map((c) => this.visit(c));
+  /**
+   * ONE canonical form, and for `cond` that form is an `if / else if / else` CHAIN.
+   *
+   * The old pair was a nested ternary (expression position) or `switch (true) { case <test>: ... }`
+   * (statement position). Both are gone, and the chain is strictly better than either:
+   *
+   *   - The switch is where `case _else:` came from. `else` arrives as an ordinary identifier, so the
+   *     switch had to EVALUATE it as a case test, and `_else` is bound to nothing: valid JavaScript,
+   *     `ReferenceError` the moment no earlier case matched. In a chain, `else` is the final
+   *     alternate -- which is what it actually is -- so the hazard cannot be expressed.
+   *
+   *   - The ternary cannot host a `return`. The corpus leans on this HARD:
+   *
+   *         (fn get-grade [score] (cond ((>= score 90) (return "A")) ... ))
+   *
+   *     Coerce that case body into an expression and it becomes `(() => { return "A"; })()`, which
+   *     returns from the ARROW. `get-grade` then returns undefined and 13_flow_cond's golden prints
+   *     `95 is: ` -- which is exactly what it did when this method emitted a ternary unconditionally.
+   *     A statement chain keeps `return` meaning what it says.
+   *
+   * And in expression position `asExpression` walks the chain into a nested ternary anyway, because
+   * it converts an IfStatement recursively. One form, both positions, no query.
+   */
+  visitCond(node: ast.CondNode): ESTree.Statement {
+    let chain: ESTree.Statement | null = null;
 
-    if (this.isExpressionContext()) {
-      // Build nested ternary
-      let result: ESTree.Expression = this.nilLiteral(node);
-      for (let i = cases.length - 1; i >= 0; i--) {
-        result = cases[i] as ESTree.ConditionalExpression;
-        if (i > 0) {
-          (cases[i - 1] as any).alternate = result;
-        }
+    for (let i = node.cases.length - 1; i >= 0; i--) {
+      const c = node.cases[i];
+      const body = this.asStatement(this.visit(c.body), c.body);
+
+      if (this.isElseCase(c)) {
+        // The catch-all IS the final alternate. It has no test to emit.
+        chain = body;
+        continue;
       }
-      return result;
+
+      chain = {
+        type: "IfStatement",
+        test: this.visitExpr(c.condition),
+        consequent: body,
+        alternate: chain,
+        loc: ESTreeBuilder.loc(c),
+      } as ESTree.IfStatement;
     }
 
-    return {
-      type: "SwitchStatement",
-      discriminant: ESTreeBuilder.literal(node, true),
-      cases: cases as ESTree.SwitchCase[],
-      loc: ESTreeBuilder.loc(node),
-    };
+    return chain ?? ESTreeBuilder.expressionStatement(node, this.nilLiteral(node));
   }
 
   /**
@@ -1704,48 +1758,17 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return cond?._type === "simple-identifier" && cond.id === "else";
   }
 
-  visitCondCase(
-    node: ast.CondCaseNode
-  ): ESTree.ConditionalExpression | ESTree.SwitchCase | ESTree.Expression {
-    const isElse = this.isElseCase(node);
-    const body = this.visit(node.body);
-
-    if (this.isExpressionContext()) {
-      // The `else` IS the alternate. Returning it bare lets visitCond's chain terminate on it --
-      // a ternary whose test is `_else` would have thrown before it could choose anything.
-      if (isElse) {
-        return body as ESTree.Expression;
-      }
-      return {
-        type: "ConditionalExpression",
-        test: this.visit(node.condition) as ESTree.Expression,
-        consequent: body as ESTree.Expression,
-        alternate: this.nilLiteral(node),
-        loc: ESTreeBuilder.loc(node),
-      };
-    }
-
-    const bodyStmt = this.isStatement(body)
-      ? [body as ESTree.Statement, { type: "BreakStatement", label: null }]
-      : [
-          ESTreeBuilder.expressionStatement(
-            node.body,
-            body as ESTree.Expression
-          ),
-          { type: "BreakStatement", label: null },
-        ];
-
-    return {
-      type: "SwitchCase",
-      // `test: null` IS `default:` in ESTree. Taken only when no case matched -- exactly `else`.
-      test: isElse ? null : (this.visit(node.condition) as ESTree.Expression),
-      consequent: bodyStmt,
-      loc: ESTreeBuilder.loc(node),
-    } as ESTree.SwitchCase;
+  /**
+   * A cond-case has no meaning on its own -- it is a (test, body) pair, and only the CHAIN decides
+   * what its alternate is. `visitCond` therefore builds the whole chain from `node.cases` directly,
+   * and nothing dispatches here any more.
+   */
+  visitCondCase(node: ast.CondCaseNode): any {
+    return this.onUnhandled(node, "visitCondCase");
   }
 
   visitWhile(node: ast.WhileNode): ESTree.WhileStatement {
-    const condition = this.visit(node.condition) as ESTree.Expression;
+    const condition = this.visitExpr(node.condition);
     const body = this.visit(node.then);
 
     const bodyStmt = this.isStatement(body)
@@ -1779,11 +1802,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     }
 
     const test = node.condition
-      ? (this.visit(node.condition) as ESTree.Expression)
+      ? (this.visitExpr(node.condition))
       : null;
       
     const update = node.step
-      ? (this.visit(node.step) as ESTree.Expression)
+      ? (this.visitExpr(node.step))
       : null;
 
     const visitedBody = this.visit(node.then);
@@ -1823,7 +1846,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         ? this.bindingPatternToESTree(node.variable as ast.ASTNode)
         : this.visit(node.variable)
     ) as ESTree.Identifier;
-    const collection = this.visit(node.collection) as ESTree.Expression;
+    const collection = this.visitExpr(node.collection);
     const body = this.visit(node.then);
     const elseFor =
       node.else !== null ? (this.visit(node.else) as ESTree.Statement) : null;
@@ -2024,7 +2047,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return this.runInScope(ScopeType.match, () => {
       const matchVar = uniqueIdentifier("tmp_match_id");
       const matchVarId = ESTreeBuilder.identifier(node, matchVar);
-      const matchVal = this.visit(node.expression) as ESTree.Expression;
+      const matchVal = this.visitExpr(node.expression);
 
       const predefinedVariables = findIdentifiersToDefine(node);
       const declarations: ESTree.VariableDeclaration | null =
@@ -2129,7 +2152,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           type: "BinaryExpression",
           operator: "===",
           left: matchVarId,
-          right: this.visit(pattern.constant) as ESTree.Expression,
+          right: this.visitExpr(pattern.constant),
         } as ESTree.BinaryExpression;
 
       case "list-pattern":
@@ -2518,7 +2541,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         });
         currentString = "";
 
-        const expr = this.visit(v) as ESTree.Expression;
+        const expr = this.visitExpr(v);
         expressions.push(
           ESTreeBuilder.callExpression(
             v,
@@ -2544,7 +2567,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   visitFormatExpression(node: ast.FormatExpressionNode): ESTree.Expression {
-    return this.visit(node.expression) as ESTree.Expression;
+    return this.visitExpr(node.expression);
   }
 
   // =========================================================================
@@ -2594,8 +2617,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     // isMethodCall`) exists because D1 had not landed, and D1's own note says it should be deleted
     // rather than migrated. There is nothing to guess here -- the source said `.hi`, so it is a call.
     if (this.isDottedMemberIndexer(head)) {
-      const callee = this.visit(head) as ESTree.Expression;
-      const args = rest.map((a) => this.visit(a) as ESTree.Expression);
+      const callee = this.visitExpr(head);
+      const args = rest.map((a) => this.visitExpr(a));
       return ESTreeBuilder.callExpression(node, callee, args);
     }
 
@@ -2612,7 +2635,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         }
         const returnValue = this.runInScope(
           ScopeType.variable,
-          () => this.visit(rest[0]) as ESTree.Expression
+          () => this.visitExpr(rest[0])
         );
         // `(return this)` hands the RECEIVER out of the function. Without a copy here, the caller
         // would hold the callee's own struct and could mutate it through the back door -- and a
@@ -2629,8 +2652,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           return this.nilLiteral(node);
         }
         const classNameNode = rest[0];
-        const constructorArgs = rest.slice(1).map((x) => this.visit(x) as ESTree.Expression);
-        const callee = this.visit(classNameNode) as ESTree.Expression;
+        const constructorArgs = rest.slice(1).map((x) => this.visitExpr(x));
+        const callee = this.visitExpr(classNameNode);
         return {
           type: "NewExpression",
           callee,
@@ -2639,8 +2662,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         } as ESTree.NewExpression;
       }
 
-      const callee = this.visit(head) as ESTree.Expression;
-      const args = rest.map((x) => this.visit(x) as ESTree.Expression);
+      const callee = this.visitExpr(head);
+      const args = rest.map((x) => this.visitExpr(x));
       const calleeStr = this.expressionToString(callee);
 
       // `(Dog "rex")` constructs. Asked of the symbol table, so a class declared LATER in the file
@@ -2756,7 +2779,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       type: "ArrayExpression",
       // A collection SLOT is a new home for a value (D11). `(let xs [a])` stores a COPY of the struct,
       // so a later `(a.x := 99)` cannot be seen through `xs[0]`.
-      elements: node.values.map((x) => this.asValue(this.visit(x) as ESTree.Expression, x)),
+      elements: node.values.map((x) => this.asValue(this.visitExpr(x), x)),
       loc: ESTreeBuilder.loc(node),
     };
   }
@@ -2768,7 +2791,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         (row) =>
           ({
             type: "ArrayExpression",
-            elements: row.map((x) => this.asValue(this.visit(x) as ESTree.Expression, x)),
+            elements: row.map((x) => this.asValue(this.visitExpr(x), x)),
           } as ESTree.ArrayExpression)
       ),
       loc: ESTreeBuilder.loc(node),
@@ -2797,11 +2820,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     const key =
       node.key._type === "simple-identifier"
         ? ESTreeBuilder.literal(node.key, (node.key as ast.SimpleIdentifierNode).id)
-        : (this.visit(node.key) as ESTree.Expression);
+        : (this.visitExpr(node.key));
 
     // The map's VALUE is visited here, not in visitMap -- so this, not visitMap, is where a struct
     // stored under a key gets its copy (D11).
-    const value = this.asValue(this.visit(node.value) as ESTree.Expression, node.value);
+    const value = this.asValue(this.visitExpr(node.value), node.value);
 
     return {
       type: "Property",
@@ -2823,7 +2846,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       operator: "=",
       left: this.visitAssignmentTarget(node.assignable),
       // `(b := a)` COPIES a struct, exactly as `(mut b a)` does.
-      right: this.asValue(this.visit(node.value) as ESTree.Expression, node.value),
+      right: this.asValue(this.visitExpr(node.value), node.value),
       loc: ESTreeBuilder.loc(node),
     };
   }
@@ -2859,7 +2882,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         type: "AssignmentExpression",
         operator: "=",
         left: this.visitAssignmentTarget(node.assignable),
-        right: this.asValue(this.visit(node.value) as ESTree.Expression, node.value),
+        right: this.asValue(this.visitExpr(node.value), node.value),
         loc: ESTreeBuilder.loc(node),
       };
     }
@@ -2878,8 +2901,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         node,
         ESTreeBuilder.identifier(node, encodeIdentifier(op)),
         [
-          this.visit(node.assignable) as ESTree.Expression,
-          this.visit(node.value) as ESTree.Expression,
+          this.visitExpr(node.assignable),
+          this.visitExpr(node.value),
         ]
       ) as ESTree.Expression,
       loc: ESTreeBuilder.loc(node),
@@ -2904,13 +2927,13 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
   /** The raw `a[b][c]` chain, with no bounds check. Shared by the read and write paths. */
   private indexerMemberChain(node: ast.IndexerNode): ESTree.Expression {
-    let expr = this.visit(node.id) as ESTree.Expression;
+    let expr = this.visitExpr(node.id);
     for (const indices of node.indices) {
       for (const idx of indices) {
         expr = ESTreeBuilder.memberExpression(
           node,
           expr,
-          this.visit(idx) as ESTree.Expression,
+          this.visitExpr(idx),
           true
         );
       }
@@ -2946,29 +2969,29 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   visitCall(node: ast.CallNode): ESTree.Expression {
     return ESTreeBuilder.callExpression(
       node,
-      this.visit(node.callee) as ESTree.Expression,
-      node.arguments.map((a) => this.visit(a) as ESTree.Expression)
+      this.visitExpr(node.callee),
+      node.arguments.map((a) => this.visitExpr(a))
     );
   }
 
   visitMember(node: ast.MemberNode): ESTree.Expression {
     return ESTreeBuilder.memberExpression(
       node,
-      this.visit(node.object) as ESTree.Expression,
-      this.visit(node.property) as ESTree.Expression,
+      this.visitExpr(node.object),
+      this.visitExpr(node.property),
       node.computed
     );
   }
 
   visitIndexer(node: ast.IndexerNode): ESTree.Expression {
-    let expr = this.visit(node.id) as ESTree.Expression;
+    let expr = this.visitExpr(node.id);
 
     for (const indices of node.indices) {
       for (const idx of indices) {
         expr = ESTreeBuilder.callExpression(
           node,
           ESTreeBuilder.identifier(node, "__ll_index"),
-          [expr, this.visit(idx) as ESTree.Expression]
+          [expr, this.visitExpr(idx)]
         ) as ESTree.Expression;
       }
     }
@@ -2979,7 +3002,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   visitSpread(node: ast.SpreadNode): ESTree.SpreadElement {
     return {
       type: "SpreadElement",
-      argument: this.visit(node.expression) as ESTree.Expression,
+      argument: this.visitExpr(node.expression),
       loc: ESTreeBuilder.loc(node),
     };
   }
@@ -2996,7 +3019,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   visitAwait(node: ast.AwaitNode): ESTree.AwaitExpression {
     return {
       type: "AwaitExpression",
-      argument: this.visit(node.expression) as ESTree.Expression,
+      argument: this.visitExpr(node.expression),
       loc: ESTreeBuilder.loc(node),
     };
   }
@@ -3533,7 +3556,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           symbol.value as ast.VariableNode
         ) as ast.VariableNode;
         const valueExpr = v.value
-          ? (this.visit(v.value) as ESTree.Expression)
+          ? (this.visitExpr(v.value))
           : this.nilLiteral(v);
         defStmt = {
           type: "VariableDeclaration",

@@ -1501,6 +1501,36 @@ const CASES: Case[] = [
 
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
+    name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",
+    source: `(
+  (fn grade [score <- Int]
+    (cond
+      ((>= score 90) (return "A"))
+      ((>= score 80) (return "B"))
+      (true          (return "F"))))
+  (console.log (grade 95))
+  (console.log (grade 50))
+)`,
+    expect: ["A", "F"],
+    // `must` an else-if CHAIN, and `mustNot` the switch's `case _else:`. NOT `mustNot: /switch/` --
+    // the runtime shim has a legitimate `switch` in `__ll_is_type`, so that assertion matched the
+    // SHIM and failed a program whose own emitted code was already correct. A gate that fires on
+    // something other than the thing it names is worse than no gate.
+    emitted: { must: [/else if/], mustNot: [/case\s+_else/] },
+    wasBroken:
+      "CAUGHT BY THE CORPUS, mid-Xb, exactly as the rule intends. `cond` used to emit a nested TERNARY " +
+      "in expression position and `switch (true) { case <test>: ... }` in statement position. Ruling " +
+      "`cond` an expression -- which it is, in every Lisp -- turned each case body into " +
+      "`(() => { return \"A\"; })()`, which returns from the ARROW. `grade` then returned undefined and " +
+      "13_flow_cond's golden printed `95 is: ` with nothing after it. THE GOLDEN WAS RIGHT AND THE " +
+      "CHANGE WAS WRONG. " +
+      "The form that serves both is an `if / else if / else` CHAIN: `return` keeps meaning `return`, " +
+      "and asExpression walks the chain into a nested ternary when a value is actually wanted. It also " +
+      "retires the switch, and with it `case _else:` -- `else` arrived as a bare identifier, so a " +
+      "switch had to EVALUATE it as a case test, and `_else` is bound to nothing: valid JavaScript, " +
+      "ReferenceError the moment no earlier case matched.",
+  },
+  {
     name: "D25: a simple `if` in VALUE position stays a TERNARY (no IIFE churn)",
     source: `(
   (let x (if true 1 2))
