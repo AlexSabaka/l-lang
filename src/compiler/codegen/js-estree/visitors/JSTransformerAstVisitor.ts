@@ -253,11 +253,67 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   private inlineStandardSymbols: string[] = [];
   private inlinedSymbols: Record<string, string> = {};
   private inlinedDefinitions: Record<string, ESTree.Statement> = {};
-  private rootSource?: string;
+  /**
+   * The file being compiled. Set by `beginProgram()` -- which `compile()` calls, and which an external
+   * driver must call itself.
+   *
+   * Defaulted rather than optional: it is read unconditionally by the source-map builder, and
+   * `isImportedSymbol` compares against it on every identifier. An `undefined` here does not fail --
+   * it makes the inliner quietly decide that NOTHING is imported, which is exactly how `(import
+   * "std/math")` came to type-check clean and then die at run time inside the REPL.
+   */
+  private rootSource: string = "bundle.lisp";
   private typesMetadata: Record<string, any> = {};
   private overloadCounter = 0;
   private operatorRegistrations: ESTree.Statement[] = [];
   private modifierDefinitions: Map<string, ast.ModifierDefNode> = new Map();
+
+  // ===========================================================================================
+  // THE EXTERNAL-DRIVER SEAM.
+  //
+  // The REPL drives this visitor from outside: it walks the program's top-level forms itself, so it
+  // can emit only the NEW cell while still visiting the history (which is what registers the symbols
+  // the new cell depends on). It therefore never calls `compile()` or `visitProgram()` -- and those
+  // are what normally set up and drain this visitor's state.
+  //
+  // Before this seam existed, that cost four `as any` casts into private fields (see
+  // docs/inbox/compiler-notes-from-repl.md #9) -- AND A REAL BUG THAT NOTHING CAUGHT:
+  //
+  //     `rootSource` is set on the first line of compile(). The REPL does not call compile(). So
+  //     `isImportedSymbol` -- which is `resolved.value._location.source !== this.rootSource` -- bailed
+  //     out on every symbol, nothing was ever INLINED, and `(import "std/math")` type-checked CLEAN
+  //     and then died at run time with `sqr is not defined`. An import in the REPL simply did not
+  //     work, and the type checker was happy about it.
+  //
+  // A second entry point is a design choice, not an accident: an embedder that wants per-form control
+  // needs one, and the alternative is that it reaches into private state and silently misses a step.
+  // ===========================================================================================
+
+  /**
+   * Begin a program WITHOUT emitting one. For an external driver that visits the forms itself.
+   *
+   * `compile()` = `beginProgram()` + visit + drain. An embedder that wants to interleave -- to visit
+   * history but emit only the tail -- calls these three in its own order.
+   */
+  public beginProgram(root: ast.ASTNode): void {
+    this.rootSource =
+      root && root._location && root._location.source ? root._location.source : "bundle.lisp";
+  }
+
+  /** The definitions the inliner pulled in from imported modules, in topological order. */
+  public getInlinedDefinitions(): ESTree.Statement[] {
+    return Object.values(this.inlinedDefinitions);
+  }
+
+  /** `__ll_op_registry.register(...)` calls for every imported operator overload. */
+  public getOperatorRegistrations(): ESTree.Statement[] {
+    return this.operatorRegistrations;
+  }
+
+  /** The runtime symbols this program actually reached for -- what the shim must contain. */
+  public getInlineStandardSymbols(): string[] {
+    return this.inlineStandardSymbols;
+  }
 
   getTypesMetadata(): Record<string, any> {
     return this.typesMetadata;
@@ -286,7 +342,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     // This will be populated as classes, functions, and variables are visited
   }
 
-  private populateTypesMetadata(): void {
+  /**
+   * Fill the types-metadata table from the symbol table. `compile()` calls this for you; an external
+   * driver (the REPL) has to call it itself. Public for that reason -- see the external-driver seam.
+   */
+  public populateTypesMetadata(): void {
     // Populate types metadata from pre-computed symbol table metadata
     const classMetadata = this.context.symbolTable.getAllClassMetadata();
     const functionMetadata = this.context.symbolTable.getAllFunctionMetadata();
@@ -450,7 +510,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // =========================================================================
 
   public compile(root: ast.ASTNode) {
-    this.rootSource = root && root._location && root._location.source ? root._location.source : 'bundle.lisp';
+    // Through the same seam the REPL uses. Two ways to set up this visitor is one way for them to
+    // drift, and the drift is invisible: the REPL simply never inlined an import.
+    this.beginProgram(root);
     const program = this.visit(root) as ESTree.Program;
 
     // Load pre-computed types metadata from symbol table

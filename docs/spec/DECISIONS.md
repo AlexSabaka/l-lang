@@ -2342,3 +2342,78 @@ A bare `T` that still reaches `isAssignable` is *genuinely* unsolved — inside 
 - **Abstract classes** (`:abstract` is not a modifier) — the remaining Phase 5 bullet.
 - **Spending the unblock.** Whether `std/core` should expose Scheme-classic `head`/`tail`/`cons` or an
   invented surface is a **language** question, deliberately left open.
+---
+
+## D23 — REPL semantics: what a session is, and what enters history
+
+> **Renumbered on merge.** The `repl-refactor` stream minted this as *D17* while `dev` was
+> independently minting **D17** (`(x |> (.m a))` is a method call) and D18–D22. Two branches, one
+> register, no lock — the numbers collided. This ruling is unchanged; only its label moved. Any
+> `D17` in the REPL sources or `docs/repl.md` means **this**.
+
+The REPL had no ruling and no test, and it rotted invisibly through P4–P8 until it was dead on the
+first keystroke. Most of what follows is not new policy — it is what the compiler ALREADY does,
+written down, because the REPL depends on it and nothing was stopping a future pass from "fixing"
+it away.
+
+**A session is a program that grows by one top-level form at a time.** Each accepted input is a
+*cell*, and the session's program is the cells, in order, as **sibling top-level forms**. Every
+input recompiles the whole thing — in a statically typed language that is the only sound choice,
+since rebinding `x` must be checked against every form that already uses `x` — but **only the new
+form is ever executed.** History is compiled, never re-run; the values it produced are already in
+the sandbox.
+
+**A session is NOT wrapped in the conventional outer list.** Every example and both new harnesses
+wrap a file in one outer `( ... )`. A session must not. That outer list is a *block*: it would make
+each cell a block-scoped statement, hide `class`/`const` bindings from the next cell, and turn
+every rebinding into a hard LL0212. It is one character away and it is wrong.
+
+**LL0212 (duplicate declaration) is a BLOCK-scope check, and stays one.** It is tested in
+`visitList`, not `visitProgram`. Two cells are two lists, so `(let x 1)` then `(let x 2)` is not a
+duplicate — while inside a file's single top-level block, a redeclaration remains an error. Both are
+correct. *Moving this check to `visitProgram` would make the REPL unusable.* `test:repl` pins it.
+
+**A binding's TYPE is fixed at first declaration, and the REPL enforces that itself (REPL0001).**
+`(let x 1)` followed by `(let x "hi")` is refused — **whether or not anything depends on `x`.**
+Rebinding at the *same* type is accepted, and redefining a function or a class is accepted.
+
+This is not belt-and-braces; it closes a **silent wrong answer**. Because cells are sibling forms,
+a rebinding puts *two* declarations of `x` at program scope with different types — while codegen
+emits *one* `var x`. The checker then resolves `(* x 2)` inside an earlier
+`(fn double [] -> Int ...)` against the **first** `x` (Int) and says nothing, and at run time
+`double` reads the String and returns `null`. A function declared `-> Int` returning null, with no
+diagnostic.
+
+**The compiler cannot catch this and must not be asked to.** In a *file* the shape is impossible —
+one top-level block, so a redeclaration is LL0212 — and a forward reference from a function body to
+a `let` declared *later* at program scope is not type-checked either, so dropping the earlier cell
+does not restore the check. Both measured. LL0200 *used* to fire here, because the checker read the
+second `let` as an assignment to the existing symbol; P6 made resolution scope-aware, it now reads a
+second *declaration*, and that accidental guard is gone. The invariant is the REPL's to hold, and it
+holds it directly: **one name, one symbol, one type, for the life of the session.**
+
+**`.delete <name>` is therefore not a convenience — it is the escape hatch.** It is the only way to
+give a binding a different type without discarding the session. It removes the cell that declared
+the name and replays the survivors into a fresh sandbox (a `var` on a contextified global cannot be
+reliably removed, so the sandbox is rebuilt rather than patched). A surviving cell that no longer
+compiles without the deleted declaration is **dropped and reported** — never silently kept, and
+never silently discarded.
+
+**History is exactly what the user typed.** There is no automatic de-duplication on rebinding.
+Dropping the earlier `(let x 1)` would not rescue a type-changing rebind anyway — the refusal does
+not come from the old cell — and it would silently take any co-declared names with it. `.history`
+does not lie; `.delete` is the only removal.
+
+**An input enters history only if it compiled AND ran to completion.** A refused input, and an input
+whose JavaScript threw, leave the session exactly as they found it. Otherwise the replay and the
+sandbox diverge, and every later input compiles against a world that never existed.
+
+**A top-level `class` or `enum` in a session is emitted as `var X = class X {...}`, not as a lexical
+declaration.** A lexical binding in a `vm.Context` lands in the realm's global lexical environment:
+redeclaring it is a `SyntaxError`, and it is not reachable as a property of the global. A REPL in
+which a class can be defined exactly once is not a REPL.
+
+*Deferred:* true sequential shadowing — input *n* rebinds `x` at a new type while earlier cells keep
+the old `x` by alpha-renaming. It is strictly more permissive and it is what a dynamic REPL gives
+away for free. It requires renaming bindings across the replayed AST, and the refusal above is sound
+without it.
