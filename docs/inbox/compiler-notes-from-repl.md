@@ -10,8 +10,9 @@
 
 ## TRIAGED ON THE DEV SYNC (2026-07-14)
 
-**Six of the nine are closed.** Each was a real bug, and four of them were hurting *everyone*, not
-just the REPL.
+**Eight of the nine are closed.** Each was a real bug, and five of them were hurting *everyone*, not
+just the REPL. Two of the nine turned out to be **worse than filed** (#9, #5) and one turned out to be
+**a language question wearing a bug's clothes** (#7).
 
 | # | Item | Outcome |
 |---|---|---|
@@ -21,12 +22,37 @@ just the REPL.
 | **7** | forward ref to a top-level `let` is unchecked | ✅ **RULED AND FIXED — D24.** It needed a *language ruling* first, and the obvious one was wrong: "functions and types may forward-reference" **permits the case that crashes**, because a class reads as a "type" while `class X {}` has a TDZ. The rule is **a value must be declared before it is EVALUATED** — deferred references (from a fn/method/lambda body) stay legal, as in every other language. **LL0219.** It also required fixing codegen first: `(f)` before its declaration printed the *function object*, which made "a function may be forward-referenced" a lie. |
 | **3** | no raw message — string-surgery on formatted output | ✅ **FIXED.** `RuleValidationMessage` now carries `text` (the raw sentence), `column` and `location`; `message` is unchanged, so every existing caller is untouched. The REPL's ANSI-stripping regex is **deleted**, not kept as a fallback — a fallback that never runs is how a seam quietly stops being load-bearing. Also fixed the sharp edge the item flagged in passing: `formatMessage` **threw** out-of-Context (`getSource` → *File not found in the AST cache*), so merely *reading* `.message` could take the process down; it now degrades to the sentence. Gated end-to-end-anchored in `test:repl`. |
 | **4** | `AstProvider` can only read from disk | ✅ **FIXED.** `loadSource(virtualPath, source)` — the compile-a-string entry point the compiler never had. **The REPL no longer writes anything to disk**; `.llang-repl.lisp` in the working directory is gone. `loadSource` *overwrites*, which also closes the stale-cache half of the item: `loadFile` early-returns on a cache hit, so re-reading a path with new text silently returned the old AST. `invalidate()` is the other half. Gated by a case that asserts the file was never created. |
+| **2** | `checkBracketsBalance` wrong in three ways | ✅ **DELETED.** The write-up is accurate and the function is beyond repair — but the finding on the audit is that it had **zero callers, repo-wide**, once `readiness.ts` replaced it. Dead *and* wrong, still exported from the `compiler/utils` barrel for the next person to find and trust. There is nothing to fix in a function nobody calls; there is only something to remove. The REPL's reader stays REPL-local: it has exactly one consumer, and promoting it would be building a shared abstraction for a second caller that does not exist. |
+| **5** | `SymbolTable.join` blind-concats scopes | ✅ **FIXED — and it was NOT a perf item.** Filed as an O(n²) ceiling, with "I have not chased whether that's a live bug in the normal compile path." Chased. In a single compile it is clean: the module cache means each module joins exactly once, so the invariant *one root scope per module file* holds by luck. In a **reused** Context it is a **wrong answer** — see below. |
 | **6** | dead README links | ✅ `docs/repl.md` exists and is linked. The other five stale `docs/development/**` links: still open. |
 
-**Still open, and correctly deferred:** #2 (`checkBracketsBalance` — still exported and still wrong;
-nothing in the compiler calls it, so it is dead *and* wrong), #5 (`SymbolTable.join` blind-concats
-scopes, which caps the REPL at O(n²)), and the two tails: `SYMBOL_MAP` enumeration (#9) and the five
-stale `docs/development/**` links (#6).
+### #5, in full: the bug the item did not know it had
+
+`resolveSymbol`'s flat cache is **first-wins** (`if (!this.symbolCache.has(k))`) and iterates
+`this.scopes` in **join order**. So when `join` blind-concats a re-processed module's root alongside
+the stale one, the **oldest root wins** — and a symbol from a version of the file *that no longer
+exists* beats the one that does. Measured, before the fix:
+
+```
+after ( (let x 1) )        -> x is Int      (roots=2)
+after ( (let x "hello") )  -> x is Int      (roots=3)   <- stale symbol won
+```
+
+`x` is a `String` in the source and the table says `Int`, permanently. Dedupe-by-`scope.node` — which
+is what the neighbouring `joinWithoutDuplication` did — could never have fixed this: **a re-parse
+yields a brand new `ProgramNode` every time.** The key is the **module**, not the node.
+
+So `join` is now keyed by `node._location.source` and replaces rather than appends, which makes
+re-joining a module idempotent. `joinWithoutDuplication` is gone: it was only ever called on the
+module-cache path, where the scopes are the *identical objects* and it was already a no-op — its
+different key was doing nothing but making it look as though the two paths needed different merge
+semantics. That is exactly how the wrong one ended up on the hot path.
+
+This is what stood between the REPL and a live `Context`. It has *not* been cashed in — the REPL still
+replays its history — but the obstacle is now removed rather than merely documented.
+
+**Still open:** the two tails — `SYMBOL_MAP` enumeration (#9) and the five stale
+`docs/development/**` links (#6).
 
 **What the two seams cost to keep:** nothing, once found. #3 and #4 were each ~30 lines and *purely
 additive* — no caller changed. What they bought is that neither workaround can rot: the REPL had been
@@ -87,7 +113,7 @@ is still live for anyone who writes `__private` or `__init`, and it deserves a
 
 ---
 
-## 2. `checkBracketsBalance` is wrong in three ways — **real bug, and it crashes the REPL**
+## 2. `checkBracketsBalance` is wrong in three ways — **real bug, and it crashes the REPL** — ✅ **DELETED (zero callers)**
 
 **`src/compiler/utils/checkBracketsBalance.ts`**
 
@@ -181,7 +207,7 @@ in-editor/LSP use later.
 
 ---
 
-## 5. `SymbolTable.join` blind-concats scopes — blocks a truly incremental REPL
+## 5. `SymbolTable.join` blind-concats scopes — blocks a truly incremental REPL — ✅ **FIXED (and it was a correctness bug)**
 
 **`src/compiler/analysis/SymbolTable.ts:444`**
 
