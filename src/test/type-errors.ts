@@ -411,6 +411,54 @@ ${PRODUCER}
     silent: true,
   },
 
+  // --- P6f: `this` has a type. ---
+  //
+  // `bindIdentifier("this", ...)` is a no-op and always has been: BuildSymbolTableAstVisitor never
+  // defines a symbol named `this`, so the write has nowhere to land (it is all 26 of P6b's lexical
+  // write misses). So `this.x` typed as Unknown and every check on a field access silently passed.
+  {
+    name: "P6f: a field's type is real through `this`",
+    source: '(defclass C (mut :ctor v <- Int 0)\n  (fn bad [] -> Int (return (- this.v "str"))))',
+    expect: /LL0204/,
+  },
+  {
+    // As an OPERAND, not as `this.v.length`. A chained member is a DIFFERENT gap -- the nil check
+    // only ever examines the HEAD of a chain -- and it misses identically for a local base:
+    //   (let c (C)) (let n c.v.length)   -> nothing
+    // so it was never `this`'s. Tracked as its own case below.
+    name: "P6f: an optional field must be unwrapped through `this`",
+    source: '(defclass C (mut :ctor v <- String? nil)\n  (fn bad [] -> String (return (+ "x" this.v))))',
+    expect: /LL0205/,
+  },
+  {
+    // ...and it must be GUARDABLE. Reporting a field as possibly-nil while refusing to believe the
+    // guard for it would make optional fields unusable -- the exact trap `nilGuard`'s own note warns
+    // about. A check you cannot satisfy is worse than no check.
+    name: "P6f: a nil-guard on a FIELD is believed",
+    source: '(defclass C (mut :ctor v <- String? nil)\n  (fn ok [] -> String (if (== this.v nil) (return "e")) (return (+ "x" this.v))))',
+    silent: true,
+  },
+  {
+    // Orthogonal to P6, and NOT introduced by it: the nil check reads only the HEAD of a member
+    // chain, so a possibly-nil INTERMEDIATE is invisible. Measured identical for a local base.
+    name: "a nil INTERMEDIATE in a member chain is unchecked",
+    source: '(defclass C (mut :ctor v <- String? nil))\n(let c (C))\n(let n c.v.length)',
+    expect: /LL0205/,
+    pending: true,
+  },
+  // ...and what it must NOT do. `:private` is per-CLASS: reading your own private field through
+  // `this` is the entire point of having one.
+  {
+    name: "P6f: a private field IS readable through `this`",
+    source: '(defclass C (mut :private :ctor secret <- Int 0)\n  (fn ok [] -> Int (return (+ this.secret 1))))',
+    silent: true,
+  },
+  {
+    name: "P6f: a correct field use through `this` stays silent",
+    source: '(defclass C (mut :ctor v <- Int 0)\n  (fn ok [] -> Int (return (+ this.v 1))))',
+    silent: true,
+  },
+
   // --- P7d: declaration-site variance (LL0214). ---
   { name: ":out in a parameter position", source: "(definterface P<:out T> (fn f [x <- T] -> Void))", expect: /LL0214/ },
   { name: ":in in a return position", source: "(definterface C<:in T> (fn f [] -> T))", expect: /LL0214/ },

@@ -1298,11 +1298,25 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     if (op !== "==" && op !== "!=" && op !== "≠") return undefined;
 
     // `(!= x nil)` or `(!= nil x)` -- either order.
+    //
+    // A MEMBER counts, not just a bare name: `(== this.cache nil)`, `(== cfg.host nil)`. It used to
+    // accept `simple-identifier` only, so an optional FIELD could be reported as possibly-nil and
+    // then could not be GUARDED -- the checker refused to believe the very check it was demanding.
+    // That is precisely the trap the note above this function is about, and it stayed invisible until
+    // P6 gave a field a type to be optional WITH.
+    //
+    // Narrowing is keyed on the identifier TEXT ("this.cache"), which is what `resolveIdentifier`
+    // already resolves through its dot path, so nothing else has to change. It is textual, so
+    // reassigning `this` or `cfg` would strand the narrowing -- exactly as true for a plain local,
+    // and no more wrong here than there.
+    const isGuardable = (n: ast.ASTNode) =>
+      n._type === "simple-identifier" || n._type === "composite-identifier";
+
     const [a, b] = [nodes[1], nodes[2]];
     const idNode =
-      b._type === "null" && a._type === "simple-identifier"
+      b._type === "null" && isGuardable(a)
         ? a
-        : a._type === "null" && b._type === "simple-identifier"
+        : a._type === "null" && isGuardable(b)
           ? b
           : undefined;
     if (!idNode) return undefined;
@@ -1945,8 +1959,18 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             refName: className,
             resolved: true
         };
-        // Bind 'this' in the class scope
-        this.typeEnv.bindIdentifier("this", thisType, node);
+        // Bind 'this' in the class SCOPE -- `bindInScope`, not `bindIdentifier`.
+        //
+        // `bindIdentifier` writes through to the symbol table, and there is no symbol named `this`:
+        // BuildSymbolTableAstVisitor defines variables, parameters, functions, classes and loop
+        // bindings, and never `this`. So the write had nowhere to land and did nothing -- it is all
+        // 26 of P6b's lexical write misses, in one line. `this.x` therefore typed as Unknown, and
+        // every check on a field access passed by knowing nothing.
+        //
+        // `this` is not a program symbol; it is a name that means something only inside this scope.
+        // That is exactly what bindInScope is for, and what narrowing and generic type parameters
+        // already use.
+        this.typeEnv.bindInScope("this", thisType);
     }
 
     try {
