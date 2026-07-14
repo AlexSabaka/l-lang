@@ -228,6 +228,13 @@ quietly dropped:
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
+*   **`__ll_member` is a thermometer.** Where the checker cannot type a receiver, `(obj.m)` is dispatched
+    at run time rather than guessed (D1, amended by Xe). It is correct, and it is also a **measurement**:
+    every site that reaches it is a receiver the type checker failed to infer. Today that is ~50 sites,
+    including `v3.x`, `user.age` and `final-account.balance` — plain struct fields. Each one the checker
+    learns to type stops reaching the shim and goes back to a direct `.x` / `.m()`. Watching that number
+    fall is the cheapest available measure of the "does not infer every expression" gap.
+
 *   **The checker silently stops walking a block NESTED in a block, once a declaration appears.**
     Found while gating Xc; **pre-existing, and confirmed at HEAD**. In
 

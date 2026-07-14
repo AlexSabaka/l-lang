@@ -1517,6 +1517,58 @@ const CASES: Case[] = [
       "INFERRED rather than declared `Any`. A checker that guesses here would report on correct code.",
   },
 
+  {
+    name: "D1/Xe: a FIELD is read, whatever it is called",
+    // Deliberately shaped like examples/05-oop/00_inheritance.lisp -- the file that put `breed` in the
+    // compiler's list in the first place. `nickname` is the same kind of field, declared the same way.
+    source: `(defclass Dog
+  (let :ctor breed)
+  (let :ctor nickname)
+  (fn show []
+    (console.log (this.breed))
+    (console.log (this.nickname))))
+(let d (new Dog "corgi" "rex"))
+(d.show)`,
+    expect: ["corgi", "rex"],
+    emitted: { mustNot: [/this\.nickname\(\)/] },
+    wasBroken:
+      "TWO FIELDS OF THE SAME CLASS, DECLARED IDENTICALLY. `(this.breed)` emitted `this.breed` and " +
+      "`(this.nickname)` emitted `this.nickname()` -- a TypeError. The difference was that codegen " +
+      "carried a hardcoded 30-name `knownPropertyNames` list, and `breed` was on it while `nickname` " +
+      "was not. The list's own comments give it away -- `// Animal/entity properties: breed, species, " +
+      "color, weight`, `// Balance and other state properties: balance, age, score` -- these are FIELD " +
+      "NAMES LIFTED OUT OF THE EXAMPLE FILES and hardcoded into the compiler. Someone hit the bug in " +
+      "the inheritance demo and added `breed`. " +
+      "The compiler already knew: `typeInfo.members` holds the fields and `methodSignatures` the " +
+      "methods. It only ever asked 'is it a METHOD', and when that said no it consulted the name list " +
+      "instead of asking 'is it a FIELD'. Xe asks.",
+  },
+
+  {
+    name: "D1/Xe: an UNTYPED receiver is dispatched at RUN TIME, not guessed",
+    // `s` is a plain String and `e` an Error -- neither type is described to the symbol table, so
+    // `memberKindOn` returns undefined for both. One member is a METHOD, the other a FIELD, and the
+    // compiler cannot tell them apart. It no longer tries.
+    source: `(let s "abc")
+(console.log (s.toUpperCase))
+(console.log (s.length))`,
+    // One receiver, one METHOD and one PROPERTY. `s` is a plain JS string: the symbol table has never
+    // been told what a String is, so `memberKindOn` returns undefined for BOTH, and the compiler cannot
+    // tell them apart at all. The run time can, exactly.
+    expect: ["ABC", "3"],
+    emitted: { must: [/__ll_member/] },
+    wasBroken:
+      "Guessed from a 30-name list. `message` was on it, so `(e.message)` read; `toUpperCase` was not, " +
+      "so `(s.toUpperCase)` called -- and both happened to be right, which is exactly why nobody looked. " +
+      "MEASURED, the receivers that reach here are not only untyped JS: `v3.x`, `user.age` and " +
+      "`final-account.balance` land here too -- ordinary USER fields whose type the checker cannot yet " +
+      "infer. So the list would have had to contain `x`, `y`, `balance` and `age`, which is precisely " +
+      "how the old one came to contain them. A name list can never be right. " +
+      "`__ll_member` asks the RUN TIME, which knows exactly: a method is called, anything else is read. " +
+      "The guess was never necessary -- it was only earlier. And it shrinks on its own: every receiver " +
+      "the checker learns to type stops reaching the shim and goes back to a direct `.x` or `.m()`.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",

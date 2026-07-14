@@ -16,11 +16,59 @@ radius behind each one.
 
 ## D1 — Zero-arg member access: `(obj.m)` is call or property read?
 
-**Ruling:** `(obj.m)` is **always** a call. Bare `obj.m` (no parens) is the only property read.
+**Ruling (amended by Xe):** `(obj.m)` is decided by the **TYPE** of `obj` — a **method** is called, a
+**field** is read. Where the type is not known, it is decided at **run time**, by `__ll_member`. It is
+never decided by a list of names.
 
-Today this is resolved by a 40-word English blacklist of method names, and it's order-dependent —
-the same expression compiles differently depending on what else is in the file. This ruling needs no
-type information at codegen time and deletes the blacklist entirely.
+### The original ruling, and why it did not survive contact
+
+> ~~`(obj.m)` is **always** a call. Bare `obj.m` (no parens) is the only property read. This ruling
+> needs no type information at codegen time and deletes the blacklist entirely.~~
+
+**Measured: it breaks 9 corpus files.** `(arr.length)`, `(err.message)`, `(this.name)` — 33 sites —
+all mean a *read*, and "always a call" emits `arr.length()`. The rule is simple and uniform and it is
+not the rule this language actually has.
+
+### What the blacklist really was
+
+`knownPropertyNames`, 30 entries, consulted whenever `isMethodOnType` said "not a method". Its own
+comments give it away:
+
+```js
+// Balance and other state properties
+'balance', 'age', 'score', 'status', 'state',
+// Animal/entity properties
+'breed', 'species', 'color', 'weight'
+```
+
+Those are not a JavaScript surface. **They are user class field names, lifted out of `examples/` and
+hardcoded into the compiler** — someone hit the bug in the inheritance demo and added `breed`. So:
+
+```lisp
+(defclass Dog (let :ctor breed) (let :ctor nickname) ...)
+
+(this.breed)      ;; -> this.breed        `breed` is in the list
+(this.nickname)   ;; -> this.nickname()   TypeError. It is not.
+```
+
+Two fields of the same class, declared identically. **Whether your field worked depended on whether
+its name appeared in an array inside the compiler.**
+
+And the type already knew: `methodSignatures` holds the methods, `members` holds them *and the fields,
+with their types*. Nothing had to be discovered — only **asked**. `memberKindOn` asks.
+
+### Why the residual list could not just be shrunk to "the JS bits"
+
+That was the plan. Then the sites still reaching the fallback were counted, and they are not only
+`s.toUpperCase` and `err.message` — they are `v3.x`, `user.age`, `final-account.balance`: **ordinary
+user fields whose receiver type the checker cannot yet infer** (the standing *"114 list nodes have no
+entry in the type channel"* gap). A residual list would have had to contain `x`, `y`, `balance`, `age`
+— which is *exactly how the original one came to contain them*. A name list can never be right here.
+
+So where the compiler does not know, it no longer guesses: `__ll_member(obj, "m")` calls a method and
+reads anything else. The answer was always available — at run time, exactly. Guessing at compile time
+was never *necessary*; it was only *earlier*. And the shim shrinks on its own: every receiver the
+checker learns to type stops reaching it and goes back to a direct `.x` or `.m()`.
 
 ## D2 — Assignment operator
 

@@ -2704,53 +2704,54 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       const isKnownFunction =
         this.isFunctionName(head) || this.functions.includes(memberName);
 
-      // D1 (docs/spec/DECISIONS.md#d1) rules that (obj.m) is ALWAYS a call — once that
-      // lands (Phase 3), this heuristic and the knownPropertyNames blacklist below both
-      // become dead code and should be deleted, not migrated.
-      // Check if this is a method call using type information from symbol table
-      let isMethodCall = false;
-      if (head._type === "composite-identifier" && objectName) {
-        isMethodCall = this.isMethodOnType(objectName, memberName, head);
+      // D1, and Xe: `(obj.m)` is decided by the TYPE, not by a list of names.
+      //
+      // `memberKindOn` returns "method", "field", or undefined -- and undefined means the compiler
+      // genuinely does not know the receiver's type, which is deferred to `__ll_member` at run time
+      // rather than guessed at. There is no name list left anywhere in this file.
+      //
+      // What this replaces: codegen asked "is it a METHOD", and on `false` consulted a hardcoded list
+      // of 30 property names. So two fields of the same class, declared identically, behaved
+      // differently -- `(this.breed)` read, `(this.nickname)` CALLED and threw -- because `breed` was
+      // on the list and `nickname` was not. The list's own comments admit it: "// Animal/entity
+      // properties: breed, species, color, weight". Field names lifted out of the examples and
+      // hardcoded into the compiler.
+      const memberKind =
+        head._type === "composite-identifier" && objectName
+          ? this.memberKindOn(objectName, memberName, head)
+          : undefined;
+
+      // A FIELD is a read. Full stop -- and it does not matter what it is called.
+      if (memberKind === "field" && args.length === 0) {
+        return callee;
       }
 
-      // L-lang semantics: (expr) is a call, expr is a reference
-      // - (func) = call func with zero args
-      // - (obj.method) = call method with zero args
-      // - (obj.prop) = also a call in strict interpretation, but often means access
-      //
-      // Use type info when available, fall back to heuristics
-      if (args.length > 0 || isKnownFunction || isMethodCall) {
+      if (args.length > 0 || isKnownFunction || memberKind === "method") {
         return ESTreeBuilder.callExpression(node, callee, args);
       }
 
-      // For composite identifiers with no args:
-      // Per l-lang semantics, (obj.member) should typically be a call.
-      // However, some JS properties like 'length', 'name' should NOT be called.
-      // Use a blacklist of known property names that shouldn't be invoked.
-      if (head._type === "composite-identifier") {
-        // Known JS properties that are NOT methods
-        const knownPropertyNames = [
-          // Array/String properties
-          'length',
-          // Object identity properties
-          'name', 'constructor', 'prototype', '__proto__',
-          // Common data fields
-          'value', 'key', 'index', 'id', 'type', 'kind',
-          'x', 'y', 'z', 'w', 'r', 'g', 'b', 'a',
-          'width', 'height', 'size', 'count',
-          'data', 'result', 'error', 'message',
-          'first', 'last', 'next', 'prev', 'parent', 'children',
-          // Balance and other state properties
-          'balance', 'age', 'score', 'status', 'state',
-          // Math/complex number properties
-          'real', 'imag', 'magnitude', 'angle',
-          // Animal/entity properties
-          'breed', 'species', 'color', 'weight'
-        ];
-
-        if (!knownPropertyNames.includes(memberName)) {
-          return ESTreeBuilder.callExpression(node, callee, args);
-        }
+      // The receiver's type is UNKNOWN -- and there is no longer a guess here.
+      //
+      // Measured, the receivers that land here are not only the untyped JS surface (`s.toUpperCase`,
+      // `err.message`). They are also `v3.x`, `user.age`, `final-account.balance` -- ORDINARY USER
+      // FIELDS whose type the checker cannot yet infer (the standing "114 list nodes have no entry in
+      // the type channel" gap). So a name list can never be right: it would have to contain `x`, `y`,
+      // `balance` and `age`, which is precisely how the old one came to contain them.
+      //
+      // The answer exists anyway -- at RUN TIME, exactly. `__ll_member` calls a method and reads
+      // anything else. Guessing at compile time was never necessary; it was only earlier.
+      //
+      // This shrinks on its own as inference improves: every receiver the checker learns to type stops
+      // reaching here and goes back to a direct `.x` or `.m()`.
+      if (head._type === "composite-identifier" && callee.type === "MemberExpression") {
+        return ESTreeBuilder.callExpression(
+          node,
+          ESTreeBuilder.identifier(node, "__ll_member"),
+          [
+            callee.object as ESTree.Expression,
+            ESTreeBuilder.literal(node, memberName),
+          ]
+        );
       }
 
       return callee;
@@ -3378,6 +3379,105 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * Check if a member name is a method on the given object type.
    * Uses symbol table type metadata for accurate detection.
    */
+  /**
+   * Is `obj.m` a METHOD, a FIELD, or does the compiler simply not know?
+   *
+   * The question `isMethodOnType` should always have been. It asked only "is it a method", and when
+   * the answer was no, codegen fell through to a hardcoded list of 30 property names -- so whether
+   * `(this.m)` was a call or a read depended on whether `m` happened to appear in an array inside the
+   * compiler. Two fields of the same class, declared identically:
+   *
+   *     (this.breed)      -> this.breed       -- `breed` was on the list
+   *     (this.nickname)   -> this.nickname()  -- TypeError. It was not.
+   *
+   * The list's own comments say what it really was: `// Animal/entity properties: breed, species,
+   * color, weight`. Those are field names lifted out of the example files. Someone hit the bug in the
+   * inheritance demo and added `breed` to a list in codegen.
+   *
+   * And the type ALREADY KNOWS. `methodSignatures` holds the methods; `members` holds them AND the
+   * fields, with their types. Nothing had to be discovered -- only asked.
+   *
+   * `undefined` means the compiler genuinely does not know the receiver's type: `arr.length`,
+   * `err.message`. That is JS interop, it is the ONLY place a guess is still needed, and it is now the
+   * only thing the name list is used for.
+   */
+  private memberKindOn(
+    objectName: string,
+    memberName: string,
+    from?: ast.ASTNode
+  ): "method" | "field" | undefined {
+    const typeInfo = this.receiverType(objectName, from);
+    if (!typeInfo) return undefined;
+
+    if (typeInfo.methodSignatures?.has(memberName)) return "method";
+    if (typeInfo.codegenMetadata?.methodSignatures?.has(memberName)) return "method";
+
+    const member =
+      typeInfo.members?.find((m: any) => m.name === memberName) ??
+      (typeInfo.detailedMembers?.find((m: any) => m.name === memberName) as any);
+
+    if (member) {
+      return member.type?.kind === "function" ? "method" : "field";
+    }
+
+    // The type is known and has no such member. Not our guess to make -- LL02xx territory, not codegen's.
+    return undefined;
+  }
+
+  /** The receiver's type, following type-refs and class names to the definition. */
+  private receiverType(objectName: string, from?: ast.ASTNode): any | undefined {
+    try {
+      // `this` is not a symbol. It is the ENCLOSING class, and the AST already says which -- walk up.
+      //
+      // Without this, `(this.breed)` cannot be answered at all, and `(this.speak)` only worked by
+      // accident: `isKnownFunction` consults `this.functions`, a flat list of every function NAME in
+      // the file, so a method call on `this` was caught by a name collision rather than by knowing the
+      // receiver. Every FIELD read on `this` fell through to the name list -- which is exactly why
+      // that list is full of `breed`, `balance` and `age`.
+      if (objectName === "this") {
+        const owner = this.enclosingTypeName(from);
+        if (!owner) return undefined;
+        const ownerSymbol = this.context.symbolTable?.resolveSymbol(owner);
+        return ownerSymbol?.inferredType;
+      }
+
+      const symbol = from
+        ? this.context.symbolTable?.resolveSymbol(objectName, from)
+        : this.context.symbolTable?.resolveSymbol(objectName);
+      if (!symbol?.inferredType) return undefined;
+
+      let typeInfo: any = symbol.inferredType;
+
+      if (typeInfo.kind === "type-ref" && typeInfo.refName) {
+        const typeSymbol = this.context.symbolTable?.resolveSymbol(typeInfo.refName);
+        if (typeSymbol?.inferredType) typeInfo = typeSymbol.inferredType;
+      }
+
+      if (
+        typeInfo.name &&
+        (typeInfo.kind === "class" || typeInfo.kind === "struct" || typeInfo.kind === "unknown")
+      ) {
+        const classSymbol = this.context.symbolTable?.resolveSymbol(typeInfo.name);
+        if (classSymbol?.inferredType) typeInfo = classSymbol.inferredType;
+      }
+
+      return typeInfo;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The class or struct that lexically encloses `node`, by name. */
+  private enclosingTypeName(node?: ast.ASTNode): string | undefined {
+    for (let n = node?._parent; n; n = n._parent) {
+      if (n._type === "class" || n._type === "struct") {
+        const name = (n as any).name;
+        return typeof name === "string" ? name : name?.id ?? name?.name;
+      }
+    }
+    return undefined;
+  }
+
   private isMethodOnType(objectName: string, memberName: string, from?: ast.ASTNode): boolean {
     try {
       // The OBJECT is a value -- a local, a parameter -- so it resolves lexically, from the node. The

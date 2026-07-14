@@ -137,6 +137,26 @@ function __ll_map_copy_each(coll) {
   if (coll == null) return coll;
   return Array.from(coll, __ll_copy_each);
 }
+/**
+ * \`(obj.m)\` where the compiler DOES NOT KNOW obj's type.
+ *
+ * D1 says a parenthesised member is a call; a field read says otherwise; and which one \`(v3.x)\` is
+ * depends entirely on what \`v3\` turns out to be. Codegen used to guess from a hardcoded list of 30
+ * property names -- so \`(this.breed)\` read and \`(this.nickname)\` CALLED and threw, purely because
+ * someone had added \`breed\` to an array in the compiler while debugging the inheritance example.
+ *
+ * Where the type IS known, codegen now asks it (Xe) and never reaches here. Where it is not -- an
+ * untyped JS receiver, or one of the expressions the checker still cannot infer -- the answer exists
+ * anyway, at run time, and it is exact. So ask then, instead of guessing now.
+ *
+ * A method is called with its receiver bound; anything else is a read.
+ */
+function __ll_member(obj, key) {
+  if (obj == null) throw new TypeError('cannot read ' + String(key) + ' of nil');
+  const v = obj[key];
+  return typeof v === 'function' ? v.call(obj) : v;
+}
+
 function __ll_index(obj, key) {
   if (obj == null) throw new TypeError('cannot index into nil');
   if (Array.isArray(obj) || typeof obj === 'string') {
