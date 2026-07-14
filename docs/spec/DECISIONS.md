@@ -1234,10 +1234,12 @@ It is the only one of the four papercuts that adds a FEATURE rather than fixing 
   different answers for an *unannotated* member, in one compiler. What the default should be is a
   language ruling — D11b deliberately left it alone rather than change it in passing.
 
-- **Call arguments are invisible to the type checker when the callee cannot be resolved.** Measured at
-  **16 diagnostics** on passing tests once made visible — LL0210 on locally-scoped names (symbol
-  resolution is top-level-only) and LL0211 on a headless member call. Blocked on **P6**. D9g threads
-  the nil check through behind an explicit guard; everything else there stays dark.
+- ~~**Call arguments are invisible to the type checker when the callee cannot be resolved.** Measured
+  at **16 diagnostics**… Blocked on **P6**.~~ — **FIXED, and the diagnosis was wrong.** The guard is
+  gone. P6 landed and the count was *still 16*: none of them were scope-resolution false positives.
+  Seven were nested functions that no pass ever defined, three were enums that no pass ever defined,
+  three were a pipeline the desugarer never desugared, and three were **true positives** whose golden
+  had recorded the bug's output as the right answer. See *P6 (concluded)*.
 
 - **`\"` inside a string literal is not unescaped** — it emits literally, so `"a \"b\" c"` prints
   `a \"b\" c`. Found while writing `21_nil_handling`; worked around, not fixed.
@@ -1382,3 +1384,164 @@ the enclosing function's return type from propagating.
 - **A generic PARENT drops its arguments.** `:extends Container<Int>` records `parentClass` as the
   bare name `Container`; only `:implements` keeps its type arguments. Subtyping through a generic
   base class therefore compares no arguments.
+
+# P6 (concluded) — the checker could not see a local variable
+
+The earlier addendum built the lexical resolver and migrated **codegen** onto it. The **type system**
+was never migrated. This is that half, and it turned out not to be the phase the register described.
+
+## The scope tree was fine. The lookup was not.
+
+`resolveSymbol(name, from?)` already had two modes. With `from` it walks the real lexical chain, and
+it works — including on the post-desugar AST, because `BaseAstTreeWalker` copies `_parent` **by
+reference**, so one step up from a rewritten node lands back in the indexed tree. Without `from` it
+searches a flat cache built from module **roots only**.
+
+Four callers passed `from`; three of them were codegen. Everything in the type system asked the flat
+question. Measured, on a two-line program:
+
+```
+root child scopes:  [ function:[p, loc] ]     <- the parameter and the local, correctly there
+
+p      scopeOf -> function    lexical: FOUND      flat: NOT FOUND
+loc    scopeOf -> function    lexical: FOUND      flat: NOT FOUND
+outer  scopeOf -> program     lexical: FOUND      flat: FOUND
+```
+
+## It was not "the type is dropped". It was ALIASING.
+
+`bindType(name, type)` resolved flat. A flat lookup does not *fail* for a local — it finds **the
+top-level symbol of the same name** and writes the local's type onto **that**. So:
+
+```lisp
+(let x <- String "a")
+(fn f [] -> Int (let x <- Int 5) (return x))
+```
+
+reported `LL0200 cannot assign Int to String` **and** `LL0213 'f' returns String`. The compiler
+believed the local `x` *was* the outer `x` — for its declared type and its value type both.
+
+Writes now go through a strict `resolveSymbolLexical`, **not** `resolveSymbol(name, from)`, whose
+fall-through to the flat root union is right for a READ (other modules' symbols really do live in
+other roots) and is exactly how a local's type lands on a homonym.
+
+## Reads and writes are only observable together
+
+This governs the whole sequence, and it is the phase's main hazard. Fix writes alone and reads still
+go flat. Fix reads alone and the symbols they now find have no `inferredType`, because nothing bound
+them. **Either one shipped alone is indistinguishable from doing nothing** — and because the
+fall-through exists, *every* failure mode (a broken `_parent`, an unindexed scope, a wrong `from`)
+degrades into precisely the old behaviour: silent, green, and doing nothing.
+
+Hence the instrument, reported by `test:type-errors`:
+
+```
+types bound to the right symbol: 1428
+types with nowhere to go        : 0     <- was 26, and all 26 were `this`
+```
+
+It caught itself immediately: the first reading was `0 hits, 0 misses`, which looks like a clean
+no-op and was the counter asking the wrong table — the checker holds the MODULE's `SymbolTable` while
+codegen holds the CONTEXT's joined one. It is static for that reason.
+
+## What was actually broken
+
+1. **Every inferred type for a non-top-level name was discarded, or aliased** (above).
+2. **The read side is a different function and took no node.** `TypeEnvironment.resolveIdentifier`
+   is where every identifier's type comes from.
+3. **A nested annotation reached nobody.** `CollectTypesPass` never enters a function body, and
+   `visitVariable` read the declared type **by name** rather than from `node.type`. So `(fn f []
+   (let x <- Int "hello"))` was checked by nothing at all, and a class field's annotation never
+   reached its symbol.
+4. **`this` was not in the symbol table at all**, so binding it was a no-op before and after. It is
+   not a program symbol; it is scope-local, which is what `bindInScope` is for.
+5. **The checker could not see another module.** It was handed `moduleSymbols`, not the joined table
+   — so an imported function had no type: no arity check, no argument check, and an imported class
+   annotation degraded to Unknown. One word. `checkIdentifierResolves` had already been reaching past
+   it by hand.
+
+## The early-return nil guard had NEVER worked inside a function body
+
+The narrowing loop lived in `visitList`, and a function body is not a list. So D9g's whole idiom
+
+```lisp
+(fn describe [c <- String?] -> String
+    (if (== c nil) (return "empty"))
+    (return (+ "holding: " c)))
+```
+
+was believed at top level and **nowhere else**. It read as working only because a parameter had no
+type to narrow — `LL0205` could not fire, so there was nothing for the missing narrowing to be wrong
+about. Two more layers sat under it: a body **wrapped in parens** is a different block, so the guard's
+narrowing closed before `checkReturns` ran; and `checkReturns` **re-infers** every return from
+scratch, so it now runs while the narrowings are open, or it judges the return against the declaration
+rather than against what the guard proved.
+
+And `nilGuard` accepted a **simple** identifier only, so `(if (== this.cache nil) …)` was not a guard
+at all. Shipping optional fields without that means a field reported as possibly-nil that **cannot be
+guarded** — the checker demanding a check it refuses to believe, which is the exact trap D9g exists to
+avoid.
+
+## LL0210's "16 false positives" were sixteen REAL BUGS
+
+The `membersChecksOnly` guard suppressed every check except LL0205/LL0206 inside call arguments,
+justified by a measured 16-diagnostic flood "blocked on P6". P6 landed. The count was **still 16**.
+None of them were P6's. Each was its own bug:
+
+| n | code | what it really was |
+|---|---|---|
+| 7 | LL0210 | **A nested function is defined by nobody.** `visitFunction` said *"already defined in ScanPass"* — and ScanPass only scans top-level. `visitVariable`, ten lines up, carries the identical correction for the identical reason. |
+| 3 | LL0210 | **An enum is never defined as a symbol.** By anyone. Classes, structs, interfaces and aliases are; enums were left off the list. (And the head split had to learn `:` — the symbol in `HttpMethod:GET` is `HttpMethod`.) |
+| 3 | LL0211 | **A pipeline is never desugared.** See below. |
+| 3 | LL0203 | **True positives.** `08-types/00_primitives.lisp` says *"Shouldn't compile because of type mismatch"* — and compiled. Its golden recorded the results, `23` and `Help me!`, as though they were right: the file asserted the exact bug it was written to warn about. Split by ruling into a passing test plus `01_type_errors.lisp`, a `negative` test asserting the code. |
+
+## THE DESUGARER IS NOT WIRED INTO THE COMPILER
+
+`DesugarAstVisitor` owns `|>`. The "desugar stage" runs **TreeShake and Comptime and nothing else**.
+So codegen desugars pipelines *itself*, and the type checker never sees the rewrite: it reads
+`(account |> (.apply evt))` as a standalone call to the free function `apply`, which takes two
+arguments. **The two halves of the compiler are reading different programs.** Contained here (a
+pipeline types as Unknown; its stage arguments are still checked). The divergence is a phase of its
+own.
+
+## Rulings
+
+- **An unannotated `nil` initializer is `T?` with an unknown payload.** `(mut cache nil)` bound `Nil`,
+  so every later `(cache := "x")` was "cannot assign String to Nil". Assignable from anything, still
+  optional — so D9's forced unwrap keeps applying. An annotation still wins outright.
+- **A union with an unknown ALTERNATIVE cannot be judged.** `String | Number` — `Number` names no
+  l-lang type — is `String | Unknown`, and we cannot know what that Unknown admits. Note it is `some`
+  for a union where it is `every` for a generic: a generic is **narrowed** by each argument, so one
+  known argument still says something; a union is **widened** by each alternative, so one unknown
+  alternative says nothing.
+
+## A gate case must isolate the axis it names
+
+Four times this phase a case failed for a reason that was not the one it tested. Each would have
+credited P6 with a bug it did not cause, or "fixed" something that was not broken:
+
+- `(t.length)` — the CALL form of a member access never reaches `checkNotNil`. Fails identically for a
+  top-level optional; never P6's.
+- `(console.log (twice 1 2 3))` — a call **argument** is where `membersChecksOnly` ate LL0203/LL0211.
+  The cross-module cases stayed red *after* the fix landed, for the guard's reason, not the bug's.
+- `this.v.length` — the nil check reads only the **head** of a chain. Misses identically for a local
+  base.
+- `(let d (Dog))` — a class used before its declaration emits a **reference to the class**, not an
+  instance, so the receiver was never a Dog.
+
+## Open findings from P6
+
+- **The desugarer is not in the pipeline** (above). The type checker and codegen see different trees.
+- **A class used before its declaration does not construct.** `(Dog)` before `(defclass Dog …)` emits
+  `__ll_copy(Dog)` — the class object. Codegen decides "is this a constructor call" from the classes
+  it has visited *so far*. Silent. Same order-dependence as `isKnownFunction`.
+- **Assigning to a `let` is not checked.** `(this.full-name := …)` on a `let` field compiles clean.
+  `let` is a constant.
+- **The nil check reads only the HEAD of a member chain**, and a call head never reaches it at all:
+  `(t.length)` and `c.v.length` are both unchecked. Two pending cases in `test:type-errors`.
+- **`test:type-errors` and `test:imports` are pinned to grammar_v2** with no `--frontend` flag, so
+  "0 corpus diagnostics" is a grammar_v2-only claim.
+- **`bindCompleteType` / `getCodegenMetadata` are dead** — zero callers.
+- **LL0212 was implemented syntactically** to route around the flat table. It can now be real.
+- **LL0211 does not know required-vs-total arity**, so `fn` parameter defaults will false-positive
+  once they exist.

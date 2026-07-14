@@ -205,6 +205,46 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 (let names <- String[] ["a" "b"])
 ```
 
+### Optionals — `T?`
+
+`T?` is the type that also admits `nil`. Dereferencing one without checking it first is a compile
+error (`LL0205`), so the check is not advice — it is the only way to get at the value.
+
+```lisp
+(fn describe [c <- String?] -> String
+    (if (== c nil)
+        (return "empty"))
+    ;; From here to the end of the block, `c` is known to be a String.
+    (return (+ "holding: " c)))
+```
+
+The guard is believed for the **rest of the block** once its branch exits (`return` or `throw`). It
+works on a field too, not only on a bare name:
+
+```lisp
+(defclass Cache
+    (mut :private :ctor value <- String? nil)
+
+    (fn get-or [fallback <- String] -> String (
+        (if (== this.value nil)
+            (return fallback))
+        (return this.value))))
+```
+
+An **unannotated** `nil` initializer is inferred as `T?` with an unknown payload — it can be assigned
+anything later, and it is still an optional, so it still has to be checked before use:
+
+```lisp
+(mut cache nil)        ;; inferred optional; accepts a value later
+(cache := "warm")
+```
+
+Annotate it when you know what it will hold — the annotation always wins:
+
+```lisp
+(mut cache <- String? nil)
+```
+
 ### User-Defined Types
 
 ```lisp
