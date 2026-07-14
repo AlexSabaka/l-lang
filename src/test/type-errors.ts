@@ -26,6 +26,7 @@ import { SymbolTable } from "../compiler/analysis/SymbolTable";
 import { MANIFEST } from "./manifest";
 
 const EXAMPLES = path.resolve(__dirname, "../../examples");
+const LIB = path.resolve(__dirname, "../../lib");
 const LIST = process.argv.includes("--list");
 
 /**
@@ -116,9 +117,24 @@ function measureCorpus(): { onTests: number; total: number; files: number } {
   let files = 0;
   const offenders: string[] = [];
 
-  for (const file of walk(EXAMPLES).sort()) {
-    const rel = path.relative(EXAMPLES, file);
-    const status = MANIFEST[rel]?.status ?? "test";
+  // `lib/` as well as `examples/`.
+  //
+  // Sc2 moved the stdlib out of the corpus and into `lib/std/`, where it is a LIBRARY rather than an
+  // example. Walking only `examples/` would therefore have quietly dropped the entire stdlib out of
+  // the diagnostic harness -- recreating, deliberately and in the same phase that named it, the
+  // "compiled but never examined" hole that Sa exists to expose. A stdlib nobody checks is how the
+  // last one came to call four functions that do not exist.
+  //
+  // A lib/ file is a `library` by definition: imported, never run standalone, so it has no golden and
+  // contributes to `total` rather than `onTests`. Sf gives it goldens and promotes it to `test`.
+  const corpus = [...walk(EXAMPLES), ...(fs.existsSync(LIB) ? walk(LIB) : [])].sort();
+
+  for (const file of corpus) {
+    const inLib = file.startsWith(LIB + path.sep);
+    const rel = inLib
+      ? path.join("lib", path.relative(LIB, file))
+      : path.relative(EXAMPLES, file);
+    const status = inLib ? "library" : (MANIFEST[rel]?.status ?? "test");
     const diags = diagnose(file);
     if (diags.length === 0) continue;
 

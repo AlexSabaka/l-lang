@@ -1,10 +1,10 @@
 (
-  (import "std/io.lisp")
-  (import "std/math.lisp")
-  (import "std/enumerable.lisp")
-  (import "std/types.lisp")
-  (import "std/strings.lisp")
-  (import "std/functional.lisp")
+  (import "std/io")
+  (import "std/math")
+  (import "std/enumerable")
+  (import "std/types")
+  (import "std/strings")
+  (import "std/functional")
 
   (print "\n=== STD LIB TESING ===\n")
 

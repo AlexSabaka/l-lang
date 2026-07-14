@@ -1,7 +1,7 @@
 (
     (import "./p5-bindings.lisp")
-    (import "../20-stdlib/std/math.lisp")
-    (import "../20-stdlib/std/enumerable.lisp")
+    (import "std/math")
+    (import "std/enumerable")
 
     (p5.disableFriendlyErrors := true)
 

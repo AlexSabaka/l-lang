@@ -336,17 +336,24 @@ export class Context {
       return { ast: ast as ASTNode, symbols: moduleSymbols };
     }
 
-    // STOP HERE if the imports did not resolve (LL0217).
+    // STOP HERE if an import did not RESOLVE (LL0217) -- and only then.
     //
-    // `results` is one Context-wide collection, so an error raised while resolving an import DOES
-    // reach `hasErrors` and DOES stop codegen -- but the next gate is not until line ~420, after the
-    // type checker. Without this one, a single misspelled import runs TreeShake, Comptime, Desugar
-    // and the whole checker against a module whose symbols were never loaded, and buries the one
-    // diagnostic that explains everything under a flood of spurious LL0210s ("'print' is not
-    // defined", x N).
+    // Why the gate exists: `results` is one Context-wide collection, so an error raised while
+    // resolving an import does reach `hasErrors` and does stop codegen -- but the next gate is not
+    // until after the type checker. Without this one, a single misspelled import runs TreeShake,
+    // Comptime, Desugar and the whole checker against a module whose symbols were never loaded, and
+    // buries the one diagnostic that explains everything under a flood of spurious LL0210s
+    // ("'print' is not defined", x N). The first error should be the true one.
     //
-    // The first error should be the true one.
-    if (this.results.hasErrors) {
+    // Why it tests for LL0217 SPECIFICALLY, and not `hasErrors`: `hasErrors` is global and this
+    // collection is shared across every module in the build. Gating on it meant that an error in any
+    // IMPORTED module skipped the IMPORTING module's type checking entirely -- measured, and caught
+    // only because the number moved: `99-p5js/main.lisp` went from 60 diagnostics to 44, because
+    // `p5-bindings.lisp` (44 ambient-global LL0210s, a known gap) tripped the gate and main.lisp was
+    // never checked at all. Sixteen diagnostics did not get fixed; they went SILENT.
+    //
+    // A missing symbol table is a reason to stop. Somebody else's type error is not.
+    if (this.results.all.some((m) => m.code === "LL0217")) {
       return { ast: ast as ASTNode, symbols: moduleSymbols };
     }
 

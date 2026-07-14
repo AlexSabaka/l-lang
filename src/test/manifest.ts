@@ -35,16 +35,14 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   //
   // `library` means COMPILED, NEVER EXECUTED -- and `test:type-errors` excludes it from the corpus
   // count entirely, so a diagnostic in one of these files is invisible twice over. That is not a
-  // footnote; it is the reason the whole std/ tree below could sit here green while calling four
-  // functions that do not exist, deftyping `Number` twice, and leaking nine unexported symbols.
-  // Phase S / Sf replaces these with `lib/std/*` at status `test`, with goldens. See STDLIB.md.
+  // footnote; it is the reason the std/ tree could sit here green while calling four functions that
+  // do not exist, deftyping `Number` twice, and leaking nine unexported symbols.
+  //
+  // The std/ entries are GONE from this list because the stdlib is no longer an example: Sc2 moved it
+  // to `lib/std/`, where it is imported BY NAME -- `(import "std/math")`. `test:type-errors` walks
+  // `lib/` alongside `examples/`, so it did not leave the diagnostic harness on the way out. Sf gives
+  // it goldens. See STDLIB.md.
   "20-stdlib/complex_math_test/math_utils.lisp": { status: "library" },
-  "20-stdlib/std/enumerable.lisp": { status: "library" },
-  "20-stdlib/std/functional.lisp": { status: "library" },
-  "20-stdlib/std/io.lisp": { status: "library" },
-  "20-stdlib/std/math.lisp": { status: "library" },
-  "20-stdlib/std/strings.lisp": { status: "library" },
-  "20-stdlib/std/types.lisp": { status: "library" },
   "99-p5js/p5-bindings.lisp": { status: "library" },
 
   // --- fixture: not a plain-`node` language-conformance test ---

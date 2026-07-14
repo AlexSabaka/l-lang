@@ -1,5 +1,5 @@
 (
-    (import "std/io.lisp")
+    (import "std/io")
 
     (let name "World")
     (let punct "!")

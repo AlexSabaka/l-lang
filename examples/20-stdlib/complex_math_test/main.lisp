@@ -1,6 +1,6 @@
 (import "./math_utils.lisp")
-(import "../std/types.lisp")
-(import "../std/math.lisp")
+(import "std/types")
+(import "std/math")
 
 (fn main []
     (console.log "--- Running Complex Math Test ---")

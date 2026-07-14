@@ -1,5 +1,5 @@
 (
-  (import "enumerable.lisp")
+  (import "std/enumerable")
 
   (fn print [msg <- String ...args <- Any[]] -> Void
     (for :each arg :from (zip args (range 0 args.length 1)) :then (
