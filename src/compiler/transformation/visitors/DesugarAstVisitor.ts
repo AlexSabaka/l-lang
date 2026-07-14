@@ -1,5 +1,5 @@
 import * as ast from "../../frontend/ast";
-import { LogLevel } from "../../Context";
+import { Context, LogLevel } from "../../Context";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { formatWithOptions } from "util";
 
@@ -37,6 +37,20 @@ import { formatWithOptions } from "util";
  * Measured: 0 lexical misses when the original parent is kept, 1056 when the chain is rebuilt.
  */
 export class DesugarAstVisitor extends BaseAstTreeWalker {
+  /**
+   * Inject the implicit return (a function's tail expression becomes an explicit `(return e)`)?
+   *
+   * A FLAG, not a deletion, because `ComptimeEvaluationAstVisitor` depends on it: it desugars a
+   * `:comptime` function before handing it to the sandbox, purely so the sandboxed function RETURNS
+   * something. Switch it off there and `(let fact5 (factorial 5))` folds to `null` instead of `120`.
+   *
+   * It is OFF for the pipeline stage while the transform is being moved (Tc) and ON once the
+   * implicit return moves too (Te) -- so that each move's diff is attributable to it alone.
+   */
+  constructor(context: Context, private readonly injectImplicitReturns = false) {
+    super(context);
+  }
+
   visitProgram(node: ast.ProgramNode): ast.ProgramNode {
     return {
       ...node,
@@ -76,169 +90,139 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     return result;
   }
 
-  /**
-   * Desugar a list node - check if it's a pipeline and transform.
-   */
   visitList(node: ast.ListNode): ast.ASTNode {
-    // 0. Unwrap trivial lists: (expression) -> expression
-    // Only if it's not an identifier (to avoid ambiguous calls like (func))
-    if (
-      node.nodes.length === 1 &&
-      node.nodes[0]._type !== "simple-identifier" &&
-      node.nodes[0]._type !== "composite-identifier"
-    ) {
-      return this.visit(node.nodes[0]);
-    }
-
-    const hasPipelineOp = node.nodes.some(
-      (n) =>
-        n._type === "simple-identifier" && ["|>", "<|"].includes((n as any).id)
-    );
-
-    if (hasPipelineOp && node.nodes.length > 2) {
-      const result = this.transformPipelineList(node);
-      if (result) {
-        // this.context.log(LogLevel.Debug, `Ended desugaring with: ${this.dump(result!)}`);
-        return result;
-      }
+    // NO trivial-list unwrap here.
+    //
+    // This used to collapse `(expr)` -> `expr` for any non-identifier head. Codegen already does that,
+    // and correctly: its version also refuses to unwrap a dotted-member indexer, because D1 rules that
+    // `(gs[0].hi)` is a CALL while `gs[0]` is a read. This copy predated D1 and would have destroyed
+    // the call. Two implementations of one rule is how the compiler ends up with two answers -- and
+    // this one was the wrong answer.
+    if (this.isPipeline(node)) {
+      const piped = this.transformPipeline(node);
+      if (piped) return piped;
     }
 
     return {
-      _type: "list",
-      _location: { ...node._location },
-      _parent: node._parent,
+      ...node,
       nodes: node.nodes.map((n) => this.visit(n) as ast.ASTNode),
     } as ast.ListNode;
   }
 
-  private transformPipelineList(node: ast.ListNode): ast.ListNode {
-    this.context.log(LogLevel.Debug, "!!!--- Hit pipeline in the desugar");
-
-    let processingNodes: ast.ASTNode[] = node.nodes;
-
-    const seed = this.visit(processingNodes[0]) as ast.ASTNode;
-    let current: ast.ListNode;
-
-    for (let i = 1; i < processingNodes.length; i += 2) {
-      const id = (processingNodes[i] as ast.SimpleIdentifierNode).id;
-      const left = id === "|>";
-      const right = id === "<|";
-      if (!left && !right) {
-        // TODO: Log
-        return node;
-      }
-
-      const funcNode = processingNodes[i + 1];
-      this.context.log(LogLevel.Debug, `!!!--- Dir = ${id} !!!--- funcType = ${funcNode._type}`);
-
-      let functionNode: ast.ASTNode;
-      let args: ast.ASTNode[] = [];
-      let member = false;
-
-      if (funcNode._type === "list") {
-        const listNodes = (funcNode as ast.ListNode).nodes;
-        if (listNodes.length > 0) {
-          functionNode = listNodes[0];
-          args = listNodes.slice(1);
-
-          this.context.log(LogLevel.Debug, `--- Desugaring function node: ${this.dump(functionNode)}`);
-
-          if (
-            functionNode._type === "composite-identifier" &&
-            (functionNode as ast.CompositeIdentifierNode).headless
-          ) {
-            member = true;
-            const rawId = (functionNode as any).id;
-            functionNode = { ...functionNode, id: rawId } as any;
-          }
-        } else {
-          // TODO: Log
-          this.context.log(LogLevel.Debug, `--- Hit early return from desugar for node: ${this.dump(node)}`);
-          return node;
-        }
-      } else if (
-        funcNode._type === "simple-identifier" ||
-        funcNode._type === "composite-identifier"
-      ) {
-        functionNode = funcNode;
-
-        this.context.log(LogLevel.Debug, `!!!--- ${(funcNode as ast.CompositeIdentifierNode).id}`);
-        if ((funcNode as ast.CompositeIdentifierNode).headless) {
-          member = true;
-          const rawId = (funcNode as any).id;
-          functionNode = { ...funcNode, id: rawId } as any;
-        }
-      } else {
-        functionNode = funcNode;
-      }
-
-      const fn = this.visit(functionNode) as ast.ASTNode;
-      const argExprs = args.map((a) => this.visit(a) as ast.ASTNode);
-
-      this.context.log(LogLevel.Debug, `!!!--- FN: ${(fn as any).name} ARGS: ${argExprs.map(a => (a as any).name).join(", ")}`);
-
-      if (member) {
-        current = {
-          nodes: [
-            {
-              _type: "simple-identifier",
-              _location: { ...funcNode._location },
-              _parent: funcNode._parent,
-              id: "get",
-            } as ast.SimpleIdentifierNode,
-            funcNode,
-            seed,
-            fn,
-          ],
-          _location: { ...node._location },
-          _parent: node._parent,
-          _type: "list",
-        };
-      } else {
-        const calleeArgs = left
-          ? [seed, ...argExprs]
-          : right
-          ? [...argExprs, seed]
-          : [];
-        current = {
-          nodes: [funcNode, fn, ...calleeArgs],
-          _location: { ...node._location },
-          _parent: node._parent,
-          _type: "list",
-        } as ast.ListNode;
-      }
-    }
-
-    this.context.log(LogLevel.Debug, "complete desugar");
-    return current!;
+  /** `(seed |> stage |> stage)` -- the separators sit at every odd index. */
+  private isPipeline(node: ast.ListNode): boolean {
+    return (
+      node.nodes.length >= 3 &&
+      node.nodes.some(
+        (n, i) =>
+          i % 2 === 1 &&
+          n._type === "simple-identifier" &&
+          ["|>", "<|"].includes((n as ast.SimpleIdentifierNode).id)
+      )
+    );
   }
 
   /**
-   * Desugar a function node - inject implicit returns.
-   * Desugars the function body only.
+   * `(a |> (f x) |> g)`  ->  `g(f(a, x))`, as `call` / `member` nodes.
+   *
+   * This is a faithful port of the transform that has been living in CODEGEN
+   * (`JSTransformerAstVisitor.transformPipelineList`) and is exercised by the whole corpus. It is the
+   * reference implementation, and the version that used to be here was not merely unwired -- it was
+   * WRONG in two independent ways, and had never run, so nobody found out:
+   *
+   *   - it folded `[seed, ...args]` at every stage instead of threading `current`, so a three-stage
+   *     pipeline silently dropped the middle stage;
+   *   - it emitted `[funcNode, fn, ...args]` -- the callee twice, with the whole un-desugared stage
+   *     spliced in as the head.
+   *
+   * A stage is a MEMBER only when it is a bare headless identifier (`|> .length`). A LIST stage whose
+   * head is headless -- `(.apply evt)` -- is NOT treated as a member here, because codegen does not
+   * treat it as one either: its test is `simple-identifier && id.startsWith(".")`, and the parser
+   * produces a `composite-identifier` whose `id` has no leading dot, so that branch is doubly dead.
+   * `(.apply evt)` therefore compiles to a FREE call `apply(seed, evt)` -- which is why
+   * `05_matching.lisp` has to define `(fn apply [acc e] (acc.apply e))` by hand.
+   *
+   * That is a bug, and it is D17's (Td). It is replicated EXACTLY here so that moving the transform
+   * changes nothing: one thing at a time, and the diff is the proof.
    */
-  visitFunction(node: ast.FunctionNode): ast.FunctionNode {
-    this.context.log(LogLevel.Info, `Desugaring function: ${node.name ? ast.symbolName(node.name) : "anonymous"}`);
-    // Transform body: inject implicit returns
-    if (node.body.length === 0) return node;
+  private transformPipeline(node: ast.ListNode): ast.ASTNode | undefined {
+    const nodes = node.nodes;
+    let current = this.visit(nodes[0]) as ast.ASTNode;
 
-    // Desugar all nodes (pipelines, etc.)
-    const transformedBody = node.body.map((x) => this.visit(x) as ast.ASTNode);
+    for (let i = 1; i < nodes.length; i += 2) {
+      const sep = nodes[i];
+      if (sep._type !== "simple-identifier") return undefined;
+      const op = (sep as ast.SimpleIdentifierNode).id;
+      const left = op === "|>";
+      const right = op === "<|";
+      if (!left && !right) return undefined;
 
-    // Apply implicit return ONLY to the last node if appropriate
-    const lastIndex = transformedBody.length - 1;
-    let lastNode = transformedBody[lastIndex];
+      const stage = nodes[i + 1];
+      if (!stage) return undefined;
 
-    // Check if we should wrap the last node in a return
-    if (this.shouldWrapInReturn(lastNode)) {
-      this.context.log(LogLevel.Info, `Wrapping last node of type ${lastNode._type} in return`);
-      transformedBody[lastIndex] = this.wrapInReturn(lastNode);
+      let calleeNode: ast.ASTNode;
+      let args: ast.ASTNode[] = [];
+      let member = false;
+
+      if (ast.isListNode(stage)) {
+        const stageNodes = (stage as ast.ListNode).nodes;
+        if (stageNodes.length === 0) return undefined;
+        calleeNode = stageNodes[0];
+        args = stageNodes.slice(1);
+      } else if (
+        stage._type === "simple-identifier" ||
+        stage._type === "composite-identifier"
+      ) {
+        calleeNode = stage;
+        member = (stage as ast.CompositeIdentifierNode).headless === true;
+      } else {
+        calleeNode = stage;
+      }
+
+      const callee = this.visit(calleeNode) as ast.ASTNode;
+      const argNodes = args.map((a) => this.visit(a) as ast.ASTNode);
+
+      // `_parent` is the ORIGINAL parent object, never rebuilt -- the scope index was built on the
+      // pre-desugar tree and `scopeOf` climbs `_parent` to reach it. See the class comment.
+      const loc = { ...stage._location };
+
+      current = member
+        ? ({
+            _type: "member",
+            _location: loc,
+            _parent: node._parent,
+            object: current,
+            property: callee,
+            computed: false,
+          } as ast.MemberNode)
+        : ({
+            _type: "call",
+            _location: loc,
+            _parent: node._parent,
+            callee,
+            arguments: left ? [current, ...argNodes] : [...argNodes, current],
+          } as ast.CallNode);
     }
 
-    // A COPY. This used to be `node.body = transformedBody` -- an in-place mutation of the very
-    // FunctionNode the symbol table holds as `symbol.value`, i.e. of the parse tree the scope index
-    // was built from. A desugar pass must not reach backwards into the tree an earlier pass indexed.
-    return { ...node, body: transformedBody } as ast.FunctionNode;
+    return current;
+  }
+
+  visitFunction(node: ast.FunctionNode): ast.FunctionNode {
+    if (node.body.length === 0) return node;
+
+    // A COPY, not `node.body = ...`. That was an in-place mutation of the very FunctionNode the
+    // symbol table holds as `symbol.value` -- the parse tree the scope index was built from. A
+    // desugar pass must not reach backwards into the tree an earlier pass indexed.
+    const body = node.body.map((x) => this.visit(x) as ast.ASTNode);
+
+    if (this.injectImplicitReturns) {
+      const last = body.length - 1;
+      if (this.shouldWrapInReturn(body[last])) {
+        body[last] = this.wrapInReturn(body[last]);
+      }
+    }
+
+    return { ...node, body } as ast.FunctionNode;
   }
 
   /**

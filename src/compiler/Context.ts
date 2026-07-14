@@ -325,7 +325,20 @@ export class Context {
 
     const comptimeVisitor = new ComptimeEvaluationAstVisitor(this);
     ast = comptimeVisitor.visit(ast) as ASTNode;
-    
+
+    // THE DESUGARER. It has existed since v0.3.5 and was NEVER CALLED -- this stage ran TreeShake and
+    // Comptime and nothing else, so codegen desugared pipelines itself and the type checker never saw
+    // the rewrite. The two halves of the compiler read different programs.
+    //
+    // It goes HERE -- after symbols, before types. Not earlier: the symbol table indexes the
+    // PRE-desugar tree, and `SymbolTable.scopeOf` finds a node's scope by climbing `_parent` back
+    // into it. Rebuilding the tree before the table is built, or re-parenting it afterwards, points
+    // every node at objects the scope index has never seen -- resolution then falls back silently to
+    // the flat root search, and P6 is undone. Measured: 0 lexical misses when the original parent is
+    // preserved, 1056 when the chain is rebuilt.
+    const desugarVisitor = new DesugarAstVisitor(this);
+    ast = desugarVisitor.visit(ast) as ASTNode;
+
     const desugaredNodeCount = this.countNodes(ast);
     const desugarVisitCount = ((treeShakerVisitor as any).getVisitCount?.() || 0) + 
                              ((comptimeVisitor as any).getVisitCount?.() || 0);

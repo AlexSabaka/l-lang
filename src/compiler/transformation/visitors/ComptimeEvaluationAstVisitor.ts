@@ -286,7 +286,9 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
             let fnNode = symbol.value as ast.FunctionNode;
             
             // Desugar the function node to ensure implicit returns are injected
-            const desugarer = new DesugarAstVisitor(this.context);
+            // `true`: inject implicit returns. That is the ONLY reason this call exists -- the sandbox
+          // needs a function that RETURNS something, and without it `(factorial 5)` folds to `null`.
+          const desugarer = new DesugarAstVisitor(this.context, true);
             fnNode = desugarer.visit(fnNode) as ast.FunctionNode;
             
             const esFn = transformer.visit(fnNode);

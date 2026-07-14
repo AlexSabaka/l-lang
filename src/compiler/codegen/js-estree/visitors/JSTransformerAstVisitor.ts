@@ -1157,87 +1157,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return declaration;
   }
 
-  private transformPipelineList(
-    nodes: ast.ASTNode[]
-  ): ESTree.Expression | null {
-    if (nodes.length < 3) return null;
-
-    this.context.log(LogLevel.Debug, "Hit the pipeline in the transpiler");
-
-    let processingNodes: ast.ASTNode[] = nodes;
-
-    const seed = processingNodes[0];
-    let current = this.visit(seed) as ESTree.Expression;
-
-    for (let i = 1; i < processingNodes.length; i += 2) {
-      const id = (processingNodes[i] as ast.SimpleIdentifierNode).id;
-      const left = id === "|>";
-      const right = id === "<|";
-      if (!left && !right) {
-        // TODO: Throw
-      }
-
-      const funcNode = processingNodes[i + 1];
-      this.context.log(LogLevel.Debug, `!!! Dir = ${id} !!! funcType = ${funcNode._type}`);
-      if (!funcNode) return null;
-
-      let functionNode: ast.ASTNode;
-      let args: ast.ASTNode[] = [];
-      let member = false;
-
-      if (funcNode._type === "list") {
-        const listNodes = (funcNode as ast.ListNode).nodes;
-        if (listNodes.length > 0) {
-          functionNode = listNodes[0];
-          args = listNodes.slice(1);
-
-          if (
-            functionNode._type === "simple-identifier" &&
-            (functionNode as any).id.startsWith(".")
-          ) {
-            member = true;
-            const rawId = (functionNode as any).id.substring(1);
-            functionNode = { ...functionNode, id: rawId } as any;
-          }
-        } else {
-          return null;
-        }
-      } else if (
-        funcNode._type === "simple-identifier" ||
-        funcNode._type === "composite-identifier"
-      ) {
-        functionNode = funcNode;
-        
-        this.context.log(LogLevel.Debug, `!!! ${(funcNode as ast.CompositeIdentifierNode).id}`);
-        if ((funcNode as ast.CompositeIdentifierNode).headless) {
-          member = true;
-          const rawId = (funcNode as any).id;
-          functionNode = { ...funcNode, id: rawId } as any;
-        }
-      } else {
-        functionNode = funcNode;
-      }
-
-      const fn = this.visit(functionNode) as ESTree.Expression;
-      const argExprs = args.map((a) => this.visit(a) as ESTree.Expression);
-
-      if (member) {
-        current = ESTreeBuilder.memberExpression(
-          funcNode,
-          current,
-          fn as ESTree.Identifier
-        );
-      } else {
-        const calleeArgs =
-          left ? [current, ...argExprs] :
-          right ? [...argExprs, current] : [];
-        current = ESTreeBuilder.callExpression(funcNode, fn, calleeArgs);
-      }
-    }
-
-    return current;
-  }
-
   /**
    * A destructuring binding target -> a real ESTree Pattern.
    *
@@ -2465,16 +2384,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       return this.visit(nodes[0]);
     }
 
-    const hasPipelineOp = nodes.some(
-      (n) =>
-        n._type === "simple-identifier" && ["|>", "<|"].includes((n as any).id)
-    );
-
-    if (hasPipelineOp) {
-      const result = this.transformPipelineList(nodes);
-      if (result) return result;
-    }
-
+    // NO pipeline handling here any more. `|>` is desugared into core `call` / `member` nodes by
+    // DesugarAstVisitor, which now actually runs -- so codegen never sees a pipeline, and the type
+    // checker sees the SAME tree codegen does. That was the entire point.
     const [head, ...rest] = nodes;
 
     // D1, for an indexer head. Stated, not guessed: the heuristic below (`isKnownFunction ||

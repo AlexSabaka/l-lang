@@ -1148,15 +1148,6 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     args.forEach((arg) => this.inferExpressionType(arg));
   }
 
-  /** `(seed |> stage |> stage)` -- the separators sit at every odd index. Same test the desugarer uses. */
-  private isPipeline(node: ast.ListNode): boolean {
-    return node.nodes.some(
-      (n, i) =>
-        i % 2 === 1 &&
-        n._type === "simple-identifier" &&
-        ["|>", "<|"].includes((n as ast.SimpleIdentifierNode).id)
-    );
-  }
 
   constructor(context: any, typeEnv: TypeEnvironment, symbolTable: SymbolTable) {
     super(context);
@@ -2484,36 +2475,51 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       }
 
       // List (function call)
+      // The CORE nodes, produced by the desugarer. A pipeline is a chain of these.
+      //
+      // This is what REPLACES the pipeline band-aid: the checker used to special-case a `list` that
+      // "looks like a pipeline" and type it Unknown, because it read `(account |> (.apply evt))` as a
+      // standalone call to the free `apply` -- ONE argument against TWO parameters -- and reported a
+      // phantom LL0211. Once the piped value is a REAL argument, the arity is simply correct. The
+      // error does not need suppressing; it does not exist.
+      case "call": {
+        const callNode = node as ast.CallNode;
+        const callee = callNode.callee;
+        const argTypes = callNode.arguments.map((a) => this.inferExpressionType(a));
+
+        const calleeIsName =
+          callee._type === "simple-identifier" || callee._type === "composite-identifier";
+        const funcName = calleeIsName ? (callee as ast.IdentifierNode).id : undefined;
+        const funcType = funcName
+          ? this.typeEnv.resolveIdentifier(funcName, callee)
+          : this.inferExpressionType(callee);
+
+        if (funcName && funcType && funcType.kind === "function") {
+          this.checkCallArguments(funcType, funcName, callNode.arguments, argTypes, callNode);
+          inferredType = funcType.returns ?? TypeEnvironment.unknown();
+        } else {
+          // A callee we cannot type -- an imported member, a JS global, a computed expression.
+          // Its EXISTENCE is still worth asserting when it is a name.
+          if (calleeIsName) {
+            this.checkIdentifierResolves(callee as ast.IdentifierNode, funcName!);
+          }
+          inferredType = TypeEnvironment.unknown();
+        }
+        break;
+      }
+
+      case "member": {
+        const memberNode = node as ast.MemberNode;
+        this.inferExpressionType(memberNode.object);
+        // The member of a value we may know nothing about. Typing it needs the object's type and a
+        // member table -- that is the type channel's job (Tg), not this one.
+        inferredType = TypeEnvironment.unknown();
+        break;
+      }
+
       case "list": {
         const listNode = node as ast.ListNode;
         if (listNode.nodes.length === 0) {
-          inferredType = TypeEnvironment.unknown();
-          break;
-        }
-
-        // A PIPELINE is not a call, and its stages are not calls either.
-        //
-        // `(account |> (.apply evt))` reads, to this pass, as a list whose second stage is the list
-        // `(apply evt)` -- a standalone call to the free function `apply`, which takes two arguments.
-        // Hence "'apply' expects 2 arguments, got 1" on three lines of `05_matching.lisp` that are
-        // perfectly correct. The piped value IS the missing argument.
-        //
-        // The reason it looks like a call is that IT WAS NEVER DESUGARED. `DesugarAstVisitor` owns
-        // `|>` and is NOT WIRED INTO THE PIPELINE AT ALL -- the "desugar stage" runs TreeShake and
-        // Comptime and nothing else -- so codegen desugars pipes itself and the type checker never
-        // sees the rewrite. The two halves of the compiler are reading different programs. That is a
-        // finding, and it is bigger than this phase; see DECISIONS.md.
-        //
-        // Until then: type a pipeline as Unknown, and infer only its STAGE ARGUMENTS -- so the checks
-        // inside them still run -- without judging a stage head as a callee.
-        if (this.isPipeline(listNode)) {
-          this.inferExpressionType(listNode.nodes[0]);
-          for (let i = 2; i < listNode.nodes.length; i += 2) {
-            const stage = listNode.nodes[i];
-            if (ast.isListNode(stage)) {
-              this.inferArguments((stage as ast.ListNode).nodes.slice(1));
-            }
-          }
           inferredType = TypeEnvironment.unknown();
           break;
         }
@@ -2557,45 +2563,8 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             // A variadic function absorbs the tail, so its declared params are a MINIMUM, not an
             // exact count -- the corpus really does have `(fn print [msg <- String ...args])`,
             // `compose` and `partial`.
-            if (funcType.params) {
-              const declared = funcType.params.length;
-              const required = funcType.isVariadic ? declared - 1 : declared;
-              const tooFew = args.length < required;
-              const tooMany = !funcType.isVariadic && args.length > declared;
+            this.checkCallArguments(funcType, funcName, args, argTypes, listNode);
 
-              if (tooFew || tooMany) {
-                const expected = funcType.isVariadic
-                  ? `at least ${required}`
-                  : `${declared}`;
-                this.reportTypeError(
-                  listNode,
-                  "LL0211",
-                  `'${funcName}' expects ${expected} argument${required === 1 && !funcType.isVariadic ? "" : "s"}, got ${args.length}.`
-                );
-              }
-            }
-
-            if (funcType.params) {
-              argTypes.forEach((argType, i) => {
-                if (i < funcType.params!.length) {
-                  const expectedType = funcType.params![i];
-                  // Gradual typing: an unannotated parameter accepts anything, and an argument we
-                  // could not type tells us nothing. Reporting either way is noise -- this fired as
-                  // "Expected Unknown, got ..." on every call to an unannotated function.
-                  if (TypeChecker.isUnknown(expectedType) || TypeChecker.isUnknown(argType)) {
-                    return;
-                  }
-                  if (!TypeChecker.isAssignable(argType, expectedType, this.symbolTable)) {
-                    this.reportTypeError(
-                      args[i] ?? listNode,
-                      "LL0203",
-                      `Argument ${i + 1} of '${funcName}': expected ${TypeChecker.formatType(expectedType)}, got ${TypeChecker.formatType(argType)}.`
-                    );
-                  }
-                }
-              });
-            }
-            
             inferredType = funcType.returns ?? TypeEnvironment.unknown();
           }
           // Handle struct constructors
@@ -2875,6 +2844,55 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       "LL0210",
       `'${head}' is not defined.`
     );
+  }
+
+  /**
+   * LL0211 (arity) and LL0203 (argument types), for ANY call -- a `list` headed by a name, or a core
+   * `call` node.
+   *
+   * Extracted rather than duplicated: a desugared pipeline is a call, and a call is a call. Writing
+   * the rule twice is how the compiler ended up with three different answers to "is this a call".
+   *
+   * A variadic function absorbs the tail, so its declared params are a MINIMUM, not an exact count --
+   * the corpus really does have `(fn print [msg <- String ...args])`, `compose` and `partial`.
+   */
+  private checkCallArguments(
+    funcType: InferredType,
+    funcName: string,
+    args: ast.ASTNode[],
+    argTypes: InferredType[],
+    reportNode: ast.ASTNode
+  ): void {
+    if (!funcType.params) return;
+
+    const declared = funcType.params.length;
+    const required = funcType.isVariadic ? declared - 1 : declared;
+    const tooFew = args.length < required;
+    const tooMany = !funcType.isVariadic && args.length > declared;
+
+    if (tooFew || tooMany) {
+      const expected = funcType.isVariadic ? `at least ${required}` : `${declared}`;
+      this.reportTypeError(
+        reportNode,
+        "LL0211",
+        `'${funcName}' expects ${expected} argument${required === 1 && !funcType.isVariadic ? "" : "s"}, got ${args.length}.`
+      );
+    }
+
+    argTypes.forEach((argType, i) => {
+      if (i >= funcType.params!.length) return;
+      const expectedType = funcType.params![i];
+      // Gradual typing: an unannotated parameter accepts anything, and an argument we could not type
+      // tells us nothing. Reporting either way is noise.
+      if (TypeChecker.isUnknown(expectedType) || TypeChecker.isUnknown(argType)) return;
+      if (!TypeChecker.isAssignable(argType, expectedType, this.symbolTable)) {
+        this.reportTypeError(
+          args[i] ?? reportNode,
+          "LL0203",
+          `Argument ${i + 1} of '${funcName}': expected ${TypeChecker.formatType(expectedType)}, got ${TypeChecker.formatType(argType)}.`
+        );
+      }
+    });
   }
 
   private inferOperatorType(op: string, args: ast.ASTNode[]): InferredType {
