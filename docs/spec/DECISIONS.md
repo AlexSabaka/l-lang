@@ -1409,11 +1409,24 @@ every rebinding into a hard LL0212. It is one character away and it is wrong.
 duplicate — while inside a file's single top-level block, a redeclaration remains an error. Both are
 correct. *Moving this check to `visitProgram` would make the REPL unusable.* `test:repl` pins it.
 
-**A binding's TYPE is fixed at first declaration.** The checker reads a second `(let x ...)` as an
-*assignment* to the existing symbol, so `(let x 1)` followed by `(let x "hi")` is refused with
-LL0200 — **whether or not anything depends on `x`.** (Measured: the refusal is identical with and
-without a dependent form present.) Rebinding at the *same* type is accepted, and redefining a
-function or a class is accepted. This is sound: within one program `x` is one symbol with one type.
+**A binding's TYPE is fixed at first declaration, and the REPL enforces that itself (REPL0001).**
+`(let x 1)` followed by `(let x "hi")` is refused — **whether or not anything depends on `x`.**
+Rebinding at the *same* type is accepted, and redefining a function or a class is accepted.
+
+This is not belt-and-braces; it closes a **silent wrong answer**. Because cells are sibling forms,
+a rebinding puts *two* declarations of `x` at program scope with different types — while codegen
+emits *one* `var x`. The checker then resolves `(* x 2)` inside an earlier
+`(fn double [] -> Int ...)` against the **first** `x` (Int) and says nothing, and at run time
+`double` reads the String and returns `null`. A function declared `-> Int` returning null, with no
+diagnostic.
+
+**The compiler cannot catch this and must not be asked to.** In a *file* the shape is impossible —
+one top-level block, so a redeclaration is LL0212 — and a forward reference from a function body to
+a `let` declared *later* at program scope is not type-checked either, so dropping the earlier cell
+does not restore the check. Both measured. LL0200 *used* to fire here, because the checker read the
+second `let` as an assignment to the existing symbol; P6 made resolution scope-aware, it now reads a
+second *declaration*, and that accidental guard is gone. The invariant is the REPL's to hold, and it
+holds it directly: **one name, one symbol, one type, for the life of the session.**
 
 **`.delete <name>` is therefore not a convenience — it is the escape hatch.** It is the only way to
 give a binding a different type without discarding the session. It removes the cell that declared

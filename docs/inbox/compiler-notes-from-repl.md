@@ -189,6 +189,34 @@ restore them or cut the links.
 
 ---
 
+## 7. A forward reference to a top-level `let` is not type-checked — **found on the dev sync**
+
+Not a REPL bug, and not blocking me. Flagging it because I measured it and it is the kind of gap
+this project takes seriously.
+
+```lisp
+(fn double [] -> Int (* x 2))   ; `x` is not declared yet
+(let x "hi")
+```
+
+compiles **clean**. No LL0204. Reorder the two forms and the same program reports
+`LL0204 Operator '*' is not defined for String and Int` — so the check exists; it simply does not
+fire when the use precedes the declaration. Related, and already known from earlier planning:
+`(let a x)` before `(let x 1)` inside a normal top-level block also compiles, and only fails at run
+time with a TDZ `ReferenceError`.
+
+Whether a top-level `let` should be forward-referenceable at all is a language ruling, not a bug
+report. But **if it is, the reference must be type-checked**, and today it silently is not.
+
+**Also worth knowing, since P6 changed it:** the checker used to read a second `(let x ...)` at the
+same scope as an *assignment* to the existing symbol (LL0200: "cannot assign String to Int"). Since
+P6 made resolution scope-aware it reads a second *declaration*. Nothing in the corpus depended on
+the old behaviour — inside a file, a redeclaration in the same block is LL0212 either way — but the
+REPL had been leaning on LL0200 without knowing it. The REPL now enforces one-name-one-type itself
+(REPL0001, D17) and no longer depends on how the checker resolves anything.
+
+---
+
 ## Summary
 
 | # | Item | Kind | Blocks REPL? |
@@ -199,6 +227,7 @@ restore them or cut the links.
 | 4 | `AstProvider` disk-only + stale cache | missing seam | worked around (temp files) |
 | 5 | `SymbolTable.join` blind concat | missing seam | caps REPL at O(n²) |
 | 6 | Dead README links | housekeeping | no |
+| 7 | Forward ref to a top-level `let` is unchecked | **bug** | worked around (REPL0001) |
 
 1 and 2 are worth fixing regardless of the REPL. 3, 4 and 5 are the price of the REPL being a
 second-class embedder of this compiler; none is urgent.

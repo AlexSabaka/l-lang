@@ -123,6 +123,8 @@ export class ReplSession {
   private sandbox: vm.Context;
   private output: string[] = [];
   private cellList: Cell[] = [];
+  /** name -> the type it was first bound at. Enforces D17's one-name-one-type. See retypes(). */
+  private types = new Map<string, string>();
   private readonly file: string;
 
   /**
@@ -188,6 +190,10 @@ export class ReplSession {
       return { kind: "refused", diagnostics: [this.fromThrow(e, spans)], output: [] };
     }
 
+    const declares = declaredNames(emitted.tail);
+    const clash = this.retypes(ctx, declares);
+    if (clash) return { kind: "refused", diagnostics: [clash], output: [] };
+
     let value: unknown;
     try {
       vm.runInContext(emitted.js, this.sandbox, { filename: "<repl>" });
@@ -198,11 +204,11 @@ export class ReplSession {
       return { kind: "runtime-error", error, output: this.output };
     }
 
-    this.cellList.push({
-      index: this.cellList.length,
-      source,
-      declares: declaredNames(emitted.tail),
-    });
+    this.cellList.push({ index: this.cellList.length, source, declares });
+    for (const name of declares) {
+      const t = typeOf(ctx, name);
+      if (t) this.types.set(name, t);
+    }
 
     return {
       kind: "value",
@@ -212,8 +218,51 @@ export class ReplSession {
     };
   }
 
+  /**
+   * Refuse a rebinding that would give an existing name a DIFFERENT type. D17: one name, one
+   * symbol, one type, for the life of the session.
+   *
+   * This is not belt-and-braces, it is load-bearing, and it closes a SILENT WRONG ANSWER.
+   *
+   * A session's cells are sibling top-level forms (they must be -- an outer list would make each
+   * cell a block and turn every rebind into LL0212). So `(let x 1)` … `(let x "hi")` puts TWO
+   * declarations of `x` at program scope, with different types -- while codegen emits ONE `var x`.
+   * The checker then resolves `(* x 2)` inside an earlier `(fn double [] -> Int ...)` against the
+   * FIRST `x` (Int) and says nothing, and at run time `double` reads the String and returns `null`.
+   * A function declared `-> Int` returning null, with zero diagnostics.
+   *
+   * The compiler does not catch it, and cannot be expected to: in a FILE this shape is impossible
+   * (one top-level block, so a redeclaration is LL0212), and a forward reference from a function
+   * body to a `let` declared later at program scope is not type-checked either -- so dropping the
+   * earlier cell does not restore the check. MEASURED both ways.
+   *
+   * LL0200 used to fire here, because the checker read the second `let` as an ASSIGNMENT to the
+   * existing symbol. P6 made resolution scope-aware and it now reads it as a second declaration, so
+   * the accidental guard is gone. Hence this one, which does not depend on how the checker happens
+   * to resolve anything.
+   */
+  private retypes(ctx: Context, declares: string[]): ReplDiagnostic | undefined {
+    for (const name of declares) {
+      const was = this.types.get(name);
+      const now = typeOf(ctx, name);
+      if (!was || !now || was === now) continue;
+
+      return {
+        code: "REPL0001",
+        severity: "error",
+        text:
+          `'${name}' is ${was} in this session and cannot become ${now}. ` +
+          `Anything already compiled against it would keep reading it as ${was}. ` +
+          `Use \`.delete ${name}\` first.`,
+        origin: { kind: "input", line: 1, column: 1 },
+      };
+    }
+    return undefined;
+  }
+
   reset(): void {
     this.cellList = [];
+    this.types.clear();
     this.context = new Context(this.file, this.options);
     // B4: the old reset() rebuilt the Context but REUSED the sandbox, so every `var` the user had
     // ever defined survived it. A reset that leaves the bindings behind is not a reset.
@@ -254,6 +303,7 @@ export class ReplSession {
   private replay(sources: string[]): string[] {
     this.sandbox = this.newSandbox();
     this.cellList = [];
+    this.types.clear();
 
     const broke: string[] = [];
     for (const source of sources) {
@@ -597,6 +647,15 @@ function declaredNames(nodes: ast.ASTNode[]): string[] {
 
   nodes.forEach(scan);
   return names;
+}
+
+/** The type a name is currently bound at, as a comparable label. `undefined` when not yet known. */
+function typeOf(ctx: Context, name: string): string | undefined {
+  const entry = ctx.symbolTable?.getAllSymbols?.().get(name);
+  const t = (entry as any)?.inferredType;
+  if (!t) return undefined;
+  if (typeof t === "string") return t;
+  return typeof t.name === "string" ? t.name : undefined;
 }
 
 function severityOf(s: RuleSeverity): ReplSeverity {

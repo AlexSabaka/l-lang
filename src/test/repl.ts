@@ -193,7 +193,7 @@ const CASES: Case[] = [
       { input: '(let x "hi")' },
       { input: "x" },
     ],
-    expect: [null, null, { refused: [/LL0200/], origin: "input", line: 1 }, { value: "1" }],
+    expect: [null, null, { refused: [/REPL0001/], origin: "input", line: 1 }, { value: "1" }],
     cells: 3, // the rebind is refused; the other three inputs are accepted
     wasBroken:
       "D17, and NOT what the ruling first assumed. The checker treats a second `(let x ...)` as an " +
@@ -213,13 +213,37 @@ const CASES: Case[] = [
       { input: '(let x "hi")' },
       { input: "x" },
     ],
-    expect: [null, { refused: [/LL0200/] }, null, null, { value: '"hi"' }],
+    expect: [null, { refused: [/REPL0001/] }, null, null, { value: '"hi"' }],
     cells: 2,
     wasBroken:
       "there was no .delete, and without it a type-changing rebind WEDGES the session: the only way " +
       "out is .reset, which throws away everything. Note what this case is NOT -- deleting a " +
       "DEPENDENT (`double`) does not unblock the rebind, because the refusal never came from the " +
       "dependent. It came from `x` already being Int.",
+  },
+  {
+    name: "a rebind cannot SILENTLY break a dependent",
+    steps: [
+      { input: "(let x 1)" },
+      { input: "(fn double [] -> Int (* x 2))" },
+      { input: "(double)" },
+      { input: '(let x "hi")' },
+      { input: "(double)" },
+    ],
+    expect: [null, null, { value: "2" }, { refused: [/REPL0001/] }, { value: "2" }],
+    cells: 4,
+    wasBroken:
+      "THE silent wrong answer, and the reason the guard exists. A session's cells are sibling " +
+      "top-level forms, so `(let x 1)` ... `(let x \"hi\")` puts TWO declarations of x at program " +
+      "scope with different types -- while codegen emits ONE `var x`. The checker resolved `(* x 2)` " +
+      "inside `double` against the FIRST x (Int) and said nothing; at run time double read the String " +
+      "and returned null. A function declared `-> Int` returning null, with zero diagnostics.\n" +
+      "        MEASURED: the compiler cannot catch this and should not be asked to. In a FILE the " +
+      "shape is impossible (one top-level block, so a redeclaration is LL0212), and a forward " +
+      "reference from a function body to a `let` declared LATER at program scope is not type-checked " +
+      "either -- so dropping the earlier cell does not restore the check. LL0200 used to fire here by " +
+      "accident (the checker read the second `let` as an assignment); P6 made resolution scope-aware " +
+      "and that accident is gone. Hence REPL0001.",
   },
   {
     name: ".delete reports the cells it breaks",
