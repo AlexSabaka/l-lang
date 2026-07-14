@@ -32,6 +32,12 @@ export interface ManifestEntry {
 // Keyed by path relative to examples/.
 export const MANIFEST: Record<string, ManifestEntry> = {
   // --- library: imported by other examples, never run standalone ---
+  //
+  // `library` means COMPILED, NEVER EXECUTED -- and `test:type-errors` excludes it from the corpus
+  // count entirely, so a diagnostic in one of these files is invisible twice over. That is not a
+  // footnote; it is the reason the whole std/ tree below could sit here green while calling four
+  // functions that do not exist, deftyping `Number` twice, and leaking nine unexported symbols.
+  // Phase S / Sf replaces these with `lib/std/*` at status `test`, with goldens. See STDLIB.md.
   "20-stdlib/complex_math_test/math_utils.lisp": { status: "library" },
   "20-stdlib/std/enumerable.lisp": { status: "library" },
   "20-stdlib/std/functional.lisp": { status: "library" },
@@ -191,9 +197,13 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "20-stdlib/test_stdlib.lisp": {
     status: "xfail",
     reason:
-      "D7: real stdlib not yet implemented. (Its LL0101 -- the inliner splicing a type-def's " +
-      "`const Number = undefined;` into an initializer -- is fixed in P5c, and it now compiles " +
-      "clean. It is blocked on the stdlib's own behaviour, not on codegen.)",
+      "D7/Phase S. 'Real stdlib not yet implemented' was true and useless; what actually happens: " +
+      "it calls `length`, `first`, `last` and `at` -- FOUR FUNCTIONS THAT EXIST NOWHERE, in no std " +
+      "module and no SYMBOL_MAP (LL0210 x4). It was written against a stdlib nobody built, and " +
+      "nothing found out because `library`/`xfail` files are compiled but never run. It also leans " +
+      "on the export leak for 7 more names -- `abs min max pow ceil floor round` are defined in " +
+      "std/math.lisp and exported by it NOWHERE, and resolve anyway because `(export ...)` is " +
+      "decorative (D20). Unblocks at Sf. See STDLIB.md.",
   },
   "modifiers_demo.lisp": {
     status: "xfail",

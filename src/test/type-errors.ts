@@ -160,6 +160,12 @@ interface Case {
   /** Not yet implemented -- reported, not failed, so the harness tracks progress honestly. */
   pending?: boolean;
   /**
+   * WHICH phase owes this gate. The pending label used to be the hardcoded string "P4c", which was
+   * already a lie for the nil-intermediate case and would have been a worse one for the D20 module
+   * gates. A tracker that misattributes what it is tracking is not a tracker.
+   */
+  why?: string;
+  /**
    * Sibling files written next to the case, so it can `(import "...")` one.
    *
    * A cross-MODULE bug cannot be stated in a single file, and the type checker's blindness to
@@ -505,6 +511,81 @@ ${PRODUCER}
   { name: ":out in a return position is legal", source: "(definterface P<:out T> (fn f [] -> T))", silent: true },
   { name: ":in in a parameter position is legal", source: "(definterface C<:in T> (fn f [x <- T] -> Void))", silent: true },
   { name: "an invariant T is legal in both positions", source: "(definterface I<T> (fn f [x <- T] -> T))", silent: true },
+
+  // -------------------------------------------------------------------------------------------
+  // Sa (D20): THE MODULE BOUNDARY DOES NOT EXIST. `(export ...)` is decorative.
+  //
+  // `visitExport` records the list onto `SymbolEntry.exportName` -- which has ZERO readers. The gate
+  // that actually decides visibility, `JSTransformerAstVisitor.isImportedSymbol`, tests only
+  // "declared in another file" + "declared at top level", so it CONFLATES top-level with exported.
+  // The one pass that does honour the list, `InlineImportsAstVisitor`, is commented out in Context.
+  //
+  // These are RED-but-tracked. They fail NOW, on purpose: the gate exists before the fix, so the
+  // sub-phase that lands D20 cannot credit itself with a bug it did not fix.
+  //
+  // The codes are reserved in the LL02xx band, not near LL0004, for a reason worth writing down:
+  // `diagnose()` above collects `LL02*` and nothing else, so a module diagnostic outside that band
+  // would be INVISIBLE TO THIS HARNESS -- a gate that can never go green. It is also the right band
+  // on the merits. These are name-VISIBILITY errors, and LL0210 ("is not defined") is their
+  // neighbour: "I cannot see that name" and "there is no such name" are the same question, asked of
+  // a different scope.
+  //
+  //   LL0215  a module-private symbol is not visible here
+  //   LL0216  a selective import does not bind that name
+  //   LL0217  the import cannot be resolved
+  //   LL0218  a type is defined twice across one import path
+  // -------------------------------------------------------------------------------------------
+  {
+    // Measured: this compiles clean and PRINTS BOTH. Corpus blast radius of enforcing it is 9
+    // references in 2 files -- and every one is the stdlib leaking into itself
+    // (`std/math.lisp` exports none of `abs min max pow ceil floor round inc`, nor `Complex`).
+    name: "Sa/D20: an UNEXPORTED symbol is module-private",
+    deps: { "sa_boundary.lisp": '(\n(fn public-fn [] -> String (return "pub"))\n(fn secret-fn [] -> String (return "sec"))\n(export public-fn)\n)\n' },
+    source: '(import "sa_boundary.lisp")\n(console.log (secret-fn))',
+    expect: /LL0215|module-private|not exported/,
+    pending: true,
+    why: "D20 -- Sb",
+  },
+  {
+    // The companion, and NOT optional. Without it, Sb could go green by refusing EVERY import --
+    // enforcing a boundary by walling off the module entirely. A check you satisfy by breaking the
+    // feature is not a check. This one must be silent before AND after.
+    name: "Sa/D20: an EXPORTED symbol stays visible",
+    deps: { "sa_boundary.lisp": '(\n(fn public-fn [] -> String (return "pub"))\n(fn secret-fn [] -> String (return "sec"))\n(export public-fn)\n)\n' },
+    source: '(import "sa_boundary.lisp")\n(console.log (public-fn))',
+    silent: true,
+  },
+  {
+    // `ImportDefinition.symbols` IS built by the AST builder and read by nobody, so a selective
+    // import behaves identically to a whole-module one. `b` is exported -- but this import did not
+    // ask for it, and that must be the difference.
+    name: "Sa/D20: a SELECTIVE import binds only what it names",
+    deps: { "sa_selective.lisp": '(\n(fn a [] -> Int (return 1))\n(fn b [] -> Int (return 2))\n(export a b)\n)\n' },
+    source: '(import { a } from "sa_selective.lisp")\n(console.log (b))',
+    expect: /LL0216|not bound|selective/,
+    pending: true,
+    why: "D20 -- Sb",
+  },
+  {
+    // Today this is a raw Node ENOENT thrown out of `fs.readFileSync` -- there is no `existsSync`
+    // guard and no diagnostic anywhere on the import path. `diagnose()` swallows the crash, so this
+    // reads as "no diagnostic", which is exactly the state D20 forbids.
+    name: "Sa/D20: an UNRESOLVABLE import is a diagnostic, not an ENOENT",
+    source: '(import "sa_no_such_module.lisp")\n(console.log 1)',
+    expect: /LL0217|cannot be resolved|not found/,
+    pending: true,
+    why: "D20 -- Sc",
+  },
+  {
+    // The stdlib does this to itself TODAY: `std/types.lisp` deftypes `Number`, and `std/math.lisp`
+    // deftypes it AGAIN -- while importing `types.lisp`. Both export it. Completely silent.
+    name: "Sa: a type defined TWICE across one import path",
+    deps: { "sa_types.lisp": "(\n(deftype Number Int | Real)\n(export Number)\n)\n" },
+    source: '(import "sa_types.lisp")\n(deftype Number Int | Real)\n(let x <- Number 1)',
+    expect: /LL0218|already defined|redefin/,
+    pending: true,
+    why: "D20 -- Sf",
+  },
 ];
 
 function runCases(): { failed: number; pending: number } {
@@ -532,7 +613,7 @@ function runCases(): { failed: number; pending: number } {
       console.log(`  PASS  ${c.name}`);
     } else if (c.pending) {
       pending++;
-      console.log(`  TODO  ${c.name}  (P4c, not implemented yet)`);
+      console.log(`  TODO  ${c.name}  (${c.why ?? "not implemented yet"})`);
     } else {
       failed++;
       console.log(`  FAIL  ${c.name}`);
@@ -579,7 +660,7 @@ function main() {
   console.log("\n=== summary ===");
   console.log(`  corpus diagnostics on passing tests: ${corpus.onTests}   (target: 0)`);
   console.log(`  negative tests failed              : ${failed}`);
-  console.log(`  negative tests pending (P4c)       : ${pending}`);
+  console.log(`  negative tests pending (tracked)   : ${pending}`);
 
   // Fail the run on a real regression only. `corpus.onTests` is expected to be non-zero until
   // P4a lands, so it is reported, not asserted -- otherwise the harness could never be committed

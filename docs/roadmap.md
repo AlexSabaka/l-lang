@@ -104,17 +104,42 @@ diagnostics (the comptime pass never recursed into an `if` body, and the tree-sh
 function it failed to fold). **D17**: `(x |> (.m a))` is a method call. **D18**: a trailing `if` yields
 a value.
 
-## 🔮 Phase 4: Stdlib (D7) (v0.4.0)
+## 🚧 Phase 4 / Phase S: Stdlib (D7) (v0.4.0)
 **Theme:** "Hide the JS."
 
-The `SYMBOL_MAP` split in **W** already drew the boundary and named the worklist: `get`, `head`,
-`tail`, `empty`, `elem`, `cons`, `list`, `call`, `eval`, `type`, `set!`, `set?` are *proto-stdlib
-functions* masquerading as language builtins. A real stdlib replaces them — and can later bind to a
-native `cstd`.
+**The stdlib already exists three times, and the three do not agree.** The full inventory, the
+rulings (**D19–D22**) and the worklist are in **`docs/spec/STDLIB.md`** — that document is what this
+phase executes against.
 
-*   [ ] Replace the runtime `SYMBOL_MAP` functions with a real, importable stdlib
-*   [ ] `eval` / a runtime AST interpreter — does not exist; `(eval x)` falls through to host JS
-*   [ ] Quasiquote / unquote — do not exist
+1.  **`RuntimeProvider.SYMBOL_MAP`** — 12 functions injected into every program *as text*.
+    Not importable, not typed. `eval` is literally the empty string.
+2.  **`InferTypesAstVisitor.JS_GLOBALS`** — a 30-name allowlist in the *type checker* that waves raw
+    JS through **untyped**. Not a stdlib: **a hole in the type system**. `console.log` goes through
+    it **579 times**.
+3.  **`examples/20-stdlib/std/*.lisp`** — 6 real modules, **compiled and never executed**. Its
+    driver calls `length`, `first`, `last`, `at` — four functions that exist nowhere. It was written
+    against a stdlib nobody built.
+
+**And the module boundary is fake:** `(export …)` is decorative. `SymbolEntry.exportName` is
+written in one place and **read by nobody**; the visibility gate conflates *top-level* with
+*exported*; and `InlineImportsAstVisitor` — the one pass that honours the export list — **is
+commented out**. (That is the *fourth* "written and never wired in" in this compiler.) Measured
+blast radius of enforcing it: **9 references in 2 files**, all of them the stdlib leaking into
+itself. Enforcing the boundary costs **one export list**.
+
+*   [x] **Sa — the standard.** `docs/spec/STDLIB.md`; D19–D22; RED gates for every finding.
+*   [ ] **Sb — `export` means something** (LL0215/LL0216). Blocks everything: no boundary, no public
+        surface, no library.
+*   [ ] **Sc — a real resolver** (LL0217), so `(import "std/math")` works. Today a missing import is
+        a raw `ENOENT`, not a diagnostic.
+*   [ ] **Sd — ambient globals become declarable.** Kills `JS_GLOBALS` and the 104 hidden p5js
+        diagnostics. *This* is the step that actually hides the JS.
+*   [ ] **Se — `std/core`:** `SYMBOL_MAP`'s library half leaves codegen and becomes typed l-lang.
+*   [ ] **Sf — the cstd-shaped modules**, typed, and **actually tested** (goldens, `status: "test"`).
+*   [ ] **Sg — retire** the rest; close D7.
+
+Deferred, and *not* stdlib modules: **`eval`** (needs a runtime AST interpreter — a phase of its
+own) and **quasiquote/unquote** (do not exist).
 
 ## 🔮 Phase 5: Advanced Type System (v0.5.0)
 **Theme:** "Type Safety First."
@@ -174,5 +199,13 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
 *   **Parse/lex gaps.** `__bar` does not lex; boolean match patterns; `\"` is not unescaped inside a
     string; `:is` type patterns; the `..` range operator; sized array types; `fn` parameter defaults;
     the numeric tower (octal/binary/hex/fraction/complex all lex, none emit).
+*   **The module boundary does not exist.** `(export …)` is decorative — an unexported top-level
+    symbol is importable, callable, and emits clean. A **selective** import (`(import { a } from …)`)
+    is parsed and dropped, behaving identically to a whole-module one. An **unresolvable** import is
+    a raw Node `ENOENT`, not a diagnostic. All three are **D20**, gated RED, and owned by Sb/Sc.
 *   **Harness.** `test:type-errors` and `test:imports` are pinned to grammar_v2, so "0 corpus
-    diagnostics" is a single-frontend claim.
+    diagnostics" is a single-frontend claim. Worse: that count covers **only `status: "test"` files**
+    — `library` and `xfail` are excluded *entirely*, so the true corpus total is **115 across 6
+    files**, and a `library` file is **compiled but never executed**. The whole `std/` tree is marked
+    `library`, which is exactly why a stdlib calling four nonexistent functions sat in the tree,
+    green, for the entire audit. A test that is compiled but never run asserts nothing.

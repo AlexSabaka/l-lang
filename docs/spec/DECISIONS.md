@@ -1695,3 +1695,117 @@ called by `__ll_op_registry.lookup`.
 - **`(|> a b c)`** — the prefix pipeline form, used in `W99` — is garbage in both implementations.
 - **No ambient-global declaration.** The p5 bindings reference `mouseX`, `mouseY`, `frameCount`, which are
   browser globals the language has no way to declare.
+
+---
+
+# Phase S — the stdlib has three heads, and they disagree
+
+Roadmap Phase 4 / **D7 — "Hide the JS"**. Before writing a single stdlib function, this phase
+inventoried what the language *already implicitly promises*. The promise turned out to be made three
+times, by three mechanisms, that contradict each other. The full inventory and the worklist are in
+**[`STDLIB.md`](./STDLIB.md)**; this section is the rulings and the evidence.
+
+## The three heads
+
+| # | Mechanism | Size | What it actually is |
+|---|---|---|---|
+| 1 | `RuntimeProvider.SYMBOL_MAP` (library half) | 12 fns | Injected into every program **as text**. `get head tail empty elem cons list call eval type set! set?`. Not importable, not typed. `eval` is literally the empty string. |
+| 2 | `InferTypesAstVisitor.JS_GLOBALS` | 30 names | A hardcoded allowlist in the **type checker** that waves raw JS through **untyped**. Not a stdlib — **a hole in the type system**. `console.log` goes through it **579 times**. |
+| 3 | `examples/20-stdlib/std/*.lisp` | 6 modules, ~290 lines | Real l-lang. **Compiled, never executed** (`status: "library"`). Its driver is `xfail` and calls `length`, `first`, `last`, `at` — **four functions that exist nowhere**. |
+
+Head 3 was written against a stdlib nobody built, and nothing ever found out, because nothing ever
+ran it. It also `deftype`s `Number` **twice** — in `types.lisp` and again in `math.lisp`, *which
+imports `types.lisp`* — and exports `Vector3` but not `Complex`, which `complex_math_test` uses
+anyway.
+
+## `(export …)` IS DECORATIVE — the module boundary does not exist
+
+A module defining `public-fn` and `secret-fn`, exporting **only** `public-fn`; an importer calling
+**both**. It compiles clean and prints both. Zero diagnostics.
+
+- `BuildSymbolTableAstVisitor.visitExport` records the list onto `SymbolEntry.exportName`.
+  **`exportName` has zero readers** — five hits in all of `src/`: one declaration, three `undefined`
+  initializers, and that single write.
+- `SymbolTable.join` splices **all** of an imported module's root scopes in, unfiltered.
+- `JSTransformerAstVisitor.isImportedSymbol` — the gate deciding what gets inlined — tests only
+  *"declared in another file"* + *"declared at module top level"*. **It conflates top-level with
+  exported**; its own comment calls a root-scope symbol "its export".
+- **`InlineImportsAstVisitor` is the one pass that DOES honour the export list** — it builds an
+  `exportedSymbols` set and filters against it. It is **commented out** in `Context.ts`.
+
+> **The fourth "written and never wired in"** — after the desugarer, the runtime matchers, and the
+> type channel. The pattern is now the most reliable predictor of where a bug lives in this
+> compiler. The question to ask of a claimed feature is not *"is it implemented?"* but
+> **"who calls it?"**
+
+**Also parsed and dropped:** `ImportDefinition.symbols`. A selective import — `(import { a } from
+"x.lisp")` — is built by the AST builder and read by nobody. It behaves **identically** to a
+whole-module import.
+
+**Blast radius, measured** (mirroring `isImportedSymbol` exactly, then asking whether `exportName`
+is set): **46 legitimate** cross-module references, **9 leaked**, in **2 files** — and every leak is
+the stdlib leaking into itself (`std/math.lisp`'s unexported `abs min max pow ceil floor round inc`,
+plus `Complex`). **Enforcing the boundary costs one export list.** That is the number Sb is planned
+against, and it is the difference between a scary phase and a cheap one.
+
+## There is no resolver, and no error path
+
+Import resolution is one line — `path.resolve(dirname(importer), literal)`. No search path, no
+module root, no extension inference. **A missing import is a raw Node `ENOENT`, not a diagnostic.**
+`std/` resolves only because the importing file happens to sit one directory above it.
+
+## Rulings
+
+- **D19 — the stdlib is a LIBRARY, not a compiler feature.** It lives in **`lib/std/`**, ships with
+  the compiler, and resolves **by name**: `(import "std/math")`. Relative imports keep working.
+  Heads 1 and 2 are **holes to be closed, not APIs to be kept**.
+- **D20 — `export` is the module boundary.** An unexported top-level symbol is **module-private**;
+  naming it from another module is a diagnostic. A selective import binds **only** what it names. An
+  unresolvable import is a diagnostic, not an `ENOENT`.
+- **D21 — naming: kebab-case, `is-x` predicates.** This is what the corpus already does, **10 of
+  10**. Scheme spellings (`nil?`, `set!`) are **rejected** — including the ones the runtime shim
+  itself uses. A module that is a *direct cstd binding* may **additionally** expose the C name as an
+  alias (`strlen` beside `string-length`), so the Phase 7 binding is mechanical rather than a
+  translation.
+- **D22 — the layout mirrors cstd headers; the signatures stay l-lang.** Each module declares the
+  header it binds to. Signatures use l-lang types (`T?`, `Int`, `String`) — no `char*`, no
+  errno-returns. Phase 7 binds **header-by-header**, not function-by-function.
+
+  ```
+  std/core   <- (the language)  head tail cons list get elem empty
+  std/io     <- stdio.h         print println read-line open close
+  std/math   <- math.h          sqrt sin cos tan pow floor ceil abs min max E PI
+  std/string <- string.h        string-length substr split join trim starts-with
+  std/char   <- ctype.h         is-alpha is-digit is-space upcase downcase
+  std/time   <- time.h          now clock sleep
+  std/os     <- unistd.h        args env exit
+  std/seq    <- (none)          map filter reduce zip range      [pure l-lang]
+  std/fn     <- (none)          identity compose partial constantly
+  ```
+
+**D22 ratifies a drift rather than imposing a shape.** The corpus had already wandered toward cstd
+without anyone deciding to: `math.lisp` is already ≈ `math.h`; `strings.lisp` already uses the
+literal C names `strlen` and `substr`; and `io.lisp`'s `print`, with its `{0}` placeholders, **is a
+`printf`**. That is the cheapest possible grounding for a native stdlib.
+
+## The harness was hiding its own subject
+
+`test:type-errors` counts corpus diagnostics **only on `status: "test"` files**. `library` and
+`xfail` are excluded *from the count entirely*. The "0 corpus diagnostics" claim standing since P6
+is a claim about **test** files; the true total is **115, across 6 files**.
+
+The whole `std/` tree is marked `library` — **compiled, never run**. That is exactly why a stdlib
+calling four nonexistent functions, defining `Number` twice, and leaking nine unexported symbols has
+sat in the tree, green, the entire time. **A test that is compiled but never executed asserts
+nothing.**
+
+## Open findings from this phase
+
+- **`eval` is the empty string** in `SYMBOL_MAP`. `(eval x)` falls through to host JS. A real `eval`
+  needs a runtime AST interpreter — a phase of its own, not a stdlib module.
+- **Quasiquote / unquote do not exist.**
+- **Namespace imports** (`import foo.bar`) parse, then dead-end on *"not supported yet"*. Either
+  implement them or delete the grammar rule.
+- **`functional.lisp` exports `apply`** — colliding with D17's `.apply` method call, which is the
+  exact collision `05_matching.lisp` hand-rolled a workaround for. A stdlib name can shadow a method
+  dispatch, and nothing warns.
