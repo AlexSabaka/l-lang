@@ -10,12 +10,29 @@ This document outlines the high-level milestones for the `l-lang` compiler, merg
 *   🚧 In Progress
 *   🔮 Future Thinking
 
-> **A note on ⚠️.** Several boxes below were ticked because the *code was written*. It was then never
-> *wired in*: the desugarer exists and is never called; two runtime helpers are emitted into every
-> program and called by nothing; "proper lexical scoping" was never reachable by the type system.
-> Each was found by a later phase tripping over it. They are marked honestly rather than un-ticked,
-> because *the shape of the mistake is the useful part* — a checkbox tracks whether a thing was
-> built, not whether it is load-bearing.
+> **A note on ⚠️ — "written, and never wired in."**
+>
+> Several boxes below were ticked because the *code was written*. It was then never **called**. This
+> is not an occasional slip; it is **this compiler's signature failure mode**, and by the end of Phase
+> S and Phase 5 it had been found **nine** times:
+>
+> | # | what | how it surfaced |
+> |---|---|---|
+> | 1 | the **desugarer** — never called, *and wrong* (it dropped the middle stage of a 3-stage pipeline) | Phase 3 |
+> | 2 | two **runtime matchers** — emitted into every program, called by nothing, unreachable by construction | Phase 3 |
+> | 3 | the **type channel** — `typeEnv` was a memo cache popped with its scope; nothing was behind the door | Phase 3 |
+> | 4 | **`InlineImportsAstVisitor`** — the one pass that honours `export`, commented out. So `(export …)` was decorative | Sa |
+> | 5 | **`visitTypeName`** — an annotation door that could never be dispatched (both type passes disable the walk) | Sb |
+> | 6 | **`LL0004 ImportHasSymbols`** — dead, *and* it encoded a false invariant, *and* it was frontend-divergent | Sc |
+> | 7 | **`:extern`** — parsed by both frontends, honoured by nobody, and **its own rule forbade the only correct way to write it** | Sd |
+> | 8 | **`isRuntimeFunction`** — zero callers, always; a worklist marker for a migration that turns out to be blocked | Se |
+> | 9 | **`FunctionNode.generics`** — declared, with a comment reading *"NEVER populated by either frontend"*, while every downstream binder already handled it | P5 |
+>
+> The lesson is a question. Of a claimed feature, do not ask *"is it implemented?"* — ask
+> **"who calls it?"** Every one of these had a green tree and a ticked box.
+>
+> They are marked honestly rather than un-ticked, because *the shape of the mistake is the useful
+> part*: a checkbox tracks whether a thing was **built**, not whether it is **load-bearing**.
 >
 > The evidence for every ⚠️ is in **`docs/spec/DECISIONS.md`**, which is the real status document.
 
@@ -81,8 +98,9 @@ register; the short version:
   symbols were all blind. Its scorecard is the phase's real lesson: the 16 diagnostics filed as
   *"false positives blocked on P6"* turned out to be **sixteen real bugs**.
 
-**Where the tree stands:** 70 pass / 0 fail / 0 error (97 total), both frontends · codegen 89/89 ·
-0 corpus type diagnostics · imports 9/9.
+**Where the tree stands** (measured, both frontends): **71 pass / 0 fail / 0 error** (91 total) ·
+codegen **96/96** · imports **10/10** · **0** corpus type diagnostics on passing tests · **0** lexical
+misses · 4 gates `pending`, each tracked to the phase that owes it.
 
 ---
 
@@ -156,20 +174,37 @@ itself. Enforcing the boundary costs **one export list**.
 Deferred, and *not* stdlib modules: **`eval`** (needs a runtime AST interpreter — a phase of its
 own) and **quasiquote/unquote** (do not exist).
 
-## 🔮 Phase 5: Advanced Type System (v0.5.0)
+## ✅ Phase 5: Advanced Type System (v0.5.0) — CLOSED
 **Theme:** "Type Safety First."
+
+**The type system stopped lying.** That was the theme, and it is met.
 
 *   [x] ~~Variance checking (`:out`/`:in`)~~ — **done** in P7 (`LL0214`)
 *   [x] ~~Static class members~~ — **done** in D11
-*   [x] **Generic inference** — **done.** `(let b (Box 42))` deduces `Box<Int>`; `(my-head [1 2 3])`
-        solves `T = Int` and returns `Int?`. The erasure rule (`every T passes, both directions`) is
-        **deleted**, with zero corpus diagnostics. The root cause was upstream of the type system: a
-        generic function **could not be written** — grammar_v2 had no generics slot, and PEG lexed
-        `my-head<T>` as a single identifier. **Unblocks `std/core`** (see Se).
-*   [ ] **Generic constraints** — `:where T :of Comparable` does not parse in grammar_v2 at all, and in
-        PEG it parses and is then *silently discarded* by two independent bugs. `:of` is not even a
-        constraint keyword.
-*   [ ] **Abstract classes** — `:abstract` is not a modifier (`LL0015`)
+*   [x] **Generic inference** — `(let b (Box 42))` deduces `Box<Int>`; `(my-head [1 2 3])` solves
+        `T = Int` and returns `Int?`; `(Box (Dog))` is refused where a `Box<Animal>` is wanted, with no
+        annotation in sight. The **erasure rule** — *every `T` passes, in both directions, always*,
+        which was the whole of l-lang's generics — is **deleted**, with zero corpus diagnostics.
+        Constructor arguments are checked **at all**, for the first time. **Unblocks `std/core`** (Se).
+
+        The root cause was upstream of the type system: **a generic function could not be written.**
+        grammar_v2 had no generics slot; PEG lexed `my-head<T>` as a *single identifier* and produced a
+        function nobody could call. `FunctionNode.generics` had been declared the whole time, with a
+        comment reading *"NEVER populated by either frontend"*.
+
+### Carried forward — named, not absorbed
+
+Two items were in this phase's list and are **not done**. They are not ticked, and they are not
+quietly dropped:
+
+*   ⚠️ **Generic constraints are a BUG, not a missing feature.** `:where T :of Comparable` does not
+    parse in grammar_v2 **at all**; in PEG it *parses and is then silently discarded* by two
+    independent bugs — an array spread into an object, and a read of a field nothing sets. `:of` is not
+    even a constraint keyword (the set is `implements | inherits | is | has`).
+    `TypeParameter.constraints` is the empty slot waiting. **A frontend divergence with a silent
+    wrong answer**, which puts it in the same family as everything Phase S kept finding.
+*   **Abstract classes** — `:abstract` is not a modifier (`LL0015`). Additive; belongs with the class
+    surface (D11), not with the type system.
 
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."
@@ -207,18 +242,33 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     `type-pattern`, `rest-pattern` and `functional-pattern` all compile to literal `false`.
 *   **`((fn [x] …) 21)` does not compile** (`LL0101`). The AST can represent it now (the `call` node);
     the grammar cannot parse it.
-*   **No ambient-global declaration** — the p5 bindings reference `mouseX`, `frameCount` and friends,
-    which the language has no way to declare.
 *   **Codegen is source-order dependent.** A class used *before* its declaration emits a reference to
     the class object instead of constructing (`(Dog)` → `__ll_copy(Dog)`). Silent.
 *   **Missing diagnostics.** Assigning to a `let` (a *constant*) is not checked. `(new)` with no class
-    name emits a bottom value. `LL0212` is a syntactic hack that can now be done properly. `LL0211`
-    does not know required-vs-total arity.
+    name emits a bottom value. `LL0212` is a syntactic hack that can now be done properly. (`LL0211`
+    *does* know required-vs-total arity now — a defaulted `:ctor` member is optional, and an inherited
+    one counts. `fn` parameter defaults still do not exist.)
+*   **`(x)` — a call, or a grouping?** **D1 says call** (*"(func) = call func with zero args"*), and
+    codegen does not follow it: it decides from `this.functions`, a *source-order list of declared
+    functions*, so `(c5)` on a local lambda emits a bare reference and printed the function object.
+    Honouring D1 for every zero-arg simple identifier was **measured** and breaks the suite — `(x)` is
+    also used as grouping in the corpus. Genuinely ambiguous; **D1 has to rule.** `call` is the
+    sanctioned form meanwhile.
+*   **`visitExport` throws instead of diagnosing.** An export list naming an undefined symbol crashes
+    the compiler with a Node stack trace, not an `LLxxxx`. And **re-exporting an imported symbol is not
+    supported** — which may well be right, but it is unstated.
+*   **A second erasure hole.** `typeArgumentsAssignable` returns `true` when *either* side has no type
+    arguments, so a bare `Producer` still satisfies a `Producer<Animal>`. Smaller than the rule Phase 5
+    deleted, and the same shape.
 *   **Nil-check coverage.** The check reads only the **head** of a member chain, and a call head never
     reaches it: `(t.length)` and `c.v.length` are both unchecked.
-*   **Parse/lex gaps.** `__bar` does not lex; boolean match patterns; `\"` is not unescaped inside a
-    string; `:is` type patterns; the `..` range operator; sized array types; `fn` parameter defaults;
-    the numeric tower (octal/binary/hex/fraction/complex all lex, none emit).
+*   **String escapes are not decoded at all.** Not just `\"` — **`"\n"` lexes as a backslash and an
+    `n`, and prints as one.** Two corpus files now carry comments working around it, and it is the
+    reason `test_stdlib` builds blank lines with `(print "")`. Recording a golden over it would freeze
+    the bug in as the expected answer.
+*   **Parse/lex gaps.** `__bar` does not lex; boolean match patterns; `:is` type patterns; the `..`
+    range operator; sized array types; `fn` parameter defaults; the numeric tower
+    (octal/binary/hex/fraction/complex all lex, none emit).
 *   **A module boundary is not transitive.** If A imports B and B imports C, A can still name C's
     exports — `SymbolTable.join` splices every module's scopes in, and the import check declines to
     invent a diagnostic where no *direct* import was recorded. Whether a boundary *should* be
@@ -226,8 +276,6 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
 *   **`:as` aliasing is unimplemented.** It parses in both frontends, on both the import and the
     export side, and nothing honours it.
 *   **Harness.** `test:type-errors` and `test:imports` are pinned to grammar_v2, so "0 corpus
-    diagnostics" is a single-frontend claim. Worse: that count covers **only `status: "test"` files**
-    — `library` and `xfail` are excluded *entirely*, so the true corpus total is **115 across 6
-    files**, and a `library` file is **compiled but never executed**. The whole `std/` tree is marked
-    `library`, which is exactly why a stdlib calling four nonexistent functions sat in the tree,
-    green, for the entire audit. A test that is compiled but never run asserts nothing.
+    diagnostics" is a single-frontend claim. The count also covers only `status: "test"` files —
+    `library` and `xfail` are excluded — though that hole is much smaller now: the stdlib **runs**
+    (`test_stdlib` has a golden), and `lib/` is walked alongside `examples/`.
