@@ -175,7 +175,29 @@ export const Question = createToken({ name: "Question", pattern: /\?/ });
 export const Exclamation = createToken({ name: "Exclamation", pattern: /!(?!=)/ });
 export const Tilde = createToken({ name: "Tilde", pattern: /~(?!=)/ });
 export const Comma = createToken({ name: "Comma", pattern: /,/ });
-export const Underscore = createToken({ name: "Underscore", pattern: /_(?![a-zA-Z0-9])/ }); // Standalone underscore
+/**
+ * The match-wildcard `_`. And it USED TO SHRED `__private`.
+ *
+ * The lookahead was `/_(?![a-zA-Z0-9])/` -- which omits `_` itself. So in `__x`, the first `_` is
+ * followed by `_`, not by an alphanumeric; the lookahead passes; and `Underscore` (which sits BEFORE
+ * `Identifier` in the token array) wins. The identifier is shredded and the parse dies:
+ *
+ *     (let __x 1)   ->  grammar_v2: "Expecting RParen but found '_'"
+ *                       peg:        fine
+ *
+ * A frontend divergence, live for anyone who writes `__private` or `__init` -- and it is exactly why
+ * the old REPL was dead on the first keystroke: it injected a boundary marker named `__repl_marker`.
+ *
+ * This is the **D14 bug class**, unchanged: a token that must defer to a longer `Identifier` match and
+ * does not. `(let nullable 1)` lexed as `null` + `able` for the same reason. So it gets the D14 cure --
+ * `longer_alt: Identifier` -- rather than a fiddlier character class. A bare `_` still lexes as
+ * `Underscore` (no longer Identifier match exists); `__x` lexes as `Identifier` (3 chars beats 1).
+ */
+export const Underscore = createToken({
+  name: "Underscore",
+  pattern: /_(?![a-zA-Z0-9])/,
+  longer_alt: Identifier,
+});
 
 // ============================================================================
 // BRACKETS & DELIMITERS

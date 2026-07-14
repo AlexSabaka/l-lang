@@ -439,11 +439,14 @@ export class ReplSession {
       const end = node._location?.end?.offset;
       if (start === undefined || end === undefined) continue;
 
-      // `end.offset` is INCLUSIVE -- it indexes the form's last character, not one past it. Slicing
-      // to `end` drops the closing paren and the form no longer parses. (RuleBuilder.getSource has
-      // the same off-by-one, which is why a diagnostic's source excerpt loses its last character;
-      // see docs/inbox/.)
-      const source = text.slice(start, end + 1).trim();
+      // `end.offset` is EXCLUSIVE -- one past the last character, the way `slice` means it.
+      //
+      // This used to be `end + 1`, compensating for grammar_v2 emitting Chevrotain's INCLUSIVE
+      // `endOffset` verbatim while the PEG emitted an exclusive one. The workaround was therefore
+      // itself frontend-divergent: correct under the default, off by one under `--frontend peg`. The
+      // divergence is fixed at the source (AstBuilder), so the compensation goes with it. See
+      // docs/inbox/compiler-notes-from-repl.md #8, which found the symptom.
+      const source = text.slice(start, end).trim();
       if (!source) continue;
 
       results.push({ source, result: this.eval(source) });

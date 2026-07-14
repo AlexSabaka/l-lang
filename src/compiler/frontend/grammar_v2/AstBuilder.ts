@@ -56,7 +56,24 @@ function createLocation(ctx: any, source: string): ast.Location {
       column: firstToken.startColumn || 1,
     },
     end: {
-      offset: lastToken.endOffset || firstToken.startOffset,
+      // EXCLUSIVE -- one past the last character, the way `String.slice` and the PEG both mean it.
+      //
+      // It was `lastToken.endOffset`, and Chevrotain's `endOffset` is INCLUSIVE: it indexes the last
+      // character, not one past it. So the two frontends disagreed about what this field MEANS:
+      //
+      //     (let x 10)      grammar_v2:  list = 0..9    INCLUSIVE
+      //                     peg:         list = 0..11   EXCLUSIVE
+      //
+      // `AstProvider.getSource` slices `[start, end)`, so it was correct under the PEG and **truncated
+      // every diagnostic's source excerpt by one character** under grammar_v2 -- the default. It read
+      // as `(let x <- Int "str"` with the closing paren missing, which looks like a wrapping artefact
+      // and is why it hid in plain sight for so long.
+      //
+      // The `+ 1` on `column` directly below has always been here: the same object was already
+      // half-exclusive. This makes the offset agree with it, with the PEG, and with `slice`.
+      //
+      // `??`, not `||`: `endOffset` of 0 is a valid offset and `||` would discard it.
+      offset: (lastToken.endOffset ?? firstToken.startOffset ?? 0) + 1,
       line: lastToken.endLine || firstToken.startLine || 1,
       column: (lastToken.endColumn || firstToken.startColumn || 1) + 1,
     },

@@ -3,8 +3,31 @@
 **From:** the `repl-refactor` stream (worktree `../l-lang-repl`)
 **To:** whoever is holding the compiler / audit-report stream
 **Date:** 2026-07-13
-**Status:** none of this is being fixed by me — the REPL refactor is scoped REPL-side only
-(`src/cli/**`), by decision. This is a hand-off, not a complaint.
+**Status:** none of this was fixed by the REPL stream — the refactor was scoped REPL-side only
+(`src/cli/**`), by decision. This was a hand-off, not a complaint.
+
+---
+
+## TRIAGED ON THE DEV SYNC (2026-07-14)
+
+Four of the nine are **closed**. Each was a real bug, and three of them were hurting *everyone*, not
+just the REPL.
+
+| # | Item | Outcome |
+|---|---|---|
+| **1** | `__ident` shredded by `Underscore` | ✅ **FIXED.** `longer_alt: Identifier` — the D14 cure, as recommended. Gated in `test:grammar-v2-smoke`, plus a guard that a bare `_` is still the wildcard. |
+| **8** | `end.offset` inclusive, `getSource` slices exclusive | ✅ **FIXED — and it was worse than reported.** Not an off-by-one: **the two frontends disagreed about what the field MEANS.** grammar_v2 emitted Chevrotain's *inclusive* `endOffset`; the PEG emitted an *exclusive* one. So `getSource` was correct under `--frontend peg` and **truncated every diagnostic's source excerpt by one character under the default**. Fixed at the source (`AstBuilder`), so the REPL's `end + 1` — itself frontend-divergent — is gone. Gated. |
+| **9** | codegen internals private, unenumerable | ✅ **FIXED (codegen half).** `beginProgram`, `getInlinedDefinitions`, `getOperatorRegistrations`, `getInlineStandardSymbols`, `populateTypesMetadata` are public; `compile()` uses the same seam. **The ask was hiding a bug:** `rootSource` is set on compile()'s first line, the REPL never calls compile(), so `isImportedSymbol` bailed on every symbol and **an `(import …)` in the REPL type-checked clean and died at run time.** Gated. `SYMBOL_MAP` enumeration: still open. |
+| **6** | dead README links | ✅ `docs/repl.md` exists and is linked. The other five stale `docs/development/**` links: still open. |
+
+**Still open, and correctly deferred:** #2 (`checkBracketsBalance` — still exported and still wrong;
+nothing in the compiler calls it, so it is dead *and* wrong), #3 (raw fields on
+`RuleValidationMessage`), #4 (`AstProvider.loadSource`), #5 (`SymbolTable.join` dedupe), #7 (**a
+forward reference to a top-level `let` is not type-checked** — this one needs a *language ruling*
+before it needs a fix: is a top-level `let` forward-referenceable at all?).
+
+**Note on numbering:** this doc's `D17` is now **D23**. The REPL stream and `dev` minted `D17`
+independently — two branches, one register, no lock.
 
 While making the REPL work again I found five defects and gaps that live under `src/compiler/`.
 Two are real user-facing bugs that have nothing to do with the REPL. Three are missing seams that

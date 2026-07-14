@@ -167,6 +167,69 @@ const CASES: SmokeCase[] = [
       assert(bodyStmt._type === "await", `expected await body, got ${bodyStmt._type}`);
     },
   },
+  {
+    // The D14 bug class again, and it was still live: a token that must defer to a longer
+    // `Identifier` match and does not.
+    //
+    // `Underscore`'s lookahead was `/_(?![a-zA-Z0-9])/` -- which omits `_` ITSELF. So in `__x` the
+    // first `_` is followed by `_`, not by an alphanumeric, the lookahead passes, and `Underscore`
+    // (which sits BEFORE `Identifier` in the token array) wins. The identifier is shredded:
+    //
+    //     (let __x 1)     grammar_v2: "Expecting RParen but found '_'"
+    //                     peg:        fine
+    //
+    // A FRONTEND DIVERGENCE, live for anyone writing `__private` or `__init` -- and it is exactly why
+    // the old REPL was dead on the first keystroke: its boundary marker was named `__repl_marker`.
+    // Cured the way D14 cured every keyword: `longer_alt: Identifier`.
+    name: "`__x` lexes as an identifier, not a shredded wildcard (inbox #1)",
+    source: "(let __x 1)",
+    check: ({ ast }) => {
+      const node = unwrapList(ast.program[0]);
+      assert(node._type === "variable", `expected variable, got ${node._type}`);
+      assert(node.name?.id === "__x", `expected name '__x', got ${JSON.stringify(node.name?.id)}`);
+    },
+  },
+  {
+    // ...and a BARE `_` must still be the match wildcard. The cure must not swallow the token it was
+    // protecting: there is no longer `Identifier` match for a lone `_`, so `longer_alt` never fires.
+    name: "a bare `_` is still the match wildcard (guard)",
+    source: '(match v { 1 => "one" _ => "other" })',
+    check: ({ ast }) => {
+      const node = unwrapList(ast.program[0]);
+      assert(node._type === "match", `expected match, got ${node._type}`);
+      assert(node.cases?.length === 2, `expected 2 cases, got ${node.cases?.length}`);
+    },
+  },
+  {
+    // `_location.end.offset` is EXCLUSIVE -- one past the last character, the way `slice` means it.
+    //
+    // It used to be Chevrotain's `endOffset` verbatim, which is INCLUSIVE, while the PEG emitted an
+    // exclusive one. The two frontends disagreed about what the FIELD MEANS:
+    //
+    //     (let x 10)      grammar_v2:  list = 0..9    INCLUSIVE
+    //                     peg:         list = 0..11   EXCLUSIVE
+    //
+    // `AstProvider.getSource` slices `[start, end)`. So it was right under the PEG and TRUNCATED EVERY
+    // DIAGNOSTIC'S SOURCE EXCERPT BY ONE CHARACTER under grammar_v2 -- the default. It printed
+    // `(let x <- Int "str"` with the closing paren missing, which reads as a wrapping artefact, which
+    // is how it hid in plain sight. `test:diff-frontends` could never have caught it: it ignores
+    // `_location`.
+    //
+    // Slicing the form back out of its own source is the invariant, and it is the one that matters --
+    // it is what `getSource` does.
+    name: "`end.offset` is EXCLUSIVE: a node slices back to its own source (inbox #8)",
+    source: "(let x 10)",
+    check: ({ ast }) => {
+      const src = "(let x 10)";
+      const list = ast.program[0];
+      const { start, end } = list._location;
+      const sliced = src.slice(start.offset, end.offset);
+      assert(
+        sliced === src,
+        `slicing [start, end) must yield the whole form. got ${JSON.stringify(sliced)}, want ${JSON.stringify(src)}`
+      );
+    },
+  },
 ];
 
 function main() {
