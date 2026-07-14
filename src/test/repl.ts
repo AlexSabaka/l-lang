@@ -26,6 +26,8 @@
  *   npm run test:repl
  *   npm run test:repl -- --verbose
  */
+import fs from "node:fs";
+import path from "node:path";
 import { CompilerOptions, LogLevel } from "../compiler/Context";
 import { ReplSession, ReplResult } from "../cli/repl/ReplSession";
 import { MultiLineBuffer } from "../cli/repl/MultiLineBuffer";
@@ -92,6 +94,14 @@ interface Case {
   expect: (Expect | null)[];
   /** History length at the end. Pins what does, and does not, enter history. */
   cells?: number;
+  /**
+   * A path (relative to the session's cwd) that must NOT exist after the case runs.
+   *
+   * The REPL used to write its whole program to disk on every keystroke-batch, into the working
+   * directory, purely because AstProvider could not be handed a string. "It still works" cannot
+   * detect that coming back; only "and it wrote nothing" can.
+   */
+  noFileAt?: string;
   /** What was wrong before -- printed on failure, so a regression names its own bug. */
   wasBroken: string;
 }
@@ -437,6 +447,63 @@ const CASES: Case[] = [
       "(docs/inbox/compiler-notes-from-repl.md #9). Twenty-three REPL cases passed while this was " +
       "broken, because not one of them imported anything.",
   },
+
+  // -----------------------------------------------------------------------------------------------
+  // The two seams the inbox asked for: #3 (a raw message) and #4 (compile a string).
+  // -----------------------------------------------------------------------------------------------
+  {
+    // #3. The diagnostic text is a FIELD now.
+    //
+    // `RuleValidationMessage` exposed only `message` -- a chalk-coloured, terminal-width-aware blob
+    // with a source excerpt and a trailing `at <abs-path>:<line>:<col>` -- while the raw `rule.message`
+    // sat in a closure, unreachable. So the REPL recovered the sentence by STRIPPING ANSI CODES FROM
+    // ANOTHER MODULE'S OUTPUT FORMAT and slicing after the code. It worked, and it would have broken
+    // the day `formatMessage` changed a space.
+    //
+    // Asserting the EXACT sentence is the point: an ANSI escape, a `.....` padding run, or an
+    // `at /abs/path` fragment leaking in is precisely what the regex used to be there to strip.
+    name: "a diagnostic's text is the raw sentence -- no ANSI, no path, no excerpt",
+    steps: [{ input: "(let s <- String 42)" }],
+    expect: [
+      {
+        // Anchored end-to-end against the WHOLE joined blob (`code: text`), on purpose. `.test()` on an
+        // unanchored regex would still pass with an ANSI escape, a `......` padding run or an
+        // `at /abs/path/.llang-repl.lisp:1:1` tail hanging off the sentence -- which is exactly the
+        // residue the deleted regex existed to scrub. Only `^...$` can prove none of it is there.
+        refused: [/^LL0200: Type mismatch: cannot assign Int to String for variable 's'\.$/],
+        line: 1,
+      },
+    ],
+    cells: 0,
+    wasBroken:
+      "`sentenceOf` stripped ANSI from the rendered blob and sliced after the inverse-rendered code. " +
+      "RuleValidationMessage now carries `text` (the sentence), `column` and `location`, and the regex " +
+      "is DELETED rather than kept as a fallback -- a fallback that never runs is not a safety net, it " +
+      "is a way for the seam to stop being load-bearing without anyone noticing. " +
+      "docs/inbox/compiler-notes-from-repl.md #3",
+  },
+  {
+    // #4. The session compiles a STRING. It writes nothing.
+    //
+    // `AstProvider.loadFile` was the only way in, so there was no compile-a-string path anywhere --
+    // and the REPL wrote its whole program to disk, into the WORKING DIRECTORY, on every
+    // keystroke-batch, purely to have something the provider would read.
+    //
+    // The path still matters (imports resolve against `dirname(currentFile)`, so a relative import
+    // typed at the prompt must see the user's directory) -- it just does not have to EXIST. This case
+    // drives a session and then asserts the file was never created.
+    name: "the session compiles a string -- nothing is written to disk",
+    steps: [{ input: "(let x 1)" }, { input: "(+ x 1)" }],
+    expect: [{ value: "1" }, { value: "2" }],
+    cells: 2,
+    noFileAt: ".llang-repl.lisp",
+    wasBroken:
+      "`fs.writeFileSync` on every build, into process.cwd(). The only reason the REPL touched the " +
+      "filesystem at all. `AstProvider.loadSource(virtualPath, text)` is the entry point that was " +
+      "missing -- and it OVERWRITES, which also kills the stale-cache bug: `loadFile` early-returns on " +
+      "a cache hit, so re-reading the same path with new text silently returned the old AST. " +
+      "docs/inbox/compiler-notes-from-repl.md #4",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------
@@ -539,6 +606,11 @@ function run(c: Case): string[] {
   const session = new ReplSession(options());
   const buffer = new MultiLineBuffer();
   const bad: string[] = [];
+
+  // A leftover from an earlier run would make the `noFileAt` gate report a bug that is not there.
+  // Clear it FIRST, so the assertion afterwards is about THIS session and nothing else.
+  const stray = c.noFileAt ? path.resolve(process.cwd(), c.noFileAt) : undefined;
+  if (stray && fs.existsSync(stray)) fs.unlinkSync(stray);
 
   try {
     for (let i = 0; i < c.steps.length; i++) {
@@ -647,6 +719,11 @@ function run(c: Case): string[] {
           if (names.includes(nope)) bad.push(`step ${i + 1}: .symbols must NOT list '${nope}', and does`);
         }
       }
+    }
+
+    if (stray && fs.existsSync(stray)) {
+      bad.push(`the session wrote ${c.noFileAt} to the working directory -- it must write nothing`);
+      fs.unlinkSync(stray);
     }
 
     if (c.cells !== undefined && session.cells.length !== c.cells) {

@@ -136,12 +136,16 @@ export class ReplSession {
   private readonly file: string;
 
   /**
-   * The program is written HERE, in the working directory -- not in os.tmpdir().
+   * The session's program has a PATH but no FILE. Nothing is written to disk.
    *
-   * `AstProvider` can only read source from disk (there is no compile-a-string entry point), so a
-   * file has to exist. It matters *where*: imports resolve against
-   * `path.dirname(currentFile)`, so while the program lived in the temp dir, EVERY relative import
-   * in the REPL resolved into the temp dir and could not be found.
+   * It used to be written -- into the working directory, on every keystroke-batch -- purely because
+   * `AstProvider` could only read source from disk. It takes a string now (`loadSource`, inbox #4), so
+   * the file is gone and the path remains.
+   *
+   * The path still matters, and where it points still matters: imports resolve against
+   * `path.dirname(currentFile)`, so a relative `(import "./x.lisp")` typed at the prompt has to see the
+   * USER'S directory. When the program lived in `os.tmpdir()`, every relative import in the REPL
+   * resolved into the temp dir and could not be found. It just does not have to EXIST.
    */
   constructor(options: CompilerOptions, cwd: string = process.cwd()) {
     this.options = {
@@ -182,10 +186,19 @@ export class ReplSession {
     const spans = this.layout(source);
     const tailStart = spans[spans.length - 1].startOffset;
 
-    fs.writeFileSync(this.file, spans.map((s) => s.source).join("\n\n"));
-
     const ctx = new Context(this.file, this.options);
     this.context = ctx;
+
+    // NOTHING IS WRITTEN TO DISK ANY MORE.
+    //
+    // The session used to `fs.writeFileSync` its whole program on every keystroke-batch -- into the
+    // working directory, and only because `AstProvider` could not be handed a string. It can now
+    // (`loadSource`, docs/inbox/compiler-notes-from-repl.md #4), so the program is fed in directly.
+    //
+    // `this.file` is still a path under the CWD, and still matters: imports resolve against
+    // `path.dirname(currentFile)`, so a relative `(import "./x.lisp")` typed at the prompt has to see
+    // the user's directory. It just does not have to EXIST.
+    ctx.astProvider.loadSource(this.file, spans.map((s) => s.source).join("\n\n"));
 
     let root: ast.ProgramNode;
     try {
@@ -811,21 +824,18 @@ function severityOf(s: RuleSeverity): ReplSeverity {
 }
 
 /**
- * The human sentence, out of a message that only exposes itself fully rendered.
+ * The human sentence. One field read, where there used to be a regex.
  *
- * `RuleValidationMessage.message` is a lazy getter that returns a chalk-coloured,
- * terminal-width-aware blob with a source excerpt and a trailing `at <path>:<line>:<col>`. The raw
- * `rule.message` is captured in a closure and never exposed. So: strip ANSI, take the sentence that
- * follows the inverse-rendered code. Fragile by construction -- the inbox note asks for a `text`
- * field on RuleValidationMessage precisely so this can be deleted.
+ * This used to STRIP ANSI CODES FROM ANOTHER MODULE'S OUTPUT FORMAT and slice after the
+ * inverse-rendered code -- because `RuleValidationMessage` exposed only `message`, a chalk-coloured,
+ * terminal-width-aware blob with a source excerpt and a trailing `at <path>:<line>:<col>`, while the
+ * raw `rule.message` sat in a closure, unreachable. It worked, and it would have broken the day
+ * `formatMessage` changed a space.
+ *
+ * `text` is a real field now (inbox #3), and the ANSI fallback is DELETED rather than kept: a fallback
+ * that never runs is not a safety net, it is a way for the seam to stop being load-bearing without
+ * anyone noticing. Every message comes from `results.add`, and `results.add` always sets `text`.
  */
-function sentenceOf(m: { code: string; message: string }): string {
-  const plain = String(m.message).replace(/\[[0-9;]*m/g, "");
-  const line = plain
-    .split("\n")
-    .map((l) => l.trim())
-    .find((l) => l.includes(m.code));
-
-  if (!line) return plain.split("\n").find((l) => l.trim()) ?? "";
-  return line.slice(line.indexOf(m.code) + m.code.length).trim();
+function sentenceOf(m: { code: string; text: string }): string {
+  return m.text;
 }

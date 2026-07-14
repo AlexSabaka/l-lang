@@ -10,7 +10,7 @@
 
 ## TRIAGED ON THE DEV SYNC (2026-07-14)
 
-Four of the nine are **closed**. Each was a real bug, and three of them were hurting *everyone*, not
+**Six of the nine are closed.** Each was a real bug, and four of them were hurting *everyone*, not
 just the REPL.
 
 | # | Item | Outcome |
@@ -19,13 +19,20 @@ just the REPL.
 | **8** | `end.offset` inclusive, `getSource` slices exclusive | ✅ **FIXED — and it was worse than reported.** Not an off-by-one: **the two frontends disagreed about what the field MEANS.** grammar_v2 emitted Chevrotain's *inclusive* `endOffset`; the PEG emitted an *exclusive* one. So `getSource` was correct under `--frontend peg` and **truncated every diagnostic's source excerpt by one character under the default**. Fixed at the source (`AstBuilder`), so the REPL's `end + 1` — itself frontend-divergent — is gone. Gated. |
 | **9** | codegen internals private, unenumerable | ✅ **FIXED (codegen half).** `beginProgram`, `getInlinedDefinitions`, `getOperatorRegistrations`, `getInlineStandardSymbols`, `populateTypesMetadata` are public; `compile()` uses the same seam. **The ask was hiding a bug:** `rootSource` is set on compile()'s first line, the REPL never calls compile(), so `isImportedSymbol` bailed on every symbol and **an `(import …)` in the REPL type-checked clean and died at run time.** Gated. `SYMBOL_MAP` enumeration: still open. |
 | **7** | forward ref to a top-level `let` is unchecked | ✅ **RULED AND FIXED — D24.** It needed a *language ruling* first, and the obvious one was wrong: "functions and types may forward-reference" **permits the case that crashes**, because a class reads as a "type" while `class X {}` has a TDZ. The rule is **a value must be declared before it is EVALUATED** — deferred references (from a fn/method/lambda body) stay legal, as in every other language. **LL0219.** It also required fixing codegen first: `(f)` before its declaration printed the *function object*, which made "a function may be forward-referenced" a lie. |
+| **3** | no raw message — string-surgery on formatted output | ✅ **FIXED.** `RuleValidationMessage` now carries `text` (the raw sentence), `column` and `location`; `message` is unchanged, so every existing caller is untouched. The REPL's ANSI-stripping regex is **deleted**, not kept as a fallback — a fallback that never runs is how a seam quietly stops being load-bearing. Also fixed the sharp edge the item flagged in passing: `formatMessage` **threw** out-of-Context (`getSource` → *File not found in the AST cache*), so merely *reading* `.message` could take the process down; it now degrades to the sentence. Gated end-to-end-anchored in `test:repl`. |
+| **4** | `AstProvider` can only read from disk | ✅ **FIXED.** `loadSource(virtualPath, source)` — the compile-a-string entry point the compiler never had. **The REPL no longer writes anything to disk**; `.llang-repl.lisp` in the working directory is gone. `loadSource` *overwrites*, which also closes the stale-cache half of the item: `loadFile` early-returns on a cache hit, so re-reading a path with new text silently returned the old AST. `invalidate()` is the other half. Gated by a case that asserts the file was never created. |
 | **6** | dead README links | ✅ `docs/repl.md` exists and is linked. The other five stale `docs/development/**` links: still open. |
 
 **Still open, and correctly deferred:** #2 (`checkBracketsBalance` — still exported and still wrong;
-nothing in the compiler calls it, so it is dead *and* wrong), #3 (raw fields on
-`RuleValidationMessage`), #4 (`AstProvider.loadSource`), #5 (`SymbolTable.join` dedupe), #7 (**a
-forward reference to a top-level `let` is not type-checked** — this one needs a *language ruling*
-before it needs a fix: is a top-level `let` forward-referenceable at all?).
+nothing in the compiler calls it, so it is dead *and* wrong), #5 (`SymbolTable.join` blind-concats
+scopes, which caps the REPL at O(n²)), and the two tails: `SYMBOL_MAP` enumeration (#9) and the five
+stale `docs/development/**` links (#6).
+
+**What the two seams cost to keep:** nothing, once found. #3 and #4 were each ~30 lines and *purely
+additive* — no caller changed. What they bought is that neither workaround can rot: the REPL had been
+parsing another module's output format with a regex, and writing a file to the user's working
+directory on every keystroke-batch, and both of those would have kept working right up until they
+didn't.
 
 **Note on numbering:** this doc's `D17` is now **D23**. The REPL stream and `dev` minted `D17`
 independently — two branches, one register, no lock.
@@ -109,7 +116,7 @@ it, it has the same bugs.
 
 ---
 
-## 3. `RuleValidationMessage` has no raw message — forces string-surgery on formatted output
+## 3. `RuleValidationMessage` has no raw message — forces string-surgery on formatted output — ✅ **FIXED**
 
 **`src/compiler/rules/RuleBuilder.ts:92-115`**
 
@@ -145,7 +152,7 @@ sharp edge for anyone who wants to collect diagnostics across compilations.
 
 ---
 
-## 4. `AstProvider` can only read from disk — no in-memory source entry point
+## 4. `AstProvider` can only read from disk — no in-memory source entry point — ✅ **FIXED**
 
 **`src/compiler/frontend/AstProvider.ts:107-121`**
 
