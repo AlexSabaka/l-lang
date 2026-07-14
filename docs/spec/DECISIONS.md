@@ -2520,3 +2520,51 @@ nowhere else.
   variable holding a function is indistinguishable from any other variable, and `(c5)` cannot be
   decided. `(call c5)` remains the sanctioned form. Fixing lambda inference would settle the last
   corner of D1.
+
+## D1 — SETTLED. A lambda has a type, and `(x)` is a call iff `x` is a function
+
+`(x)` is a call **iff `x` is a function** — *declared* as one, **or holding one**. The second half
+needed the type system to be able to say so, and it could not: **a lambda had no type at all.**
+
+```
+(let f (fn [] 5))          ->  Unknown      inferExpressionType had no `case "function"`
+(let c5 (constantly 5))    ->  Unknown      an unannotated return was hardcoded to `Any`
+```
+
+So a variable holding a function was **indistinguishable from a variable holding anything else**, and
+codegen had nothing to ask. `(f)` printed `[Function]`; `(c5)` printed the closure's source.
+`test_stdlib` shipped `(call c5)` for the whole life of the file to get round it.
+
+### Structural, and that is a measurement rather than a compromise
+
+`functionTypeOf` reads annotations and — when the return is unannotated — asks the body **one**
+question: *is its tail another function?* It does not infer expressions. Of **211** unannotated returns
+in the corpus:
+
+| tail is a **lambda** | **8** | `constantly`, `partial`, `compose`, … — exactly what D1 needs |
+| tail is a **literal** | **0** | full literal inference would newly type *nothing* |
+| tail is something else | 203 | needs full expression inference, and would mostly still be `Unknown` |
+
+The structural answer is **complete for the question being asked**, and it lands with **zero** new
+corpus diagnostics. Full return-type inference remains a real, separate feature — and now a clearly
+optional one.
+
+### The desugared tree is not the tree that was written
+
+Both halves of the fix failed silently at first, for the same reason: this pass runs **after** the
+desugarer.
+
+- `(let f (fn [] 5))` reaches it as a **`list` wrapping the lambda**, so `case "function"` never fired.
+  Codegen has always unwrapped exactly this (its own trivial-list unwrap, with the same D1 guard — an
+  *identifier* head is a call and must not be unwrapped); the checker did not, so the lambda inside was
+  never typed.
+- `(fn constantly [x] (fn [] x))`'s tail arrives as **`(return (fn [] x))`** — One Tree's implicit
+  return — nested inside *two* lists. Peeling one layer finds another list, decides it is not a
+  function, and gives up. `constantly` keeps typing as `Any` and the feature quietly does nothing.
+
+A structural check against a tree you did not write has to peel until it stops being a wrapper.
+
+### The proof
+
+`test_stdlib.lisp` drops `(call c5)` for `(c5)`, and **its golden does not move** — same output,
+honest syntax. The workaround, and the note explaining why it was needed, are gone.

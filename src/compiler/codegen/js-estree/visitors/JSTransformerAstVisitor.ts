@@ -2314,9 +2314,30 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return kind === "class" || kind === "struct";
   }
 
-  /** A name that CALLS: `(solve-maze)` is `solve_maze()`, wherever `solve-maze` is declared. */
+  /**
+   * A name that CALLS -- and D1 is now fully settled.
+   *
+   * Two ways to be callable, and both are needed:
+   *
+   *   a `fn` DECLARATION        `(solve-maze)`  -> nodeType is "function"
+   *   a variable of FUNCTION TYPE  `(c5)`       -> `(let c5 (constantly 5))`
+   *
+   * The second was impossible until lambdas had types. A lambda inferred `Unknown`, so a variable
+   * holding a function was indistinguishable from a variable holding anything else, and `(c5)`
+   * compiled to a bare reference -- it printed the function object instead of calling it. That was the
+   * last corner of D1, and `test_stdlib` had to write `(call c5)` to get round it.
+   *
+   * A variable of any OTHER type still reads as a value, which is what keeps the corpus's string
+   * interpolation idiom working: `'"Squares: {(squares)}"` reads `squares`, an array.
+   */
   private isFunctionName(head: ast.ASTNode): boolean {
-    return this.declarationKindOf(head) === "function";
+    if (this.declarationKindOf(head) === "function") return true;
+    try {
+      const resolved: any = this.context?.symbolTable?.resolveSymbol?.(head as any, head);
+      return resolved?.inferredType?.kind === "function";
+    } catch {
+      return false;
+    }
   }
 
   private isImportedSymbol(resolved: any): boolean {

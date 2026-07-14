@@ -1370,6 +1370,52 @@ const CASES: Case[] = [
       "not broken -- a guard, and the reason D24 cannot ban forward references to functions. " +
       "`10-algorithms/04_recursion.lisp` relies on it",
   },
+
+  // ===============================================================================================
+  // D1, FULLY SETTLED. A lambda has a type, so a VARIABLE holding a function is callable.
+  // ===============================================================================================
+  {
+    // The last corner. `(let f (fn [] 42))` then `(f)` printed the FUNCTION OBJECT, because a lambda
+    // inferred `Unknown` -- `inferExpressionType` had no `case "function"` and fell through to its
+    // `default`. A variable holding a function was indistinguishable from a variable holding anything
+    // else, so codegen could not know `(f)` was a call.
+    name: "D1: `(f)` on a variable holding a DIRECT lambda is a call",
+    source: `(let f (fn [] 42))
+(console.log (f))`,
+    expect: ["42"],
+    wasBroken: "printed `[Function]`. A lambda had no type at all, so codegen had nothing to ask",
+  },
+  {
+    // ...and THROUGH a function that RETURNS a lambda. This is the case `test_stdlib` had to work
+    // around with `(call c5)` for the whole life of the file.
+    //
+    // `(fn constantly [x] (fn [] x))` had an unannotated return, which was hardcoded to `Any` -- so
+    // `(let c5 (constantly 5))` typed as `Any`. An unannotated return whose body hands back a lambda
+    // is a FUNCTION type. Measured: 8 functions in the corpus are this shape (`constantly`, `partial`,
+    // `compose`); 0 have a literal tail, so nothing else changes.
+    name: "D1: `(c5)` through a function that RETURNS a lambda is a call",
+    source: `(fn constantly [x] (fn [] x))
+(let c5 (constantly 5))
+(console.log (c5))`,
+    expect: ["5"],
+    wasBroken:
+      "printed `() => { return __ll_copy(x); }`. `test_stdlib` shipped `(call c5)` to get round it, " +
+      "and the note explaining why is now a note explaining why it no longer needs to",
+  },
+  {
+    // THE GUARD THAT KEEPS D1 HONEST. A variable of any OTHER type still READS.
+    //
+    // This is the whole corpus idiom -- `'"Squares: {(squares)}"` -- and it is what makes "always a
+    // call" the wrong rule. `(x)` is a call iff `x` is a function: DECLARED as one, or HOLDING one.
+    name: "D1: `(x)` on a non-function variable still READS (guard)",
+    source: `(let squares [1 4 9])
+(let n 7)
+(console.log '"squares: {(squares)} n: {(n)}")`,
+    expect: ["squares: [ 1, 4, 9 ] n: 7"],
+    wasBroken:
+      "not broken -- the guard. If lambda inference ever typed a non-function as a function, or if " +
+      "the rule slipped to 'always a call', this reads as a TypeError instead of a value",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

@@ -76,12 +76,14 @@
   (print "--- Functional ---")
   (print "identity(42) = {0}" (identity 42))
   (let c5 (constantly 5))
-  ;; `(call c5)`, not `(c5)`. A zero-arg call to a LOCAL holding a function value emits a bare
-  ;; REFERENCE, not a call: codegen decides "is this a call?" from `this.functions`, a source-order
-  ;; list of DECLARED functions, and a local lambda is not in it. So `(c5)` printed the function.
-  ;; `call` is the language's sanctioned zero-arg invocation and the corpus already uses it this way
-  ;; (`(call noFill)` in p5-bindings). Gated in test:type-errors; D1 says `(f)` should be a call.
-  (print "constantly() = {0}" (call c5))
+  ;; `(c5)`, and it is a CALL -- which it was not, for the whole life of this file.
+  ;;
+  ;; It had to be written `(call c5)`: codegen decided "is this a call?" from a SOURCE-ORDER LIST of
+  ;; declared functions, and a variable holding a lambda is not in it, so `(c5)` compiled to a bare
+  ;; reference and printed the function object. Fa made the decision ask the symbol table; lambda type
+  ;; inference then gave it the answer for a variable. D1 is settled: `(x)` is a call iff `x` is a
+  ;; function -- declared as one, OR holding one.
+  (print "constantly() = {0}" (c5))
   
   (let f (compose sqr inc)) ;; (x+1)^2
   (print "compose(sqr, inc)(3) = (3+1)^2 = {0}" (f 3))

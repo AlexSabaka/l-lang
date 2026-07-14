@@ -234,6 +234,78 @@ function isVariadicParams(params: ast.ParameterNode[]): boolean {
   return params.length > 0 && !!params[params.length - 1].spread;
 }
 
+/**
+ * The type of a `fn` NODE -- named or anonymous. The one implementation, shared by both passes.
+ *
+ * A lambda had NO TYPE. `(let f (fn [] 5))` inferred `Unknown`, because `inferExpressionType` has no
+ * `case "function"` and fell through to its `default`. So a variable holding a function was
+ * indistinguishable from a variable holding anything else -- and that is the last corner of D1:
+ * codegen cannot decide whether `(c5)` is a call if it cannot tell that `c5` is callable.
+ *
+ * PURELY STRUCTURAL, and deliberately so. It reads annotations, and -- when the return is unannotated
+ * -- asks one question of the body: *is its tail another function?* It does not infer expressions.
+ *
+ * That is not timidity, it is the measurement: of 211 unannotated returns in the corpus, **8** have a
+ * lambda tail (`constantly`, `partial`, `compose`, …) and **0** have a literal tail. Full expression
+ * inference would newly type nothing that D1 needs and would put 203 functions' return types into
+ * play. The structural answer is complete for the question being asked.
+ */
+function functionTypeOf(
+  node: ast.FunctionNode,
+  symbolTable: SymbolTable,
+  typeEnv: TypeEnvironment
+): InferredType {
+  const params = node.params.map((p) =>
+    p.type ? convertAstType(p.type, symbolTable, typeEnv) : TypeEnvironment.any()
+  );
+
+  let returns: InferredType;
+  if (node.returns) {
+    returns = convertAstType(node.returns, symbolTable, typeEnv);
+  } else {
+    // Unannotated. If the body hands back a function, THAT is the return type -- `(fn constantly [x]
+    // (fn [] x))` returns a function, and it is the only reason `(c5)` can ever be known to be a call.
+    // Anything else stays `Any`, exactly as before: gradual typing, untouched.
+    const tail = functionTail(node.body);
+    returns = tail
+      ? functionTypeOf(tail, symbolTable, typeEnv)
+      : TypeEnvironment.any();
+  }
+
+  return TypeEnvironment.function(params, returns, isVariadicParams(node.params));
+}
+
+/**
+ * The body's last form, if it IS a function.
+ *
+ * Reads the DESUGARED tree, which is not the tree that was written -- and that is the whole of the
+ * difficulty. `(fn constantly [x] (fn [] x))` reaches this pass as `(return (fn [] x))`, because One
+ * Tree's implicit-return injection has already run. Unwrapping only the `list`-of-one a declaration
+ * arrives in finds nothing, and `constantly` keeps typing as `Any`. Both shapes have to be peeled.
+ */
+function functionTail(body: ast.ASTNode[] | undefined): ast.FunctionNode | undefined {
+  let cur = body?.[body.length - 1];
+
+  // PEEL UNTIL IT STOPS BEING A WRAPPER. The desugared tree nests deeper than one level -- the tail of
+  // `(fn constantly [x] (fn [] x))` arrives as a list, containing a list, containing `(return (fn []
+  // x))`. Unwrapping once finds another list, decides it is not a function, and gives up; `constantly`
+  // keeps typing as `Any` and the whole feature quietly does nothing.
+  for (let i = 0; i < 8 && ast.isListNode(cur); i++) {
+    const nodes = (cur as ast.ListNode).nodes ?? [];
+    const head = nodes[0];
+    const isReturn =
+      nodes.length === 2 &&
+      head?._type === "simple-identifier" &&
+      (head as ast.SimpleIdentifierNode).id === "return";
+
+    if (nodes.length === 1) cur = nodes[0];
+    else if (isReturn) cur = nodes[1];
+    else break; // a real call or block: not a wrapper, and not a lambda tail
+  }
+
+  return cur?._type === "function" ? (cur as ast.FunctionNode) : undefined;
+}
+
 class CollectTypesPass extends BaseAstTreeWalker {
   private typeEnv: TypeEnvironment;
   private symbolTable: SymbolTable;
@@ -340,9 +412,14 @@ class CollectTypesPass extends BaseAstTreeWalker {
       p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.any()
     );
 
+    // An unannotated return that hands back a LAMBDA is a function type, not `Any` (D1). Without
+    // this, `(fn constantly [x] (fn [] x))` returns `Any`, so `(let c5 (constantly 5))` types as
+    // `Any`, so codegen cannot tell that `(c5)` is a call -- and it emitted the function object.
     const returnType = node.returns
       ? this.convertAstTypeToInferred(node.returns)
-      : TypeEnvironment.any();
+      : functionTail(node.body)
+        ? functionTypeOf(functionTail(node.body)!, this.symbolTable, this.typeEnv)
+        : TypeEnvironment.any();
 
     // Build method signature for complete metadata -- still inside the scope, it converts the same
     // parameter and return types over again.
@@ -2624,6 +2701,21 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           break;
         }
 
+        // A single non-identifier element is a PARENTHESISED EXPRESSION, not a call -- `(let f (fn []
+        // 5))` reaches this pass as a `list` wrapping the lambda, not as the lambda itself. Codegen
+        // has always unwrapped exactly this (its own trivial-list unwrap, with the same D1 guard); the
+        // checker did not, so the lambda inside was never typed at all.
+        //
+        // The guard is D1's: an IDENTIFIER head is a call (`(solve-maze)`), and must not be unwrapped.
+        if (
+          listNode.nodes.length === 1 &&
+          listNode.nodes[0]._type !== "simple-identifier" &&
+          listNode.nodes[0]._type !== "composite-identifier"
+        ) {
+          inferredType = this.inferExpressionType(listNode.nodes[0]);
+          break;
+        }
+
         const firstNode = listNode.nodes[0];
 
         // Check if it's a function call
@@ -2786,6 +2878,16 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         // system. The question "is it there?" is asked with the TOTAL form, `(get c k)`, below.
         inferredType =
           this.containerElementType(containerType) ?? TypeEnvironment.unknown();
+        break;
+      }
+
+      // A LAMBDA IN EXPRESSION POSITION -- `(let f (fn [] 5))`, `(map (fn [x] (* x 2)) xs)`.
+      //
+      // There was no case for it, so it fell through to `default` and typed as Unknown. A variable
+      // holding a function was indistinguishable from a variable holding anything else, which is why
+      // `(c5)` could not be known to be a call -- the last corner of D1.
+      case "function": {
+        inferredType = functionTypeOf(node as ast.FunctionNode, this.symbolTable, this.typeEnv);
         break;
       }
 

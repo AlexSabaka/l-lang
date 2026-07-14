@@ -1001,30 +1001,22 @@ ${PRODUCER}
   },
 
   {
-    // Sf, found by RUNNING the stdlib: a zero-arg call to a LOCAL holding a function value emits a
-    // bare REFERENCE, not a call.
+    // SETTLED. Was `pending` from Sf ("codegen guesses from a source-order list; D1 must rule on
+    // `(x)` call-vs-grouping") -- and it took three things, in order:
     //
-    // Codegen decides "is this a call?" from `this.functions` -- a source-order list of DECLARED
-    // functions -- so a local lambda is not in it, and `(c5)` compiled to `c5`. test_stdlib printed
-    // the function object instead of 5. D1's own comment states the rule it is not following:
-    // "(func) = call func with zero args".
+    //   Fa   codegen asks the SYMBOL TABLE, not a source-order list  -> `(f)` on a declared fn
+    //   D1   `(x)` is a call iff `x` names a FUNCTION                -> the rule, from the corpus
+    //   L    a LAMBDA HAS A TYPE                                     -> `(c5)` on a variable
     //
-    // Not fixed here, and the reason is measured: honouring it for every zero-arg simple identifier
-    // breaks the suite and a codegen case, because `(x)` is ALSO used as grouping in the corpus. The
-    // two readings are genuinely ambiguous and D1 has to say which wins. Meanwhile `call` is the
-    // sanctioned form (`(call noFill)`), which is what test_stdlib uses.
-    //
-    // This is a TYPE-CHECKER gate because that is where the answer should come from: `c5`'s type is a
-    // function, and codegen should be asking, not guessing from a list.
-    name: "Sf: a zero-arg call to a local function value is a CALL",
+    // The last was the blocker: a lambda inferred `Unknown`, so a variable holding a function was
+    // indistinguishable from a variable holding anything else. The checker had nothing to tell codegen.
+    name: "D1: a zero-arg call to a local function value IS a call",
     source:
       "(fn make [] (fn [] 5))\n" +
       "(let c (make))\n" +
       "(let v (c))\n" +
       "(console.log v)",
-    expect: /LL0/,
-    pending: true,
-    why: "codegen guesses from a source-order list; D1 must rule on `(x)` call-vs-grouping",
+    silent: true,
   },
 ];
 

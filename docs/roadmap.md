@@ -99,8 +99,8 @@ register; the short version:
   *"false positives blocked on P6"* turned out to be **sixteen real bugs**.
 
 **Where the tree stands** (measured, both frontends): **71 pass / 0 fail / 0 error** (91 total) ·
-codegen **100/100** · imports **10/10** · repl **24/24** · smoke **11/11** · **0** corpus type
-diagnostics on passing tests · **0** lexical misses · 4 gates `pending`, each tracked to the phase
+codegen **103/103** · imports **10/10** · repl **24/24** · smoke **11/11** · **0** corpus type
+diagnostics on passing tests · **0** lexical misses · 3 gates `pending`, each tracked to the phase
 that owes it.
 
 ---
