@@ -1,5 +1,5 @@
 import * as ast from "../../frontend/ast";
-import { isCallList, valueIsTail, classifyList, SPECIAL_FORMS } from "../../analysis/listForm";
+import { isCallList, valueIsTail, isBlockList, classifyList, SPECIAL_FORMS } from "../../analysis/listForm";
 import { Context, LogLevel } from "../../Context";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { TypeEnvironment } from "../TypeEnvironment";
@@ -1784,6 +1784,23 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       } else if (!valueIsTail(item)) {
         // A real call: `(console.log x)`. Inferring it runs the argument and operator checks.
         this.inferExpressionType(item);
+      } else if (isBlockList(item)) {
+        // A BLOCK, and every one of its items is a statement. This branch used to be shared with the
+        // wrapped-special-form case below, which does `this.visit(head)` -- so a nested block was
+        // checked to its FIRST ITEM AND NO FURTHER. Everything after it was never typed, never
+        // resolved, never seen by any rule in this file:
+        //
+        //     ( (fn helper [] 1)
+        //       (console.log (totally-undefined-fn 1)) )   ;; <- no LL0210. Dies at run time.
+        //
+        // Put the bad call FIRST and it reported -- because then it happened to BE the head. That is
+        // the signature of a check that is not running, rather than a check that is wrong.
+        //
+        // `classifyList` is what makes the two separable at all (D25, Xd): a GROUPING is one
+        // parenthesised form and its value is the thing inside; a BLOCK is a bag of statements.
+        for (const inner of (item as ast.ListNode).nodes) {
+          this.visitStatement(inner);
+        }
       } else {
         // A wrapped special form -- if / for / while / match / when / cond / try. Visiting it
         // reaches its own visitor (visitIf) or onUnhandled, which walks its children. Treating

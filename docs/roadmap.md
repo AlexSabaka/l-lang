@@ -235,19 +235,16 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     learns to type stops reaching the shim and goes back to a direct `.x` / `.m()`. Watching that number
     fall is the cheapest available measure of the "does not infer every expression" gap.
 
-*   **The checker silently stops walking a block NESTED in a block, once a declaration appears.**
-    Found while gating Xc; **pre-existing, and confirmed at HEAD**. In
+*   ~~**The checker silently stops walking a block nested in a block**~~ — **FIXED (Xf).**
+    `visitStatement`'s final branch is commented *"a wrapped special form — if / for / while / match"*
+    and does `this.visit(head)`: it visits the FIRST item and returns. A genuine multi-item **block**
+    landed in the same branch, so everything after its first item was dropped — never typed, never
+    resolved, never seen by any rule. Put the bad call first and it reported, because then it happened
+    to BE the head: the signature of a check that is **not running**, rather than one that is wrong.
+    `classifyList` (D25/Xd) is what made a `grouping` separable from a `block` at all.
 
-    ```lisp
-    ( ( (fn f [] 1)
-        (console.log (totally-undefined-fn 1)) ) )   ;; <- NOT reported. Dies at run time.
-    ```
-
-    the undefined call raises **no LL0210 at all** — it compiles clean and throws `is not defined`.
-    Un-nest it by one level and the diagnostic appears. So an entire class of checks is silently not
-    running on nested blocks, and nothing in the corpus noticed because the conventional file wrapper
-    is only one level deep. This is a bug about *reachability of the checker*, not about any one rule,
-    and it deserves its own phase.
+    **The corpus does not contain this shape — measured, 0 occurrences — and that is exactly why it
+    survived.** Unexercised is not the same as dead. The gate is the only thing holding it.
 *   **LL0220 can only fire where the head's type is KNOWN.** By design (never report on an `Unknown`),
     so `((get-fn) 2)` is caught when `get-fn`'s return type is *inferred* as a function and NOT when it
     is declared `-> Any`. Both halves are gated. This gets strictly better as return-type inference does.

@@ -1018,6 +1018,39 @@ ${PRODUCER}
       "(console.log v)",
     silent: true,
   },
+  // -----------------------------------------------------------------------------------------------
+  // Xf -- the checker has to REACH the code before any of its rules matter.
+  // -----------------------------------------------------------------------------------------------
+  {
+    name: "Xf: a block nested in a block is checked to its LAST item",
+    // The harness wraps every case in `( ... )`, so this source's own parens make a block nested in a
+    // block -- which is the whole point. Un-nest it by one level and the diagnostic appears.
+    source: `(
+  (fn helper [] -> Int (return 1))
+  (console.log (totally-undefined-fn 1))
+)`,
+    expect: /LL0210/,
+    why:
+      "SILENT. `visitStatement`'s final branch is commented 'a wrapped special form -- if / for / " +
+      "while / match', and it does `this.visit(head)` -- visits the FIRST item and returns. A genuine " +
+      "multi-item BLOCK lands in the same branch, so everything after its first item is DROPPED: never " +
+      "typed, never resolved, never checked by any rule we have. Measured: with a declaration first, " +
+      "the undefined call raises nothing at all and dies at run time; put the call FIRST and it reports, " +
+      "because then it happens to BE the head. " +
+      "A check that silently does not run is worse than a check that does not exist -- you believe you " +
+      "have it. Every diagnostic in this file rides on the checker actually reaching the code.",
+  },
+  {
+    name: "Xf: a nested block that is CORRECT still says nothing",
+    source: `(
+  (fn helper [] -> Int (return 1))
+  (console.log (helper))
+)`,
+    silent: true,
+    why:
+      "The guard. Making the checker reach dropped items is only a fix if it does not start inventing " +
+      "diagnostics on code that was always fine.",
+  },
 ];
 
 function runCases(): { failed: number; pending: number } {
