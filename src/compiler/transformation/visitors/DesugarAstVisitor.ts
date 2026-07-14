@@ -4,49 +4,76 @@ import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { formatWithOptions } from "util";
 
 /**
- * DesugarAstVisitor - Transform complex syntax into simpler forms
+ * DesugarAstVisitor — one tree, for the type checker and codegen alike.
  *
- * This visitor performs AST desugaring operations:
- * 1. Pipeline Transformation: (a |> b |> c) → (c (b a))
- * 2. Implicit Return Injection: Wraps last expressions in explicit (return ...)
- * 3. List/Matrix Unrolling: [1 | 2] → [[1], [2]]
+ * Rewrites sugar into the core forms both back-ends already understand:
+ *   1. Pipelines:       (a |> (f x))  ->  (f a x)
+ *   2. Implicit return: a function's tail expression becomes an explicit `(return …)`
  *
- * These transformations simplify the code generation phase, allowing JSTransformer
- * to focus purely on mapping desugared AST to JavaScript.
+ * ## Why this is not a `BaseAstTreeWalker`, despite extending one
+ *
+ * `BaseAstTreeWalker.visit` dispatches and then **re-walks the ORIGINAL node's children and
+ * overwrites the result** — so any rewrite a `visitX` performs is clobbered. A REWRITING visitor
+ * cannot use that walk. It must own its recursion, which is what `visit` below does.
+ *
+ * ## The bug that made this whole class inert
+ *
+ * The dispatch used to be `if ((this as any)[methodName])`, which is **always true**: `BaseAstVisitor`
+ * declares a `visitX` for every node type in the language, each an `onUnhandled` no-op. So every type
+ * without an explicit rule here dispatched to that no-op, came back unchanged, and **was never
+ * recursed into**. In practice this visitor reached exactly three node types — `program`, `list`,
+ * `function` — and nothing else. A pipeline inside a `let`, which is how the entire corpus writes
+ * them, was never even seen.
+ *
+ * It is asked properly now: `overridesVisitor` tells a real rule from the inherited no-op.
+ *
+ * ## `_parent` is load-bearing. Do not "fix" it.
+ *
+ * The symbol table indexes the PRE-desugar tree, and `SymbolTable.scopeOf` finds a node's scope by
+ * climbing `_parent`. That works across a rewrite only because every rebuilt node keeps the
+ * **original** parent OBJECT, so one step up lands back in the indexed tree. Re-parenting the
+ * desugared tree — the obvious "tidy-up" — repoints every node at objects the scope index has never
+ * seen: `scopeOf` misses, resolution silently falls back to the flat root search, and P6 is undone.
+ * Measured: 0 lexical misses when the original parent is kept, 1056 when the chain is rebuilt.
  */
 export class DesugarAstVisitor extends BaseAstTreeWalker {
-  /**
-   * Override visit to control recursion manually.
-   * This prevents BaseAstTreeWalker from auto-recursing and overwriting
-   * our desugared transformations.
-   */
   visitProgram(node: ast.ProgramNode): ast.ProgramNode {
-    (node as any).program = (node as any).program.map((n: any, i: number) => {
-      return this.visit(n);
-    });
-    return node;
+    return {
+      ...node,
+      program: node.program.map((n) => this.visit(n) as ast.ASTNode),
+    } as ast.ProgramNode;
   }
 
   visit(node: ast.ASTNode): any {
     if (!node) return node;
-    // this.context.log(LogLevel.Info, `[DESUGAR] visit: ${node._type} (parent: ${node._parent?._type})`);
 
-    const type = node._type;
-    const methodName = `visit${type
+    const methodName = `visit${node._type
       .split("-")
       .map((s) => s[0].toUpperCase() + s.slice(1))
       .join("")}`;
 
-    if ((this as any)[methodName]) {
+    // A REAL rule, not the inherited no-op. See the class comment: `(this as any)[methodName]` is
+    // always truthy, and dispatching on it is what stopped this visitor recursing at all.
+    if (this.overridesVisitor(methodName)) {
       return (this as any)[methodName](node);
     }
 
-    // Manual fallbacks for container nodes
-    if (type === "program") {
-      return this.visitProgram(node as any);
+    // Everything else: rebuild the node, recursing into its children. Shallow copy, so the input tree
+    // is never mutated -- the symbol table holds references INTO it (`symbol.value`), and this pass
+    // used to rewrite those nodes in place. A literal simply has no child keys, so it falls through
+    // this loop untouched.
+    const result = { ...node } as any;
+    for (const key of ast.getNodeIterableKeys(node)) {
+      const value = (node as any)[key];
+      if (Array.isArray(value)) {
+        result[key] = value.map((item: any) =>
+          ast.isAstNode(item) ? this.visit(item) : item
+        );
+      } else if (ast.isAstNode(value)) {
+        result[key] = this.visit(value);
+      }
     }
-
-    return node;
+    return result;
   }
 
   /**
@@ -208,8 +235,10 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       transformedBody[lastIndex] = this.wrapInReturn(lastNode);
     }
 
-    node.body = transformedBody;
-    return node;
+    // A COPY. This used to be `node.body = transformedBody` -- an in-place mutation of the very
+    // FunctionNode the symbol table holds as `symbol.value`, i.e. of the parse tree the scope index
+    // was built from. A desugar pass must not reach backwards into the tree an earlier pass indexed.
+    return { ...node, body: transformedBody } as ast.FunctionNode;
   }
 
   /**
@@ -286,7 +315,10 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
           _type: "simple-identifier",
           id: "return",
           _location: { ...node._location },
-          _parent: undefined,
+          // The ORIGINAL parent, never `undefined`. A node with no parent cannot reach a scope --
+          // `scopeOf` returns undefined and resolution falls back to the flat search. Harmless for
+          // `return` itself (a special form, never resolved), but the invariant is the point.
+          _parent: node._parent,
         } as ast.SimpleIdentifierNode,
         node,
       ],

@@ -26,7 +26,15 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
       .map((s) => s[0].toUpperCase() + s.slice(1))
       .join("")}`;
 
-    if ((this as any)[methodName]) {
+    // `overridesVisitor`, NOT `(this as any)[methodName]`. The latter is always truthy -- every node
+    // type has an inherited no-op visitor -- so this dispatched to the no-op for every type it does
+    // not handle, returned the node unchanged, and the recursion below was DEAD CODE.
+    //
+    // The consequence was not cosmetic: this pass never entered an `if` / `while` / `for` / `match`
+    // body, so a `:comptime` fold inside one never happened. The tree-shaker then deleted the
+    // function -- correctly, since a `:comptime` function is supposed to be folded away -- and the
+    // program threw `ReferenceError` at run time. Zero diagnostics.
+    if (this.overridesVisitor(methodName)) {
       return (this as any)[methodName](node);
     }
 
@@ -37,9 +45,18 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
     for (const key of ast.getNodeIterableKeys(node)) {
       const value = node[key];
       if (Array.isArray(value)) {
+        // Drop only the nodes a FOLD deleted -- not every null in the array.
+        //
+        // `.filter(item => item !== null)` was destructive: a headless composite-identifier (`.apply`
+        // in a pipeline stage) has `parts: [null, "apply"]`, where the leading `null` IS the absent
+        // head and carries meaning. Filtering it away left `["apply"]`, codegen read `parts[1]` as
+        // undefined, and both pipeline files died with "Cannot read properties of undefined".
+        //
+        // It only surfaced when this pass started recursing at all -- before that it never reached a
+        // composite-identifier, so a latently destructive filter looked harmless for years.
         result[key] = value
-          .map((item) => (ast.isAstNode(item) ? this.visit(item) : item))
-          .filter((item) => item !== null); // Filter out nulls
+          .map((item: any) => (ast.isAstNode(item) ? this.visit(item) : item))
+          .filter((item: any, i: number) => !(ast.isAstNode(value[i]) && item === null));
       } else if (ast.isAstNode(value)) {
         result[key] = this.visit(value);
       }

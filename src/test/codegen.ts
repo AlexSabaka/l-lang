@@ -290,6 +290,26 @@ const CASES: Case[] = [
   // --- :comptime. It FOLDS -- see the retraction in DECISIONS.md. The gap is that a fold which
   // FAILS degrades silently to run time. ---
   {
+    // The comptime pass never RECURSES into an `if` / `while` / `for` / `match` body: its dispatch
+    // tests `(this as any)['visit' + Type]`, and BaseAstVisitor defines one of those for EVERY node
+    // type, so it always resolves -- to an inherited NO-OP. Its own generic-recursion fallback is
+    // unreachable.
+    //
+    // So the fold does not happen; the call is emitted; and then the tree-shaker DELETES `twice`,
+    // because a `:comptime` function is supposed to have been folded away. Zero diagnostics, and a
+    // guaranteed `ReferenceError: twice is not defined` at run time. `DesugarAstVisitor` has the
+    // identical dispatch, which is why it reaches only `program`, `list` and `function`.
+    name: "comptime: a fold inside an `if` body still folds",
+    source: `(fn :comptime twice [n <- Int] -> Int (* n 2))
+(if true (
+    (let folded (twice 21))
+    (console.log folded)
+) nil)`,
+    expect: ["42"],
+    emitted: { mustNot: [/function twice|const twice/] },
+    wasBroken: "the fold never ran inside the `if`, the tree-shaker deleted `twice`, and it threw ReferenceError",
+  },
+  {
     name: "comptime: a fold really folds (the function is GONE from the output)",
     source: `(fn :comptime twice [n <- Int] -> Int (* n 2))
 (let six (twice 3))

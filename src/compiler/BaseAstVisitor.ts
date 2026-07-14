@@ -162,6 +162,35 @@ export class BaseAstVisitor {
     return node;
   }
 
+  /**
+   * Does this class actually IMPLEMENT `visitX`, or is it the inherited no-op?
+   *
+   * This exists because `(this as any)['visit' + Type]` -- the obvious dispatch, and the one two
+   * REWRITING visitors were built on -- is **always truthy**: the block below declares a `visitX`
+   * for every node type in the language, each one an `onUnhandled` no-op. So a rewriting visitor
+   * that dispatches on truthiness lands on the NO-OP for every type it did not explicitly override,
+   * returns the node unchanged, and NEVER RECURSES INTO ITS CHILDREN -- which makes its own
+   * generic-recursion fallback dead code it can never reach.
+   *
+   * Both `DesugarAstVisitor` and `ComptimeEvaluationAstVisitor` were written that way. The desugarer
+   * therefore reached only `program`, `list` and `function`, and the comptime pass never entered an
+   * `if` body -- so a `:comptime` fold inside an `if` silently did not happen, the tree-shaker then
+   * deleted the function as "already folded", and the program threw `ReferenceError` at run time with
+   * zero diagnostics.
+   *
+   * A visitor that only READS (the analysis and type passes) is unaffected: it uses
+   * `BaseAstTreeWalker`, whose generic walk recurses regardless of dispatch. A visitor that REWRITES
+   * cannot use that walk -- it re-walks the ORIGINAL node's children and overwrites the rewrite -- so
+   * it must own its recursion, and must therefore be able to tell a real visitor from the no-op.
+   */
+  protected overridesVisitor(methodName: string): boolean {
+    const method = (this as any)[methodName];
+    return (
+      typeof method === "function" &&
+      method !== (BaseAstVisitor.prototype as any)[methodName]
+    );
+  }
+
   visitProgram(node: ast.ProgramNode): any {
     return this.onUnhandled(node, "visitProgram");
   }
