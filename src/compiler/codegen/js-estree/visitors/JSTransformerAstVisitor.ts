@@ -245,6 +245,23 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
   private scope: ScopeType[] = [ScopeType.program];
 
+  /**
+   * SOURCE-ORDER ACCUMULATORS. They are a RECORD of what has been visited -- never a DECISION input.
+   *
+   * They used to be both, and that was the standing "codegen is source-order dependent" gap. The same
+   * expression compiled differently depending on where it sat in the file:
+   *
+   *     (f)                 ->  f            // f not visited YET  -> a bare reference
+   *     (fn f [] 7)
+   *     (f)                 ->  f()          // f visited          -> a call
+   *
+   * So `(f)` before its declaration printed `[Function: f]` instead of calling it. A silent wrong
+   * answer -- and it made "a function may be forward-referenced" a LIE, which is what blocked the
+   * forward-reference ruling (D24).
+   *
+   * The call/construct decision now asks the SYMBOL TABLE, which is built in a prior pass and knows
+   * every declaration in the module regardless of order. See `declarationKindOf`.
+   */
   public functions: string[] = [];
   public classes: string[] = [];
   public variables: string[] = [];
@@ -2259,6 +2276,49 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * unresolvable, so it fell through untouched. Now that it resolves, the test has to be precise.
    * A symbol is an import only if it is declared at MODULE scope (a root scope, with no parent).
    */
+  /**
+   * WHAT KIND OF THING DOES THIS NAME DECLARE? Asked of the symbol table, not of source order.
+   *
+   * This is the whole of the fix. `(x)` -- a list with a single identifier head -- is ambiguous:
+   *
+   *     (solve-maze)                 a zero-arg CALL
+   *     '"Squares: {(squares)}"`     the VALUE of `squares`, in a string interpolation
+   *
+   * Codegen used to answer from `this.functions`, a list it fills AS IT VISITS -- so the answer
+   * depended on where the form sat in the file. D1's answer is neither "always a call" nor "always a
+   * grouping". Measured against the corpus, it is:
+   *
+   *     `(x)` is a CALL iff `x` names a FUNCTION.
+   *
+   * Every "grouping" use of `(x)` in the corpus is a variable inside a string interpolation; every
+   * other zero-arg `(x)` is a genuine call. The symbol table separates them perfectly, and it does so
+   * WHEREVER the declaration sits.
+   *
+   * Returns undefined for a name the table does not know -- a JS global, an `:extern`, a member of a
+   * value we cannot type. The caller keeps its old behaviour there, because inventing an answer from
+   * missing information is exactly the habit this replaces.
+   */
+  private declarationKindOf(head: ast.ASTNode): string | undefined {
+    if (head._type !== "simple-identifier" && head._type !== "composite-identifier") return undefined;
+    try {
+      const resolved: any = this.context?.symbolTable?.resolveSymbol?.(head as any, head);
+      return resolved?.nodeType;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** A name that CONSTRUCTS: `(Dog "rex")` is `new Dog("rex")`, wherever `Dog` is declared. */
+  private isConstructorName(head: ast.ASTNode): boolean {
+    const kind = this.declarationKindOf(head);
+    return kind === "class" || kind === "struct";
+  }
+
+  /** A name that CALLS: `(solve-maze)` is `solve_maze()`, wherever `solve-maze` is declared. */
+  private isFunctionName(head: ast.ASTNode): boolean {
+    return this.declarationKindOf(head) === "function";
+  }
+
   private isImportedSymbol(resolved: any): boolean {
     if (!resolved?.value?._location || !this.rootSource) return false;
 
@@ -2562,7 +2622,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       const args = rest.map((x) => this.visit(x) as ESTree.Expression);
       const calleeStr = this.expressionToString(callee);
 
-      if (this.classes.includes(calleeStr)) {
+      // `(Dog "rex")` constructs. Asked of the symbol table, so a class declared LATER in the file
+      // still constructs -- it used to emit a bare reference, which the Known Gap recorded as
+      // `(Dog)` -> `__ll_copy(Dog)`: a silent wrong answer.
+      if (this.isConstructorName(head)) {
         return {
           type: "NewExpression",
           callee,
@@ -2581,9 +2644,14 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         }
       }
 
+      // D1, answered: `(x)` is a CALL iff `x` names a FUNCTION. From the symbol table, not from a
+      // source-order list -- so `(f)` before `(fn f ...)` is a call, exactly as `(f)` after it is.
+      //
+      // `memberName` is still consulted through the old list for the DOTTED case (`(obj.m)`), which
+      // the isMethodCall branch below handles properly; a bare member name is not a symbol this table
+      // can resolve.
       const isKnownFunction =
-        this.functions.includes((head as any).id) ||
-        this.functions.includes(memberName);
+        this.isFunctionName(head) || this.functions.includes(memberName);
 
       // D1 (docs/spec/DECISIONS.md#d1) rules that (obj.m) is ALWAYS a call — once that
       // lands (Phase 3), this heuristic and the knownPropertyNames blacklist below both
@@ -2985,7 +3053,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       const head = (node as ast.ListNode).nodes[0];
       if (head && head._type === "simple-identifier") {
         const id = ast.symbolName(head as ast.IdentifierNode);
-        if (id === "new" || this.classes.includes(id)) return false;
+        // Symbol table, not source order: a construction is a construction wherever the class is
+        // declared, and a freshly-constructed value never needs copying.
+        if (id === "new" || this.isConstructorName(head)) return false;
       }
     }
 

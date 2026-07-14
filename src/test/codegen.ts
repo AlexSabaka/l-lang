@@ -85,11 +85,13 @@ const CASES: Case[] = [
     // local receiver, a blacklisted method name, and a class declared after, all at once -- so the
     // corpus never hits it, and the emitted JS for all 97 files is byte-identical after the fix.
     // Unexercised is not the same as dead.
-    // `(new Dog)` and not `(Dog)`, deliberately: a class used BEFORE its declaration emits a
-    // reference to the class rather than an instance (`__ll_copy(Dog)`), because codegen decides
-    // "is this a constructor call" from a list of classes it has visited SO FAR. That is a separate
-    // bug -- registered, not absorbed -- and writing this case the obvious way made it look like
-    // this one.
+    // `(new Dog)` and not `(Dog)`, deliberately -- and the reason is now HISTORY: a class used before
+    // its declaration used to emit a reference to the class rather than an instance
+    // (`__ll_copy(Dog)`), because codegen decided "is this a constructor call" from a list of classes
+    // it had visited SO FAR. That was a separate bug, registered rather than absorbed, and writing
+    // this case the obvious way would have made it look like this one. Fa fixed it -- the decision
+    // asks the symbol table now -- so both spellings work. The `new` is kept: the case is about a
+    // zero-arg METHOD, and it should not depend on a fix made elsewhere.
     name: "a zero-arg method on a LOCAL receiver is CALLED, not read",
     source: `(fn go [] -> Void (
     (let d (new Dog))
@@ -1283,6 +1285,90 @@ const CASES: Case[] = [
       "not broken -- a guard. LL0013's test is fixed from `!!node.body` to `node.body.length > 0` " +
       "(exactly what its sibling LL0012 already does). A fix that made the rule stop firing " +
       "altogether would look identical on every other gate",
+  },
+
+  // ===============================================================================================
+  // Fa -- CODEGEN STOPS GUESSING FROM SOURCE ORDER. D1's `(x)` is answered.
+  //
+  // The same expression compiled differently depending on where it sat in the file, because the
+  // call/construct decision read `this.functions` / `this.classes` -- lists codegen fills AS IT
+  // VISITS. That is the standing "codegen is source-order dependent" gap, and it made "a function may
+  // be forward-referenced" a LIE, which is what blocked the forward-reference ruling (D24).
+  // ===============================================================================================
+  {
+    // THE SILENT WRONG ANSWER. `(f)` before `(fn f ...)` printed the FUNCTION OBJECT.
+    //
+    // `fn` emits `function f(){}`, which JS hoists -- so the call was always safe at run time. The bug
+    // was that codegen did not emit a CALL at all: `f` was not yet in `this.functions`, so `(f)`
+    // compiled to a bare reference. Move the same line below the declaration and it compiled to
+    // `f()`. One expression, two meanings, decided by position.
+    name: "Fa: `(f)` before its declaration is a CALL",
+    source: `(console.log (f))
+(fn f [] -> Int (return 7))
+(console.log (f))`,
+    expect: ["7", "7"],
+    wasBroken:
+      "printed `[Function: f]` and then `7`. The SAME expression, compiled two ways, because " +
+      "`this.functions` is a source-order list. It also made the forward-reference ruling unwritable: " +
+      "you cannot say 'a function may be forward-referenced' while `(f)` silently is not a call",
+  },
+  {
+    // ...and the class half of the same bug. A class used before its declaration emitted a reference
+    // to the class OBJECT instead of constructing it -- `__ll_copy(Dog)` -- which the Known Gap
+    // recorded as a silent wrong answer.
+    // DEFERRED, deliberately -- and the first draft of this case taught the lesson.
+    //
+    // Written as `(let d (Dog "rex"))` ABOVE the `defclass`, it now emits `new Dog("rex")` correctly
+    // and then dies: `ReferenceError: Cannot access 'Dog' before initialization`. That is the TDZ,
+    // and it is exactly the program D24 refuses -- an IMMEDIATE forward reference to a value. Fa fixes
+    // what codegen EMITS; it does not make an invalid program valid, and it should not.
+    //
+    // So the construction lives in a function body: deferred, legal, and it still proves the decision
+    // is order-independent -- `Dog` is constructed from a body written ABOVE the class.
+    name: "Fa: a class constructed before its declaration CONSTRUCTS",
+    source: `(fn make [] (Dog "rex"))
+(defclass Dog (let :ctor name))
+(let d (make))
+(console.log d.name)`,
+    expect: ["rex"],
+    emitted: { must: [/new Dog\(/], mustNot: [/__ll_copy\(Dog\)/] },
+    wasBroken:
+      "`this.classes` is a source-order list too, so `(Dog \"rex\")` written above the declaration was " +
+      "not recognised as a construction. It emitted `__ll_copy(Dog)` -- the class OBJECT, cloned -- " +
+      "and said nothing",
+  },
+  {
+    // D1's ANSWER, and the case that decides it. `(x)` is NOT always a call.
+    //
+    // Measured: EVERY "grouping" use of `(x)` in the corpus is a variable inside a string
+    // interpolation -- `'"Squares: {(squares)}"`. Every other zero-arg `(x)` is a genuine call. So
+    // the rule is not "always call" (which breaks these) and not "always group" (which breaks
+    // `(solve-maze)`). It is: A CALL IFF THE NAME IS A FUNCTION. The symbol table separates them,
+    // wherever either is declared.
+    name: "Fa/D1: `(x)` on a VARIABLE reads its value (the interpolation idiom)",
+    source: `(let squares [1 4 9])
+(fn total [] -> Int (return 14))
+(console.log '"squares: {(squares)} total: {(total)}")`,
+    // `[ 1, 4, 9 ]`, not `1,4,9`: an interpolated value goes through the runtime's
+    // `__ll_format_object`, not JS's bare `${}` stringification. Not what this case is about, but it
+    // is what the language actually prints, and a golden says what IS.
+    expect: ["squares: [ 1, 4, 9 ] total: 14"],
+    wasBroken:
+      "not broken -- THE GUARD that makes D1's answer the right one. `(squares)` must read and " +
+      "`(total)` must call, in the same expression. An 'always a call' rule was measured and it " +
+      "breaks the suite: 10-algorithms and 00_bfs both interpolate `{(x)}` on a variable",
+  },
+  {
+    // Mutual recursion: a function naming a function declared LATER. It works because `fn` is hoisted,
+    // and it is why functions cannot simply be made declare-before-use.
+    name: "Fa: mutual recursion still works (guard)",
+    source: `(fn is-even [n <- Int] -> Boolean (if (== n 0) true (is-odd (- n 1))))
+(fn is-odd [n <- Int] -> Boolean (if (== n 0) false (is-even (- n 1))))
+(console.log (is-even 10) (is-odd 7))`,
+    expect: ["true true"],
+    wasBroken:
+      "not broken -- a guard, and the reason D24 cannot ban forward references to functions. " +
+      "`10-algorithms/04_recursion.lisp` relies on it",
   },
 ];
 
