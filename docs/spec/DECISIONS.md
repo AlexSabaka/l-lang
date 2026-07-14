@@ -2568,3 +2568,61 @@ A structural check against a tree you did not write has to peel until it stops b
 
 `test_stdlib.lisp` drops `(call c5)` for `(c5)`, and **its golden does not move** — same output,
 honest syntax. The workaround, and the note explaining why it was needed, are gone.
+
+## D25 — what a list IS: call, block, or grouping
+
+`(a b c)` is the whole language. Until now the rule was never written down, so codegen guessed it,
+the type checker guessed it *again*, and the desugarer guessed it a **third** time — and all three
+guessed from the same proxy: **`head._type === "simple-identifier"`.** That proxy is what makes an
+applied lambda impossible to write.
+
+**Ruling.** A list is read by its HEAD, in this order:
+
+| head | reading | why |
+|---|---|---|
+| a **special form** (`let`, `fn`, `if`, `return`, `new`, …) | that form | decided before anything else |
+| an **identifier**, with ≥1 argument | **call** | `(g 1)` cannot mean anything else, whatever `g` names |
+| an **identifier**, with 0 arguments | **call iff it names a function** (D1) | `(solve-maze)` calls; `{(squares)}` reads |
+| a **dotted member** — `(obj.m)` | **call**, always (D1) | the source said `.m` |
+| a **lambda literal** — `((fn [x] x) 21)` | **call** | ← **new.** See below. |
+| **anything else** (a list, a form) | **implicit block** | this is the file wrapper and every body |
+| a list of **exactly one** non-identifier element | **grouping** | `((+ 1 2))` → `3` |
+
+### Why a lambda literal head is unambiguous, and a call head is not
+
+The tempting general rule — *"a head that evaluates to a function is the callee"* — is **refuted by the
+corpus, fatally**:
+
+```lisp
+(                        ;; <- the file wrapper. Its head is `(console.log 1)`: a CALL.
+  (console.log 1)
+  (console.log 2)
+)
+```
+
+Every file and every function body in the repo is a list whose head is a call. Reading a call head as a
+callee turns all of them into *"apply the result of the first form to the rest"*. It is not a close
+call; it is the most common shape in the language.
+
+A **lambda literal** head has no such collision. A block whose first form is a bare lambda literal is a
+**no-op** — it computes a closure and discards it — so that shape has no other meaning to preserve.
+That is the entire reason this one case can be lifted and the general one cannot.
+
+### `(call f a b)` — the application form, finally wired in
+
+The tenth **"written and never wired in"**. `CallNode` is in the AST, `visitCall` is in codegen and is
+*correct*, and **no source syntax has ever produced one** — the only builder is `DesugarAstVisitor`,
+for `|>`. So `(call g 2)` parsed as an ordinary list with head `call`, emitted a call to a function
+named `call` that does not exist, and evaluated to **`NaN`**. Silently. It is written up in this file,
+two entries above, as though it worked.
+
+`(call f a b)` becomes a real special form in both grammars: it applies **any** callee expression, so a
+computed function has a way to be applied at all —
+
+```lisp
+(call (get-fn) 2)        ;; the escape hatch
+((get-fn) 2)             ;; LL0220: a computed callee must be applied with `call`
+```
+
+— and a list whose head is a non-lambda form keeps meaning **block**, which is what the corpus needs it
+to mean.

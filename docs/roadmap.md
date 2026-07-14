@@ -229,20 +229,32 @@ quietly dropped:
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
 *   **Expression vs statement.** `(console.log (when false 1))` and `((D).hi)` emit **invalid
-    JavaScript** (`LL0101`). One shared root: `isExpressionContext()` is true only inside a
-    `variable` or `match` scope. (A trailing `if` no longer loses its value — that is **D18**.)
+    JavaScript** (`LL0101`). One shared root: `isExpressionContext()` asks *"is a `variable` or `match`
+    scope anywhere above me on the stack"* — a **positional** property answered by an **ambient-state**
+    query, so the identical `if` node compiles two ways depending on what encloses it. The same disease
+    Phase F cured in the call decision. **Ruled: D25. Phase X in flight; gates are RED.** (A trailing
+    `if` no longer loses its value — that is **D18**.)
 *   **The type checker does not infer every expression.** 114 `list` nodes have no entry in the type
     channel, which caps what codegen can prove and is why the struct-copy elision came in at 138
     rather than the 353 predicted.
-*   **The call-vs-block rule is implemented three times** — codegen, the checker, and the desugarer.
+*   **The call-vs-block rule is implemented three times** — codegen, the checker, and the desugarer —
+    and all three guess it from the same proxy, `head._type === "simple-identifier"`. That proxy is why
+    an applied lambda cannot be written. **Ruled: D25.**
 *   **`03_matching.lisp`'s golden asserts a bug.** `(< _ 0)` — a guard-shaped list pattern — parses as
     a 3-element array *destructure* and falls through to `_`; the golden bakes in
     `how da fck are you still alive?`. A **passing test that asserts the wrong answer**. Its `_3c`
     (encoded `<`) is also emitted as an implicit global.
 *   **Pattern matching is half-built.** `:is` is not a grammar rule at all (the keyword is `:of`), and
     `type-pattern`, `rest-pattern` and `functional-pattern` all compile to literal `false`.
-*   **`((fn [x] …) 21)` does not compile** (`LL0101`). The AST can represent it now (the `call` node);
-    the grammar cannot parse it.
+*   **`((fn [x] …) 21)` does not compile** (`LL0101`). *Corrected on measurement:* it **parses fine** —
+    the grammar was never the problem. Its head is a **lambda**, and codegen's call test is "is the head
+    an identifier", so it falls into the implicit-block path and emits statements into an expression
+    slot. **Ruled a call: D25.**
+*   **`(call f a b)` is the tenth "written and never wired in".** `CallNode` is in the AST and
+    `visitCall` in codegen is *correct* — and **no source syntax has ever built one**; the only producer
+    is the desugarer, for `|>`. `(call g 2)` emits a call to a function named `call` that does not
+    exist, and evaluates to **`NaN`**, silently. DECISIONS.md described it as a working form.
+    **D25 wires it in** as the application form for a computed callee.
 *   **Missing diagnostics.** Assigning to a `let` (a *constant*) is not checked. `(new)` with no class
     name emits a bottom value. `LL0212` is a syntactic hack that can now be done properly. (`LL0211`
     *does* know required-vs-total arity now — a defaulted `:ctor` member is optional, and an inherited
@@ -259,9 +271,9 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     `n`, and prints as one.** Two corpus files now carry comments working around it, and it is the
     reason `test_stdlib` builds blank lines with `(print "")`. Recording a golden over it would freeze
     the bug in as the expected answer.
-*   **Parse/lex gaps.** `__bar` does not lex; boolean match patterns; `:is` type patterns; the `..`
-    range operator; sized array types; `fn` parameter defaults; the numeric tower
-    (octal/binary/hex/fraction/complex all lex, none emit).
+*   **Parse/lex gaps.** Boolean match patterns; `:is` type patterns; the `..` range operator; sized
+    array types; `fn` parameter defaults; the numeric tower (octal/binary/hex/fraction/complex all lex,
+    none emit). (`__bar` **now lexes** — fixed via `longer_alt`, inbox #1.)
 *   **A module boundary is not transitive.** If A imports B and B imports C, A can still name C's
     exports — `SymbolTable.join` splices every module's scopes in, and the import check declines to
     invent a diagnostic where no *direct* import was recorded. Whether a boundary *should* be

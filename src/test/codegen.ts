@@ -1416,6 +1416,126 @@ const CASES: Case[] = [
       "not broken -- the guard. If lambda inference ever typed a non-function as a function, or if " +
       "the rule slipped to 'always a call', this reads as a TypeError instead of a value",
   },
+  // ===============================================================================================
+  // D25 -- what a list IS. Phase X.
+  //
+  // Expression-ness is currently decided by `isExpressionContext()`, which asks "is there a `variable`
+  // or `match` scope ANYWHERE above me on the stack" -- a POSITIONAL property answered by an
+  // AMBIENT-STATE query. So the identical `if` node compiles two different ways depending on what
+  // encloses it. Exactly the disease Phase F cured in the call decision (`this.functions`, a
+  // source-order list).
+  //
+  // And call-vs-block is decided by `head._type === "simple-identifier"`, which is why an applied
+  // lambda -- whose head is a LAMBDA -- can never be a call, and falls into the implicit-block path
+  // that emits statements into an expression slot.
+  //
+  // These go RED before the fix. The three "unchanged" cases below are the ones that make the fix
+  // falsifiable: they are what a careless fix breaks.
+  // ===============================================================================================
+  {
+    name: "D25/Xb: an `if` in a call ARGUMENT is an expression",
+    source: `(console.log (if true 1 2))`,
+    expect: ["1"],
+    emitted: { mustNot: [/console\.log\(\s*if\s*\(/] },
+    wasBroken:
+      "emitted `console.log(if (true) {` -- INVALID JAVASCRIPT (LL0101). The very same `if` node in " +
+      "`(let x (if true 1 2))` compiles fine, because a `variable` scope is on the stack there and " +
+      "isExpressionContext() therefore says yes. The node did not change; only its surroundings did.",
+  },
+  {
+    name: "D25/Xb: an `if` as an OPERATOR OPERAND is an expression",
+    source: `(console.log (+ 1 (if true 10 20)))`,
+    expect: ["11"],
+    wasBroken:
+      "emitted `_2b(1, if (true) {` -- invalid JavaScript. Same root: an operand is an expression " +
+      "slot, and nothing told codegen so.",
+  },
+  {
+    name: "D25/Xb: a `when` in a call ARGUMENT is an expression",
+    source: `(console.log (when true 42))`,
+    expect: ["42"],
+    wasBroken:
+      "emitted `console.log(if (true) {` -- invalid JavaScript. `when` and `if` share the bug and " +
+      "share the fix; both already have `asExpression`, which does the coercion correctly and is " +
+      "simply never reached from an argument position.",
+  },
+  {
+    name: "D25/Xc: an applied lambda literal is a CALL",
+    source: `(console.log ((fn [x] (* x 2)) 21))`,
+    expect: ["42"],
+    wasBroken:
+      "the head is a LAMBDA, not an identifier, so visitList fell through to the implicit-block path " +
+      "and emitted the lambda and the argument as STATEMENTS into console.log's argument slot -- " +
+      "`21;`, invalid JS. The roadmap blamed the grammar (\"the AST can represent it; the grammar " +
+      "cannot parse it\"); measured, it parses fine. D25 rules a lambda-literal head a call, and it " +
+      "is the one head that can be lifted: a block whose first form is a bare lambda literal is a NO-OP, " +
+      "so the shape has no other meaning. A block whose first form is a CALL is every file in the repo.",
+  },
+  {
+    name: "D25/Xc: `(call f a)` applies any callee -- the escape hatch",
+    source: `(
+  (fn get-fn [] -> Any (return (fn [x] (* x 3))))
+  (console.log (call (get-fn) 5))
+)`,
+    expect: ["15"],
+    wasBroken:
+      "THE TENTH 'written and never wired in'. `CallNode` is in the AST and `visitCall` is in codegen " +
+      "and is CORRECT -- and no source syntax has ever built one; the only producer is the desugarer, " +
+      "for `|>`. So `(call g 2)` parsed as an ordinary list with head `call`, emitted a call to a " +
+      "function named `call` that does not exist, and evaluated to NaN. SILENTLY. DECISIONS.md " +
+      "described `(call c5)` as a working form while this was true.",
+  },
+  {
+    name: "D25/Xc: a computed callee without `call` is DIAGNOSED, not silently blocked",
+    source: `(
+  (fn get-fn [] -> Any (return (fn [x] (* x 3))))
+  (console.log ((get-fn) 5))
+)`,
+    expectDiagnostic: /LL0220/,
+    wasBroken:
+      "a list whose head is a non-lambda form is a BLOCK (that is the file wrapper, and it must stay " +
+      "one), so `((get-fn) 5)` emitted statements into an expression slot -- invalid JS, reported as " +
+      "LL0101 'this is a bug in the code generator'. It is not a codegen bug; it is a program the " +
+      "language does not accept, and it should say so and name `call`.",
+  },
+
+  // --- The three that must NOT move. A careless fix breaks each of these. ---
+  {
+    name: "D25: a simple `if` in VALUE position stays a TERNARY (no IIFE churn)",
+    source: `(
+  (let x (if true 1 2))
+  (console.log x)
+)`,
+    expect: ["1"],
+    emitted: { must: [/\?/], mustNot: [/\(\s*\(\s*\)\s*=>/] },
+    wasBroken:
+      "NOT broken -- a GUARD. `asExpression` wraps a statement in an IIFE, and if Xb routes every `if` " +
+      "through it, every ternary in the corpus becomes `(() => { ... })()`. That churns the emitted JS " +
+      "for ~100 cases and every golden -- and by the standing rule a moved golden is a FINDING, so a " +
+      "careless fix would manufacture a hundred false ones. The ternary fast-path is the fix's real " +
+      "constraint.",
+  },
+  {
+    name: "D25: a list whose head is a CALL is still a BLOCK",
+    source: `(
+  (console.log 1)
+  (console.log 2)
+)`,
+    expect: ["1", "2"],
+    wasBroken:
+      "NOT broken -- a GUARD, and the one that refutes the tempting general rule. This is the file " +
+      "wrapper: a list whose head is itself a call. If a head that evaluates to a function were read " +
+      "as the callee, EVERY file and EVERY function body in the repo would become 'apply the result of " +
+      "the first form to the rest'. It is the most common shape in the language.",
+  },
+  {
+    name: "D25: `((+ 1 2))` is still a GROUPING",
+    source: `(console.log ((+ 1 2)))`,
+    expect: ["3"],
+    wasBroken:
+      "NOT broken -- a GUARD. A single-element list whose element is not an identifier is redundant " +
+      "parens. D1 leans on this: every `(x)` in a string interpolation in the corpus is this shape.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------
