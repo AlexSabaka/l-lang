@@ -1224,6 +1224,16 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   private classStack: string[] = [];
 
   /**
+   * How deep we are inside a DEFERRED body -- a function, method, lambda or class body (D24).
+   *
+   * Everything in there runs AFTER the module is initialised (a class's field initialisers run at
+   * CONSTRUCTION), so a name it mentions is bound by the time it is read, whatever the source order.
+   * That is the half of the forward-reference rule that keeps l-lang in step with every other
+   * language, and it is why this is a counter rather than a flag: bodies nest.
+   */
+  private deferredDepth = 0;
+
+  /**
    * LL0206 -- a `:private` member, reached from outside the class that declared it (D11c).
    *
    * `:private` was enforced NOWHERE. `Symbol.visibility` is computed correctly (SymbolTable.ts:661,
@@ -1891,11 +1901,16 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // BLOCK and walks `return` and `e` as two separate statements -- so a bare `(return multiply)`
     // never had its operand inferred at all, and LL0210 stopped seeing it. A check that goes quiet is
     // not a check that passed.
+    // DEFERRED (D24). A function body runs after module init, so it may name anything at module
+    // scope regardless of order -- which is what makes mutual recursion, and `(fn area [] (* PI 4))`
+    // above `(let PI 3.14)`, legal.
+    this.deferredDepth++;
     this.visitBlock(
       this.blockItems(node.body),
       (stmt) => this.visitStatement(stmt),
       () => this.checkReturns(node)
     );
+    this.deferredDepth--;
 
     this.typeEnv.exitScope();
   }
@@ -1980,6 +1995,22 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     node.extends?.forEach(e => this.checkAnnotationVisible(e as unknown as ast.ASTNode));
     node.implements?.forEach(i => this.checkAnnotationVisible(i as unknown as ast.ASTNode));
 
+    // D24: `:extends` is the one TYPE-SHAPED thing that is a VALUE reference.
+    //
+    // `class Dog extends Animal` EVALUATES `Animal` at class-definition time, so a parent declared
+    // later is a `ReferenceError: Cannot access 'Animal' before initialization` -- measured. Whereas
+    // `:implements` is erased: an interface has no runtime existence at all, so implementing one
+    // declared later is harmless. Two clauses that look alike and are not.
+    //
+    // Checked here because a parent name is a `type-name`, and a type-name never reaches the
+    // reference-position path where the rest of D24 lives.
+    for (const e of node.extends ?? []) {
+      const parent: any = (e as any).type;
+      if (!parent?.name) continue;
+      const entry = (this.context.symbolTable ?? this.symbolTable).resolveSymbol(parent.name, parent);
+      if (entry) this.checkForwardReference(parent, String(parent.name), entry);
+    }
+
     this.typeEnv.enterScope(node);
     this.classStack.push(className);
 
@@ -2021,7 +2052,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     }
 
     try {
+      // DEFERRED (D24): a class's members -- methods AND field initialisers -- run at CONSTRUCTION,
+      // not at module init. Its `:extends` clause does not, and is checked below.
+      this.deferredDepth++;
       node.body.forEach(member => this.visit(member));
+      this.deferredDepth--;
     } finally {
       this.classStack.pop();
       this.typeEnv.exitScope();
@@ -2791,6 +2826,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // solely as `(new Complex 1.0 2.0)`.
     this.checkNameVisible(target, name);
 
+    // D24: `(new Dog)` EVALUATES `Dog`. A class is a TYPE in `<- Dog` and a VALUE here -- which is the
+    // whole reason the rule cannot be "functions and types may forward-reference": that would permit
+    // this, and this is a `ReferenceError: Cannot access 'Dog' before initialization`.
+    const classEntry = (this.context.symbolTable ?? this.symbolTable).resolveSymbol(name, target);
+    if (classEntry) this.checkForwardReference(target, name, classEntry);
+
     const resolved = this.typeEnv.resolveIdentifier(name);
 
     if (resolved && (resolved.kind === "class" || resolved.kind === "struct")) {
@@ -2950,6 +2991,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       // It resolves. That used to be the end of the question -- and it is why `(export ...)` meant
       // nothing: a name from another module resolved whether or not that module offered it (D20).
       this.checkSymbolVisible(node, head, entry);
+      // ...and D24: does it resolve to something declared LATER, in a position that evaluates now?
+      // This is a VALUE reference by construction -- which is exactly why the check lives here and
+      // not in checkSymbolVisible, which the annotation path also reaches.
+      this.checkForwardReference(node, head, entry);
       return;
     }
 
@@ -2971,7 +3016,78 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    *
    * `SymbolTable.isVisibleFrom` is the single implementation of the rule. This is its only reporter.
    */
+  /**
+   * D24 -- LL0219. A VALUE used before it is DECLARED.
+   *
+   * The ruling: **a name is forward-referenceable iff it is not EVALUATED before its declaration.**
+   * That is the runtime fact, not a style rule -- and getting the axis wrong lets the crashing case
+   * through. All three of these compiled clean:
+   *
+   *     (let a x)                        (let x 1)          -> ReferenceError: 'x' before initialization
+   *     (let d (new Dog))                (defclass Dog)     -> ReferenceError: 'Dog' ...
+   *     (defclass Dog :extends Animal)   (defclass Animal)  -> ReferenceError: 'Animal' ...
+   *
+   * THREE POSITIONS, THREE ANSWERS:
+   *
+   *   TYPE position (`<- Dog`, `-> T`, `:implements`)  always fine. Types are ERASED -- an interface
+   *                                                    emits nothing at all. Never reaches here.
+   *   A `fn`                                           always fine, anywhere. It emits
+   *                                                    `function f(){}`, which JS HOISTS, and MUTUAL
+   *                                                    RECURSION DEPENDS ON IT (the corpus uses it).
+   *   A VALUE -- `let`/`mut`/`defclass`/`defstruct`/`defenum`, and a `:extends` parent --
+   *                                                    only in DEFERRED position. A function, method
+   *                                                    or lambda BODY runs after module init, so the
+   *                                                    name is bound by the time it is read. In
+   *                                                    IMMEDIATE position it must be declared first.
+   *
+   * The correction that makes the rule correct: **a class is a TYPE in `<- Dog` and a VALUE in
+   * `(new Dog)`.** "Functions and types may forward-reference" would have permitted two of the three
+   * crashes above, because a class reads as a "type".
+   *
+   * ASKED HERE, from the reference-position path, and that is the whole trick. The first version of
+   * this check walked the AST for identifiers itself -- and immediately flagged
+   * `(fn :operator + [c1 <- Complex ...])`, because a PARAMETER'S NAME is a binding, not a reference.
+   * 29 false positives on passing tests. `checkIdentifierResolves`'s own note warns about exactly
+   * that trap ("map keys, enum keys, a function's own name -- none of which are references to
+   * anything"), and the cure is to not re-derive what this pass already knows.
+   *
+   * Compares SOURCE OFFSETS, not indices: a declaration that starts after the use is a forward
+   * reference, and offsets survive desugar (DECISIONS.md relies on this property elsewhere).
+   */
+  private checkForwardReference(node: ast.ASTNode, name: string, entry: SymbolEntry): void {
+    if (this.deferredDepth > 0) return; // a body that runs after module init. Safe, and legal (D24).
+
+    // Top-level only. A local is bound by its own block, and `let`-in-a-block ordering is JS's problem.
+    if (entry.scope?.parent !== undefined) return;
+
+    // `fn` is HOISTED. A type is ERASED. Only a value has a temporal dead zone.
+    const kind = entry.nodeType;
+    if (kind !== "variable" && kind !== "class" && kind !== "struct" && kind !== "enum") return;
+    if ((entry.value as any)?.extern) return; // an ambient global is the host's, not ours to order
+
+    const decl = (entry.value as any)?._location;
+    const use = node._location;
+    if (!decl?.start || !use?.start || decl.source !== use.source) return; // another module: not an order
+
+    if (decl.start.offset > use.start.offset) {
+      this.reportTypeError(
+        node,
+        "LL0219",
+        `'${name}' is used before it is declared. A value must be declared before it is evaluated. ` +
+          `(A function may be referenced ahead of its declaration; a value may not.)`
+      );
+    }
+  }
+
   private checkSymbolVisible(node: ast.ASTNode, name: string, entry: SymbolEntry): void {
+    // NO D24 CHECK HERE, and that is deliberate.
+    //
+    // This is reached from the ANNOTATION path too (checkAnnotationVisible -> checkNameVisible ->
+    // here), and a type annotation is not an evaluation: `(fn take [d <- Dog])` above `(defclass Dog)`
+    // is perfectly legal, because types are erased. Hooking D24 in here reported it. The forward-
+    // reference check belongs at the VALUE-reference sites only, and it is called from each of them
+    // by name: checkIdentifierResolves, inferNewExpression, and visitClass's `:extends`.
+
     const askingFile = node._location?.source;
     const declaredIn = (entry.value as any)?._location?.source;
     const where = declaredIn ? path.basename(declaredIn) : "another module";

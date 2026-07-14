@@ -2417,3 +2417,106 @@ which a class can be defined exactly once is not a REPL.
 the old `x` by alpha-renaming. It is strictly more permissive and it is what a dynamic REPL gives
 away for free. It requires renaming bindings across the replayed AST, and the refusal above is sound
 without it.
+
+---
+
+## D24 — forward references: a value must be declared before it is EVALUATED
+
+**Ruling:** a name is forward-referenceable **iff it is not evaluated before its declaration.** The
+rule *is* the runtime fact, and it is what every mainstream language does.
+
+| position | rule | why |
+|---|---|---|
+| **TYPE** (`<- Dog`, `-> T`, `:implements`) | always fine | types are **erased**. An interface emits nothing at all. |
+| **a `fn`** | always fine, anywhere | it emits `function f(){}`, which JS **hoists** — and **mutual recursion depends on it**. |
+| **a VALUE** — `let`, `mut`, `defclass`, `defstruct`, `defenum`, and a `:extends` parent | only in **DEFERRED** position | a function, method or lambda **body** runs after module init, so the name is bound by the time it is read. In **immediate** position it must be declared first. |
+
+**LL0219** enforces it. Three programs that compiled clean and crashed:
+
+```
+(let a x)                        (let x 1)          -> ReferenceError: 'x' before initialization
+(let d (new Dog))                (defclass Dog)     -> ReferenceError: 'Dog' ...
+(defclass Dog :extends Animal)   (defclass Animal)  -> ReferenceError: 'Animal' ...
+```
+
+### The correction that makes the rule correct
+
+The tempting rule — *"functions and types may forward-reference; values may not"* — **permits two of
+those three crashes**, because a class reads as a "type".
+
+> **A class is a TYPE in `<- Dog` and a VALUE in `(new Dog)`.**
+
+`class X {}` is not hoisted; it has a temporal dead zone like any `const`. And `:extends` **evaluates**
+its parent at class-definition time (`class Dog extends Animal`) while `:implements` does not — an
+interface has no runtime existence. Two clauses that look alike and are not.
+
+### Deferred references are LEGAL, and that is the half that matters
+
+```lisp
+(fn area [] -> Real (* PI 4))
+(let PI 3.14)                     ;; legal. `area` runs after the module is initialised.
+```
+
+Banning this was the simpler rule, and it costs nothing measurable (**0 corpus uses**) — but it is
+stricter than the runtime requires and stricter than every language people come from. The reason to
+allow it is the reason to allow anything: *it works, and forbidding it buys nothing.*
+
+## D1, answered: `(x)` is a call iff `x` names a FUNCTION
+
+`(x)` — a list with a single identifier head — is genuinely ambiguous, and the corpus uses **both**
+readings:
+
+```lisp
+(solve-maze)                    ;; a zero-arg CALL
+'"Squares: {(squares)}"         ;; the VALUE of `squares`, in a string interpolation
+```
+
+Measured: **every "grouping" use of `(x)` in the corpus is a variable inside a string interpolation**
+(`10-algorithms`, `00_bfs`). **Every other zero-arg `(x)` is a genuine call** (`solve-maze`,
+`init-game`, `beginShape`, `main`). "Always a call" was tried and it breaks the suite; "always a
+grouping" breaks every zero-arg call. So:
+
+> **`(x)` is a call iff `x` names a function.** Asked of the **symbol table** — not of source order.
+
+### Codegen was source-order dependent, and it made D24 unwritable
+
+The call/construct decision read `this.functions` and `this.classes` — lists codegen fills **as it
+visits**. So the same expression compiled differently depending on where it sat in the file:
+
+```
+(console.log (f))       ->  [Function: f]      f not visited yet -> a bare reference
+(fn f [] -> Int 7)
+(console.log (f))       ->  7                  f visited         -> a call
+```
+
+**`(f)` before its declaration printed the function object.** A silent wrong answer — and it made *"a
+function may be forward-referenced"* a **lie**, which is why D24 could not be written until it was
+fixed. The class half was the same bug: a class constructed before its declaration emitted
+`__ll_copy(Dog)` — the class *object*, cloned.
+
+Both now ask the symbol table, which is built in a prior pass and knows every declaration regardless
+of order. The standing Known Gap *"codegen is source-order dependent"* is closed.
+
+### A false positive worth recording
+
+The first version of the LL0219 check walked the AST for identifiers itself. It immediately produced
+**29 diagnostics on passing tests** — flagging `(fn :operator + [c1 <- Complex c2 <- Complex] …)` in
+`09_operators.lisp`, because that file *also* declares top-level `(let c1 …)` and `(let c2 …)` further
+down.
+
+**A parameter's name is a BINDING, not a reference.** `checkIdentifierResolves`'s own note warns about
+exactly this trap — *"map keys, enum keys, a function's own name — none of which are references to
+anything"* — and the cure is not to re-derive what the pass already knows. The check moved to the
+reference-position path, and the false positives vanished.
+
+The same shape bit once more: hooking it into `checkSymbolVisible` made **type annotations** report,
+because the annotation path reaches that function too. `(fn take [d <- Dog])` above `(defclass Dog)` is
+legal — a type is not an evaluation. The check is called from the **value** sites by name, and from
+nowhere else.
+
+## Open findings from this phase
+
+- **A lambda has no type.** `(let f (fn [] 5))` infers `Unknown` — *even for a direct lambda*. So a
+  variable holding a function is indistinguishable from any other variable, and `(c5)` cannot be
+  decided. `(call c5)` remains the sanctioned form. Fixing lambda inference would settle the last
+  corner of D1.

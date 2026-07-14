@@ -880,6 +880,85 @@ ${PRODUCER}
     silent: true,
   },
 
+  // ===============================================================================================
+  // Fb / D24 -- a VALUE used before it is DECLARED. LL0219.
+  //
+  // The rule: a name is forward-referenceable iff it is not EVALUATED before its declaration. All
+  // three cases below compiled CLEAN and crashed at run time.
+  // ===============================================================================================
+  {
+    name: "D24: a top-level `let` naming a `let` declared later",
+    source: "(let a x)\n(let x 1)\n(console.log a)",
+    expect: /LL0219/,
+  },
+  {
+    // A class is a TYPE in `<- Dog` and a VALUE in `(new Dog)`. This is the case the obvious rule --
+    // "functions and types may forward-reference" -- would have PERMITTED, because a class reads as a
+    // type. It is a `ReferenceError: Cannot access 'Dog' before initialization`.
+    name: "D24: `(new Dog)` before `(defclass Dog)`",
+    source: '(let d (new Dog "rex"))\n(defclass Dog (let :ctor name))\n(console.log d.name)',
+    expect: /LL0219/,
+  },
+  {
+    // `:extends` EVALUATES its parent at class-definition time -- `class Dog extends Animal` -- so a
+    // parent declared later is a TDZ crash. `:implements` does not: an interface has no runtime
+    // existence at all. Two clauses that look alike and are not.
+    name: "D24: `:extends` a class declared later",
+    source:
+      '(defclass Dog :extends Animal (fn speak [] -> String (return "Woof")))\n' +
+      '(defclass Animal (fn speak [] -> String (return "...")))\n' +
+      "(let d (new Dog))\n(console.log (d.speak))",
+    expect: /LL0219/,
+  },
+
+  // --- ...and the four guards. Each is a LEGAL program, and each is a way the rule could over-fire. ---
+  {
+    // THE HALF OF THE RULE THAT MATTERS. A function body runs AFTER module init, so it may name
+    // anything at module scope regardless of order. Every mainstream language allows this, and so
+    // does l-lang. Banning it was the tempting, simpler rule -- and it would have been wrong.
+    name: "D24: a fn BODY may name a `let` declared later (deferred -- guard)",
+    source: "(fn area [] -> Real (* PI 4))\n(let PI 3.14)\n(console.log (area))",
+    silent: true,
+  },
+  {
+    // Mutual recursion. `fn` emits `function f(){}`, which JS hoists -- and the corpus depends on it
+    // (10-algorithms/04_recursion). This is why functions cannot be made declare-before-use.
+    name: "D24: mutual recursion (a fn naming a later fn -- guard)",
+    source:
+      "(fn is-even [n <- Int] -> Boolean (if (== n 0) true (is-odd (- n 1))))\n" +
+      "(fn is-odd [n <- Int] -> Boolean (if (== n 0) false (is-even (- n 1))))\n" +
+      "(console.log (is-even 10))",
+    silent: true,
+  },
+  {
+    // TYPE position is always fine -- types are erased. And `:implements` names an interface, which
+    // emits nothing at all, so implementing one declared later is harmless.
+    name: "D24: a forward reference in TYPE position is fine (guard)",
+    source:
+      "(fn take [d <- Dog] -> Void (console.log 1))\n" +
+      "(defclass Dog :implements Speaker (fn speak [] -> String (return \"Woof\")))\n" +
+      "(definterface Speaker (fn speak [] -> String))\n" +
+      "(take (new Dog))",
+    silent: true,
+  },
+  {
+    // THE FALSE-POSITIVE GUARD, and it is here because the first version of this check produced
+    // exactly it: 29 diagnostics on passing tests.
+    //
+    // A PARAMETER'S NAME IS A BINDING, NOT A REFERENCE. `04-data-types/09_operators.lisp` declares
+    // `(fn :operator + [c1 <- Complex c2 <- Complex] ...)` and, further down, top-level `(let c1 ...)`
+    // and `(let c2 ...)`. A check that walks the AST for identifiers itself sees the parameter names
+    // as forward references to those lets. checkIdentifierResolves' own note warns about this trap;
+    // the cure is to ask from the reference-position path rather than re-derive it.
+    name: "D24: a PARAMETER named like a later `let` is not a reference (guard)",
+    source:
+      "(defstruct C (let :ctor r <- Int 0))\n" +
+      "(fn :operator + [c1 <- C c2 <- C] -> C (return (C (+ c1.r c2.r))))\n" +
+      "(let c1 (C 1))\n(let c2 (C 2))\n" +
+      "(let s (+ c1 c2))\n(console.log s.r)",
+    silent: true,
+  },
+
   // --- P5d: the erasure rule is GONE. `T` is no longer a universal escape hatch. ---
   {
     // `(fn pair<T> [a <- T b <- T])` called as `(pair 1 "x")`: `T` is solved to `Int` from the first

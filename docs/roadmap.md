@@ -49,8 +49,8 @@ Focused on technical debt, specifically in code generation and symbol resolution
       ⚠️ **The scope TREE was built. Nothing could read it.**
       `SymbolTable.scopes` was a flat list of module *roots*, and every resolution path walked
       *upward* — so a parameter or a local `let` was written into a child scope and was then
-      unfindable. The type system asked that flat question for its entire life. Fixed in **P6**;
-      forward references are *still* order-dependent in codegen (see Known Gaps).
+      unfindable. The type system asked that flat question for its entire life. Fixed in **P6**; and
+      codegen's own order-dependence — the *other* half of this box — is closed by **D24/Fa**.
 
 ## ✅ Phase 2: Syntax Harmonization & OOP (v0.3.0)
 **Theme:** "Make it feel like Lisp, work like C#."
@@ -99,8 +99,9 @@ register; the short version:
   *"false positives blocked on P6"* turned out to be **sixteen real bugs**.
 
 **Where the tree stands** (measured, both frontends): **71 pass / 0 fail / 0 error** (91 total) ·
-codegen **96/96** · imports **10/10** · **0** corpus type diagnostics on passing tests · **0** lexical
-misses · 4 gates `pending`, each tracked to the phase that owes it.
+codegen **100/100** · imports **10/10** · repl **24/24** · smoke **11/11** · **0** corpus type
+diagnostics on passing tests · **0** lexical misses · 4 gates `pending`, each tracked to the phase
+that owes it.
 
 ---
 
@@ -242,18 +243,10 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     `type-pattern`, `rest-pattern` and `functional-pattern` all compile to literal `false`.
 *   **`((fn [x] …) 21)` does not compile** (`LL0101`). The AST can represent it now (the `call` node);
     the grammar cannot parse it.
-*   **Codegen is source-order dependent.** A class used *before* its declaration emits a reference to
-    the class object instead of constructing (`(Dog)` → `__ll_copy(Dog)`). Silent.
 *   **Missing diagnostics.** Assigning to a `let` (a *constant*) is not checked. `(new)` with no class
     name emits a bottom value. `LL0212` is a syntactic hack that can now be done properly. (`LL0211`
     *does* know required-vs-total arity now — a defaulted `:ctor` member is optional, and an inherited
     one counts. `fn` parameter defaults still do not exist.)
-*   **`(x)` — a call, or a grouping?** **D1 says call** (*"(func) = call func with zero args"*), and
-    codegen does not follow it: it decides from `this.functions`, a *source-order list of declared
-    functions*, so `(c5)` on a local lambda emits a bare reference and printed the function object.
-    Honouring D1 for every zero-arg simple identifier was **measured** and breaks the suite — `(x)` is
-    also used as grouping in the corpus. Genuinely ambiguous; **D1 has to rule.** `call` is the
-    sanctioned form meanwhile.
 *   **`visitExport` throws instead of diagnosing.** An export list naming an undefined symbol crashes
     the compiler with a Node stack trace, not an `LLxxxx`. And **re-exporting an imported symbol is not
     supported** — which may well be right, but it is unstated.
