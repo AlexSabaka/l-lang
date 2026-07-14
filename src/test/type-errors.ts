@@ -159,6 +159,15 @@ interface Case {
   silent?: boolean;
   /** Not yet implemented -- reported, not failed, so the harness tracks progress honestly. */
   pending?: boolean;
+  /**
+   * Sibling files written next to the case, so it can `(import "...")` one.
+   *
+   * A cross-MODULE bug cannot be stated in a single file, and the type checker's blindness to
+   * imported symbols (P6e) is exactly that shape: it is handed the MODULE's symbol table, not the
+   * joined one, so an imported function has no type at all and every check against it silently
+   * degrades to Unknown.
+   */
+  deps?: Record<string, string>;
 }
 
 /** A two-level hierarchy, shared by the P7d subtyping and variance cases. */
@@ -366,6 +375,42 @@ ${PRODUCER}
     silent: true,
   },
 
+  // --- P6e: the checker can see an IMPORTED symbol. ---
+  //
+  // `InferTypesAstVisitor` is handed the MODULE's symbol table, not the joined one, so an imported
+  // function has no type at all: no arity check, no argument check, and an imported class annotation
+  // degrades to Unknown. Every call across a module boundary is unchecked.
+  {
+    // NOT wrapped in `(console.log ...)`, deliberately. A call ARGUMENT is exactly where
+    // `membersChecksOnly` swallows LL0203 and LL0211, so writing these the obvious way conflated the
+    // cross-module question with the guard -- they read as RED for P6e's reason while actually being
+    // suppressed for P6g's. Isolate the axis the case names; P6g's scorecard covers the other.
+    name: "P6e: an imported function's ARITY is checked",
+    deps: { "p6e_lib.lisp": '(\n(fn twice [x <- Int] -> Int (return (* x 2)))\n(export twice)\n)\n' },
+    source: '(import "p6e_lib.lisp")\n(let r (twice 1 2 3))',
+    expect: /LL0211/,
+  },
+  {
+    name: "P6e: an imported function's ARGUMENT is checked",
+    deps: { "p6e_lib.lisp": '(\n(fn twice [x <- Int] -> Int (return (* x 2)))\n(export twice)\n)\n' },
+    source: '(import "p6e_lib.lisp")\n(let r (twice "str"))',
+    expect: /LL0203/,
+  },
+  {
+    name: "P6e: a CORRECT imported call stays silent",
+    deps: { "p6e_lib.lisp": '(\n(fn twice [x <- Int] -> Int (return (* x 2)))\n(export twice)\n)\n' },
+    source: '(import "p6e_lib.lisp")\n(let r (twice 21))',
+    silent: true,
+  },
+  {
+    // An UNANNOTATED imported function must stay unjudged -- gradual typing does not stop at a
+    // module boundary. This is the false positive that folding the joined table in could buy.
+    name: "P6e: an unannotated imported function is not judged",
+    deps: { "p6e_any.lisp": '(\n(fn anything [x] (return x))\n(export anything)\n)\n' },
+    source: '(import "p6e_any.lisp")\n(let r (anything "a"))',
+    silent: true,
+  },
+
   // --- P7d: declaration-site variance (LL0214). ---
   { name: ":out in a parameter position", source: "(definterface P<:out T> (fn f [x <- T] -> Void))", expect: /LL0214/ },
   { name: ":in in a return position", source: "(definterface C<:in T> (fn f [] -> T))", expect: /LL0214/ },
@@ -384,6 +429,9 @@ function runCases(): { failed: number; pending: number } {
 
   for (const c of CASES) {
     const file = path.join(tmp, `${c.name.replace(/[^a-z0-9]+/gi, "_")}.lisp`);
+    for (const [depName, depSource] of Object.entries(c.deps ?? {})) {
+      fs.writeFileSync(path.join(tmp, depName), depSource);
+    }
     // Wrap in the conventional top-level list: a bare declaration is an error since LL0019.
     fs.writeFileSync(file, `(\n${c.source}\n)\n`);
 

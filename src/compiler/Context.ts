@@ -339,8 +339,21 @@ export class Context {
     }
 
     // TYPES STAGE - Type Inference and Checking
+    //
+    // The JOINED table, not `moduleSymbols`.
+    //
+    // The checker used to be handed the module's OWN table -- its root and its nested scopes, and
+    // nothing else. Imported symbols live in the other roots that `join` spliced into THIS table a
+    // few lines up (and which codegen has always resolved against). So an imported function had no
+    // type at all: no arity check, no argument check, and an imported class annotation degraded to
+    // Unknown, where gradual typing then forgave everything downstream of it. Every call across a
+    // module boundary was unchecked.
+    //
+    // `checkIdentifierResolves` already reached past this, with `this.context.symbolTable ??
+    // this.symbolTable` and a comment explaining that asking the module-local table alone flags every
+    // imported symbol as undefined. That workaround is what the whole pass needed.
     this.performanceMetrics.startTimer("types");
-    const inferTypesVisitor = new InferTypesAstVisitor(this, moduleSymbols);
+    const inferTypesVisitor = new InferTypesAstVisitor(this, this.symbolTable);
     inferTypesVisitor.inferTypes(ast);
     const typeEnv = inferTypesVisitor.getTypeEnvironment();
 
