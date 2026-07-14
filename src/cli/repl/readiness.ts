@@ -1,21 +1,24 @@
 /**
  * Is this input a finished form, does it need another line, or is it simply wrong?
  *
- * A REPL-local reader, deliberately NOT `compiler/utils/checkBracketsBalance`. That function
- * returns `true | number` and crams three different answers into it: `true` for balanced, a count
- * for unclosed, `-1` for too many closers -- and, worst, `stack.length` (which can be 0) for a
- * MISMATCHED bracket, making "that `]` is wrong" indistinguishable from "balanced". The REPL cannot
- * act correctly on an answer it cannot tell apart, and it didn't: `command.repl.ts` treated every
- * non-`true` answer as "keep buffering", multiplied it by two, and fed it to `".".repeat()`. A
- * stray `)` became `".".repeat(-2)` -- a RangeError thrown outside the line handler's try/catch,
- * which killed the process.
+ * The only bracket reader in the codebase, and the reason the other one is gone.
  *
- * It also handles two things the shared util does not, and which a REPL meets immediately:
- * `\"` escapes inside strings, and `;` line comments. Without those, `(print "a\")b")` and a `)`
- * inside a comment both mis-count.
+ * `compiler/utils/checkBracketsBalance` returned `true | number` and crammed three different answers
+ * into it: `true` for balanced, a count for unclosed, `-1` for too many closers -- and, worst,
+ * `stack.length` (which can be 0) for a MISMATCHED bracket, making "that `]` is wrong"
+ * indistinguishable from "balanced". A caller cannot act correctly on an answer it cannot tell apart,
+ * and the old REPL didn't: it treated every non-`true` answer as "keep buffering", multiplied it by
+ * two, and fed it to `".".repeat()`. A stray `)` became `".".repeat(-2)` -- a RangeError thrown
+ * outside the line handler's try/catch, which killed the process. It also mis-counted `\"` escapes and
+ * `;` comments, both of which a REPL meets immediately.
  *
- * The shared util's defects are written up in docs/inbox/compiler-notes-from-repl.md; this refactor
- * is scoped REPL-side and does not touch it.
+ * This file replaced it, and once it did, that function had ZERO callers anywhere in the repo -- dead
+ * AND wrong, still exported from the utils barrel for anyone to find. It has been deleted
+ * (docs/inbox/compiler-notes-from-repl.md #2).
+ *
+ * It lives here, not in `compiler/utils`, because the REPL is its only consumer. Promoting it would
+ * be building a shared abstraction for a second caller that does not exist. If an LSP ever wants one,
+ * that is the moment to move it.
  */
 
 export type Readiness =
