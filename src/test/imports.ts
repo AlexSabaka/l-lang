@@ -529,6 +529,107 @@ const CASES: Case[] = [
         : { ok: false, detail: `expected "8", got ${JSON.stringify(out.stdout)} (NaN = the bug)` };
     },
   },
+  // -----------------------------------------------------------------------------------------------
+  // SymbolTable.join -- docs/inbox/compiler-notes-from-repl.md #5.
+  //
+  // The inbox filed this as a PERFORMANCE ceiling ("blocks a truly incremental REPL") and said, in as
+  // many words, "I have not chased whether that's a live bug in the normal compile path." Chased. It is
+  // not a perf item. It is a CORRECTNESS bug, and these two cases are the difference between the two.
+  // -----------------------------------------------------------------------------------------------
+  {
+    name: "a compile produces exactly ONE root scope per module file",
+    why:
+      "The invariant everything below rests on, pinned so it cannot drift. `SymbolTable.scopes` is a " +
+      "FOREST of module roots, and `resolveSymbol`'s flat root-union is what makes a symbol from " +
+      "another module visible here. That union is only sound if each module appears in it once. " +
+      "A diamond (main -> a,b -> d) is the shape that tests it: `d` is reached twice, and the module " +
+      "cache is the only thing stopping it from being joined twice.",
+    run: () => {
+      const entry = fixture(
+        "one-root-per-module",
+        {
+          "d.lisp": `(\n  (fn d-val [] -> Int (return 7))\n  (export d-val)\n)\n`,
+          "a.lisp": `(\n  (import "d.lisp")\n  (fn a-val [] -> Int (return (d-val)))\n  (export a-val)\n)\n`,
+          "b.lisp": `(\n  (import "d.lisp")\n  (fn b-val [] -> Int (return (d-val)))\n  (export b-val)\n)\n`,
+          "main.lisp": `(\n  (import "a.lisp")\n  (import "b.lisp")\n  (console.log (+ (a-val) (b-val)))\n)\n`,
+        },
+        "main.lisp"
+      );
+
+      const ctx = new Context(entry, options());
+      ctx.process(entry, "types");
+
+      const roots: any[] = (ctx.symbolTable as any).scopes;
+      const files = roots.map((r) => r.node?._location?.source ?? "<none>");
+      const dupes = files.filter((f, i) => files.indexOf(f) !== i);
+
+      return dupes.length === 0
+        ? { ok: true, detail: `${roots.length} roots, ${new Set(files).size} distinct modules` }
+        : {
+            ok: false,
+            detail:
+              `a module has more than one root scope: ${[...new Set(dupes)].join(", ")}. ` +
+              `resolveSymbol's root-union is first-wins, so the DUPLICATE decides.`,
+          };
+    },
+  },
+  {
+    name: "a reused Context re-processing a module REPLACES its symbols, it does not stack them",
+    why:
+      "THE BUG. `Context.process` joins each module's symbols with `SymbolTable.join`, which blind- " +
+      "concats: `this.scopes = [...this.scopes, ...other.scopes]`. Re-processing a file therefore " +
+      "APPENDS a second root for it and the first one never leaves. `joinWithoutDuplication` sits " +
+      "directly below it and does dedupe -- by `scope.node` -- but (a) it is only called on the cached " +
+      "path, where it is a no-op, and (b) node identity CANNOT work here: a re-parse yields a brand new " +
+      "ProgramNode every time. The key is the MODULE, not the node. " +
+      "And it is not merely a leak. `resolveSymbol`'s flat cache is FIRST-WINS " +
+      "(`if (!this.symbolCache.has(k))`) over `this.scopes` in JOIN ORDER -- so the OLDEST root wins, " +
+      "and a symbol from a version of the file that no longer exists beats the one that does. " +
+      "Measured before the fix: `x` is a String in the source and the table says Int, forever. " +
+      "That is why the REPL cannot keep a Context alive and has to replay its whole history, O(n^2), " +
+      "on every keystroke.",
+    run: () => {
+      const entry = fixture("rejoin", { "main.lisp": `(\n  (let x 1)\n)\n` }, "main.lisp");
+      const ctx = new Context(entry, options());
+
+      /** Re-typecheck `entry` with new text, the way a live REPL would. */
+      const retype = (source: string) => {
+        ctx.astProvider.loadSource(entry, source);
+        (ctx as any).moduleCache.delete(path.resolve(entry));
+        ctx.process(entry, "types");
+      };
+      const rootCount = () => ((ctx.symbolTable as any).scopes as any[]).length;
+
+      retype(`(\n  (let x 1)\n)\n`);
+      const before = rootCount();
+
+      retype(`(\n  (let x "hello")\n)\n`);
+      const after = rootCount();
+
+      if (after !== before) {
+        return {
+          ok: false,
+          detail:
+            `re-processing the SAME file grew the root forest ${before} -> ${after}. The stale root ` +
+            `is still in it, and being first, it wins.`,
+        };
+      }
+
+      // `inferredType`, not `type` -- SymbolEntry has no `type` field, and a gate that reads one would
+      // report "<unresolved>" forever, passing for a reason that has nothing to do with the bug.
+      const x: any = (ctx.symbolTable as any).resolveSymbol("x");
+      const seen = String(x?.inferredType?.name ?? x?.inferredType?.kind ?? "<unresolved>");
+
+      return seen === "String"
+        ? { ok: true, detail: `roots stable at ${after}; x resolves to String` }
+        : {
+            ok: false,
+            detail:
+              `x is a String in the source, but resolveSymbol says ${seen}. A STALE symbol, from a ` +
+              `version of the file that no longer exists, won.`,
+          };
+    },
+  },
 ];
 
 function main() {

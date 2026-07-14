@@ -295,11 +295,16 @@ export class Context {
 
     const fullPath = path.resolve(file);
 
-    // If module already processed and cached, reuse its symbol table
+    // If module already processed and cached, reuse its symbol table.
+    //
+    // `join` is keyed by the module and idempotent, so re-joining a module already in the forest is a
+    // no-op -- which is all this path ever needed. It used to call `joinWithoutDuplication`, a second
+    // join keyed by `scope.node`; here the scopes ARE the same objects (cacheModule stores the very
+    // SymbolTable that was joined below), so it was already a no-op, and its different key was doing
+    // nothing but making it look as though the two paths needed different merge semantics.
     const cached = this.getModule(fullPath);
     if (cached) {
-      // Merge cached symbols into the global symbol table without duplication
-      this.symbolTable.joinWithoutDuplication(cached.symbols!);
+      this.symbolTable.join(cached.symbols!);
       return cached;
     }
 

@@ -251,6 +251,17 @@ export interface Scope {
   parent: Scope | undefined;
 }
 
+/**
+ * Which module does this root scope belong to?
+ *
+ * The identity `join` merges on. It is the FILE, not the node: a re-parse of the same file yields a
+ * brand new ProgramNode, so anything keyed on node identity sees a re-processed module as a stranger
+ * and stacks it alongside the old one.
+ */
+function moduleOf(scope: Scope): string | undefined {
+  return scope.node?._location?.source;
+}
+
 export class SymbolTable {
   private scopes: Scope[] = [];
   private symbolCache: Map<string, SymbolEntry> = new Map();
@@ -570,46 +581,47 @@ export class SymbolTable {
     return entry.exportName !== undefined;
   }
 
+  /**
+   * Merge another module's symbols into this table. Keyed by the MODULE, and idempotent.
+   *
+   * `this.scopes` is a FOREST of module roots, and `resolveSymbol`'s flat root-union is what makes a
+   * symbol declared in another module visible here. That union is only sound while each module appears
+   * in it ONCE -- so re-joining a module must REPLACE its root, never append a second one.
+   *
+   * It used to append: `this.scopes = [...this.scopes, ...other.scopes]`, no dedupe. In a single
+   * compile that is invisible, because the module cache guarantees each module joins exactly once. In
+   * a REUSED Context -- the whole point of a Context -- re-processing a file stacked a second root for
+   * it and the first one never left. And that is not a leak, it is a WRONG ANSWER: the flat cache is
+   * first-wins over `scopes` in join order, so the OLDEST root wins, and a symbol from a version of the
+   * file that no longer exists beats the one that does. Measured: `(let x 1)` re-typechecked as
+   * `(let x "hello")` still resolved `x` as Int, permanently.
+   *
+   * There was also a `joinWithoutDuplication` sitting right below this, which DID dedupe -- by
+   * `scope.node` -- and was called only on the module-cache path, where the scopes are the identical
+   * objects and it was therefore a no-op. Node identity could never have fixed the real case anyway: a
+   * re-parse produces a brand new ProgramNode every time. **The key is the module, not the node.** One
+   * join, one key; the two-methods-with-two-notions-of-"same" is what let the wrong one own the hot path.
+   */
   join(other: SymbolTable): SymbolTable {
-    this.scopes = [...this.scopes, ...other.scopes];
-    // Invalidate cache after joining symbol tables
+    for (const incoming of other.scopes) {
+      const module = moduleOf(incoming);
+
+      // A root with no source cannot be identified, so it can only be appended -- never matched, never
+      // replaced. Appending an unidentifiable root is what the old code did to EVERY root.
+      const at = module === undefined ? -1 : this.scopes.findIndex((s) => moduleOf(s) === module);
+
+      if (at >= 0) {
+        this.scopes[at] = incoming;
+      } else {
+        this.scopes.push(incoming);
+      }
+    }
+
+    // Every index into the forest is now stale.
     this.cacheValid = false;
     this.indexValid = false;
     this.symbolCache.clear();
     return this;
-  }
-
-  /**
-   * Join symbol tables while avoiding duplication of re-exported symbols
-   * Returns count of new symbols added
-   */
-  joinWithoutDuplication(other: SymbolTable): number {
-    let addedCount = 0;
-    
-    for (const scope of other.scopes) {
-      // Check if scope already exists
-      const existingScope = this.scopes.find(s => s.node === scope.node);
-      
-      if (existingScope) {
-        // Merge symbol tables, skipping duplicates
-        for (const [key, symbol] of scope.table.entries()) {
-          if (!existingScope.table.has(key)) {
-            existingScope.table.set(key, symbol);
-            addedCount++;
-          }
-        }
-      } else {
-        // New scope, add it
-        this.scopes.push(scope);
-        addedCount += scope.table.size;
-      }
-    }
-
-    // Invalidate cache after joining
-    this.cacheValid = false;
-    this.indexValid = false;
-    this.symbolCache.clear();
-    return addedCount;
   }
 
   /**
