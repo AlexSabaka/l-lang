@@ -1473,10 +1473,8 @@ const CASES: Case[] = [
   },
   {
     name: "D25/Xc: `(call f a)` applies any callee -- the escape hatch",
-    source: `(
-  (fn get-fn [] -> Any (return (fn [x] (* x 3))))
-  (console.log (call (get-fn) 5))
-)`,
+    source: `(fn get-fn [] -> Any (return (fn [x] (* x 3))))
+(console.log (call (get-fn) 5))`,
     expect: ["15"],
     wasBroken:
       "THE TENTH 'written and never wired in'. `CallNode` is in the AST and `visitCall` is in codegen " +
@@ -1487,16 +1485,36 @@ const CASES: Case[] = [
   },
   {
     name: "D25/Xc: a computed callee without `call` is DIAGNOSED, not silently blocked",
-    source: `(
-  (fn get-fn [] -> Any (return (fn [x] (* x 3))))
-  (console.log ((get-fn) 5))
-)`,
+    // NO `-> Any` on get-fn, and that is the whole point: the return type must be INFERRED as a
+    // function for the compiler to know this is a mistake. Declared `-> Any` it is Unknown, and
+    // LL0220 deliberately says nothing -- see the companion case below.
+    // NOT wrapped in our own `( ... )`: the harness adds the top-level list itself, and a second one
+    // makes a block-inside-a-block -- which trips a PRE-EXISTING bug where the checker silently stops
+    // checking a nested block's items once a declaration appears. Flagged in the roadmap; it would have
+    // made this gate un-passable for a reason that has nothing to do with LL0220.
+    source: `(fn get-fn [] (return (fn [x] (* x 3))))
+(console.log ((get-fn) 5))`,
     expectDiagnostic: /LL0220/,
     wasBroken:
       "a list whose head is a non-lambda form is a BLOCK (that is the file wrapper, and it must stay " +
       "one), so `((get-fn) 5)` emitted statements into an expression slot -- invalid JS, reported as " +
       "LL0101 'this is a bug in the code generator'. It is not a codegen bug; it is a program the " +
       "language does not accept, and it should say so and name `call`.",
+  },
+
+  {
+    name: "D25/Xc: LL0220 stays SILENT on an Unknown head (gradual typing)",
+    source: `(fn get-fn [] -> Any (return (fn [x] (* x 3))))
+(console.log ((get-fn) 5))`,
+    // Compiles, and yields the BLOCK's value -- the last form. That is D25's reading, applied
+    // honestly: the function on the left is computed and discarded.
+    expect: ["5"],
+    wasBroken:
+      "NOT broken -- a GUARD, on the rule that governs this whole compiler: NEVER report an error " +
+      "involving an Unknown type. `-> Any` makes the head Unknown, so LL0220 must not fire, even " +
+      "though the shape is identical to the case above. The cost is honest and worth stating: this " +
+      "mistake is only caught where the type is KNOWN, which today means where the return type was " +
+      "INFERRED rather than declared `Any`. A checker that guesses here would report on correct code.",
   },
 
   // --- The three that must NOT move. A careless fix breaks each of these. ---

@@ -1602,6 +1602,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       return;
     }
 
+    // Everything below here is a BLOCK (D25). Before walking it as one, catch the program that meant
+    // to APPLY something -- because a block and an attempted application are the same shape.
+    this.checkComputedCallee(node);
+
     // Duplicate declarations in the SAME block. Shadowing in a nested scope is legal and common
     // (`n` as a parameter, then `n` in an inner loop); redeclaring the same name in the same block
     // is not, and nothing anywhere in the compiler checked for it.
@@ -2701,6 +2705,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           break;
         }
 
+        // Also HERE, not only in visitList. `visitList` sees a block in STATEMENT position; a block in
+        // EXPRESSION position -- `(console.log ((get-fn) 5))` -- arrives as a call ARGUMENT and is
+        // routed straight here, so visitList never walks it. That is the position the mistake is
+        // actually made in, and checking only the statement side reported nothing at all for it.
+        this.checkComputedCallee(listNode);
+
         // A single non-identifier element is a PARENTHESISED EXPRESSION, not a call -- `(let f (fn []
         // 5))` reaches this pass as a `list` wrapping the lambda, not as the lambda itself. Codegen
         // has always unwrapped exactly this (its own trivial-list unwrap, with the same D1 guard); the
@@ -3156,6 +3166,72 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    * Compares SOURCE OFFSETS, not indices: a declaration that starts after the use is a forward
    * reference, and offsets survive desugar (DECISIONS.md relies on this property elsewhere).
    */
+  private readonly reportedComputedCallee = new Set<ast.ASTNode>();
+
+  /**
+   * LL0220 -- a computed callee cannot be applied by juxtaposition. D25.
+   *
+   * `((get-fn) 5)` looks like an application and is not one. Under D25 a list whose head is a form is
+   * an implicit BLOCK, so this evaluates `(get-fn)`, throws the function away, and yields `5`.
+   *
+   * WHY IT CANNOT BE RULED AN APPLICATION. The shape is *identical* to the one every file in the repo
+   * is made of:
+   *
+   *     ( (console.log 1) (console.log 2) )      <- the file wrapper. Head is a CALL.
+   *     ( (get-fn)        5              )      <- head is a CALL.
+   *
+   * Nothing structural separates them, so "a head that evaluates to a function is the callee" would
+   * turn every file and every function body into "apply the result of the first form to the rest".
+   * The block reading has to win, and that leaves the mistake SILENT -- and Xb made it worse, not
+   * better: the head used to be emitted as a statement into an expression slot, which at least died
+   * loudly as LL0101. Coerced properly, it now compiles to `(get_fn(), 5)` and quietly returns 5.
+   *
+   * So the discriminator is not the shape; it is the TYPE. A block that computes a FUNCTION, discards
+   * it, and goes on to something else is not a block anybody meant to write. `(console.log 1)` is Void
+   * and stays a block; `(get-fn)` is a function and is a mistake.
+   *
+   * Gradual typing, as everywhere: an Unknown head reports NOTHING. This fires only where the compiler
+   * actually knows the head is a function, which is exactly when it can be sure.
+   */
+  private checkComputedCallee(node: ast.ListNode): void {
+    if (node.nodes.length < 2) return;
+
+    // Reached from BOTH the statement walk and the expression walk, and a node can be seen by both.
+    // One mistake, one diagnostic.
+    if (this.reportedComputedCallee.has(node)) return;
+
+    const head = node.nodes[0];
+    if (!ast.isListNode(head)) return;
+
+    // Peel the parens ONLY to ask "is this a DECLARATION?".
+    //
+    // `(fn helper [] 1)` is a list WRAPPING a function declaration, and a declaration's type is, of
+    // course, a function -- so the naive check fired on `((fn helper [] 1) (console.log (helper)))`
+    // and on thirteen other perfectly ordinary blocks. A block that begins by declaring something is
+    // the most normal shape there is.
+    //
+    // And peel ONLY for that question. NOT for the type: `(get-fn)` must be typed as the CALL it is,
+    // yielding what get-fn RETURNS. Peel it to the bare identifier and it types as the function
+    // itself -- so every block starting with an ordinary zero-arg call would report.
+    let declared: ast.ASTNode | undefined = head;
+    while (declared && ast.isListNode(declared) && declared.nodes.length === 1) {
+      declared = declared.nodes[0];
+    }
+    if (this.isDeclaration(declared)) return;
+
+    const headType = this.inferExpressionType(head);
+    if (!headType || headType.kind !== "function") return;
+
+    this.reportedComputedCallee.add(node);
+    this.reportTypeError(
+      node,
+      "LL0220",
+      `This is a BLOCK, not a call: its value is the last form, and the function on the left is ` +
+        `discarded. A callee that is not a name must be applied with \`call\` -- ` +
+        `write \`(call <fn> <args>)\`. (D25)`
+    );
+  }
+
   private checkForwardReference(node: ast.ASTNode, name: string, entry: SymbolEntry): void {
     if (this.deferredDepth > 0) return; // a body that runs after module init. Safe, and legal (D24).
 

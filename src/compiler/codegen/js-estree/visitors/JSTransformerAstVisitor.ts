@@ -1119,7 +1119,18 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           static: hasModifier(node.modifiers ?? [], "static"),
           loc: ESTreeBuilder.loc(node),
         } as ESTree.MethodDefinition;
-      } else if (this.scope[1] === ScopeType.program) {
+        // `name &&`, and it is not a nicety. The form was chosen from AMBIENT SCOPE alone -- the same
+        // disease as `isExpressionContext()` and as Phase F's source-order call list, a third time --
+        // so a LAMBDA at top level took this branch and emitted a FunctionDeclaration with `id: null`:
+        //
+        //     function (x) { return x * 2; }
+        //
+        // which is not a declaration (it declares nothing) and not an expression either. That is what
+        // `((fn [x] (* x 2)) 21)` actually died of, once its head was correctly read as a callee.
+        //
+        // An ANONYMOUS function is never a declaration. It has no name to declare. That is a fact
+        // about the node, not about where the node happens to sit, and it belongs in the test.
+      } else if (name && this.scope[1] === ScopeType.program) {
         let declaration = {
           type: "FunctionDeclaration",
           id: name,
@@ -2584,6 +2595,29 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return !!members?.length && members[members.length - 1] === true;
   }
 
+  /**
+   * The lambda literal at `node`, looking THROUGH the parens it arrived in.
+   *
+   * `(fn [x] x)` is itself a parenthesised form, so in `((fn [x] x) 21)` the head is not a `function`
+   * node at all -- it is a one-element LIST wrapping one. Testing `head._type === "function"` finds
+   * nothing, and the applied lambda falls into the implicit-block path exactly as before. The tree you
+   * get is not the tree you wrote; peel until it stops being a wrapper.
+   *
+   * ANONYMOUS only. A NAMED `(fn f ...)` in head position is a DECLARATION -- and a block whose first
+   * form declares a function is most of the files in this repo.
+   */
+  private lambdaLiteralIn(node: ast.ASTNode): ast.FunctionNode | undefined {
+    let inner: ast.ASTNode | undefined = node;
+
+    while (inner && ast.isListNode(inner) && (inner as ast.ListNode).nodes.length === 1) {
+      inner = (inner as ast.ListNode).nodes[0];
+    }
+
+    return inner?._type === "function" && !(inner as ast.FunctionNode).name
+      ? (inner as ast.FunctionNode)
+      : undefined;
+  }
+
   visitList(node: ast.ListNode): ESTree.Expression | ESTree.Statement {
     const nodes = Array.isArray(node.nodes) ? node.nodes : [node.nodes];
     if (nodes.length === 0) return ESTreeBuilder.literal(node, null);
@@ -2606,6 +2640,32 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       !this.isDottedMemberIndexer(nodes[0])
     ) {
       return this.visit(nodes[0]);
+    }
+
+    // D25: an APPLIED LAMBDA LITERAL is a call. `((fn [x] (* x 2)) 21)` -> 42.
+    //
+    // The head is a lambda, not an identifier, so the call test below missed it and it fell all the
+    // way through to the implicit-block path -- which emitted the lambda and the argument as
+    // STATEMENTS into whatever expression slot the list sat in. `console.log(...21;...)`. The roadmap
+    // blamed the grammar; the grammar parses it fine.
+    //
+    // ANONYMOUS, and that word is doing all the work. A `function` node with a NAME in head position
+    // is a DECLARATION -- `((fn helper [] 1) (console.log (helper)))` -- and a block whose first form
+    // declares a function is most of the files in this repo. Only a lambda LITERAL is unambiguous,
+    // because a block whose first form is a bare lambda literal is a no-op: it builds a closure and
+    // throws it away. That is the entire licence for this rule, and it does not extend one inch further.
+    //
+    // `rest.length > 0` matters just as much. A one-element list holding a lambda is NOT an
+    // application: the desugarer wraps a `let`'s value in a list, so `(let f (fn [] 5))` arrives here
+    // as exactly that shape. Reading it as a zero-arg call would bind `f` to 5 instead of to the
+    // function -- silently. Zero-arg application is spelled `(call (fn [] 5))`.
+    const lambda = nodes.length > 1 ? this.lambdaLiteralIn(nodes[0]) : undefined;
+    if (lambda) {
+      return ESTreeBuilder.callExpression(
+        node,
+        this.visitExpr(lambda),
+        nodes.slice(1).map((a) => this.visitExpr(a))
+      );
     }
 
     // NO pipeline handling here any more. `|>` is desugared into core `call` / `member` nodes by

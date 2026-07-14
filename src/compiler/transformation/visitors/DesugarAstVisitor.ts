@@ -103,10 +103,56 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       if (piped) return piped;
     }
 
+    const applied = this.transformCall(node);
+    if (applied) return applied;
+
     return {
       ...node,
       nodes: node.nodes.map((n) => this.visit(n) as ast.ASTNode),
     } as ast.ListNode;
+  }
+
+  /**
+   * `(call f a b)` -> a real `call` node -- D25's application form, for a callee that is not a name.
+   *
+   * `call` was NOT missing. It was a RUNTIME SHIM, and a bad one:
+   *
+   *     const call = (f, args) => !!args && Array.isArray(args) ? f(...args) : f();
+   *
+   * Its second parameter is an ARGUMENT ARRAY, so `(call g [2])` works and `(call g 2)` -- the way
+   * anyone would actually write it -- passes `2`, fails `Array.isArray`, and calls `g()` **with no
+   * arguments at all**. The argument is SILENTLY DROPPED. `(call g 2)` on `(fn [x] (+ x 1))` returns
+   * NaN, and nothing anywhere reports a thing. Meanwhile `CallNode` and codegen's `visitCall` have
+   * existed all along, are correct, and NO SOURCE SYNTAX HAS EVER BUILT ONE: the only producer is the
+   * pipeline desugaring, twenty lines up.
+   *
+   * So this is not "wiring in dead code" -- it is replacing a live shim that quietly loses arguments
+   * with the node the compiler already knew how to emit. All six uses in the corpus are zero-arg
+   * (`(call check-j)`, `(call noFill)`, `(call Math.random)`), and they emit exactly what they did
+   * before; what changes is that the variadic form now means what it says.
+   *
+   * Desugared rather than parsed, deliberately: both frontends hand over the identical list, so
+   * neither grammar has to learn a new form, and the type checker sees the same tree codegen does.
+   */
+  private transformCall(node: ast.ListNode): ast.CallNode | undefined {
+    const [head, ...rest] = node.nodes;
+
+    if (
+      head?._type !== "simple-identifier" ||
+      (head as ast.SimpleIdentifierNode).id !== "call" ||
+      rest.length === 0
+    ) {
+      return undefined;
+    }
+
+    const [callee, ...args] = rest;
+    return {
+      _type: "call",
+      _location: node._location,
+      _parent: node._parent,
+      callee: this.visit(callee) as ast.ASTNode,
+      arguments: args.map((a) => this.visit(a) as ast.ASTNode),
+    } as ast.CallNode;
   }
 
   /** `(seed |> stage |> stage)` -- the separators sit at every odd index. */

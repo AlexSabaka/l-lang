@@ -228,6 +228,23 @@ quietly dropped:
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
+*   **The checker silently stops walking a block NESTED in a block, once a declaration appears.**
+    Found while gating Xc; **pre-existing, and confirmed at HEAD**. In
+
+    ```lisp
+    ( ( (fn f [] 1)
+        (console.log (totally-undefined-fn 1)) ) )   ;; <- NOT reported. Dies at run time.
+    ```
+
+    the undefined call raises **no LL0210 at all** — it compiles clean and throws `is not defined`.
+    Un-nest it by one level and the diagnostic appears. So an entire class of checks is silently not
+    running on nested blocks, and nothing in the corpus noticed because the conventional file wrapper
+    is only one level deep. This is a bug about *reachability of the checker*, not about any one rule,
+    and it deserves its own phase.
+*   **LL0220 can only fire where the head's type is KNOWN.** By design (never report on an `Unknown`),
+    so `((get-fn) 2)` is caught when `get-fn`'s return type is *inferred* as a function and NOT when it
+    is declared `-> Any`. Both halves are gated. This gets strictly better as return-type inference does.
+
 *   **Expression vs statement.** `(console.log (when false 1))` and `((D).hi)` emit **invalid
     JavaScript** (`LL0101`). One shared root: `isExpressionContext()` asks *"is a `variable` or `match`
     scope anywhere above me on the stack"* — a **positional** property answered by an **ambient-state**
@@ -250,11 +267,11 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     the grammar was never the problem. Its head is a **lambda**, and codegen's call test is "is the head
     an identifier", so it falls into the implicit-block path and emits statements into an expression
     slot. **Ruled a call: D25.**
-*   **`(call f a b)` is the tenth "written and never wired in".** `CallNode` is in the AST and
-    `visitCall` in codegen is *correct* — and **no source syntax has ever built one**; the only producer
-    is the desugarer, for `|>`. `(call g 2)` emits a call to a function named `call` that does not
-    exist, and evaluates to **`NaN`**, silently. DECISIONS.md described it as a working form.
-    **D25 wires it in** as the application form for a computed callee.
+*   ~~**`(call f a b)` is the tenth "written and never wired in"**~~ — **FIXED (Xc), and the original
+    claim was wrong.** `call` was not missing; it was a runtime shim `(f, args) => Array.isArray(args)
+    ? f(...args) : f()`, whose second parameter is an argument ARRAY — so `(call g 2)` **silently drops
+    the argument** and returns `NaN`. `(call f a b)` is now desugared to the `CallNode` that codegen
+    could always emit and no source syntax ever built.
 *   **Missing diagnostics.** Assigning to a `let` (a *constant*) is not checked. `(new)` with no class
     name emits a bottom value. `LL0212` is a syntactic hack that can now be done properly. (`LL0211`
     *does* know required-vs-total arity now — a defaulted `:ctor` member is optional, and an inherited

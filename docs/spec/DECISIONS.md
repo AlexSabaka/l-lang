@@ -2608,21 +2608,50 @@ A **lambda literal** head has no such collision. A block whose first form is a b
 **no-op** — it computes a closure and discards it — so that shape has no other meaning to preserve.
 That is the entire reason this one case can be lifted and the general one cannot.
 
-### `(call f a b)` — the application form, finally wired in
+### `(call f a b)` — the application form
 
-The tenth **"written and never wired in"**. `CallNode` is in the AST, `visitCall` is in codegen and is
-*correct*, and **no source syntax has ever produced one** — the only builder is `DesugarAstVisitor`,
-for `|>`. So `(call g 2)` parsed as an ordinary list with head `call`, emitted a call to a function
-named `call` that does not exist, and evaluated to **`NaN`**. Silently. It is written up in this file,
-two entries above, as though it worked.
+**Correction.** When D25 was first written this section claimed `call` was the tenth *"written and
+never wired in"* — that `(call g 2)` called a function named `call` that did not exist. **That is
+false, and the truth is worse.** `call` was a *runtime shim*:
 
-`(call f a b)` becomes a real special form in both grammars: it applies **any** callee expression, so a
-computed function has a way to be applied at all —
-
-```lisp
-(call (get-fn) 2)        ;; the escape hatch
-((get-fn) 2)             ;; LL0220: a computed callee must be applied with `call`
+```js
+const call = (f, args) => !!args && Array.isArray(args) ? f(...args) : f();
 ```
 
-— and a list whose head is a non-lambda form keeps meaning **block**, which is what the corpus needs it
-to mean.
+Its second parameter is an **argument ARRAY**. So `(call g [2])` works, and `(call g 2)` — the way
+anyone would actually write it — passes `2`, fails `Array.isArray`, and calls `g()` **with no arguments
+at all**. The argument is *silently dropped*: `(call g 2)` on `(fn [x] (+ x 1))` returns `NaN`, and
+nothing reports a thing.
+
+What *is* true is that `CallNode` and codegen's `visitCall` have existed all along, are correct, and
+**no source syntax has ever built one** — the only producer is the pipeline (`|>`) desugaring.
+
+So `(call f a b)` is now desugared into that node: variadic, and meaning what it says. All six uses in
+the corpus are zero-arg (`(call check-j)`, `(call noFill)`, `(call Math.random)`) and emit exactly what
+they did before. Desugared rather than parsed, deliberately — both frontends hand over the identical
+list, so neither grammar learns a new form, and the type checker sees the tree codegen sees.
+
+```lisp
+(call (get-fn) 2)        ;; the escape hatch: any callee expression
+((get-fn) 2)             ;; LL0220 -- see below
+```
+
+### LL0220, and the honest limit on it
+
+`((get-fn) 2)` is a **block** under the rule above, so it evaluates `(get-fn)`, throws the function
+away, and yields `2`. That is a silent wrong answer, and it cannot be ruled an application, because the
+shape is *identical* to the one every file is made of:
+
+```lisp
+( (console.log 1) (console.log 2) )     ;; the file wrapper. Head is a CALL.
+( (get-fn)        2                )     ;; head is a CALL.
+```
+
+Nothing **structural** separates them. So the discriminator is not the shape, it is the **type**: a
+block that computes a *function*, discards it, and moves on is not a block anyone meant to write.
+`(console.log 1)` is Void and stays a block; `(get-fn)` returns a function and is a mistake.
+
+**And the limit is real, and stated rather than hidden.** Gradual typing forbids reporting on an
+`Unknown`, so LL0220 fires only where the head's type is actually *known* to be a function — which
+today means where the return type was **inferred**, not declared `-> Any`. Both cases are gated. A
+checker that guessed here would report on correct code, and that trade is the right way round.
