@@ -161,9 +161,14 @@ own) and **quasiquote/unquote** (do not exist).
 
 *   [x] ~~Variance checking (`:out`/`:in`)~~ — **done** in P7 (`LL0214`)
 *   [x] ~~Static class members~~ — **done** in D11
-*   [ ] **Generic constraints** — `:where T :of Comparable` does not parse in grammar_v2 at all
-*   [ ] **Generic inference** — `(let b (Box 42))` does not deduce `Box<Int>`; it "works" only
-        because generics are erased
+*   [x] **Generic inference** — **done.** `(let b (Box 42))` deduces `Box<Int>`; `(my-head [1 2 3])`
+        solves `T = Int` and returns `Int?`. The erasure rule (`every T passes, both directions`) is
+        **deleted**, with zero corpus diagnostics. The root cause was upstream of the type system: a
+        generic function **could not be written** — grammar_v2 had no generics slot, and PEG lexed
+        `my-head<T>` as a single identifier. **Unblocks `std/core`** (see Se).
+*   [ ] **Generic constraints** — `:where T :of Comparable` does not parse in grammar_v2 at all, and in
+        PEG it parses and is then *silently discarded* by two independent bugs. `:of` is not even a
+        constraint keyword.
 *   [ ] **Abstract classes** — `:abstract` is not a modifier (`LL0015`)
 
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)

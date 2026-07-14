@@ -820,7 +820,11 @@ ${PRODUCER}
   {
     // Solved THROUGH a container: `T[]` against `Int[]` recurses into the element.
     name: "P5b: `T` is solved through `T[]`",
-    source: "(fn first-of<T> [xs <- T[]] -> T (return (elem xs 0)))\n(let s <- String (first-of [1 2 3]))",
+    // `xs[0]`, the PARTIAL indexer, which really does return `T`. Written with `(elem xs 0)` -- the
+    // TOTAL one -- this function returns `T?` and a `-> T` declaration is a genuine LL0213. The
+    // erasure rule was hiding that, in this very test, until P5d deleted it. D9's partial/total split
+    // is doing exactly what it was built for.
+    source: "(fn first-of<T> [xs <- T[]] -> T (return xs[0]))\n(let s <- String (first-of [1 2 3]))",
     expect: /LL0200/,
   },
   {
@@ -876,13 +880,40 @@ ${PRODUCER}
     silent: true,
   },
 
+  // --- P5d: the erasure rule is GONE. `T` is no longer a universal escape hatch. ---
+  {
+    // `(fn pair<T> [a <- T b <- T])` called as `(pair 1 "x")`: `T` is solved to `Int` from the first
+    // argument, and the second is then checked against the SOLUTION. A generic call that does not
+    // agree with itself is an error, not a widening to `Int | String`.
+    //
+    // This is the case the erasure rule swallowed: `String` against a bare `T` used to be waved
+    // through unconditionally, in both directions.
+    name: "P5d: a generic call must agree with ITSELF",
+    source: '(fn pair<T> [a <- T b <- T] -> T (return a))\n(let p (pair 1 "x"))',
+    expect: /LL0203/,
+  },
+  {
+    // ...and the guard that says the deletion did not just make everything an error. A generic body
+    // still works on its own `T` -- `this.value` really is `T` in there, and there is nothing to
+    // compare it to. Gradual typing has to keep holding at exactly the point where inference stops.
+    name: "P5d: a generic body still works on its own `T` (guard)",
+    source:
+      "(defclass Box<T> (mut :ctor v <- T)\n" +
+      "  (fn get [] -> T (return this.v))\n" +
+      "  (fn set [item <- T] -> Void (this.v := item)))\n" +
+      "(let b (Box 42))\n" +
+      "(b.set 7)\n" +
+      "(console.log (b.get))",
+    silent: true,
+  },
+
   {
     // The correct call must stay SILENT. A unifier that reports on everything is not inference, it is
     // noise -- and this is the case that would catch a substitution that produced garbage.
     name: "P5b: a CORRECT generic call is silent",
     source:
       "(fn ident<T> [x <- T] -> T (return x))\n" +
-      "(fn first-of<T> [xs <- T[]] -> T (return (elem xs 0)))\n" +
+      "(fn first-of<T> [xs <- T[]] -> T (return xs[0]))\n" +
       '(let a <- Int (ident 42))\n' +
       '(let b <- String (ident "s"))\n' +
       "(let c <- Int (first-of [1 2 3]))\n" +

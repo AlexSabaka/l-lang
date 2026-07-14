@@ -2230,3 +2230,115 @@ answer*. `test_stdlib` uses `(print "")` instead, and says why.
   compiler with a Node stack trace. And **re-exporting an imported symbol is not supported** — which
   may be right, but it is unstated.
 - **`(x)` — call or grouping?** D1 says call; the corpus uses both. Gated `pending`.
+
+---
+
+# Phase 5 — generic inference. Generics stopped being a lie.
+
+`(let b (Box 42))` deduces `Box<Int>`. `(my-head [1 2 3])` on `(fn my-head<T> [xs <- T[]] -> T?)`
+solves `T = Int` and returns `Int?`. **The Se gate is green: `std/core` is unblocked.**
+
+## The finding that reframed the phase: you could not WRITE a generic function
+
+```
+grammar_v2  ->  PARSE ERROR: Expecting LBracket but found '<'
+peg         ->  PARSES.  fn name = "my-head<T>"      <- ONE identifier
+```
+
+`grammar_v2`'s `functionExpr` had **no generics slot**. PEG's identifier charset **includes `<` and
+`>`** — it has to, because `<`, `>`, `<=` and `>=` are operator *names*, declared as `(fn :operator <
+…)` — so `my-head<T>` lexed as a **single name** and produced a function nobody could ever call. A
+frontend divergence, and a silent one.
+
+`FunctionNode.generics` had been declared the whole time, carrying a comment reading *"NEVER populated
+by either frontend"*, while every downstream binder already handled it. **The ninth "written and never
+wired in."** So "generic inference does not work" was never a type-system problem at the root.
+
+The PEG name rule now stops at an angle bracket, and an operator whose name *is* an angle bracket falls
+through to a second alternative. A name need not be alphabetic — `W99_L_sloth_design_v1.lisp` already
+writes `(fn ?<T> …)`.
+
+## SOLVE, then CHECK AGAINST THE SOLUTION — the ordering is the whole phase
+
+A function type recorded `params`, `returns` and `isVariadic` and nothing else, so a call site saw `T`
+and had no way to know it was a **free variable** rather than a concrete type named `T`.
+`funcType.returns` was handed back **raw**: a declared `-> T?` reached the caller as a literal
+`{kind:"generic", name:"T", optional:true}`, which no check knows what to do with. That is why a
+generic optional never fired while a concrete `-> Int?` always did.
+
+Three pieces: the function type carries its **type parameters**; **`unify`** reads a declared parameter
+against the actual argument (`T[]` vs `Int[]` recurses into the element and learns `T = Int`); and
+**`substitute`** applies the solution.
+
+> **`optional` is a FLAG, not a wrapper** (D9), and carrying it through substitution is the whole
+> point. Lose it and `-> T?` quietly becomes `T`, LL0205 never fires, every gate stays green, and the
+> feature looks finished while doing nothing.
+
+**And the ordering took two attempts to see.** Deleting the erasure rule on its own reported *`expected
+T, got Int`* on every generic call in the corpus — which is not a type error, it is **the checker
+complaining that it has not done its job yet**. A generic signature must be **instantiated before its
+arguments are judged**. Once `checkCallArguments` compares against the solved signature, there is
+nothing left for the erasure rule to paper over.
+
+## A class is INSTANTIATED, and its constructor is checked at all
+
+`(Box 42)` produced a bare `{kind:"type-ref", name:"Box"}` with **no arguments**, so `Box<Dog>` and
+`Box<Animal>` were the *same type* and the variance rules P7 wrote had nothing to compare. The existing
+invariance test only passed because it **annotates** `<- Box<Dog>` — the annotation did the work and
+the inference was never exercised.
+
+The result is `{kind:"generic", name:"Box", generics:[Int]}` — the **same shape the annotation already
+produces**, so `typeArgumentsAssignable` compares the two with declaration-site variance, unchanged.
+*Not* a `type-ref` carrying `generics`: `unwrapType` dereferences a type-ref to the declaration and
+**drops the arguments** on the way.
+
+The type argument reaches the **member**, too: `bi.v` on a `Box<Int>` is `Int`, not the bare `T` the
+declaration says. `TypeChecker.substitute` is shared by the call site and the member walk so the two
+cannot disagree.
+
+And the constructor's arguments are checked **at all** — the class branch never called
+`checkCallArguments`. `(Box 1 2 3)` on a one-parameter constructor was not checked *loosely*; it was
+not checked.
+
+### The corpus immediately caught two bugs in that check
+
+Which is the argument for arming a check against **real code** rather than a fixture:
+
+- **`'Complex' expects 2 arguments, got 0`** ×5 — a **defaulted** `:ctor` member is optional.
+  `(defstruct Complex (let :ctor real <- Real 0.0) …)` makes `(new Complex)` legal, and it is the
+  corpus's declare-then-fill idiom. I had counted *declared* parameters rather than *required* ones.
+- **`'Dog' expects 1 argument, got 2`** — an **inherited** `:ctor` member counts. `ctorInfo.params`
+  holds only a class's *own*, and a subclass's constructor takes the parent's **first**.
+
+Both are correct programs. Both are now guards.
+
+## The erasure rule is gone
+
+```ts
+if (isBareTypeParameter(source) || isBareTypeParameter(target)) return true;   // both directions
+```
+
+**Every `T` passed, always.** That one line was the whole of l-lang's generics. It is deleted, with
+**zero corpus diagnostics** — and the named canaries it warned about (`14_generic_interface`,
+`20-stdlib/complex_math_test`) are green, because inference now types them for real.
+
+It caught a real bug in one of this phase's own tests on the way out: `(fn first-of<T> [xs <- T[]] -> T
+(return (elem xs 0)))` returns **`T?`**, not `T` — `elem` is the **total** accessor — and the erasure
+rule had been hiding that `LL0213` the whole time. D9's partial/total split doing exactly what it was
+built for.
+
+A bare `T` that still reaches `isAssignable` is *genuinely* unsolved — inside a generic body,
+`this.value` really is `T` and there is nothing to compare it to. Gradual typing already covers that.
+**What is gone is the blanket amnesty.**
+
+## Open findings from this phase
+
+- **Generic constraints** (`:where T :of Comparable`) do **not parse in grammar_v2 at all**; in PEG
+  they parse and are then **silently discarded** by two independent bugs — an array spread into an
+  object, and a read of a field nothing sets. `:of` is not even a constraint keyword (the set is
+  `implements | inherits | is | has`). `TypeParameter.constraints` is the empty slot waiting.
+- **`typeArgumentsAssignable` bails out when either side has no arguments** — a bare `Producer`
+  satisfies a `Producer<Animal>`. A second, smaller erasure hole.
+- **Abstract classes** (`:abstract` is not a modifier) — the remaining Phase 5 bullet.
+- **Spending the unblock.** Whether `std/core` should expose Scheme-classic `head`/`tail`/`cons` or an
+  invented surface is a **language** question, deliberately left open.

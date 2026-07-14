@@ -24,24 +24,35 @@ export class TypeChecker {
       return true;
     }
 
-    // An UNINSTANTIATED type parameter is compatible with anything, in either direction.
+    // THE ERASURE RULE WAS DELETED HERE (P5d). Generics have stopped being a lie.
     //
-    // `(defclass Container<T> (mut :ctor value <- T))` then `(let c (Container 42))`: the ctor
-    // parameter's type is the bare `T` and the argument's is `Int`. Deciding that honestly means
-    // INSTANTIATING the class -- inferring `Container<Int>` from the call and substituting -- and
-    // that is a type system l-lang does not have. This phase makes `T` say "T" instead of lying
-    // that it is `Unknown`; it does not pretend to check it.
+    //     if (isBareTypeParameter(source) || isBareTypeParameter(target)) return true;
     //
-    // Not optional: until `T` was bound it WAS `Unknown`, and `isUnknown` short-circuited every
-    // check that touched it. Binding it for real without this rule produced 2 false positives on
-    // currently-passing tests (14_generic_interface, 20-stdlib/complex_math_test) -- gradual typing
-    // has to keep holding at exactly the point where inference stops.
+    // Every `T` passed, in BOTH directions, always. That single line was the whole of l-lang's
+    // generics, and its own note admitted as much:
     //
-    // A bare parameter only. `Container<Int>` carries its arguments and is compared structurally by
-    // typesEqual; it is not a type parameter and does not come through here.
-    if (this.isBareTypeParameter(sourceUnwrapped) || this.isBareTypeParameter(targetUnwrapped)) {
-      return true;
-    }
+    //     "Deciding that honestly means INSTANTIATING the class -- inferring `Container<Int>` from
+    //      the call and substituting -- and that is a type system l-lang does not have."
+    //
+    // It has one now (P5b/P5c). `(Container 42)` infers `Container<Int>`; `(my-head [1 2 3])` solves
+    // `T = Int` and returns `Int?`; `(Box (Dog))` is a `Box<Dog>` and is refused where a `Box<Animal>`
+    // is wanted.
+    //
+    // THE ORDERING IS WHAT MADE THE DELETION POSSIBLE, and it took two attempts to see it. Deleting
+    // the rule on its own reported `expected T, got Int` on every generic call in the corpus -- which
+    // is not a type error, it is the checker complaining that it has not done its job yet. A generic
+    // signature has to be SOLVED before its arguments are judged. Once `checkCallArguments` compares
+    // against the INSTANTIATED signature, there is nothing left for this rule to paper over, and it
+    // goes with zero corpus diagnostics.
+    //
+    // It also caught a real bug in one of Phase 5's own tests on the way out: `(fn first-of<T> [xs <-
+    // T[]] -> T (return (elem xs 0)))` returns `T?`, not `T` -- `elem` is the TOTAL accessor -- and the
+    // erasure rule had been hiding that LL0213 all along.
+    //
+    // A bare `T` that reaches here now is genuinely unsolved -- inside a generic body, `this.value`
+    // really is `T` and there is nothing to compare it to. Gradual typing already covers that: an
+    // unbound name converts to Unknown, and `isUnknown` short-circuits the check. What is gone is the
+    // blanket amnesty.
 
     // --- nil, and `T?` (D9) ---------------------------------------------------------------------
     //

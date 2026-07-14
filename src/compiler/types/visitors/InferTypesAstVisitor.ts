@@ -2557,10 +2557,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           : this.inferExpressionType(callee);
 
         if (funcName && funcType && funcType.kind === "function") {
-          this.checkCallArguments(funcType, funcName, callNode.arguments, argTypes, callNode);
-          // Phase 5: solve the function's type variables from the arguments. The core `call` node is
-          // the SECOND call site, and it gets this for the same reason the first one does.
-          inferredType = this.instantiateReturn(funcType, argTypes);
+          // Phase 5: SOLVE, then check against the SOLUTION. The core `call` node is the second call
+          // site, and it gets this for the same reason the first one does.
+          const solved = this.instantiateSignature(funcType, argTypes);
+          this.checkCallArguments(solved, funcName, callNode.arguments, argTypes, callNode);
+          inferredType = solved.returns ?? TypeEnvironment.unknown();
         } else {
           // A callee we cannot type -- an imported member, a JS global, a computed expression.
           // Its EXISTENCE is still worth asserting when it is a name.
@@ -2636,12 +2637,14 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             // A variadic function absorbs the tail, so its declared params are a MINIMUM, not an
             // exact count -- the corpus really does have `(fn print [msg <- String ...args])`,
             // `compose` and `partial`.
-            this.checkCallArguments(funcType, funcName, args, argTypes, listNode);
-
-            // Phase 5: `funcType.returns` was handed back RAW, so a declared `-> T?` reached the
-            // caller as a literal `{kind:"generic", name:"T", optional:true}` -- a type no check knows
-            // what to do with, and the reason a generic optional never fired.
-            inferredType = this.instantiateReturn(funcType, argTypes);
+            // Phase 5: SOLVE FIRST, then check against the solved signature.
+            //
+            // `funcType.returns` used to be handed back RAW, so a declared `-> T?` reached the caller
+            // as a literal `{kind:"generic", name:"T", optional:true}` -- a type no check knows what to
+            // do with, and the reason a generic optional never fired.
+            const solved = this.instantiateSignature(funcType, argTypes);
+            this.checkCallArguments(solved, funcName, args, argTypes, listNode);
+            inferredType = solved.returns ?? TypeEnvironment.unknown();
           }
           // Handle struct and class constructors. `(Box 42)` is a `Box<Int>` (P5c), and its arguments
           // are checked -- which, until now, they were not, at all.
@@ -3158,14 +3161,25 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     reportNode: ast.ASTNode
   ): InferredType {
     const ctorParams = this.constructorParams(classType);
+    const params = classType.generics ?? [];
+    const free = new Set(params.filter((p) => TypeChecker.isBareTypeParameter(p)).map((p) => p.name));
 
-    // The constructor's arguments, checked at last. Modelled as a function so there is ONE arity and
-    // argument rule in this compiler rather than a second, subtly different one.
+    // SOLVE FIRST. `(Container 42)` binds `T = Int`, and the argument is then checked against `Int`
+    // rather than against the bare `T` -- which would read "expected T, got Int", a complaint that the
+    // checker has not done its job rather than a type error. Doing it in the other order is exactly
+    // what forced the erasure rule to exist.
+    const subst = new Map<string, InferredType>();
+    const n = Math.min(ctorParams.length, argTypes.length);
+    for (let i = 0; i < n; i++) this.unify(ctorParams[i]?.type, argTypes[i], free, subst);
+
+    // The constructor's arguments, checked at last -- against the SOLVED signature. Modelled as a
+    // function so there is ONE arity and argument rule in this compiler, not a second, subtly
+    // different one.
     if (ctorParams.length > 0) {
       const ctorAsFunction: InferredType = {
         kind: "function",
         name: className,
-        params: ctorParams.map((p: any) => p.type),
+        params: ctorParams.map((p: any) => this.substitute(p.type, subst)),
         returns: TypeEnvironment.unknown(),
       };
       // A DEFAULTED ctor parameter is optional -- `(defstruct Complex (let :ctor real <- Real 0.0)
@@ -3176,42 +3190,50 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       this.checkCallArguments(ctorAsFunction, className, args, argTypes, reportNode, required);
     }
 
-    const params = classType.generics ?? [];
-    const free = new Set(params.filter((p) => TypeChecker.isBareTypeParameter(p)).map((p) => p.name));
     if (free.size === 0) {
       return { kind: "type-ref", name: className, refName: className, resolved: true };
     }
 
-    const subst = new Map<string, InferredType>();
-    const n = Math.min(ctorParams.length, argTypes.length);
-    for (let i = 0; i < n; i++) this.unify(ctorParams[i]?.type, argTypes[i], free, subst);
-
-    // An argument we could not solve stays the parameter itself -- `Box<T>`, not `Box<Unknown>`.
-    // Unknown would silence every check downstream of it; the bare parameter keeps saying "T", which
-    // is what the erasure rule is there to handle until it goes.
+    // A parameter no argument determined stays the parameter itself -- `Box<T>`, not `Box<Unknown>`.
+    // `Unknown` would silence every check downstream of it; a bare `T` keeps saying "T", and that is
+    // the one case the erasure rule still legitimately covers.
     const typeArgs = params.map((p) => subst.get(p.name) ?? p);
 
     return { kind: "generic", name: className, generics: typeArgs };
   }
 
   /**
-   * The return type of a call, with the function's type variables solved from the arguments.
+   * SOLVE, then CHECK AGAINST THE SOLUTION. The ordering is the whole of Phase 5.
    *
-   * This is the ONE place a call's result type is computed, and it is called from BOTH call sites --
-   * the `list` branch and the core `call` node. Wiring only one is the exact shape of Sb's `new`-door
-   * half-fix: every gate green, the feature half-blind.
+   * A generic signature must be INSTANTIATED before its arguments are judged. Check them against the
+   * raw signature and `(Container 42)` reads as *"expected T, got Int"* -- which is not a type error,
+   * it is the checker complaining that it has not done its job yet. That is precisely what the
+   * erasure rule in `isAssignable` existed to paper over: every bare `T` was waved through, in both
+   * directions, because the alternative was a false positive on every generic call in the corpus.
+   *
+   * With the substitution applied first there is nothing left to paper over. `(Container 42)` checks
+   * `Int` against `Int`. And `(pair 1 "x")` on `(fn pair<T> [a <- T b <- T])` checks the second
+   * argument against the ALREADY-SOLVED `T = Int` and reports it -- a generic call that does not agree
+   * with itself is an error, not a widening.
+   *
+   * Returns the function type unchanged when there is nothing to solve, so a non-generic call cannot
+   * be perturbed by this path at all.
    */
-  private instantiateReturn(funcType: InferredType, argTypes: InferredType[]): InferredType {
-    const returns = funcType.returns ?? TypeEnvironment.unknown();
+  private instantiateSignature(funcType: InferredType, argTypes: InferredType[]): InferredType {
     const tps = funcType.typeParameters;
-    if (!tps?.length || !funcType.params?.length) return returns;
+    if (!tps?.length || !funcType.params?.length) return funcType;
 
     const free = new Set(tps.map((t) => t.name));
     const subst = new Map<string, InferredType>();
     const n = Math.min(funcType.params.length, argTypes.length);
     for (let i = 0; i < n; i++) this.unify(funcType.params[i], argTypes[i], free, subst);
+    if (subst.size === 0) return funcType;
 
-    return this.substitute(returns, subst);
+    return {
+      ...funcType,
+      params: funcType.params.map((p) => this.substitute(p, subst)),
+      returns: funcType.returns ? this.substitute(funcType.returns, subst) : funcType.returns,
+    };
   }
 
   /**
