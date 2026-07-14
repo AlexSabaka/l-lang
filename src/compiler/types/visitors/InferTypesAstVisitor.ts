@@ -1121,23 +1121,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    * Nothing calls this yet -- the six existing checks still log. Arming them is P4b, and it must
    * not happen until the false positives are gone, or 19 passing tests break at once.
    */
-  /**
-   * While > 0, only the MEMBER-ACCESS checks are reported. See `inferArgumentsForMembersOnly`.
-   *
-   * A blunt instrument, and a deliberate one: it exists so the checks that look INSIDE call arguments
-   * can do so without also switching on every OTHER check in there, all of which are blocked on scope
-   * resolution (P6) and produce a measured 16-diagnostic false-positive flood.
-   *
-   * The allowed set is exactly the checks that key off a RESOLVED BASE TYPE -- LL0205 (possibly nil)
-   * and LL0206 (private) -- and therefore cannot flood for the same reason the others do: if we could
-   * not type the base, they report nothing.
-   */
-  private static readonly MEMBER_CHECKS = new Set(["LL0205", "LL0206"]);
-  private membersChecksOnly = 0;
-
   protected reportTypeError(node: ast.ASTNode, code: string, message: string): void {
-    if (this.membersChecksOnly > 0 && !InferAndCheckPass.MEMBER_CHECKS.has(code)) return;
-
     const rule = createRule<ast.ASTNode>()
       .addSeverity(RuleSeverity.Error)
       .addCode(code)
@@ -1150,29 +1134,28 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
   /**
    * Type the arguments of a call whose CALLEE we could not resolve -- `(console.log h.length)`, a
-   * member call, a JS global -- but report only the MEMBER-ACCESS checks from inside them.
+   * member call, a JS global. The callee tells us nothing; the ARGUMENTS still have to be checked.
    *
-   * The arguments were previously never visited at all, so EVERY check living in inferExpressionType
-   * silently skipped anything handed to `console.log`. That is most of the corpus's I/O, and exactly
-   * where a member access gets written: `(let z h.length)` reported LL0205 while `(console.log
-   * h.length)` -- the same expression -- reported nothing. LL0206 arrived with the same blind spot:
-   * `(console.log v.secret)` is the obvious way to try to read a private field.
+   * They were once not visited at all, so every check living in inferExpressionType silently skipped
+   * anything handed to `console.log` -- which is most of the corpus's I/O. Then they were visited
+   * behind `membersChecksOnly`, which reported LL0205 and LL0206 from in here and DROPPED everything
+   * else, because the rest produced a 16-diagnostic false-positive flood that was blocked on scope
+   * resolution.
    *
-   * Making the arguments FULLY visible is the right fix and is not this phase's. Measured: 16 new
-   * diagnostics on passing tests, and none are member bugs -- they are LL0210 on locally-scoped names
-   * (symbol resolution is top-level-only; the audit's P6) and LL0211 on a headless member call.
-   * Turning those on here would mean shipping a false-positive flood under someone else's banner.
-   *
-   * So: the arguments become visible to the checks that key off a resolved base type, and to nothing
-   * else, until P6 lands.
+   * P6 is that scope resolution. The guard is gone.
    */
-  private inferArgumentsForMembersOnly(args: ast.ASTNode[]): void {
-    this.membersChecksOnly++;
-    try {
-      args.forEach((arg) => this.inferExpressionType(arg));
-    } finally {
-      this.membersChecksOnly--;
-    }
+  private inferArguments(args: ast.ASTNode[]): void {
+    args.forEach((arg) => this.inferExpressionType(arg));
+  }
+
+  /** `(seed |> stage |> stage)` -- the separators sit at every odd index. Same test the desugarer uses. */
+  private isPipeline(node: ast.ListNode): boolean {
+    return node.nodes.some(
+      (n, i) =>
+        i % 2 === 1 &&
+        n._type === "simple-identifier" &&
+        ["|>", "<|"].includes((n as ast.SimpleIdentifierNode).id)
+    );
   }
 
   constructor(context: any, typeEnv: TypeEnvironment, symbolTable: SymbolTable) {
@@ -1849,9 +1832,20 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // Infer types in function body -- as a BLOCK, so an early-return nil-guard on a PARAMETER is
     // believed for the rest of the body. `forEach(stmt => this.visit(stmt))` skipped the narrowing
     // loop entirely; see visitBlock.
+    // `visitStatement`, the same dispatch a top-level block gets.
+    //
+    // P6c used `this.visit` here instead, and had to: visitStatement routes `(return e)` -- a plain
+    // list headed by the identifier `return` -- through inferExpressionType, which lands in the
+    // unresolved-callee branch, and THAT was behind `membersChecksOnly`, which dropped every check
+    // from inside the returned expression. The guard is gone (P6g), so the reason is gone.
+    //
+    // And `this.visit` was quietly WORSE: it sends `(return e)` to visitList, which treats it as a
+    // BLOCK and walks `return` and `e` as two separate statements -- so a bare `(return multiply)`
+    // never had its operand inferred at all, and LL0210 stopped seeing it. A check that goes quiet is
+    // not a check that passed.
     this.visitBlock(
       this.blockItems(node.body),
-      (stmt) => this.visit(stmt),
+      (stmt) => this.visitStatement(stmt),
       () => this.checkReturns(node)
     );
 
@@ -2497,8 +2491,35 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           break;
         }
 
+        // A PIPELINE is not a call, and its stages are not calls either.
+        //
+        // `(account |> (.apply evt))` reads, to this pass, as a list whose second stage is the list
+        // `(apply evt)` -- a standalone call to the free function `apply`, which takes two arguments.
+        // Hence "'apply' expects 2 arguments, got 1" on three lines of `05_matching.lisp` that are
+        // perfectly correct. The piped value IS the missing argument.
+        //
+        // The reason it looks like a call is that IT WAS NEVER DESUGARED. `DesugarAstVisitor` owns
+        // `|>` and is NOT WIRED INTO THE PIPELINE AT ALL -- the "desugar stage" runs TreeShake and
+        // Comptime and nothing else -- so codegen desugars pipes itself and the type checker never
+        // sees the rewrite. The two halves of the compiler are reading different programs. That is a
+        // finding, and it is bigger than this phase; see DECISIONS.md.
+        //
+        // Until then: type a pipeline as Unknown, and infer only its STAGE ARGUMENTS -- so the checks
+        // inside them still run -- without judging a stage head as a callee.
+        if (this.isPipeline(listNode)) {
+          this.inferExpressionType(listNode.nodes[0]);
+          for (let i = 2; i < listNode.nodes.length; i += 2) {
+            const stage = listNode.nodes[i];
+            if (ast.isListNode(stage)) {
+              this.inferArguments((stage as ast.ListNode).nodes.slice(1));
+            }
+          }
+          inferredType = TypeEnvironment.unknown();
+          break;
+        }
+
         const firstNode = listNode.nodes[0];
-        
+
         // Check if it's a function call
         if (firstNode._type === "simple-identifier" || firstNode._type === "composite-identifier") {
           const funcName = (firstNode as ast.IdentifierNode).id;
@@ -2619,7 +2640,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             // The arguments were never visited at all, so a member access INSIDE one was invisible --
             // `(let z h.length)` reported LL0205 while `(console.log h.length)`, the same expression,
             // reported nothing. Member checks only; see inferArgumentsForMembersOnly.
-            this.inferArgumentsForMembersOnly(listNode.nodes.slice(1));
+            this.inferArguments(listNode.nodes.slice(1));
 
             inferredType = TypeEnvironment.unknown();
           }
@@ -2820,7 +2841,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
     // A member expression only asserts the existence of its HEAD: `x.foo.bar` says nothing about
     // `foo` or `bar`, which are JS property lookups on a value we may know nothing about.
-    const head = id.split(".")[0];
+    //
+    // `:` separates too. `HttpMethod:POST` is an ENUM MEMBER -- the symbol is `HttpMethod`, and
+    // `POST` is a key inside it, no more a reference than `bar` is in `x.foo.bar`. Splitting on `.`
+    // alone left the whole string as the head, which of course resolved to nothing, so every enum
+    // member in the corpus read as an undefined identifier.
+    const head = id.split(/[.:]/)[0];
     if (!head) return;
 
     if (

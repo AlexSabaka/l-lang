@@ -12,11 +12,7 @@
     ;; Or here
     (console.log (add-integers 5 3))
 
-    ;; Shouldn't compile because of type mismatch
-    ;; Given Int instead of String
-    (console.log (concat-strings 2 3))
-
-    ;; Shouldn't compile because of type mismatch
-    ;; Given String instead of Int
-    (console.log (add-integers "Help " "me!"))
+    ;; The two calls that "shouldn't compile" used to live here -- and they DID compile. This file's
+    ;; golden recorded their output ("23", "Help me!") as if it were the right answer. They now live
+    ;; in 01_type_errors.lisp, which asserts the compiler REFUSES them. See P6.
 )

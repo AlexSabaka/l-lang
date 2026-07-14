@@ -717,7 +717,7 @@ export class SymbolTableBuilder {
     this.active = this.active.parent;
   }
 
-  defineSymbol(node: ast.VariableNode | ast.FunctionNode | ast.ClassNode | ast.InterfaceNode | ast.TypeDefNode | ast.StructNode | ast.ModifierDefNode) {
+  defineSymbol(node: ast.VariableNode | ast.FunctionNode | ast.ClassNode | ast.InterfaceNode | ast.TypeDefNode | ast.StructNode | ast.ModifierDefNode | ast.EnumNode) {
     if (this.root === undefined) {
       throw new Error("No root scope. Cannot define symbol.");
     }

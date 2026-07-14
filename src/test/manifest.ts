@@ -52,6 +52,16 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
 
   // --- negative: the file MUST fail, with exactly these diagnostics ---
+  "08-types/01_type_errors.lisp": {
+    status: "negative",
+    codes: ["LL0203"],
+    reason:
+      "The tail of 00_primitives.lisp, split out in P6. Its own comments said 'Shouldn't compile " +
+      "because of type mismatch' -- and it compiled: the golden recorded the results, '23' and " +
+      "'Help me!', as though they were right, so the file asserted the exact bug it was written to " +
+      "warn about. The checker could not see a call ARGUMENT (the membersChecksOnly guard, removed " +
+      "in P6g). Asserting the CODE is what the file always meant.",
+  },
   "02-errors/01_errors.lisp": {
     status: "negative",
     codes: ["LL0002", "LL0006", "LL0007"],

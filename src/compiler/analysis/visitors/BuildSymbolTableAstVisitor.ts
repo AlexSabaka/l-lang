@@ -183,10 +183,45 @@ class ResolvePassVisitor extends BaseAstTreeWalker {
     return node;
   }
 
+  /**
+   * An ENUM was never defined as a symbol -- by anyone, anywhere. `(defenum HttpMethod :GET :POST)`
+   * put nothing in the table, so `HttpMethod:GET` resolved to nothing and LL0210 called it undefined
+   * on code that compiles and runs perfectly.
+   *
+   * ScanPass defines classes, structs, interfaces and type aliases. Enums were simply left off the
+   * list, and nothing noticed because until LL0210 no check had ever asked whether an identifier
+   * resolves to anything.
+   */
+  visitEnum(node: ast.EnumNode) {
+    this.symbolTableBuilder.defineSymbol(node);
+    return node;
+  }
+
   visitFunction(node: ast.FunctionNode) {
-    // Function already defined in ScanPass, now enter its scope and resolve body
+    // Define the function in the ENCLOSING scope first, before descending into its own.
+    //
+    // This said "Function already defined in ScanPass" -- and ScanPass only scans TOP-LEVEL items.
+    // So a NESTED function was defined by nobody:
+    //
+    //     (fn make-adder [n <- Int] (
+    //         (fn adder [x <- Int] (+ x n))
+    //         (return adder)))            ; LL0210: 'adder' is not defined
+    //
+    // which is the entire point of `14_closures.lisp`, and it is not a closure bug -- the name simply
+    // was not in the symbol table. `visitVariable`, ten lines up, carries the SAME correction for the
+    // same reason ("ScanPass only scans TOP-LEVEL items though"): someone hit this for `let`, fixed it
+    // there, and left the identical assumption standing here.
+    //
+    // Ask instead of assume, exactly as `visitVariable` does: define it unless this scope already has
+    // it -- which is how a top-level function stays ScanPass's, not defined twice.
+    const active = this.symbolTableBuilder.getActive();
+    const fnName = node.name ? ast.symbolName(node.name) : undefined;
+    if (fnName && !active?.table.has(fnName)) {
+      this.symbolTableBuilder.defineSymbol(node);
+    }
+
     this.symbolTableBuilder.enterScope(node);
-    
+
     // Define parameters as symbols in function scope
     node.params.forEach(param => {
       this.symbolTableBuilder.defineParameter(param);
