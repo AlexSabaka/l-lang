@@ -1,5 +1,6 @@
 import * as ast from "../frontend/ast";
 import { InferredType, SymbolTable, TypeParameter } from "../analysis/SymbolTable";
+import { TypeChecker } from "./TypeChecker";
 
 /**
  * TypeEnvironment - Manages type inference and binds inferred types to the symbol table
@@ -195,6 +196,20 @@ export class TypeEnvironment {
         for (let i = 1; i < parts.length; i++) {
            if (!currentType) return undefined;
 
+           // An INSTANTIATED generic -- `Container<Int>` (Phase 5).
+           //
+           // Dereference to the declaration, and carry the type arguments through to the member's
+           // type: `c.value` on a `Container<Int>` is `Int`, not the bare `T` the declaration says.
+           // Without this, instantiating a class would ANNOUNCE the argument and then throw it away
+           // at the only place it matters -- and member access would degrade to Unknown, which is a
+           // silent loss of the very information the inference just recovered.
+           let memberSubst: Map<string, InferredType> | undefined;
+           const instantiated = TypeChecker.instantiationOf(currentType, this.symbolTable);
+           if (instantiated) {
+               currentType = instantiated.declaration;
+               memberSubst = instantiated.subst;
+           }
+
            // Resolve type-ref to actual type definition if needed. A type name: top-level, flat.
            if (currentType.kind === 'type-ref' && currentType.refName) {
                const resolved = this.resolveIdentifier(currentType.refName);
@@ -206,7 +221,9 @@ export class TypeEnvironment {
            if (currentType.kind === 'class' || currentType.kind === 'struct' || currentType.kind === 'interface') {
                const member: any = currentType.members?.find((m: any) => m.name === memberName);
                if (member) {
-                   currentType = member.type;
+                   currentType = memberSubst
+                     ? TypeChecker.substitute(member.type, memberSubst)
+                     : member.type;
                } else {
                    // Member not found in 'members' list
                    // TODO: Handle interface inheritance lookups if needed

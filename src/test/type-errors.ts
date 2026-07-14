@@ -829,6 +829,53 @@ ${PRODUCER}
     source: '(fn ident<T> [x <- T] -> T (return x))\n(let bad (- (ident "str") 1))',
     expect: /LL0204/,
   },
+  // --- P5c: generic CLASSES. `(Box 42)` is a `Box<Int>`. ---
+  {
+    // NO ANNOTATION. This is the difference between generics working and generics being erased: the
+    // existing invariance test annotates `<- Box<Dog>`, so the ANNOTATION did the work and the
+    // inference was never exercised. `(Box (Dog))` now yields `Box<Dog>` on its own.
+    name: "P5c: an INFERRED `Box<Dog>` is not a `Box<Animal>`",
+    source:
+      `${ANIMALS}\n` +
+      "(defclass Box<T> (mut :ctor v <- T))\n" +
+      "(fn take [b <- Box<Animal>] -> Void (console.log 1))\n" +
+      "(let bd (Box (Dog)))\n" +
+      "(take bd)",
+    expect: /LL0203/,
+  },
+  {
+    // The type argument reaches the MEMBER. `bi.v` on a `Box<Int>` is `Int`, not the bare `T` the
+    // declaration says. Without this, instantiation would announce the argument and then throw it
+    // away at the only place it matters.
+    name: "P5c: a member of `Box<Int>` is `Int`, not `T`",
+    source: "(defclass Box<T> (mut :ctor v <- T))\n(let bi (Box 42))\n(let s <- String bi.v)",
+    expect: /LL0200/,
+  },
+  {
+    // Constructor arguments, checked AT ALL for the first time. The class branch never called
+    // checkCallArguments -- `(Box 1 2 3)` on a one-parameter constructor was not checked loosely, it
+    // was not checked.
+    name: "P5c: a constructor's ARITY is checked",
+    source: "(defclass Box<T> (mut :ctor v <- T))\n(let bad (Box 1 2 3))",
+    expect: /LL0211/,
+  },
+  {
+    // ...and the two shapes the CORPUS caught, which the first version of the check got wrong. Both
+    // are correct programs and must stay silent.
+    //
+    //   a DEFAULTED :ctor member is optional -- `(new Complex)` is legal when both carry `0.0`
+    //   an INHERITED :ctor member counts -- `(new Dog "Buddy" "Golden")` is parent's, then own
+    name: "P5c: defaulted and INHERITED constructor params (guard)",
+    source:
+      "(defstruct Cx (let :ctor re <- Real 0.0) (let :ctor im <- Real 0.0))\n" +
+      "(defclass Animal (let :ctor name))\n" +
+      "(defclass Dog :extends Animal (let :ctor breed))\n" +
+      '(let z (new Cx))\n' +
+      '(let d (new Dog "Buddy" "Golden"))\n' +
+      "(console.log z d)",
+    silent: true,
+  },
+
   {
     // The correct call must stay SILENT. A unifier that reports on everything is not inference, it is
     // noise -- and this is the case that would catch a substitution that produced garbage.

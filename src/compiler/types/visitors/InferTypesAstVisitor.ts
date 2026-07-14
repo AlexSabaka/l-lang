@@ -2643,25 +2643,18 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             // what to do with, and the reason a generic optional never fired.
             inferredType = this.instantiateReturn(funcType, argTypes);
           }
-          // Handle struct constructors
-          else if (funcType && funcType.kind === "struct") {
-            // Calling a struct returns an instance of that struct
-            inferredType = {
-              kind: "type-ref",
-              name: funcName,
-              refName: funcName,
-              resolved: true,
-            };
-          }
-          // Handle class constructors
-          else if (funcType && funcType.kind === "class") {
-            // Calling a class returns an instance of that class
-            inferredType = {
-              kind: "type-ref",
-              name: funcName,
-              refName: funcName,
-              resolved: true,
-            };
+          // Handle struct and class constructors. `(Box 42)` is a `Box<Int>` (P5c), and its arguments
+          // are checked -- which, until now, they were not, at all.
+          else if (funcType && (funcType.kind === "struct" || funcType.kind === "class")) {
+            const ctorArgs = listNode.nodes.slice(1);
+            const ctorArgTypes = ctorArgs.map((a) => this.inferExpressionType(a));
+            inferredType = this.inferConstruction(
+              funcType,
+              funcName,
+              ctorArgs,
+              ctorArgTypes,
+              listNode
+            );
           } else if (funcName === "new") {
             // `(new Box 5)` -- there is no `new` AST node; the head is just the identifier `new`,
             // which resolves to nothing. It used to fall into inferOperatorType and emit a
@@ -2798,7 +2791,16 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const resolved = this.typeEnv.resolveIdentifier(name);
 
     if (resolved && (resolved.kind === "class" || resolved.kind === "struct")) {
-      return { kind: "type-ref", name, refName: name, resolved: true };
+      // `(new Box 42)` is a `Box<Int>` just as surely as `(Box 42)` is. Two spellings of one form;
+      // they must not disagree, and the corpus uses BOTH -- `complex_math_test` writes
+      // `(new Complex 1.0 2.0)` while `10_generics_basic` writes `(Container 42)`.
+      //
+      // This is also where `new`'s ARGUMENTS finally get visited. inferNewExpression read args[0] and
+      // returned; args.slice(1) was never inferred at all, which is why `(new Platform x y
+      // (random-platform-type))` hid an undefined function through the whole of Sd.
+      const ctorArgs = args.slice(1);
+      const ctorArgTypes = ctorArgs.map((a) => this.inferExpressionType(a));
+      return this.inferConstruction(resolved, name, ctorArgs, ctorArgTypes, target);
     }
 
     // An unknown class is not an operator error; it is an unresolved identifier (P4c). Still a hole:
@@ -3099,6 +3101,100 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   }
 
   /**
+   * PHASE 5 -- constructing a generic class: `(Box 42)` is a `Box<Int>`.
+   *
+   * Two things were missing here, not one:
+   *
+   *   1. The type arguments. `(Box 42)` produced a bare `{kind:"type-ref", name:"Box"}` with NO
+   *      arguments at all, so `Box<Dog>` and `Box<Animal>` were the same type and the variance rules
+   *      P7 wrote had nothing to compare. Generics "worked" by erasure.
+   *   2. ANY CHECK ON THE ARGUMENTS. The class branch never called checkCallArguments -- so
+   *      `(Box 1 2 3)` on a one-parameter constructor was neither arity- nor type-checked. Not
+   *      "checked loosely": not checked.
+   *
+   * The result is `{kind:"generic", name:"Box", generics:[Int]}` -- the SAME shape the annotation
+   * `<- Box<Int>` already produces, which is what lets `typeArgumentsAssignable` compare the two with
+   * declaration-site variance, unchanged, and why the invariant case keeps reporting.
+   *
+   * NOT a `type-ref` carrying `generics`: `unwrapType` dereferences a type-ref to the declaration and
+   * DROPS the arguments on the way, so they would be announced and then silently discarded at the one
+   * place they matter.
+   *
+   * A non-generic class keeps its old `type-ref` exactly. The overwhelming majority of the corpus is
+   * that case, and it must not be perturbed by this at all.
+   */
+  /**
+   * A constructor's parameters -- INCLUDING the ones it inherits.
+   *
+   * `ctorInfo.params` holds only a class's OWN `:ctor` members, and a subclass's constructor takes
+   * the parent's first. The corpus says so plainly:
+   *
+   *     (defclass Animal (let :ctor name))
+   *     (defclass Dog :extends Animal (let :ctor breed))
+   *     (new Dog "Buddy" "Golden Retriever")        ;; TWO arguments: the parent's, then its own
+   *
+   * The first version of the constructor check did not know this and reported `'Dog' expects 1
+   * argument, got 2` on a correct program. The corpus caught it immediately -- which is the argument
+   * for turning a check on against real code rather than against a fixture.
+   */
+  private constructorParams(classType: InferredType): any[] {
+    const own = classType.ctorInfo?.params ?? [];
+    const parentName = (classType as any).parentClass;
+    if (!parentName) return own;
+
+    const parent = this.symbolTable.resolveSymbol(
+      typeof parentName === "string" ? parentName : parentName?.name
+    )?.inferredType;
+    if (!parent || parent === classType) return own;
+
+    return [...this.constructorParams(parent), ...own];
+  }
+
+  private inferConstruction(
+    classType: InferredType,
+    className: string,
+    args: ast.ASTNode[],
+    argTypes: InferredType[],
+    reportNode: ast.ASTNode
+  ): InferredType {
+    const ctorParams = this.constructorParams(classType);
+
+    // The constructor's arguments, checked at last. Modelled as a function so there is ONE arity and
+    // argument rule in this compiler rather than a second, subtly different one.
+    if (ctorParams.length > 0) {
+      const ctorAsFunction: InferredType = {
+        kind: "function",
+        name: className,
+        params: ctorParams.map((p: any) => p.type),
+        returns: TypeEnvironment.unknown(),
+      };
+      // A DEFAULTED ctor parameter is optional -- `(defstruct Complex (let :ctor real <- Real 0.0)
+      // (let :ctor imag <- Real 0.0))` makes `(new Complex)` legal, and it is the corpus's
+      // declare-then-fill idiom. Counting declared parameters instead of REQUIRED ones reported
+      // "'Complex' expects 2 arguments, got 0" on five correct lines.
+      const required = ctorParams.filter((p: any) => !p.hasDefault).length;
+      this.checkCallArguments(ctorAsFunction, className, args, argTypes, reportNode, required);
+    }
+
+    const params = classType.generics ?? [];
+    const free = new Set(params.filter((p) => TypeChecker.isBareTypeParameter(p)).map((p) => p.name));
+    if (free.size === 0) {
+      return { kind: "type-ref", name: className, refName: className, resolved: true };
+    }
+
+    const subst = new Map<string, InferredType>();
+    const n = Math.min(ctorParams.length, argTypes.length);
+    for (let i = 0; i < n; i++) this.unify(ctorParams[i]?.type, argTypes[i], free, subst);
+
+    // An argument we could not solve stays the parameter itself -- `Box<T>`, not `Box<Unknown>`.
+    // Unknown would silence every check downstream of it; the bare parameter keeps saying "T", which
+    // is what the erasure rule is there to handle until it goes.
+    const typeArgs = params.map((p) => subst.get(p.name) ?? p);
+
+    return { kind: "generic", name: className, generics: typeArgs };
+  }
+
+  /**
    * The return type of a call, with the function's type variables solved from the arguments.
    *
    * This is the ONE place a call's result type is computed, and it is called from BOTH call sites --
@@ -3133,12 +3229,20 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     funcName: string,
     args: ast.ASTNode[],
     argTypes: InferredType[],
-    reportNode: ast.ASTNode
+    reportNode: ast.ASTNode,
+    /**
+     * How many arguments are actually REQUIRED, when that differs from how many are declared.
+     *
+     * A constructor's defaulted `:ctor` members are optional -- `(new Complex)` is legal when both of
+     * its parameters carry `0.0`. A function has no defaults today (`fn` parameter defaults are a
+     * standing Known Gap), so it never passes this.
+     */
+    requiredOverride?: number
   ): void {
     if (!funcType.params) return;
 
     const declared = funcType.params.length;
-    const required = funcType.isVariadic ? declared - 1 : declared;
+    const required = requiredOverride ?? (funcType.isVariadic ? declared - 1 : declared);
     const tooFew = args.length < required;
     const tooMany = !funcType.isVariadic && args.length > declared;
 

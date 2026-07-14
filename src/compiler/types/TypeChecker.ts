@@ -572,6 +572,62 @@ export class TypeChecker {
   }
 
   /**
+   * Replace every type VARIABLE in `type` with its solution (Phase 5).
+   *
+   * Lives here, not in the checker's visitor, because two very different consumers need exactly the
+   * same operation and must not disagree about it: the call site (`(my-head [1 2 3])` -> `Int?`) and
+   * MEMBER ACCESS on a generic instance (`c.value` on a `Container<Int>` -> `Int`, not `T`).
+   *
+   * `optional` is a FLAG, not a wrapper (D9), and carrying it is the whole point: lose it and `T?`
+   * quietly becomes `T`, LL0205 never fires, every gate stays green, and the feature looks finished
+   * while doing nothing.
+   */
+  static substitute(type: InferredType, subst: Map<string, InferredType>): InferredType {
+    if (!type || subst.size === 0) return type;
+
+    if (this.isBareTypeParameter(type) && subst.has(type.name)) {
+      const solved = subst.get(type.name)!;
+      return type.optional || solved.optional ? { ...solved, optional: true } : solved;
+    }
+
+    const result = { ...type };
+    if (type.generics) result.generics = type.generics.map((g) => this.substitute(g, subst));
+    if (type.alternatives) result.alternatives = type.alternatives.map((a) => this.substitute(a, subst));
+    if (type.inner) result.inner = this.substitute(type.inner, subst);
+    if (type.params) result.params = type.params.map((p) => this.substitute(p, subst));
+    if (type.returns) result.returns = this.substitute(type.returns, subst);
+    if (type.keyType) result.keyType = this.substitute(type.keyType, subst);
+    if (type.valueType) result.valueType = this.substitute(type.valueType, subst);
+    return result;
+  }
+
+  /**
+   * The substitution implied by an INSTANTIATION -- `Container<Int>` against `class Container<T>`
+   * gives `{T -> Int}`.
+   *
+   * `declaration.generics` on a class holds its type PARAMETERS (the field means arguments on a
+   * use-site and parameters on a declaration -- one of the sharper edges in this type system).
+   */
+  static instantiationOf(
+    instance: InferredType,
+    symbolTable?: SymbolTable
+  ): { declaration: InferredType; subst: Map<string, InferredType> } | undefined {
+    if (instance?.kind !== "generic" || !instance.generics?.length) return undefined;
+
+    const declaration = symbolTable?.resolveSymbol(instance.name)?.inferredType;
+    if (!declaration) return undefined;
+
+    const params = declaration.generics ?? [];
+    const subst = new Map<string, InferredType>();
+    params.forEach((p, i) => {
+      const arg = instance.generics![i];
+      if (this.isBareTypeParameter(p) && arg) subst.set(p.name, arg);
+    });
+
+    return { declaration, subst };
+  }
+
+  /**
    * Check if type is numeric
    */
   static isNumeric(type: InferredType): boolean {
