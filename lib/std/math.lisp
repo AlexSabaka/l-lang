@@ -10,7 +10,10 @@
   (export sqr sqrt sin cos tan log exp
           abs floor ceil round pow min max inc dec
           E PI TAU
-          Number Complex Vector3)
+          Complex Vector3)
+  ;; NOT `Number`. It belongs to std/types now, and a module cannot re-export a symbol it does not
+  ;; define -- `visitExport` refuses ("Cannot export undefined symbol"). Anyone who wants the type
+  ;; imports std/types, which is where it is declared, once.
 
   (let E 2.718281828459045)
   (let PI 3.141592653589793)
@@ -64,7 +67,14 @@
     (Math.exp x)
   )
 
-  (deftype Number Int | Real)
+  ;; `(deftype Number Int | Real)` was DELETED here (Sf).
+  ;;
+  ;; It was defined TWICE -- here, and in std/types, WHICH THIS FILE IMPORTS. Both exported it, and
+  ;; nothing said a word: two symbols with one name, and `resolveSymbol`'s flat cross-module fallback
+  ;; picking whichever it happened to reach first. That is the duplicate-definition hole whose gate
+  ;; (LL0218) is still pending, sitting live in the standard library.
+  ;;
+  ;; `Number` now comes from std/types, which is the single place it is defined.
 
   ;; Complex Number Struct and Operations
   (defstruct Complex

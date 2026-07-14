@@ -192,17 +192,17 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "frontend ever supported it -- the PEG's For rule has no :of either. Aspirational syntax; " +
       "either add a :of clause to D12 or rewrite the example.",
   },
-  "20-stdlib/test_stdlib.lisp": {
-    status: "xfail",
-    reason:
-      "D7/Phase S. 'Real stdlib not yet implemented' was true and useless; what actually happens: " +
-      "it calls `length`, `first`, `last` and `at` -- FOUR FUNCTIONS THAT EXIST NOWHERE, in no std " +
-      "module and no SYMBOL_MAP (LL0210 x4). It was written against a stdlib nobody built, and " +
-      "nothing found out because `library`/`xfail` files are compiled but never run. It also leans " +
-      "on the export leak for 7 more names -- `abs min max pow ceil floor round` are defined in " +
-      "std/math.lisp and exported by it NOWHERE, and resolve anyway because `(export ...)` is " +
-      "decorative (D20). Unblocks at Sf. See STDLIB.md.",
-  },
+  // THE STDLIB RUNS. It has a golden, it is executed on every `npm test`, in both frontends.
+  //
+  // It was xfail because it called `length`, `first`, `last` and `at` -- four functions that existed
+  // NOWHERE -- and nothing ever found out, because a `library`/`xfail` file is compiled and never RUN.
+  // That is the hole Sa was written to expose, and this entry closing it is what Sf is FOR.
+  //
+  // Running it found three real bugs the moment it executed: an inlined function's PARAMETER being
+  // replaced by a same-named top-level symbol (`(pow 2 3)` was NaN), a `deftype` being inlined as if
+  // it had a runtime value (`is-int` threw ReferenceError), and a zero-arg call to a local function
+  // value emitting a bare reference. See DECISIONS.md.
+  "20-stdlib/test_stdlib.lisp": { status: "test" },
   "modifiers_demo.lisp": {
     status: "xfail",
     reason:

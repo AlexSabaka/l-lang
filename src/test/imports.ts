@@ -478,6 +478,57 @@ const CASES: Case[] = [
         : { ok: false, detail: `expected "7", got ${JSON.stringify(out.stdout)}` };
     },
   },
+
+  // -----------------------------------------------------------------------------------------------
+  // Sf: A PARAMETER IS NOT A TOP-LEVEL SYMBOL OF THE SAME NAME.
+  // -----------------------------------------------------------------------------------------------
+  {
+    name: "an inlined function's PARAMETER is not replaced by a same-named top-level symbol",
+    why:
+      "`cloneNode` was a JSON round-trip with a cycle-breaking replacer -- and `_parent` IS the cycle, " +
+      "so it was dropped. Every cloned node came out orphaned, which silently changed what its " +
+      "identifiers MEAN: resolveSymbol(name, node) climbs `_parent` to find a scope, misses, and falls " +
+      "through to the FLAT cross-module union, where it finds a TOP-LEVEL symbol of the same name. So " +
+      "an imported function whose PARAMETER shares a name with a top-level symbol in its own module had " +
+      "that parameter replaced by the symbol. This is std/math EXACTLY: it has `(fn pow [base exp] ...)` " +
+      "and, separately, `(fn exp [x] ...)`. It emitted " +
+      "`function __ll_inlined_pow_1(base, exp) { return Math.pow(base, __ll_inlined_exp_1); }` -- so " +
+      "`(pow 2 3)` was NaN. NEVER SEEN, because the stdlib was never RUN. Sf ran it.",
+    run: () => {
+      const entry = fixture(
+        "param-shadows-toplevel",
+        {
+          // The exact shape of std/math: a function `exp`, and another function with a PARAMETER
+          // named `exp`. Nothing about this is exotic -- it is what any math library looks like.
+          "lib.lisp":
+            `(\n` +
+            `  (fn exp [x <- Int] -> Int (return (* x 100)))\n` +
+            `  (fn pw [base <- Int exp <- Int] -> Int (return (Math.pow base exp)))\n` +
+            `  (export exp pw)\n` +
+            `)\n`,
+          "main.lisp":
+            `(\n` +
+            `  (import "lib.lisp")\n` +
+            `  (console.log (pw 2 3))\n` +
+            `)\n`,
+        },
+        "main.lisp"
+      );
+      const out = build(entry);
+
+      if (!out.compiled) return { ok: false, detail: "did not compile" };
+      if (out.runtimeError) return { ok: false, detail: `runtime: ${out.runtimeError}` };
+
+      // Output alone is the point here -- NaN is the bug -- but assert the SHAPE too: the parameter
+      // must survive into the body, rather than the module-level function being spliced in.
+      if (/Math\.pow\(base, __ll_inlined_exp/.test(out.code ?? "")) {
+        return { ok: false, detail: "the parameter `exp` was replaced by the top-level `exp` function" };
+      }
+      return out.stdout === "8"
+        ? { ok: true, detail: "the parameter shadows the top-level symbol, as it must" }
+        : { ok: false, detail: `expected "8", got ${JSON.stringify(out.stdout)} (NaN = the bug)` };
+    },
+  },
 ];
 
 function main() {

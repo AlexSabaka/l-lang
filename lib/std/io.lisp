@@ -1,5 +1,5 @@
 (
-  (import "std/enumerable")
+  (import "std/seq")
 
   (fn print [msg <- String ...args <- Any[]] -> Void
     (for :each arg :from (zip args (range 0 args.length 1)) :then (

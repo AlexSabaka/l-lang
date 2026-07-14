@@ -143,9 +143,15 @@ itself. Enforcing the boundary costs **one export list**.
         is now `lib/std/js.lisp`, an implicitly-imported prelude. **p5js: 104 → 0**, uncovering two
         guaranteed runtime crashes. A 3-name residual remains, named as a language defect: types and
         values share one namespace.
-*   [ ] **Se — `std/core`:** `SYMBOL_MAP`'s library half leaves codegen and becomes typed l-lang.
-*   [ ] **Sf — the cstd-shaped modules**, typed, and **actually tested** (goldens, `status: "test"`).
-*   [ ] **Sg — retire** the rest; close D7.
+*   [x] **Se — the dead half of `SYMBOL_MAP` is deleted; the live half CANNOT leave.**
+        `get`/`head`/`elem` are the language's only `T?` producers and their type is **inexpressible**
+        until call-site generic inference exists (**Phase 5**) — and the mechanism *self-disables* the
+        moment the name resolves, so even declaring them would silently delete every optional check.
+        The gate marks the day `std/core` becomes possible.
+*   [x] **Sf — THE STDLIB RUNS.** D22's layout; `length`/`first`/`last`/`at` exist; `test_stdlib` has a
+        golden and executes in **both frontends**. Running it found **three real bugs** immediately —
+        `(pow 2 3)` was `NaN` because an inlined function's *parameter* was replaced by a same-named
+        top-level symbol.
 
 Deferred, and *not* stdlib modules: **`eval`** (needs a runtime AST interpreter — a phase of its
 own) and **quasiquote/unquote** (do not exist).

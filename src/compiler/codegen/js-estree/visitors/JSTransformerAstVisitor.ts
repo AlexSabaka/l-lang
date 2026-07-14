@@ -2213,6 +2213,24 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     // already falls through to.
     if (resolved.value.extern) return false;
 
+    // NOR IS A TYPE (Sf). A `deftype` has NO RUNTIME VALUE -- it emits nothing at all -- so inlining it
+    // renames a name that was never going to be defined.
+    //
+    // `std/types` has `(deftype Number Int | Real)` and, in the same file, `(fn is-int [x]
+    // (Number.isInteger x))`. Within that file `Number` resolves same-source and is left alone. But the
+    // moment `is-int` is INLINED INTO ANOTHER MODULE, the inliner walks its body, resolves `Number` to
+    // the deftype, sees a top-level symbol from another file, and emits:
+    //
+    //     return __ll_copy(__ll_inlined_Number_1.isInteger(x));   // ReferenceError
+    //
+    // Never seen, because nothing ever imported std/types and RAN it. test_stdlib is the first thing
+    // to do so -- which is the entire reason Sf exists.
+    //
+    // This is the type/value namespace collision (Sd's residual) surfacing in codegen rather than in
+    // the checker: `Number` is both an l-lang type and a JS value, and only one of them has a runtime
+    // representation.
+    if (resolved.value._type === "type-def") return false;
+
     if (resolved.value._location.source === this.rootSource) return false;
     // A root scope has no parent. Anything deeper is a local of the other module, not its export.
     return resolved.scope !== undefined && resolved.scope.parent === undefined;
@@ -3235,17 +3253,45 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return generate(expr);
   }
 
+  /**
+   * A deep copy that KEEPS `_parent`, by reference, pointing into the ORIGINAL tree.
+   *
+   * It was a JSON round-trip with a cycle-breaking replacer -- and `_parent` IS the cycle, so the
+   * replacer dropped it. Every cloned node came out orphaned, and that silently changed what its
+   * identifiers mean:
+   *
+   *     resolveSymbol(name, node)  ->  scopeOf(node) climbs `_parent`  ->  undefined
+   *                                ->  falls through to the FLAT cross-module union
+   *                                ->  finds a TOP-LEVEL symbol of the same name
+   *
+   * So an imported function whose PARAMETER shares a name with a top-level symbol in its own module
+   * had that parameter replaced by the symbol. `std/math` has `(fn pow [base exp] (Math.pow base exp))`
+   * and, separately, `(fn exp [x] (Math.exp x))`. It emitted:
+   *
+   *     function __ll_inlined_pow_1(base, exp) {        // <- exp is bound RIGHT HERE
+   *       return Math.pow(base, __ll_inlined_exp_1);    // <- and the body used the FUNCTION
+   *     }
+   *
+   * `(pow 2 3)` was NaN. It had never been seen because the stdlib was never RUN -- which is the
+   * whole reason Sf exists.
+   *
+   * Keeping the original parent is the rule One Tree already established for synthesized nodes:
+   * `nodeScopeIndex` is keyed on the ORIGINAL nodes, so a clone must climb into the original tree to
+   * find its scope. Re-parenting the copy onto itself would be the other way to lose it.
+   */
   private cloneNode<T extends ast.ASTNode>(n: T): T {
-    const cache = new Set<any>();
-    return JSON.parse(
-      JSON.stringify(n, (key, value) => {
-        if (typeof value === "object" && value !== null) {
-          if (cache.has(value)) return;
-          cache.add(value);
-        }
-        return value;
-      })
-    ) as T;
+    const clone = (v: any): any => {
+      if (Array.isArray(v)) return v.map(clone);
+      if (!v || typeof v !== "object") return v;
+      const out: any = {};
+      for (const k of Object.keys(v)) {
+        // BY REFERENCE, and never recursed into: it points at the original tree, which is what makes
+        // the lexical walk work -- and it is also what made the JSON round-trip a cycle.
+        out[k] = k === "_parent" ? v[k] : clone(v[k]);
+      }
+      return out;
+    };
+    return clone(n) as T;
   }
 
   /**

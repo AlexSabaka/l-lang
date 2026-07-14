@@ -1,0 +1,51 @@
+=== STD LIB TESTING ===
+
+--- Math ---
+sqr(4) = 16
+abs(-5) = 5
+min(1, 2) = 1
+max(1, 2) = 2
+pow(2, 3) = 8
+ceil(3.2) = 4
+floor(3.7) = 3
+round(3.5) = 4
+
+--- Collections ---
+[ 1, 2, 3, 4, 5 ]
+length: 5
+first: 1
+last: 5
+at 2: 3
+map inc: 2,3,4,5,6
+filter > 3: 4,5
+reduce +: 15
+reverse [1 2 3]: 3,2,1
+flatten [[1 2] [3 4]]: 1,2,3,4
+
+--- Strings ---
+strlen('hello') = 5
+upcase('hello') = HELLO
+downcase('HELLO') = hello
+trim('  hi  ') = 'hi'
+split('a,b,c', ',') = a,b,c
+join(['a', 'b'], '-') = a-b
+contains('hello', 'ell') = true
+starts-with('hello', 'he') = true
+
+--- Types ---
+is-int(5) = true
+is-int(5.5) = false
+is-string('s') = true
+is-array([]) = true
+is-nil(nil) = true
+type-name(5) = Int
+type-name([]) = Array
+type-name('s') = String
+type-name(true) = Boolean
+
+--- Functional ---
+identity(42) = 42
+constantly() = 5
+compose(sqr, inc)(3) = (3+1)^2 = 16
+
+=== DONE ===

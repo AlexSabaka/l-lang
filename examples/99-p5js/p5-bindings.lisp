@@ -57,7 +57,7 @@
     (fn :extern imageMode [...args])
 
     ;; Math & random
-    ;; `map` is p5's, and it is deliberately NOT exported below: `std/enumerable` exports a `map` of
+    ;; `map` is p5's, and it is deliberately NOT exported below: `std/seq` exports a `map` of
     ;; its own, and the importer must get THAT one. D20's module boundary is what makes keeping this
     ;; one private possible at all.
     (fn :extern map [...args])
