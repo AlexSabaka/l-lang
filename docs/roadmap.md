@@ -288,10 +288,13 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     deleted, and the same shape.
 *   **Nil-check coverage.** The check reads only the **head** of a member chain, and a call head never
     reaches it: `(t.length)` and `c.v.length` are both unchecked.
-*   **String escapes are not decoded at all.** Not just `\"` — **`"\n"` lexes as a backslash and an
-    `n`, and prints as one.** Two corpus files now carry comments working around it, and it is the
-    reason `test_stdlib` builds blank lines with `(print "")`. Recording a golden over it would freeze
-    the bug in as the expected answer.
+*   ~~**String escapes are not decoded at all**~~ — **FIXED.** And in both frontends it was the same
+    shape: a correct decoder, bypassed on the plain-string path. PEG's `Char` rule decodes every escape
+    and has all along — but `RawString` was written `$Char*`, and **`$` yields the raw matched text and
+    throws the actions away**. grammar_v2's `formattedString()` called `unescapeString()`; `string()`
+    did `.slice(1,-1)`. Which is why an INTERPOLATED string decoded escapes and a plain one did not:
+    same escape, two answers, in one language. `unescapeString` was also wrong on `"\\n"` (a chained
+    `.replace()` rewrites its own output), so it is now a single pass. No golden moved.
 *   **Parse/lex gaps.** Boolean match patterns; `:is` type patterns; the `..` range operator; sized
     array types; `fn` parameter defaults; the numeric tower (octal/binary/hex/fraction/complex all lex,
     none emit). (`__bar` **now lexes** — fixed via `longer_alt`, inbox #1.)

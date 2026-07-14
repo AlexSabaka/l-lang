@@ -6,12 +6,14 @@
   (import "std/string")
   (import "std/fn")
 
-  ;; NOTE: no `\n` in these strings, and that is not a style choice.
+  ;; Blank lines come from `(print "")`, and that IS now just a style choice.
   ;;
-  ;; String escapes ARE NOT DECODED -- `"\n"` lexes as a backslash and an `n`, and prints as one. It is
-  ;; a standing Known Gap (`examples/06-modifiers/05_multiple_modifiers.lisp` carries a comment about
-  ;; the same thing), and writing a golden full of literal `\n` would BAKE THE BUG IN as the expected
-  ;; answer -- which is the one thing this suite exists not to do. Blank lines come from `(print "")`.
+  ;; It used not to be: string escapes were not decoded at all -- `"\n"` lexed as a backslash and an
+  ;; `n` and printed as one -- so a golden full of literal `\n` would have BAKED THE BUG IN as the
+  ;; expected answer, which is the one thing this suite exists not to do. The workaround is why this
+  ;; file has no escapes in it anywhere. **Escapes work now** (both frontends), and `(print "a\nb")`
+  ;; prints two lines. The `(print "")` calls are left as they are because changing them would move a
+  ;; golden for no reason -- but nothing forces them any more.
   (print "=== STD LIB TESTING ===")
   (print "")
 

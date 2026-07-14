@@ -1569,6 +1569,58 @@ const CASES: Case[] = [
       "the checker learns to type stops reaching the shim and goes back to a direct `.x` or `.m()`.",
   },
 
+  // ===============================================================================================
+  // Escapes. `"a\n b"` printed a BACKSLASH and an `n`.
+  //
+  // Both frontends already HAVE a correct decoder, and both bypass it on the plain-string path:
+  //   - PEG's `Char` rule decodes (`"n" { return "\n"; }`) -- but `RawString` is written `$Char*`,
+  //     and `$` takes the RAW MATCHED TEXT and throws the actions away.
+  //   - grammar_v2's `formattedString()` calls `unescapeString()`; `string()` does `.slice(1,-1)`.
+  // Which is why `'"a\n b"` (interpolated) decoded and `"a\n b"` (plain) did not. Same escape, two
+  // answers, in one language.
+  // ===============================================================================================
+  {
+    name: "escapes: \\n is a NEWLINE",
+    source: `(console.log "a\\nb")`,
+    expect: ["a", "b"],
+    wasBroken:
+      "printed `a\\nb` -- a literal backslash and an n. The emitted JS was `console.log(\"a\\\\nb\")`: " +
+      "the backslash survived into the string value and was then RE-ESCAPED on the way out.",
+  },
+  {
+    name: "escapes: \\t is a TAB",
+    source: `(console.log "a\\tb")`,
+    expect: ["a\tb"],
+    wasBroken: "printed a literal backslash and a t.",
+  },
+  {
+    name: "escapes: \\\" is a quote, \\\\ is one backslash",
+    source: `(console.log "q\\"x")
+(console.log "one\\\\two")`,
+    expect: ['q"x', "one\\two"],
+    wasBroken: "both survived as two characters, backslash included.",
+  },
+  {
+    name: "escapes: \\\\n is a BACKSLASH then an n, not a newline",
+    source: `(console.log "a\\\\nb")`,
+    expect: ["a\\nb"],
+    wasBroken:
+      "THE CASE THAT BREAKS A NAIVE FIX, and the one the existing `unescapeString` gets wrong. It is a " +
+      "chain of `.replace()` calls: `\\\\n` -> `\\\\` is not consumed first, so the `/\\\\n/` pass matches " +
+      "the SECOND backslash and the n, and an escaped backslash followed by a letter n decodes to a " +
+      "backslash and a NEWLINE. An escape decoder has to be a single pass over the string.",
+  },
+  {
+    name: "escapes: an INTERPOLATED string decodes the same way",
+    source: `(let n 5)
+(console.log '"a\\nb {(n)}")`,
+    expect: ["a", "b 5"],
+    wasBroken:
+      "NOT broken -- a GUARD. The interpolated path was the one that ALREADY worked, in both frontends, " +
+      "which is exactly what made the plain-string bug visible as an inconsistency rather than a gap. " +
+      "It must keep working, and it must agree with the plain path.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",

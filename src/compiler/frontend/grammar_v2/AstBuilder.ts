@@ -300,8 +300,10 @@ export class LLangAstBuilder extends BaseCstVisitor {
     if (ctx.formattedString) {
       return this.visit(ctx.formattedString[0]);
     }
-    // Raw string - remove quotes
-    const value = ctx.StringLiteral[0].image.slice(1, -1);
+    // Strip the quotes, then DECODE. The decode is what was missing: `formattedString` below has always
+    // called `unescapeString`, and this path did not -- so `'"a\nb"` printed a newline and `"a\nb"`
+    // printed a backslash and an `n`. Same escape, two answers, in one language.
+    const value = this.unescapeString(ctx.StringLiteral[0].image.slice(1, -1));
     return this.makeNode("string", ctx, { value });
   }
 
@@ -356,14 +358,43 @@ export class LLangAstBuilder extends BaseCstVisitor {
     return this.makeNode("formatted-string", ctx, { value });
   }
 
+  /**
+   * Decode the escape sequences in a string literal's body. ONE PASS, and that is the whole point.
+   *
+   * This used to be a chain of `.replace()` calls -- `\\n` -> newline, then `\\\\` -> backslash, and so on --
+   * which is wrong for the one input that matters:
+   *
+   *     "a\\\\nb"        the source says: BACKSLASH, then the letter n
+   *
+   * The `/\\n/` pass runs FIRST and matches the second backslash together with the `n`, so an escaped
+   * backslash followed by a letter decodes to a backslash and a NEWLINE. A decoder that rewrites its own
+   * output cannot be correct; it has to consume each escape exactly once, left to right.
+   *
+   * The set matches the PEG's `Char` rule exactly. Two frontends must agree, and an escape the other one
+   * rejects is a divergence, not a feature.
+   */
   private unescapeString(s: string): string {
-    return s
-      .replace(/\\n/g, "\n")
-      .replace(/\\r/g, "\r")
-      .replace(/\\t/g, "\t")
-      .replace(/\\"/g, '"')
-      .replace(/\\\\/g, "\\")
-      .replace(/\\{/g, "{");
+    return s.replace(
+      /\\(u[0-9a-fA-F]{4}|.)/g,
+      (_match: string, esc: string): string => {
+        if (esc[0] === "u") return String.fromCharCode(parseInt(esc.slice(1), 16));
+        switch (esc) {
+          case "n": return "\n";
+          case "r": return "\r";
+          case "t": return "\t";
+          case "b": return "\b";
+          case "f": return "\f";
+          case '"': return '"';
+          case "\\": return "\\";
+          case "/": return "/";
+          case "{": return "{";
+          case "}": return "}";
+          // An unknown escape is the character itself -- `\q` is `q`. Same as the PEG, which simply has
+          // no alternative for it and therefore cannot produce a backslash either.
+          default: return esc;
+        }
+      }
+    );
   }
 
   private getFirstToken(cst: any): any {

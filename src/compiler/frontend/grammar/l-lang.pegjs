@@ -875,9 +875,18 @@ ConstantPattern
 String
   = RawString / FormattedString
 
+// `Char*`, NOT `$Char*`.
+//
+// `$` yields the RAW MATCHED TEXT and throws the actions away -- so the `Char` rule below, which
+// decodes every escape correctly and has done all along, was computing `\n` -> newline and having its
+// answer discarded. `"a\nb"` kept the backslash, and the JS emitter then re-escaped it, so the program
+// printed a backslash and an `n`.
+//
+// `FormattedString` immediately below uses `(Format / Char)*` with no `$`, which is exactly why an
+// INTERPOLATED string decoded escapes while a plain one did not. One `$`, two answers.
 RawString
-  = _ '"' value:$Char* '"' _ {
-    return makeNode("string", { value });
+  = _ '"' chars:Char* '"' _ {
+    return makeNode("string", { value: chars.join("") });
   }
 
 FormattedString
@@ -901,6 +910,8 @@ Char
       / "n" { return "\n"; }
       / "r" { return "\r"; }
       / "t" { return "\t"; }
+      / "{"
+      / "}"
       / "u" digits:$(HexDigit HexDigit HexDigit HexDigit) {
           return String.fromCharCode(parseInt(digits, 16));
         }
