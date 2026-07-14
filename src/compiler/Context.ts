@@ -139,6 +139,36 @@ export class Context {
    */
   private importBindings: Map<string, Map<string, Set<string> | null>> = new Map();
 
+  /** The module every module implicitly imports. Resolved against `libPaths`, like any other. */
+  private static readonly PRELUDE = "std/js";
+
+  /**
+   * Import the prelude into `file`, implicitly.
+   *
+   * Two things have to be true, and D20 is what makes both necessary:
+   *
+   *   - the prelude's names must be EXPORTED, or every one of them trips LL0215 (Sb). `std/js` has an
+   *     `(export ...)` list, like any module.
+   *   - the import must be RECORDED, or every one of them trips LL0216 (Sc) -- "this file's import
+   *     does not bind it" -- which would be true, since no file writes the import. Hence
+   *     `recordImport(..., null)`: a whole-module import, made on the file's behalf.
+   *
+   * Absent a `lib/` (a bare checkout, or a `-I`-less embed) `resolve` returns undefined and this is a
+   * no-op: no prelude, no diagnostic, and programs that touch no JS global still compile. The prelude
+   * is a library, and a missing library is not a compiler error.
+   */
+  private injectPrelude(file: string): void {
+    const prelude = ModuleResolver.resolve(Context.PRELUDE, file, this.libPaths);
+    if (!prelude) return;
+
+    // The prelude does not import itself. Without this the recursion is unbounded -- and `processing`
+    // would merely turn it into a silent no-op rather than a stack overflow, which is worse.
+    if (path.resolve(prelude) === path.resolve(file)) return;
+
+    this.recordImport(file, prelude, null);
+    this.process(prelude, "types");
+  }
+
   /** Called once per resolved `(import ...)`, from the dependency-graph pass. */
   recordImport(importer: string, imported: string, names: Set<string> | null): void {
     const byModule = this.importBindings.get(path.resolve(importer)) ?? new Map();
@@ -364,6 +394,17 @@ export class Context {
     if (stopAt === "syntax") {
       return { ast: ast as ASTNode };
     }
+
+    // THE PRELUDE -- `std/js`, imported implicitly by every module.
+    //
+    // This is what lets `JS_GLOBALS` die. That was a hardcoded 37-name allowlist INSIDE THE TYPE
+    // CHECKER, waved through untyped; `console` alone went through it 579 times. It is now an
+    // ordinary l-lang library of `:extern` declarations, which is the whole point of "hide the JS":
+    // interop belongs behind a library boundary, not inside the compiler.
+    //
+    // Injected here, before the symbols stage, so the prelude's symbols are joined before this module
+    // resolves anything.
+    this.injectPrelude(fullPath);
 
     // SYMBOLS STAGE
     this.performanceMetrics.startTimer("symbols");

@@ -2013,3 +2013,121 @@ its own `lib/` was missing. The ascent is bounded at `.git` (not `package.json` 
   `SymbolTable.join` splices every module's scopes in, and `importBinds` returns `true` when there is
   no *direct* import record rather than inventing a diagnostic from missing information. Whether a
   module boundary should be transitive is a real question, and D20 does not answer it.
+
+## Sd — ambient globals are declarable, and `JS_GLOBALS` is dead
+
+`InferTypesAstVisitor.JS_GLOBALS` was a **hardcoded 37-name allowlist inside the type checker** that
+waved raw JavaScript through untyped — `console` alone went through it **579 times**. It was never a
+standard library. It was a hole in the type system, and it is now **`lib/std/js.lisp`**: ordinary
+l-lang `:extern` declarations, imported implicitly into every module. Interop lives behind a library
+boundary instead of inside the compiler, and the set is now **extensible** — a browser target, a node
+target and `99-p5js` want different globals, and a hardcoded set could never give them one.
+
+### `:extern` existed, and its own rule forbade the only way to write it
+
+`FunctionNode.extern` parsed identically in both frontends and was honoured by **nobody** — the
+eighth *"written and never wired in"*. Worse than dormant:
+
+```ts
+LL0013 ExternFunctionCannotHaveBody
+  .addTest((node) => node.extern)
+  .addTest((node) => !!node.body)      // body is ALWAYS [] for a bodyless fn
+```
+
+`!![]` is **`true`**. Every correctly-written `(fn :extern f [x] -> Int)` was rejected for having the
+body it did not have. Its sibling LL0012 has always carried the `.length > 0` this was missing. That
+is why the corpus contained **zero uses of a feature both grammars parse**. `LL0006` was the same
+trap on the value side: an extern `let` has no initialiser *by definition*.
+
+Three more things it needed: **codegen must emit nothing** (`visitFunction` never checked `extern`,
+so it would emit `function createCanvas(w, h) {}` — an empty stub **shadowing the real global**);
+`extern` had to exist on `VariableNode` (it was already *legal* on a `let` and meant nothing);
+and — found the hard way — **an extern must never be INLINED**.
+
+That last one broke everything at once. Once `console` resolves, it looks like an ordinary imported
+top-level symbol, so the inliner renames it: `(console.log x)` → `__ll_inlined_console_1.log(x)`.
+**82 of 96 codegen cases and 7 of 9 import cases**, instantly. There is nothing to inline in a
+declaration; the thing it names belongs to the host.
+
+### 104 p5js diagnostics → 0, and what the noise was hiding
+
+`p5-bindings.lisp` declares p5's 27 ambient globals and gains the `(import "std/types")` it always
+needed — **8 of its 44 diagnostics were never about p5**; the file called `is-nil` eight times and
+had no `(import …)` line at all.
+
+The declarations are **untyped and rest-only**, deliberately. A declared arity is an *assertion*, and
+p5's real signatures are variadic nearly everywhere (`fill`, `color` and `text` each take 1–4
+arguments). Declaring `[w h]` buys an arity check and pays for it with **false LL0211s on correct
+code**. Typing that surface is its own measured pass. `map` and `color` are declared and *not*
+exported — `std/enumerable` exports its own `map`, and the importer must get **that** one. D20's
+module boundary is what makes a private p5 global possible at all.
+
+**Two guaranteed runtime crashes were sitting under the noise:**
+
+- `(random-platform-type)` — called, **defined nowhere**. A `ReferenceError` the moment a platform
+  spawns. `Platform`'s constructor takes **two** parameters and was being handed three.
+- `(platform.init)` — `Platform` has no `init`. A `TypeError`, right behind it.
+
+Neither is diagnosable, and the first says why: **`new`'s ARGUMENTS are never visited.**
+`inferNewExpression` reads `args[0]` and returns; `args.slice(1)` is never inferred, so an undefined
+function passed as a constructor argument is invisible — as are argument-type and arity errors on
+**every** constructor call. Gated `pending`, not fixed: a checker change with its own blast radius.
+
+### The cascade — the second time this shape has appeared
+
+```
+(import "./broken.lisp")     ;; has one LL0210
+(import "std/math")          ;; never gets its symbols built
+(floor 3.7)                  ;; -> LL0210 'floor' is not defined      <- A LIE
+```
+
+`Context`'s post-syntax gate was `this.results.hasErrors`, and `results` is a **single Context-wide
+collection shared by every module in the build**. Once any module errored, every module imported
+*after* it returned before its symbols stage and was never joined. That is why p5js appeared to have
+an undefined `floor`, `abs` and `map`: `p5-bindings` is imported first and errored, so `std/math` and
+`std/enumerable` were **silently never processed at all**.
+
+**A module's own errors stop that module. Somebody else's do not.** This is the *second* instance of
+this exact shape (Sc2 was the first, and that one was mine). A Context-wide collection used as a
+per-module signal will keep producing it until every such gate is per-module.
+
+Fixing it exposed a real type error hiding behind it: `std/math` declared `floor`/`ceil`/`round` as
+returning `Number` (`Int | Real`), which made every caller's `-> Int` a lie. **They map onto the
+integers — that is what they are for.**
+
+### THE RESIDUAL — three names, and a language defect
+
+`String`, `Boolean` and `Number` **could not move to the prelude**, and the reason is a real defect
+rather than an oversight: **l-lang resolves types and values from ONE namespace**, and each of these
+is *both* an l-lang type and a JS value.
+
+Declaring `Number` in the prelude was tried, and produced **11 new LL0203s** — *expected Number, got
+Int*. The mechanism is subtle and is why the first version of the guard missed it entirely:
+
+> Inside `std/math`, `<- Number` resolves **lexically** to that file's own `deftype Number Int | Real`
+> — so an *in-file* annotation test looks fine. But when **another module** checks a **call** to one of
+> math's functions, the parameter's type-ref is resolved in the **caller's** scope, the lexical walk
+> misses, and the flat cross-module fallback finds the extern — a *variable*, not a union. `Int` stops
+> being assignable to `Number`.
+
+The guard therefore has to **cross a module boundary**, or it cannot see the thing it exists for. It
+was rewritten to do so and then **falsified**: re-adding `Number` to the prelude turns it red; removing
+it turns it green.
+
+So the three are named in `TYPE_NAMED_GLOBALS`, **as a defect**. The real fix is to stop resolving
+types and values from one namespace (or to prefer a type-kind symbol when resolving a type name).
+Until then, a **three-name shim is the honest answer, and a thirty-seven-name allowlist was not**.
+
+## Open findings from this phase
+
+- **`new`'s arguments are never type-checked, or even visited.** Undefined functions, wrong argument
+  types and wrong arity are all invisible on every constructor call. Gated `pending`.
+- **Types and values share one namespace.** The direct cause of the residual above.
+- **Typing the JS globals** is now possible and not done. `TypeEnvironment.resolveIdentifier` already
+  resolves a dotted name against a `class`/`struct`/**`interface`**, so `(definterface JsMath (fn sqrt
+  [x <- Real] -> Real))` + `(let :extern Math <- JsMath)` would give `Math.sqrt` a checked signature.
+  It is a behaviour change and belongs in its own measured pass.
+- **`extern` on classes** is not sayable. Only `FunctionNode` and `VariableNode` carry the flag, so an
+  ambient *class* (`p5.Vector`) cannot be declared.
+- **Member existence is never checked** on any receiver — `platform.init` on a class without `init` is
+  silent.

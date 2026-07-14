@@ -2199,6 +2199,20 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    */
   private isImportedSymbol(resolved: any): boolean {
     if (!resolved?.value?._location || !this.rootSource) return false;
+
+    // AN EXTERN IS NEVER INLINED (Sd). There is nothing to inline: the declaration has no definition,
+    // and the thing it names belongs to the HOST.
+    //
+    // Without this, the prelude breaks every program in the language. `console` now RESOLVES -- it is
+    // an `:extern` in lib/std/js.lisp -- so it looks like an ordinary imported top-level symbol, and
+    // the inliner does what it does: renames it. `(console.log x)` compiles to
+    // `__ll_inlined_console_1.log(x)`, a ReferenceError, in all 579 places. Measured: 82 of 96 codegen
+    // cases, and 7 of 9 import cases, the moment the prelude was wired in.
+    //
+    // The correct emission for an extern is the bare name, which is exactly what visitIdentifier
+    // already falls through to.
+    if (resolved.value.extern) return false;
+
     if (resolved.value._location.source === this.rootSource) return false;
     // A root scope has no parent. Anything deeper is a local of the other module, not its export.
     return resolved.scope !== undefined && resolved.scope.parent === undefined;

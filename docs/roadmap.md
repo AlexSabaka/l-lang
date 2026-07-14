@@ -138,8 +138,11 @@ itself. Enforcing the boundary costs **one export list**.
         is now **LL0217**. A selective import binds only what it names (**LL0216**). The stdlib moved
         to **`lib/std/`**. Found on the way: PEG silently **misparsed** `(import { starts-with } … )`
         into four namespace imports, and `LL0004` was a dead rule encoding a false invariant.
-*   [ ] **Sd — ambient globals become declarable.** Kills `JS_GLOBALS` and the 104 hidden p5js
-        diagnostics. *This* is the step that actually hides the JS.
+*   [x] **Sd — ambient globals are declarable; `JS_GLOBALS` is dead.** `:extern` works (it had been
+        *unusable* — LL0013 rejected every correct one). The 37-name allowlist inside the type checker
+        is now `lib/std/js.lisp`, an implicitly-imported prelude. **p5js: 104 → 0**, uncovering two
+        guaranteed runtime crashes. A 3-name residual remains, named as a language defect: types and
+        values share one namespace.
 *   [ ] **Se — `std/core`:** `SYMBOL_MAP`'s library half leaves codegen and becomes typed l-lang.
 *   [ ] **Sf — the cstd-shaped modules**, typed, and **actually tested** (goldens, `status: "test"`).
 *   [ ] **Sg — retire** the rest; close D7.

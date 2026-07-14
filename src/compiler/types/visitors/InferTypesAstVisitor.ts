@@ -2815,25 +2815,39 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   }
 
   /**
-   * Every identifier a program can name without declaring it.
+  /**
+   * The RESIDUAL. Three names, where there were thirty-seven.
    *
-   * `RuntimeProvider.isRuntimeReference` covers l-lang's own runtime helpers. This list is the JS
-   * ambient environment -- the globals any emitted program may reach for. It is deliberately short
-   * and explicit: a long, speculative list would silently swallow real typos.
+   * `JS_GLOBALS` is gone (Sd3) -- a hardcoded 37-name allowlist that lived inside the type checker and
+   * waved raw JavaScript through untyped. It was never a standard library; it was a hole in the type
+   * system, and `console` alone went through it 579 times. It is now `lib/std/js.lisp`: ordinary
+   * l-lang `:extern` declarations, imported implicitly (Context.injectPrelude). That is the whole of
+   * "hide the JS" -- interop belongs behind a library boundary, not inside the compiler -- and it
+   * makes the set EXTENSIBLE, which a hardcoded set could never be.
+   *
+   * These three could not go with it, and the reason is a real defect in the language rather than an
+   * oversight: **l-lang resolves types and values from ONE namespace**, and each of these is BOTH an
+   * l-lang type and a JS value.
+   *
+   *     String, Boolean   PRIMITIVES. Used as values ZERO times in the corpus.
+   *     Number            a `deftype` in std/types. Used as a value twice: `(Number str)` coerces,
+   *                       and `(== (type tree) Number)` compares against the constructor.
+   *
+   * Declaring `Number` in the prelude was tried, and it produced **11 new LL0203s** -- *expected
+   * Number, got Int*. Inside std/math, `<- Number` resolves LEXICALLY to that file's own
+   * `deftype Number Int | Real`; but when another module checks a CALL to one of math's functions, the
+   * parameter's type-ref is resolved in the CALLER's scope, the lexical walk misses, and the flat
+   * cross-module fallback finds the extern -- a variable, not a union. `Int` stops being assignable.
+   *
+   * So they are named here, and named as a defect. The real fix is to stop resolving types and values
+   * from one namespace (or to prefer a type-kind symbol when resolving a type name); until then, a
+   * three-name shim is the honest answer, and a thirty-seven-name allowlist was not.
+   *
+   * NO `undefined`, and there must never be (D9). It is the second bottom value; dropping it from
+   * `NilKw` while leaving it in an ambient set would simply re-admit it, still emitting the JS
+   * `undefined`, with zero diagnostics. LL0210 refuses it by name.
    */
-  private static readonly JS_GLOBALS = new Set([
-    // Standard library
-    "console", "Math", "JSON", "Object", "Array", "String", "Number", "Boolean", "Symbol",
-    "Error", "TypeError", "RangeError", "Date", "RegExp", "Map", "Set", "WeakMap", "WeakSet",
-    "Promise", "Proxy", "Reflect", "BigInt",
-    "parseInt", "parseFloat", "isNaN", "isFinite", "NaN", "Infinity", "globalThis",
-    // NO `undefined` (D9). It is deleted as a spelling, and it is the SECOND bottom value -- so
-    // dropping it from NilKw while leaving it here would simply re-admit it as an ambient global,
-    // still emitting the JS `undefined` identifier, with zero diagnostics. Both had to go, and it is
-    // exactly the kind of half-fix this audit exists to catch. LL0210 now refuses it by name.
-    "window", "document", "navigator", "process",
-    "setTimeout", "setInterval", "clearTimeout", "clearInterval", "fetch",
-  ]);
+  private static readonly TYPE_NAMED_GLOBALS = new Set(["String", "Boolean", "Number"]);
 
   /**
    * Special forms. These are not functions and are never declared: the parser hands them through
@@ -2885,10 +2899,14 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const head = id.split(/[.:]/)[0];
     if (!head) return;
 
+    // A JS global is now an ordinary SYMBOL, declared `:extern` in `lib/std/js.lisp` and resolved
+    // through the symbol table below like every other name -- so `console` is subject to the same
+    // rules as `my-function`, which is the point. TYPE_NAMED_GLOBALS is the three-name residual that
+    // could not make the move; see its note.
     if (
       TypeChecker.isOperatorName(head) ||
       InferAndCheckPass.SPECIAL_FORMS.has(head) ||
-      InferAndCheckPass.JS_GLOBALS.has(head) ||
+      InferAndCheckPass.TYPE_NAMED_GLOBALS.has(head) ||
       RuntimeProvider.isRuntimeReference(head)
     ) {
       return;

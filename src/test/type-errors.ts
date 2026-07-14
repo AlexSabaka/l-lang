@@ -706,6 +706,42 @@ ${PRODUCER}
     pending: true,
     why: "new's args are never visited -- surfaced by Sd",
   },
+
+  // --- Sd3: the prelude. These are GUARDS. ---
+  {
+    // A JS global is now an ordinary symbol, declared `:extern` in lib/std/js.lisp and imported
+    // implicitly. If the prelude fails to load -- a bad resolve, a missed recordImport, a missing
+    // export -- this is what says so. And it would say so 579 times over in the corpus, which is at
+    // least loud.
+    name: "Sd/prelude: a JS global resolves without being imported",
+    source: '(console.log (Math.max 1 2) (JSON.stringify [1]) (parseInt "42"))',
+    silent: true,
+  },
+  {
+    // THE COLLISION GUARD -- and it is written CROSS-MODULE on purpose, because the same-file version
+    // of it PASSED while the bug was live.
+    //
+    // `Number` is both a JS value (`(Number str)` coerces) and an l-lang TYPE (`deftype Number` in
+    // std/math and std/types), and l-lang resolves types and values from ONE namespace. Declaring
+    // `Number` in the prelude was tried; it produced 11 LL0203s of exactly this shape.
+    //
+    // The mechanism is why the naive gate missed it. INSIDE std/math, `<- Number` resolves LEXICALLY
+    // to that file's own deftype -- so an in-file annotation test looks fine. But when ANOTHER module
+    // checks a CALL to one of math's functions, the parameter's type-ref is resolved in the CALLER's
+    // scope, the lexical walk misses, and the flat cross-module fallback finds the extern -- a
+    // variable, not a union. `Int` stops being assignable to `Number`.
+    //
+    // So the gate has to cross a module boundary, or it cannot see the thing it exists for.
+    name: "Sd/prelude: `Number` survives as a TYPE across a module boundary",
+    source: '(import "std/math")\n(console.log (sqr 4) (min 1 2) (pow 2 3))',
+    silent: true,
+  },
+  {
+    // ...and the value side of the same name must keep working. Both, or the split is not real.
+    name: "Sd/prelude: `Number` is still a VALUE",
+    source: '(let n (Number "42"))\n(console.log n)',
+    silent: true,
+  },
 ];
 
 function runCases(): { failed: number; pending: number } {

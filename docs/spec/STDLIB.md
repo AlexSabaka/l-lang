@@ -216,9 +216,14 @@ In dependency order. Each is a sub-phase of Phase S.
   names (**LL0216**). The stdlib moved to **`lib/std/`**, so the resolver is load-bearing rather than
   ornamental, and `test:type-errors` walks `lib/` so it did not leave the harness on the way out.
   `LL0004 ImportHasSymbols` **deleted** — dead, and it encoded a false invariant.
-- **Sd — ambient globals become declarable.** Kills the `JS_GLOBALS` allowlist and, with it, the
-  104 hidden p5js diagnostics. This is the one that actually *hides the JS*: `console` and `Math`
-  become **typed** instead of **waved through**.
+- ✅ **Sd — ambient globals are declarable, and `JS_GLOBALS` is dead.** `:extern` is real (it had been
+  unusable: LL0013 rejected every correct one for having the body it did not have). The 37-name
+  allowlist inside the type checker is now **`lib/std/js.lisp`**, an implicitly-imported prelude —
+  interop behind a library boundary, and **extensible**. p5js: **104 diagnostics → 0**, and the noise
+  turned out to be hiding two guaranteed runtime crashes. A **three-name residual**
+  (`String`/`Boolean`/`Number`) remains, named as what it is: l-lang resolves types and values from
+  one namespace, and declaring `Number` as a value silently breaks `<- Number` **across a module
+  boundary**. Declarations are **untyped** — typing them is a separate measured pass.
 - **Se — `std/core`.** `SYMBOL_MAP`'s library half leaves the code generator and becomes typed
   l-lang. D9's optionals already make `head`/`first` typable honestly (`T?`) — that was the stated
   reason D9 had to precede D7.
