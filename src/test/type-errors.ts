@@ -808,6 +808,41 @@ ${PRODUCER}
     silent: true,
   },
 
+  // --- P5b: the unifier. `T` is SOLVED from the arguments, not erased. ---
+  {
+    // `T` really is Int, and the checker knows it. If unification silently did nothing, the return
+    // would be a bare `T`, which isAssignable waves through in both directions -- so this going
+    // SILENT is the failure mode, and it looks exactly like success.
+    name: "P5b: `T` is solved from the argument",
+    source: "(fn ident<T> [x <- T] -> T (return x))\n(let s <- String (ident 42))",
+    expect: /LL0200/,
+  },
+  {
+    // Solved THROUGH a container: `T[]` against `Int[]` recurses into the element.
+    name: "P5b: `T` is solved through `T[]`",
+    source: "(fn first-of<T> [xs <- T[]] -> T (return (elem xs 0)))\n(let s <- String (first-of [1 2 3]))",
+    expect: /LL0200/,
+  },
+  {
+    // ...and it flows into the OPERATORS, not just assignment.
+    name: "P5b: a solved `T` reaches the operator tables",
+    source: '(fn ident<T> [x <- T] -> T (return x))\n(let bad (- (ident "str") 1))',
+    expect: /LL0204/,
+  },
+  {
+    // The correct call must stay SILENT. A unifier that reports on everything is not inference, it is
+    // noise -- and this is the case that would catch a substitution that produced garbage.
+    name: "P5b: a CORRECT generic call is silent",
+    source:
+      "(fn ident<T> [x <- T] -> T (return x))\n" +
+      "(fn first-of<T> [xs <- T[]] -> T (return (elem xs 0)))\n" +
+      '(let a <- Int (ident 42))\n' +
+      '(let b <- String (ident "s"))\n' +
+      "(let c <- Int (first-of [1 2 3]))\n" +
+      "(console.log a b c)",
+    silent: true,
+  },
+
   {
     // Sf, found by RUNNING the stdlib: a zero-arg call to a LOCAL holding a function value emits a
     // bare REFERENCE, not a call.

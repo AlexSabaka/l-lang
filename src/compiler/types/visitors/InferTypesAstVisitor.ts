@@ -366,7 +366,22 @@ class CollectTypesPass extends BaseAstTreeWalker {
       requiresRuntimeMetadata: methodSignature.isOperatorOverload
     };
 
-    const funcType = TypeEnvironment.function(paramTypes, returnType, isVariadicParams(node.params));
+    // The function's own `<T>` (Phase 5). A call site cannot solve for a type variable it does not
+    // know is one -- `T` and a class actually named `T` are indistinguishable in the signature.
+    const typeParameters: TypeParameter[] | undefined = node.generics?.length
+      ? node.generics.map((g) => ({
+          name: g.name,
+          constraints: [], // `:where T :of C` does not parse in either frontend; a separate item
+          variance: g.variance,
+        }))
+      : undefined;
+
+    const funcType = TypeEnvironment.function(
+      paramTypes,
+      returnType,
+      isVariadicParams(node.params),
+      typeParameters
+    );
     // Enhance function type with metadata
     const enhancedFuncType: InferredType = {
       ...funcType,
@@ -2543,7 +2558,9 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
         if (funcName && funcType && funcType.kind === "function") {
           this.checkCallArguments(funcType, funcName, callNode.arguments, argTypes, callNode);
-          inferredType = funcType.returns ?? TypeEnvironment.unknown();
+          // Phase 5: solve the function's type variables from the arguments. The core `call` node is
+          // the SECOND call site, and it gets this for the same reason the first one does.
+          inferredType = this.instantiateReturn(funcType, argTypes);
         } else {
           // A callee we cannot type -- an imported member, a JS global, a computed expression.
           // Its EXISTENCE is still worth asserting when it is a name.
@@ -2621,7 +2638,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             // `compose` and `partial`.
             this.checkCallArguments(funcType, funcName, args, argTypes, listNode);
 
-            inferredType = funcType.returns ?? TypeEnvironment.unknown();
+            // Phase 5: `funcType.returns` was handed back RAW, so a declared `-> T?` reached the
+            // caller as a literal `{kind:"generic", name:"T", optional:true}` -- a type no check knows
+            // what to do with, and the reason a generic optional never fired.
+            inferredType = this.instantiateReturn(funcType, argTypes);
           }
           // Handle struct constructors
           else if (funcType && funcType.kind === "struct") {
@@ -2990,6 +3010,112 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const entry = symbols.resolveSymbol(head, node);
     if (!entry) return; // unresolved is LL0210's business, and only where LL0210 is asked
     this.checkSymbolVisible(node, head, entry);
+  }
+
+  /**
+   * PHASE 5 -- SOLVE for the type variables, from the arguments.
+   *
+   * `unify(param, arg, subst)` reads a declared parameter type against the actual argument type and
+   * records what that implies about each free variable. `T[]` against `Int[]` recurses into the
+   * element and learns `T = Int`.
+   *
+   * `free` is the set of names that are actually this function's OWN type parameters. Without it,
+   * every `{kind:"generic"}` in a signature looks like a variable to solve -- including a class
+   * genuinely named `T`, and including a type parameter belonging to an ENCLOSING generic class, which
+   * is bound in the environment and must NOT be re-solved per call.
+   *
+   * First binding wins. `(fn pair<T> [a <- T b <- T])` called as `(pair 1 "x")` binds `T = Int` and
+   * then leaves the `String` to be REPORTED by checkCallArguments as an LL0203 -- rather than silently
+   * widening `T` to `Int | String`, which would make a wrong call typecheck. A generic call that does
+   * not agree with itself is an error, not a union.
+   */
+  private unify(
+    param: InferredType | undefined,
+    arg: InferredType | undefined,
+    free: Set<string>,
+    subst: Map<string, InferredType>
+  ): void {
+    if (!param || !arg) return;
+
+    if (TypeChecker.isBareTypeParameter(param) && free.has(param.name)) {
+      if (subst.has(param.name)) return; // first binding wins; the mismatch is LL0203's to report
+      // The `?` on the PARAMETER belongs to the signature, not to what T stands for:
+      // `(fn f<T> [x <- T?])` called with an `Int?` learns `T = Int`, not `T = Int?`.
+      subst.set(param.name, param.optional ? { ...arg, optional: false } : arg);
+      return;
+    }
+
+    // Gradual typing: an argument we could not type teaches us nothing about T. Binding `Unknown` to
+    // it would be worse than leaving it free -- it would silence every downstream check, permanently.
+    if (TypeChecker.isUnknown(arg)) return;
+
+    // Structural recursion. `T[]` vs `Int[]`, `Box<T>` vs `Box<Int>`, `Map<String,T>` vs
+    // `Map<String,Int>`, `(T) -> U` vs `(Int) -> String`.
+    if (param.generics && arg.generics) {
+      const n = Math.min(param.generics.length, arg.generics.length);
+      for (let i = 0; i < n; i++) this.unify(param.generics[i], arg.generics[i], free, subst);
+    }
+    if (param.inner) this.unify(param.inner, arg.inner ?? arg.generics?.[0], free, subst);
+    if (param.keyType) this.unify(param.keyType, arg.keyType, free, subst);
+    if (param.valueType) this.unify(param.valueType, arg.valueType, free, subst);
+    if (param.params && arg.params) {
+      const n = Math.min(param.params.length, arg.params.length);
+      for (let i = 0; i < n; i++) this.unify(param.params[i], arg.params[i], free, subst);
+    }
+    if (param.returns) this.unify(param.returns, arg.returns, free, subst);
+  }
+
+  /**
+   * PHASE 5 -- APPLY the solution. `T?` with `T = Int` becomes `Int?`.
+   *
+   * Modelled on `resolveTypeReferences`, which is the same shape of deep structural map.
+   *
+   * **`optional` is a FLAG, not a wrapper** (D9), and carrying it is the whole point of this function.
+   * Lose it and `-> T?` quietly becomes `Int` instead of `Int?`: LL0205 never fires, every gate stays
+   * green, and the feature looks finished while doing nothing. Same for `isArray`.
+   *
+   * Returns the input unchanged when there is nothing to substitute, so a non-generic call pays
+   * nothing and -- more importantly -- cannot be perturbed by this code path at all.
+   */
+  private substitute(type: InferredType, subst: Map<string, InferredType>): InferredType {
+    if (!type || subst.size === 0) return type;
+
+    if (TypeChecker.isBareTypeParameter(type) && subst.has(type.name)) {
+      const solved = subst.get(type.name)!;
+      // The `?` on the PARAMETER survives the substitution: `T?` where `T = Int` is `Int?`. If the
+      // solution is itself optional, it stays optional -- `?` does not stack, it is a flag.
+      return type.optional || solved.optional ? { ...solved, optional: true } : solved;
+    }
+
+    const result = { ...type };
+    if (type.generics) result.generics = type.generics.map((g) => this.substitute(g, subst));
+    if (type.alternatives) result.alternatives = type.alternatives.map((a) => this.substitute(a, subst));
+    if (type.inner) result.inner = this.substitute(type.inner, subst);
+    if (type.params) result.params = type.params.map((p) => this.substitute(p, subst));
+    if (type.returns) result.returns = this.substitute(type.returns, subst);
+    if (type.keyType) result.keyType = this.substitute(type.keyType, subst);
+    if (type.valueType) result.valueType = this.substitute(type.valueType, subst);
+    return result;
+  }
+
+  /**
+   * The return type of a call, with the function's type variables solved from the arguments.
+   *
+   * This is the ONE place a call's result type is computed, and it is called from BOTH call sites --
+   * the `list` branch and the core `call` node. Wiring only one is the exact shape of Sb's `new`-door
+   * half-fix: every gate green, the feature half-blind.
+   */
+  private instantiateReturn(funcType: InferredType, argTypes: InferredType[]): InferredType {
+    const returns = funcType.returns ?? TypeEnvironment.unknown();
+    const tps = funcType.typeParameters;
+    if (!tps?.length || !funcType.params?.length) return returns;
+
+    const free = new Set(tps.map((t) => t.name));
+    const subst = new Map<string, InferredType>();
+    const n = Math.min(funcType.params.length, argTypes.length);
+    for (let i = 0; i < n; i++) this.unify(funcType.params[i], argTypes[i], free, subst);
+
+    return this.substitute(returns, subst);
   }
 
   /**

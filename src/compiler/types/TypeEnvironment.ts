@@ -1,5 +1,5 @@
 import * as ast from "../frontend/ast";
-import { InferredType, SymbolTable } from "../analysis/SymbolTable";
+import { InferredType, SymbolTable, TypeParameter } from "../analysis/SymbolTable";
 
 /**
  * TypeEnvironment - Manages type inference and binds inferred types to the symbol table
@@ -279,10 +279,20 @@ export class TypeEnvironment {
   /**
    * Helper to create function types
    */
+  /**
+   * `typeParameters` is what makes a call site able to SOLVE for `T` (Phase 5).
+   *
+   * Without it, a function type records `params`, `returns` and `isVariadic` and nothing else -- so a
+   * call site sees `T` in the signature and has no way to know it is a FREE VARIABLE to be solved
+   * rather than a concrete type named "T". `funcType.returns` was handed back raw, and a declared
+   * `-> T?` reached the caller as a literal `{kind:"generic", name:"T", optional:true}`, which no
+   * check knows what to do with.
+   */
   static function(
     params: InferredType[],
     returns: InferredType,
-    isVariadic = false
+    isVariadic = false,
+    typeParameters?: TypeParameter[]
   ): InferredType {
     return {
       kind: "function",
@@ -290,6 +300,7 @@ export class TypeEnvironment {
       params,
       returns,
       ...(isVariadic ? { isVariadic } : {}),
+      ...(typeParameters?.length ? { typeParameters } : {}),
     };
   }
 
