@@ -753,6 +753,22 @@ class LLangParser extends CstParser {
       this.OPTION2(() => {
         this.SUBRULE(this.identifier);
       });
+      // `<T>` -- a generic FUNCTION (Phase 5).
+      //
+      // This slot did not exist, so `(fn my-head<T> [xs <- T[]] -> T?)` was a PARSE ERROR here while
+      // PEG lexed the whole of `my-head<T>` as a single identifier. `FunctionNode.generics` has been
+      // declared the whole time -- with a comment saying it is "NEVER populated by either frontend" --
+      // and every downstream binder already handles it. Only the grammar was missing.
+      //
+      // `genericParam`, the same rule classes use, so `:out`/`:in` come along for free.
+      this.OPTION5(() => {
+        this.CONSUME(t.LAngle);
+        this.AT_LEAST_ONE(() => {
+          this.SUBRULE(this.genericParam);
+          this.OPTION6(() => this.CONSUME2(t.Comma));
+        });
+        this.CONSUME(t.RAngle);
+      });
       this.CONSUME(t.LBracket);
       this.MANY2(() => {
         this.SUBRULE(this.parameter);

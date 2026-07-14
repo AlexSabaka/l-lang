@@ -781,6 +781,33 @@ ${PRODUCER}
     source: "(let xs [1 2 3])\n(let h (head xs))\n(console.log (+ h 1))",
   },
 
+  // --- P5a: a generic function can be WRITTEN. ---
+  {
+    // It could not be. `(fn f<T> [...])` was a PARSE ERROR in grammar_v2 -- `functionExpr` had no
+    // generics slot -- while PEG lexed the whole of `f<T>` as ONE IDENTIFIER, because `<` and `>` are
+    // identifier characters there (they have to be: `<`, `>`, `<=` and `>=` are operator NAMES). So
+    // the PEG "parsed" it into a function called `f<T>` that nobody could ever call. A frontend
+    // divergence, and a silent one.
+    //
+    // `FunctionNode.generics` had been declared the whole time, with a comment reading "NEVER
+    // populated by either frontend", while every downstream binder already handled it. The ninth
+    // "written and never wired in" -- and the reason "generic inference does not work" was never a
+    // type-system problem at the root.
+    name: "P5a: a generic function is CALLABLE by its real name",
+    source: "(fn ident<T> [x <- T] -> T (return x))\n(console.log (ident 42))",
+    silent: true,
+  },
+  {
+    // ...and the operator names that FORCED `<`/`>` into the identifier charset must still parse.
+    // A name rule that stops at an angle bracket has to let these through the other way.
+    name: "P5a: `(fn :operator < ...)` still parses (guard)",
+    source:
+      "(defstruct M (let :ctor a <- Int 0))\n" +
+      "(fn :operator < [x <- M y <- M] -> Boolean (return (< x.a y.a)))\n" +
+      "(console.log (< (M 1) (M 2)))",
+    silent: true,
+  },
+
   {
     // Sf, found by RUNNING the stdlib: a zero-arg call to a LOCAL holding a function value emits a
     // bare REFERENCE, not a call.

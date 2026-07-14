@@ -645,11 +645,16 @@ export class LLangAstBuilder extends BaseCstVisitor {
     const returns = ctx.type ? this.visit(ctx.type[0]) : null;
     const body = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
     const extern = modifiers.some((m: any) => m.modifier === "extern");
+    // `<T>` on a FUNCTION (Phase 5). Same `genericParam` nodes a class uses, so variance rides along.
+    const generics = ctx.genericParam
+      ? ctx.genericParam.map((g: any) => this.visit(g))
+      : undefined;
     return this.makeNode("function", ctx, {
       name,
       async,
       extern,
       modifiers,
+      generics,
       params,
       returns,
       body,

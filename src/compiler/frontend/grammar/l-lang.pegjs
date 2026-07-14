@@ -404,13 +404,39 @@ LetMutMode
 // Function definition
 Function
   = _ FunctionKw __ modifiers:(@Modifier _)*
-    _ name:Identifier? _ "[" _ params:FunctionParameter|.. , ","?| _ "]" _ returns:(RightArrowKw _ @Type)?
+    _ decl:FunctionDecl? _ "[" _ params:FunctionParameter|.. , ","?| _ "]" _ returns:(RightArrowKw _ @Type)?
     _ body:Expression* _
   {
     const extern = !!modifiers.find(x => x.modifier === "extern");
     const async = !!modifiers.find(x => x.modifier === "async");
-    return makeNode("function", { name, async, extern, modifiers, params, returns, body });
+    const name = decl ? decl.name : null;
+    const generics = decl && decl.generics ? decl.generics : undefined;
+    return makeNode("function", { name, async, extern, generics, modifiers, params, returns, body });
   }
+
+// A function's name, and its `<T>` if it has one (Phase 5).
+//
+// `(fn my-head<T> [...])` used to lex as a SINGLE IDENTIFIER named `my-head<T>` -- a function nobody
+// could ever call -- because `<` and `>` are identifier characters here. They have to be: `<`, `>`,
+// `<=` and `>=` are operator NAMES, and an operator is declared with `(fn :operator < [...])`.
+//
+// So the name is read with a charset that stops at an angle bracket, and an operator whose name IS an
+// angle bracket falls through to the second alternative. Ordered choice does the rest.
+//
+// The name need not be alphabetic: `examples/W99_L_sloth_design_v1.lisp` writes `(fn ?<T> [...])`, so
+// a symbolic name may carry generics too. Only `<` and `>` are special.
+FunctionDecl
+  = name:FunctionName generics:ClassGenerics? {
+      return { name: makeNode("simple-identifier", { id: name }), generics };
+    }
+  / name:Identifier {
+      return { name, generics: undefined };
+    }
+
+FnNameChar = !"<" !">" c:(NonControl / Control) { return c; }
+
+FunctionName "function name"
+  = $(FnNameChar (FnNameChar / Digit)*)
 
 FunctionParameter
   = _ spread:SpreadKw? _ name:Identifier _ modifiers:(@Modifier _)* _ type:(LeftArrowKw _ @Type)? {
