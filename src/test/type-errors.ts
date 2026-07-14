@@ -742,6 +742,44 @@ ${PRODUCER}
     source: '(let n (Number "42"))\n(console.log n)',
     silent: true,
   },
+
+  // --- Se: why SYMBOL_MAP's library half cannot leave the compiler. ---
+  {
+    // THE GATE THAT UNBLOCKS `std/core`.
+    //
+    // `get`, `head` and `elem` are the language's ONLY producers of `T?` (inferTotalAccessorType), and
+    // their type is `T[] -> T?` -- which l-lang CANNOT EXPRESS. Measured:
+    //
+    //     (let h (head xs)) (+ h 1)              -> LL0205    the builtin produces Int?
+    //     (fn f [] -> Int? ...) (+ (f) 1)        -> LL0205    a CONCRETE optional works
+    //     (fn my-head<T> [xs <- T[]] -> T? ...)  -> NOTHING   a GENERIC one does not
+    //
+    // So the gap is precisely call-site generic inference (Phase 5). Until it lands, moving head/get/
+    // elem into a library would DELETE every optional check in the language -- and silently, because
+    // inferTotalAccessorType disables itself the instant the name resolves to a symbol:
+    //
+    //     if (this.symbolTable.resolveSymbol(funcName)) return undefined;
+    //
+    // Merely DECLARING them in std/core is enough to do it. The check does not fail; it stops existing.
+    //
+    // This case is the link between the two phases. The day it goes green is the day `std/core`
+    // becomes possible, and not before.
+    name: "Se: a generic `-> T?` produces an optional at the call site",
+    source:
+      "(fn my-head<T> [xs <- T[]] -> T? (return (get xs 0)))\n" +
+      "(let h (my-head [1 2 3]))\n" +
+      "(console.log (+ h 1))",
+    expect: /LL0205/,
+    pending: true,
+    why: "generic inference -- Phase 5. BLOCKS std/core",
+  },
+  {
+    // ...and the guard: the builtin producers must keep producing. If this ever goes silent, something
+    // has resolved `head` to a symbol and turned inferTotalAccessorType off.
+    name: "Se: the builtin `head` still produces `T?` (guard)",
+    source: "(let xs [1 2 3])\n(let h (head xs))\n(console.log (+ h 1))",
+    expect: /LL0205/,
+  },
 ];
 
 function runCases(): { failed: number; pending: number } {

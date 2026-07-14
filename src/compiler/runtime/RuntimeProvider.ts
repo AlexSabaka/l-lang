@@ -316,8 +316,15 @@ function __ll_is_type(val, type) {
     "%": `const ${encodeIdentifier('%')}  = (a, b) => a % b;`,
     
     // List/Vector Ops
-    "set!": `const ${encodeIdentifier('set!')} = (obj, key, val) => { obj[key] = val; return val; };`,
-    "set?": `const ${encodeIdentifier('set?')} = (obj, key) => { return obj[key] !== undefined && obj[key] !== null; };`,
+    //
+    // `set!` and `set?` were DELETED here (Se). Zero uses in the entire repo -- corpus, lib, and the
+    // test suites' inline sources -- and D21 rejects them BY NAME: "Scheme spellings (`nil?`, `set!`)
+    // are rejected, including the ones the runtime shim itself uses". A builtin nobody calls, spelled
+    // a way the language has ruled against, is not a stdlib worklist item. It is dead code with a
+    // reservation on a name.
+    //
+    // `cons` went with them: also zero uses. `list` stays -- it has two.
+
     // TOTAL, and the counterpart to the partial `c[k]` (D9). This is the ONLY way to ask "is it
     // there?", and it is what gives `T?` a PRODUCER: without it an optional would only ever arise
     // where someone typed a `?`, and the forced unwrap would have nothing to catch.
@@ -337,7 +344,6 @@ function __ll_is_type(val, type) {
     // Total, like `get`. It was `a[i]`, which hands back `undefined` for a miss -- and `undefined` is
     // no longer a value this language has.
     "elem": `const elem = (a, i) => a?.[i] ?? null;`,
-    "cons": `const cons = (...args) => args.reduce((acc, curr) => Array.isArray(curr) ? [...acc, ...curr] : [...acc, curr], []);`,
     "list": `const list = (...args) => [...args];`,
 
     // Call wrapper
@@ -445,9 +451,31 @@ ${metadataInit}
   /**
    * A runtime FUNCTION -- the proto-stdlib half of SYMBOL_MAP.
    *
-   * `get`, `head`, `tail`, `empty`, `elem`, `cons`, `list`, `call`, `eval`, `type`, `set!`, `set?`.
-   * These are what a real stdlib (D7) must provide, at which point they leave the code generator
-   * entirely. An import of the same name legitimately shadows them, and must keep doing so.
+   * `get`, `head`, `tail`, `empty`, `elem`, `list`, `call`, `eval`, `type`. (`cons`, `set!` and `set?`
+   * were deleted in Se: zero uses anywhere, and D21 rejects the last two by name.)
+   *
+   * This was filed as D7's worklist -- "a real stdlib replaces them, at which point they leave the code
+   * generator entirely". **Se established that most of them CANNOT leave, and the reason is worth
+   * keeping here rather than in a document nobody opens:**
+   *
+   *   get / head / elem   are the language's ONLY producers of `T?` (inferTotalAccessorType). Their
+   *                       type is `T[] -> T?`, which is INEXPRESSIBLE: a declared generic `-> T?`
+   *                       produces no optional at the call site, because call-site generic inference
+   *                       does not exist (Phase 5). Worse, inferTotalAccessorType DISABLES ITSELF the
+   *                       moment the name resolves to a symbol -- so merely DECLARING them in a
+   *                       library silently deletes every optional check in the language.
+   *   tail/empty/list/call  the comptime sandbox and the REPL load this shim through getRuntimeShim()
+   *                       and have NO import pipeline. Whatever leaves SYMBOL_MAP leaves them, silently.
+   *   type                reads `__ll_type_metadata`, a JSON blob the COMPILER emits. Not writable in
+   *                       l-lang at all.
+   *   eval                is the empty string. It needs a runtime AST interpreter.
+   *
+   * The gate that unblocks this is in test:type-errors: *a generic `-> T?` return must produce an
+   * optional at the call site.* The day it goes green is the day `std/core` becomes possible.
+   *
+   * This predicate itself has ZERO callers, and always has -- it is a marker, not a mechanism. Kept,
+   * because the note is the useful part. An import of the same name legitimately shadows a runtime
+   * function, and must keep doing so.
    */
   public static isRuntimeFunction(symbol: SymbolName): boolean {
     return symbol in this.SYMBOL_MAP && !this.isOperatorSymbol(symbol);
