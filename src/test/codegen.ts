@@ -287,6 +287,31 @@ const CASES: Case[] = [
       "modifier args parsed and were discarded; getModifierArgs exists in helpers/modifiers.ts and is dead",
   },
 
+  {
+    // D17. `(x |> (.m a))` is a METHOD CALL on the piped value -- `x.m(a)` -- not a free call
+    // `m(x, a)`.
+    //
+    // It used to be the latter, and there was no way to notice: codegen's member test was
+    // `simple-identifier && id.startsWith(".")`, while the parser produces a `composite-identifier`
+    // whose `id` has no leading dot. Doubly dead, never once fired. `05_matching.lisp` only worked
+    // because it defines `(fn apply [acc e] (acc.apply e))` BY HAND -- a free function whose only job
+    // is to undo the mis-desugaring. Written without that shim, as here, the pipeline reported
+    // `LL0210: 'add' is not defined` on a method that plainly exists.
+    name: "D17: a `(.m a)` pipeline stage is a METHOD call",
+    source: `(defclass Acc
+    (mut :ctor v <- Int 0)
+    (fn add [n <- Int] -> Acc (
+        (this.v := (+ this.v n))
+        (return this)
+    )))
+(let a (new Acc 0))
+(let r (a |> (.add 5) |> (.add 3)))
+(console.log r.v)`,
+    expect: ["8"],
+    emitted: { must: [/a\.add\(5\)\.add\(3\)/] },
+    wasBroken: "desugared to the free call `add(a, 5)`, so it needed a hand-written free `add` to work at all",
+  },
+
   // --- :comptime. It FOLDS -- see the retraction in DECISIONS.md. The gap is that a fold which
   // FAILS degrades silently to run time. ---
   {

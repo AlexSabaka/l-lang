@@ -135,15 +135,21 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
    *   - it emitted `[funcNode, fn, ...args]` -- the callee twice, with the whole un-desugared stage
    *     spliced in as the head.
    *
-   * A stage is a MEMBER only when it is a bare headless identifier (`|> .length`). A LIST stage whose
-   * head is headless -- `(.apply evt)` -- is NOT treated as a member here, because codegen does not
-   * treat it as one either: its test is `simple-identifier && id.startsWith(".")`, and the parser
-   * produces a `composite-identifier` whose `id` has no leading dot, so that branch is doubly dead.
-   * `(.apply evt)` therefore compiles to a FREE call `apply(seed, evt)` -- which is why
-   * `05_matching.lisp` has to define `(fn apply [acc e] (acc.apply e))` by hand.
+   * Three stage shapes:
    *
-   * That is a bug, and it is D17's (Td). It is replicated EXACTLY here so that moving the transform
-   * changes nothing: one thing at a time, and the diff is the proof.
+   *   `(x |> .length)`     a bare headless identifier  ->  member READ:   x.length
+   *   `(x |> (.m a))`      a list with a headless head ->  METHOD CALL:   x.m(a)      [D17]
+   *   `(x |> (f a))`       anything else               ->  free call:     f(x, a)
+   *
+   * D17 is the one that changed. `(.m a)` used to compile to a FREE call `m(x, a)`: codegen's member
+   * test was `simple-identifier && id.startsWith(".")`, and the parser produces a
+   * `composite-identifier` whose `id` has no leading dot -- so the branch was doubly dead and had
+   * never once fired. `05_matching.lisp` only worked because it defines `(fn apply [acc e] (acc.apply
+   * e))` BY HAND, a free function whose entire job is to undo the mis-desugaring.
+   *
+   * Once the checker could finally see the desugared pipeline (Tc), it said so plainly: `LL0210 --
+   * 'add' is not defined`, on a method that plainly exists. The receiver is the piped value, so it is
+   * the RECEIVER and not also the first argument.
    */
   private transformPipeline(node: ast.ListNode): ast.ASTNode | undefined {
     const nodes = node.nodes;
@@ -162,19 +168,25 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
 
       let calleeNode: ast.ASTNode;
       let args: ast.ASTNode[] = [];
-      let member = false;
+      // A bare `.m` stage: a member READ, no call.       `(x |> .length)`  ->  x.length
+      let memberRead = false;
+      // A `(.m a)` stage: a METHOD CALL on the piped value.  `(x |> (.m a))`  ->  x.m(a)   [D17]
+      let methodCall = false;
 
       if (ast.isListNode(stage)) {
         const stageNodes = (stage as ast.ListNode).nodes;
         if (stageNodes.length === 0) return undefined;
         calleeNode = stageNodes[0];
         args = stageNodes.slice(1);
+        methodCall =
+          calleeNode._type === "composite-identifier" &&
+          (calleeNode as ast.CompositeIdentifierNode).headless === true;
       } else if (
         stage._type === "simple-identifier" ||
         stage._type === "composite-identifier"
       ) {
         calleeNode = stage;
-        member = (stage as ast.CompositeIdentifierNode).headless === true;
+        memberRead = (stage as ast.CompositeIdentifierNode).headless === true;
       } else {
         calleeNode = stage;
       }
@@ -185,23 +197,35 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       // `_parent` is the ORIGINAL parent object, never rebuilt -- the scope index was built on the
       // pre-desugar tree and `scopeOf` climbs `_parent` to reach it. See the class comment.
       const loc = { ...stage._location };
+      const memberOf = (object: ast.ASTNode): ast.MemberNode => ({
+        _type: "member",
+        _location: loc,
+        _parent: node._parent,
+        object,
+        property: callee,
+        computed: false,
+      } as ast.MemberNode);
 
-      current = member
-        ? ({
-            _type: "member",
-            _location: loc,
-            _parent: node._parent,
-            object: current,
-            property: callee,
-            computed: false,
-          } as ast.MemberNode)
-        : ({
-            _type: "call",
-            _location: loc,
-            _parent: node._parent,
-            callee,
-            arguments: left ? [current, ...argNodes] : [...argNodes, current],
-          } as ast.CallNode);
+      if (memberRead) {
+        current = memberOf(current);
+      } else if (methodCall) {
+        // D17. The receiver IS the piped value, so it is NOT also an argument.
+        current = {
+          _type: "call",
+          _location: loc,
+          _parent: node._parent,
+          callee: memberOf(current),
+          arguments: argNodes,
+        } as ast.CallNode;
+      } else {
+        current = {
+          _type: "call",
+          _location: loc,
+          _parent: node._parent,
+          callee,
+          arguments: left ? [current, ...argNodes] : [...argNodes, current],
+        } as ast.CallNode;
+      }
     }
 
     return current;
