@@ -128,10 +128,14 @@ blast radius of enforcing it: **9 references in 2 files**, all of them the stdli
 itself. Enforcing the boundary costs **one export list**.
 
 *   [x] **Sa — the standard.** `docs/spec/STDLIB.md`; D19–D22; RED gates for every finding.
-*   [ ] **Sb — `export` means something** (LL0215/LL0216). Blocks everything: no boundary, no public
-        surface, no library.
-*   [ ] **Sc — a real resolver** (LL0217), so `(import "std/math")` works. Today a missing import is
-        a raw `ENOENT`, not a diagnostic.
+*   [x] **Sb — `export` means something** (**LL0215**). The module boundary exists. `exportName` has
+        a reader. An **operator is exempt** (W: language, not library). Cost, as predicted: **one
+        export list**. Two doors bypassed the obvious check — `new`, and *a call head that resolves* —
+        and the proof of enforcement was a live golden test going red before the export list was
+        fixed.
+*   [ ] **Sc — the import side.** A real resolver so `(import "std/math")` works; a missing import
+        becomes a **diagnostic, not an `ENOENT`** (**LL0217**); a selective import binds only what it
+        names (**LL0216**).
 *   [ ] **Sd — ambient globals become declarable.** Kills `JS_GLOBALS` and the 104 hidden p5js
         diagnostics. *This* is the step that actually hides the JS.
 *   [ ] **Se — `std/core`:** `SYMBOL_MAP`'s library half leaves codegen and becomes typed l-lang.
@@ -199,10 +203,10 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
 *   **Parse/lex gaps.** `__bar` does not lex; boolean match patterns; `\"` is not unescaped inside a
     string; `:is` type patterns; the `..` range operator; sized array types; `fn` parameter defaults;
     the numeric tower (octal/binary/hex/fraction/complex all lex, none emit).
-*   **The module boundary does not exist.** `(export …)` is decorative — an unexported top-level
-    symbol is importable, callable, and emits clean. A **selective** import (`(import { a } from …)`)
-    is parsed and dropped, behaving identically to a whole-module one. An **unresolvable** import is
-    a raw Node `ENOENT`, not a diagnostic. All three are **D20**, gated RED, and owned by Sb/Sc.
+*   **The import side of a module is still fake.** (The *export* side is fixed — **Sb**, LL0215.) A
+    **selective** import (`(import { a } from …)`) is parsed and dropped, behaving identically to a
+    whole-module one. An **unresolvable** import is a raw Node `ENOENT`, not a diagnostic. Both are
+    **D20**, gated RED, and owned by **Sc**.
 *   **Harness.** `test:type-errors` and `test:imports` are pinned to grammar_v2, so "0 corpus
     diagnostics" is a single-frontend claim. Worse: that count covers **only `status: "test"` files**
     — `library` and `xfail` are excluded *entirely*, so the true corpus total is **115 across 6

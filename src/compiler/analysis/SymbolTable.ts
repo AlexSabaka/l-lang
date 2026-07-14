@@ -523,6 +523,53 @@ export class SymbolTable {
     return undefined;
   }
 
+  /**
+   * D20 -- is `entry` visible from `askingFile`?
+   *
+   * `(export ...)` was decorative. `SymbolEntry.exportName` had exactly one writer
+   * (BuildSymbolTableAstVisitor.visitExport) and ZERO readers, so an unexported top-level symbol was
+   * importable, callable, and emitted clean. This is the reader.
+   *
+   * It is a STATIC on the table, and there is exactly one of it, on purpose. The rule "which symbols
+   * cross a module boundary" is the kind of thing this compiler has a habit of implementing three
+   * times in three passes and then disagreeing with itself (see: the call-vs-block rule). Both the
+   * type checker's doors ask THIS.
+   *
+   * The obvious home -- filtering the cross-module fall-through inside `resolveSymbol` -- does not
+   * work, and would have been a fix that only LOOKED airtight. That fall-through can judge visibility
+   * only if it knows who is asking, i.e. only if the caller passed `from`; measured, almost nobody
+   * does. Type references, `extends`, `new` and most of codegen call `resolveSymbol(name)` bare. So
+   * the test is applied at named doors that know the asking file by other means -- for the checker,
+   * `node._location.source`, which is free at every one of them, and which is per-NODE rather than
+   * per-pass, so it stays correct no matter which module is being processed.
+   *
+   * Every clause is a way of NOT flagging. The check fires only on a positive identification -- it
+   * can never invent a diagnostic out of missing information, which is why it is safe to hang on a
+   * blanket `visitTypeName` that also sees primitives and generic parameters: they resolve to no
+   * symbol, so they are never judged.
+   */
+  static isVisibleFrom(entry: SymbolEntry, askingFile: string | undefined): boolean {
+    if (!askingFile) return true; // cannot tell who is asking -> do not invent an answer
+
+    const declaredIn = (entry.value as any)?._location?.source;
+    if (!declaredIn) return true; // synthesized, or no provenance -> not judgeable
+    if (declaredIn === askingFile) return true; // your own privates are your own
+
+    // Not module top-level: a local, a parameter, a class member. Never crosses a boundary as a
+    // free name, and `:private` on a member is a DIFFERENT rule (D11), enforced elsewhere.
+    if (entry.scope?.parent !== undefined) return true;
+
+    // W, applied: an operator is LANGUAGE, not library. It "cannot be shadowed, imported or
+    // redefined -- only OVERLOADED", and a thing with no name has no export. This clause is
+    // load-bearing: `inlineImportedOperators()` exists precisely because an operator is found by
+    // DISPATCH and never by name, and the lib in src/test/imports.ts:395 exports `Money` and NOT its
+    // `+`. Drop this line and that operator stops being inlined, never reaches
+    // `__ll_op_registry.register`, and W's bug returns whole.
+    if (entry.isOperator) return true;
+
+    return entry.exportName !== undefined;
+  }
+
   join(other: SymbolTable): SymbolTable {
     this.scopes = [...this.scopes, ...other.scopes];
     // Invalidate cache after joining symbol tables

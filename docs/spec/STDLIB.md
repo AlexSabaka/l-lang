@@ -203,12 +203,18 @@ such: they are the higher-order layer, written in l-lang, on top of everything e
 
 In dependency order. Each is a sub-phase of Phase S.
 
-- **Sa — the standard.** *(this document; docs + RED gates; the compiler is not touched)*
-- **Sb — `export` means something.** Read `exportName`. Cost, measured: **one export list**
-  (`std/math.lisp`). Blocks everything else — without a boundary there is no public surface, and
-  therefore no library.
-- **Sc — the resolver.** A real resolution layer at the single choke point, with a search path, so
-  `(import "std/math")` works. Plus the missing-file diagnostic.
+- ✅ **Sa — the standard.** *(this document; docs + RED gates; the compiler is not touched)*
+- ✅ **Sb — `export` means something.** **LL0215**. `exportName` has a reader. Cost, as predicted:
+  **one export list** (`std/math.lisp`). A private symbol stays *resolvable* and is refused **by
+  name** — telling someone a function they are looking at "is not defined" is a worse answer than the
+  truth. **An operator is exempt** (W: it is language, not library; it has no name to export).
+  Codegen was deliberately *not* given the check: its `isImportedSymbol` asks a **reachability**
+  question, and a module's own private helpers must still inline transitively.
+- **Sc — the import side.** `(import "std/math")` resolved by name (a real resolution layer at the
+  single choke point, with a search path); an unresolvable import is a **diagnostic, not an ENOENT**
+  (**LL0217**); and a **selective** import binds only what it names (**LL0216** — moved here from Sb:
+  `exportName` is the *export* side, `ImportDefinition.symbols` is the *import* side, and they share
+  no code).
 - **Sd — ambient globals become declarable.** Kills the `JS_GLOBALS` allowlist and, with it, the
   104 hidden p5js diagnostics. This is the one that actually *hides the JS*: `console` and `Math`
   become **typed** instead of **waved through**.

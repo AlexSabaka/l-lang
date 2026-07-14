@@ -15,7 +15,8 @@ import {
 import { TypeChecker } from "../TypeChecker";
 import { createRule, RuleSeverity } from "../../rules/RuleBuilder";
 import { RuntimeProvider } from "../../runtime";
-import { SymbolTable } from "../../analysis";
+import { SymbolTable, SymbolEntry } from "../../analysis";
+import * as path from "node:path";
 
 /**
  * Convert kebab-case or lowercase node type to camelCase method name
@@ -1695,7 +1696,9 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const varName = (node.name as ast.IdentifierNode).id;
     this.context.log(LogLevel.Info, `[InferAndCheckPass.visitVariable] Processing variable: ${varName}`);
 
-    
+    // D20: `(let x <- Priv nil)` names Priv just as surely as `(new Priv)` does.
+    this.checkAnnotationVisible(node.type);
+
     // If value exists, infer its type
     if (node.value) {
       const valueType = this.inferExpressionType(node.value);
@@ -1789,9 +1792,44 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     }
   }
 
+  /**
+   * D20, the ANNOTATION door.
+   *
+   * A `visitTypeName` override would have been the obvious shape -- one method, every annotation --
+   * and it is dead code in this pass. `InferAndCheckPass.visit` (and `CollectTypesPass.visit`)
+   * deliberately OVERRIDE BaseAstTreeWalker to disable the automatic child walk: "we manually
+   * control which children to visit in each visitXxx method". Nothing visits a type node, so
+   * `visitTypeName` is never dispatched. It looked right, ran never, and reported nothing -- the
+   * exact failure mode this phase keeps finding.
+   *
+   * So the annotation door is explicit, and this is the one helper the annotation-owning visitors
+   * call. It walks the whole type subtree, because `Priv`, `Priv[]`, `Box<Priv>` and `Priv | Int`
+   * all mention Priv (same reasoning as `collectTypeNames`, which P7 needed for variance).
+   *
+   * Primitives (`Int`) and generic parameters (`T`) pass through it harmlessly: they resolve to no
+   * symbol, and `checkNameVisible` fires only on a POSITIVE identification.
+   */
+  private checkAnnotationVisible(typeNode: ast.ASTNode | undefined): void {
+    if (!typeNode) return;
+    const walk = (n: any): void => {
+      if (!n || typeof n !== "object") return;
+      if (n._type === "type-name" && typeof n.name === "string") {
+        this.checkNameVisible(n, n.name);
+        return;
+      }
+      for (const key of Object.keys(n)) {
+        if (key === "_parent" || key === "_location") continue;
+        const value = n[key];
+        if (Array.isArray(value)) value.forEach(walk);
+        else if (value && typeof value === "object") walk(value);
+      }
+    };
+    walk(typeNode);
+  }
+
   visitFunction(node: ast.FunctionNode) {
     this.typeEnv.enterScope(node);
-    
+
     // Bind generic type parameters to the scope
     if (node.generics && node.generics.length > 0) {
       for (const generic of node.generics) {
@@ -1806,12 +1844,16 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       }
     }
     
+    // D20: the annotations a function writes down -- its parameters and its return type.
+    node.params.forEach(param => this.checkAnnotationVisible(param.type));
+    this.checkAnnotationVisible(node.returns);
+
     // Bind parameter types in function scope
     node.params.forEach(param => {
       // Destructuring parameters bind N names; not typed yet (D5/P8).
       if (ast.isBindingPattern(param.name)) return;
       const paramName = (param.name as ast.IdentifierNode).id;
-      const paramType = param.type 
+      const paramType = param.type
         ? this.convertAstTypeToInferred(param.type)
         : TypeEnvironment.unknown();
       
@@ -1918,6 +1960,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   visitClass(node: ast.ClassNode) {
     const className = typeof node.name === 'string' ? node.name : ((node.name as any).id || (node.name as any).name);
     this.checkOperatorMethodArity(className, node.body);
+
+    // D20: you cannot extend, or claim to implement, something another module keeps to itself.
+    node.extends?.forEach(e => this.checkAnnotationVisible(e as unknown as ast.ASTNode));
+    node.implements?.forEach(i => this.checkAnnotationVisible(i as unknown as ast.ASTNode));
+
     this.typeEnv.enterScope(node);
     this.classStack.push(className);
 
@@ -2531,6 +2578,15 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           const funcName = (firstNode as ast.IdentifierNode).id;
           const funcType = this.typeEnv.resolveIdentifier(funcName, firstNode);
 
+          // D20, and it has to be asked HERE -- before the dispatch below, not inside it.
+          //
+          // `checkIdentifierResolves` is only reached on the ELSE branch, i.e. when the head did NOT
+          // resolve. A call to an unexported function resolves perfectly well: it takes the
+          // `funcType.kind === "function"` branch, gets its arity checked, and is never asked whether
+          // it was allowed to be seen at all. Visibility is a question about a name that RESOLVED --
+          // which is exactly the question nothing in this compiler was asking (D20).
+          this.checkNameVisible(firstNode, funcName);
+
           // The TOTAL container accessors are the ONLY things in the language that PRODUCE a `T?`.
           const totalAccessor = this.inferTotalAccessorType(funcName, listNode.nodes.slice(1));
           if (totalAccessor) {
@@ -2709,13 +2765,24 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     }
 
     const name = (target as ast.IdentifierNode).id;
+
+    // D20, and THE door that makes the difference between enforcing the boundary and appearing to.
+    //
+    // `new` never reaches checkIdentifierResolves -- it lands here, and a miss here just returns
+    // Unknown. So an Sb wired only into the obvious door passes every gate while a private class
+    // still leaks, and the corpus is the proof: the ONLY leaked reference in
+    // `20-stdlib/complex_math_test/main.lisp` -- a LIVE golden test -- is `Complex`, and it appears
+    // solely as `(new Complex 1.0 2.0)`.
+    this.checkNameVisible(target, name);
+
     const resolved = this.typeEnv.resolveIdentifier(name);
 
     if (resolved && (resolved.kind === "class" || resolved.kind === "struct")) {
       return { kind: "type-ref", name, refName: name, resolved: true };
     }
 
-    // An unknown class is not an operator error; it is an unresolved identifier (P4c).
+    // An unknown class is not an operator error; it is an unresolved identifier (P4c). Still a hole:
+    // Sb adds the PRIVATE case, not the MISSING one. Different bug, different code.
     return TypeEnvironment.unknown();
   }
 
@@ -2835,7 +2902,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // resolves against. Asking the module-local table alone flags every imported symbol -- `log`,
     // `print`, `double`, `dot-product` -- as undefined.
     const symbols = this.context.symbolTable ?? this.symbolTable;
-    if (symbols.resolveSymbol(head, node)) {
+    const entry = symbols.resolveSymbol(head, node);
+    if (entry) {
+      // It resolves. That used to be the end of the question -- and it is why `(export ...)` meant
+      // nothing: a name from another module resolved whether or not that module offered it (D20).
+      this.checkSymbolVisible(node, head, entry);
       return;
     }
 
@@ -2844,6 +2915,42 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       "LL0210",
       `'${head}' is not defined.`
     );
+  }
+
+  /**
+   * LL0215 (D20) -- the symbol resolves, but the module that owns it does not export it.
+   *
+   * "Resolves" and "is visible" are different questions, and until Sb the compiler only asked the
+   * first. The distinction is worth the extra code: telling someone `'secret-fn' is not defined` when
+   * it plainly IS defined, in a file they are looking at, is a worse answer than the truth. So a
+   * private symbol stays RESOLVABLE and is refused by name, rather than being hidden and reported as
+   * a typo.
+   *
+   * `SymbolTable.isVisibleFrom` is the single implementation of the rule. This is its only reporter.
+   */
+  private checkSymbolVisible(node: ast.ASTNode, name: string, entry: SymbolEntry): void {
+    const askingFile = node._location?.source;
+    if (SymbolTable.isVisibleFrom(entry, askingFile)) return;
+
+    const declaredIn = (entry.value as any)?._location?.source;
+    const where = declaredIn ? path.basename(declaredIn) : "another module";
+    this.reportTypeError(
+      node,
+      "LL0215",
+      `'${name}' is defined in '${where}' but is not exported. Add it to that module's (export ...) list to make it public.`
+    );
+  }
+
+  /**
+   * The same question, for a door that has only a NAME and a node -- `new`, and type annotations.
+   */
+  private checkNameVisible(node: ast.ASTNode, name: string): void {
+    const head = name.split(/[.:]/)[0];
+    if (!head) return;
+    const symbols = this.context.symbolTable ?? this.symbolTable;
+    const entry = symbols.resolveSymbol(head, node);
+    if (!entry) return; // unresolved is LL0210's business, and only where LL0210 is asked
+    this.checkSymbolVisible(node, head, entry);
   }
 
   /**

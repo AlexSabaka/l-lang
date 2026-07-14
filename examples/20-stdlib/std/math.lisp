@@ -1,7 +1,16 @@
 (
   (import "types.lisp")
 
-  (export sqr sqrt sin cos tan log exp E PI TAU Number Vector3)
+  ;; D20: this list is the module's PUBLIC SURFACE, and it is now enforced (LL0215).
+  ;;
+  ;; It used to omit `abs floor ceil round pow min max inc dec` -- every one of them defined right
+  ;; below and reachable from anywhere anyway, because `(export ...)` was decorative. It also omitted
+  ;; `Complex`, which `complex_math_test/main.lisp` constructs. Nine leaked names; the whole corpus
+  ;; blast radius of D20 was this one list.
+  (export sqr sqrt sin cos tan log exp
+          abs floor ceil round pow min max inc dec
+          E PI TAU
+          Number Complex Vector3)
 
   (let E 2.718281828459045)
   (let PI 3.141592653589793)

@@ -1809,3 +1809,83 @@ nothing.**
 - **`functional.lisp` exports `apply`** — colliding with D17's `.apply` method call, which is the
   exact collision `05_matching.lisp` hand-rolled a workaround for. A stdlib name can shadow a method
   dispatch, and nothing warns.
+
+## Sb — `export` means something (LL0215)
+
+`SymbolEntry.exportName` had one writer and **zero readers**. It has a reader now, and the module
+boundary exists: **LL0215**, *"'X' is defined in 'Y' but is not exported."*
+
+**A private symbol stays RESOLVABLE and is refused by name.** Hiding it instead — filtering it out of
+the symbol table — would have reported `'secret-fn' is not defined` about a function that plainly IS
+defined, in a file the programmer is looking at. "Resolves" and "is visible" are different questions,
+and the fix is to *ask the second one*, not to corrupt the answer to the first.
+
+### `resolveSymbol` could not be the choke point
+
+The obvious design — filter the cross-module fall-through inside `SymbolTable.resolveSymbol` — is a
+fix that only *looks* airtight. That fall-through can judge visibility only if it knows who is
+asking, i.e. only if the caller passed `from`. **Measured: almost nobody does.** Type references,
+`extends`, `new`, and most of codegen call `resolveSymbol(name)` bare. It would have enforced D20 at
+exactly one door and been silently permissive at the rest.
+
+So the rule lives in **one** static predicate (`SymbolTable.isVisibleFrom`) applied at named doors,
+each of which knows the asking file by other means — for the checker, `node._location.source`, which
+is free everywhere and is **per-node rather than per-pass**, so it stays right no matter which module
+is being processed.
+
+The comment already sitting on that fall-through stated the bug out loud: it is *"where symbols from
+OTHER modules live, and they are **legitimately visible** here."*
+
+### THE HALF-FIX: `new` is a door, and it is the only one the corpus used
+
+`checkIdentifierResolves` is the obvious place, and **it is not enough**. Two doors bypass it, and
+both were found by writing the gate before the fix:
+
+1. **`new`** routes to `inferNewExpression`, which returns Unknown on a miss. The *only* leaked
+   reference in `20-stdlib/complex_math_test/main.lisp` — **a live golden test**, not an xfail — is
+   `Complex`, and it appears solely as `(new Complex 1.0 2.0)`.
+2. **A CALL HEAD that resolves.** `checkIdentifierResolves` is reached only on the `else` branch —
+   when the head did *not* resolve. A call to an unexported function resolves perfectly well, takes
+   the `funcType.kind === "function"` branch, gets its arity checked, and is **never asked whether it
+   was allowed to be seen**. Visibility is a question about a name that RESOLVED, which is precisely
+   the question nothing was asking.
+
+Wire only the obvious door and every gate in `type-errors.ts` goes green while `Complex` still leaks.
+**The proof of enforcement is `complex_math_test` going red** — and it did: `[84/97] main.lisp 💥
+ERROR`, two LL0215s, before the export list was fixed. It had been green *because the leak was live*.
+
+### `visitTypeName` is dead code in this pass — and it looked right
+
+The annotation door wanted a `visitTypeName` override: one method, every annotation. It is **never
+dispatched**. `InferAndCheckPass.visit` (and `CollectTypesPass.visit`) deliberately override
+`BaseAstTreeWalker` to *disable* the automatic child walk — *"we manually control which children to
+visit in each visitXxx method"* — and nothing visits a type node. Written, never called, reports
+nothing. The annotation door is therefore explicit: one helper (`checkAnnotationVisible`) called from
+`visitFunction` (params + returns), `visitVariable`, and `visitClass` (`:extends` / `:implements`).
+
+### AN OPERATOR IS EXEMPT — W, applied
+
+`isVisibleFrom` returns `true` for an operator, and that line is load-bearing.
+`inlineImportedOperators()` exists *because* an operator is found by **dispatch** and never by name,
+and it routes through `isImportedSymbol`. The lib in `src/test/imports.ts:395` exports `Money` and
+**not** its `+`. Add a blanket export check and that operator stops being inlined, never reaches
+`__ll_op_registry.register`, and **W's bug returns whole**. This is not a special case: *an operator
+is not a name — it cannot be shadowed, imported or redefined, only overloaded*. A thing with no name
+has no export. `test:imports` staying 9/9 is the gate.
+
+### Codegen was NOT given the check — deliberately
+
+`isImportedSymbol` compares against `this.rootSource`, so "imported" there means *"not from the root
+file"*. That is how the inliner drags in a module's **own private helpers** transitively —
+`std/types.lisp`'s `get-type` is unexported and called by the exported `type-name`. A visibility check
+there would refuse to inline `get-type` and emit a `ReferenceError`.
+
+**The inliner asks a REACHABILITY question, not a VISIBILITY one**, and conflating them is a
+regression. Visibility is decided upstream: LL0215 is a `RuleSeverity.Error`, and `Context` returns
+before codegen when `results.hasErrors`, so codegen never sees a program that violates D20.
+
+### The cost, as predicted
+
+**One export list.** `std/math.lisp` omitted `abs floor ceil round pow min max inc dec` (all defined
+directly below it) and `Complex`. Nine leaked names; the entire corpus blast radius of the module
+boundary. 46 legitimate cross-module references were untouched, and no golden moved.
