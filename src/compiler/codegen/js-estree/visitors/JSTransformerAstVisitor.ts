@@ -2811,6 +2811,34 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    *
    * The total form is `(get c k)`, which answers nil.
    */
+  /**
+   * The CORE nodes. See `ast.CallNode` / `ast.MemberNode`.
+   *
+   * Nothing produces these yet -- there is no surface syntax and no parser rule. They exist so a
+   * DESUGARED pipeline can say what the sugar meant: "call this EXPRESSION" and "take a member of a
+   * COMPUTED value", neither of which `list` or `indexer` can express (a list is a call only when its
+   * head is a name; an indexer's base must be a name).
+   *
+   * They are trivial to emit precisely BECAUSE they are already the shape JavaScript wants. That is
+   * the point of a core node: the transform decides, and the backend just writes it down.
+   */
+  visitCall(node: ast.CallNode): ESTree.Expression {
+    return ESTreeBuilder.callExpression(
+      node,
+      this.visit(node.callee) as ESTree.Expression,
+      node.arguments.map((a) => this.visit(a) as ESTree.Expression)
+    );
+  }
+
+  visitMember(node: ast.MemberNode): ESTree.Expression {
+    return ESTreeBuilder.memberExpression(
+      node,
+      this.visit(node.object) as ESTree.Expression,
+      this.visit(node.property) as ESTree.Expression,
+      node.computed
+    );
+  }
+
   visitIndexer(node: ast.IndexerNode): ESTree.Expression {
     let expr = this.visit(node.id) as ESTree.Expression;
 

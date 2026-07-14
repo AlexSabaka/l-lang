@@ -97,6 +97,8 @@ export type NodeType =
   | "simple-assignment"
   | "compound-assignment"
   | "indexer"
+  | "call"
+  | "member"
   | "try-catch"
   | "when"
   | "if"
@@ -470,6 +472,38 @@ export interface CompoundAssignmentNode extends ASTNode<"compound-assignment"> {
   assignable: AssignableNode;
   value: ASTNode;
   operator: string;
+}
+
+/**
+ * CORE NODES — `call` and `member`.
+ *
+ * These have no surface syntax and no parser rule. Nothing in either frontend produces them; they
+ * exist so that a DESUGARED form can say what the sugar meant, and they are the reason a pipeline can
+ * become one tree that both the type checker and codegen read.
+ *
+ * The existing nodes cannot express it:
+ *
+ *   - a `list` is a call ONLY when its head is an identifier or a dotted-member indexer, so
+ *     `((fn [x] (* x 2)) 21)` -- calling a function EXPRESSION -- does not compile at all (LL0101).
+ *   - an `indexer`'s base is an `IdentifierNode`, so the object of a member access must be a NAME.
+ *     `(x |> .length)` needs the member of a COMPUTED value.
+ *
+ * A pipeline stage is precisely "call this expression with the piped value" and "take this member of
+ * a computed value". Without these two nodes, the desugared form is inexpressible and the transform
+ * has to live in codegen -- which is exactly how the type checker ended up never seeing it.
+ */
+export interface CallNode extends ASTNode<"call"> {
+  /** Any expression. Not restricted to a name, which is the whole point. */
+  callee: ASTNode;
+  arguments: ASTNode[];
+}
+
+export interface MemberNode extends ASTNode<"member"> {
+  /** Any expression. */
+  object: ASTNode;
+  property: ASTNode;
+  /** `obj[expr]` vs `obj.name`. The two emit identically in JavaScript; the flag records intent. */
+  computed: boolean;
 }
 
 export interface IndexerNode extends ASTNode<"indexer"> {

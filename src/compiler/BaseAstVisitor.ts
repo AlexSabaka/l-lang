@@ -81,6 +81,8 @@ export class BaseAstVisitor {
         "simple-assignment": this.visitSimpleAssignment.bind(this),
         "compound-assignment": this.visitCompoundAssignment.bind(this),
         "indexer": this.visitIndexer.bind(this),
+        "call": this.visitCall.bind(this),
+        "member": this.visitMember.bind(this),
         "try-catch": this.visitTryCatch.bind(this),
         "when": this.visitWhen.bind(this),
         "if": this.visitIf.bind(this),
@@ -341,6 +343,22 @@ export class BaseAstVisitor {
 
   visitCompoundAssignment(node: ast.CompoundAssignmentNode): any {
     return this.onUnhandled(node, "visitCompoundAssignment");
+  }
+
+  /**
+   * The CORE nodes. See `ast.CallNode` / `ast.MemberNode`.
+   *
+   * They are in the exhaustive `Record<ast.NodeType, ...>` map above, which means TypeScript forces
+   * every backend to answer for them -- a backend that cannot emit one is a COMPILE error here, not a
+   * silent pass-through that surfaces later as a crash inside astring. Codegen's `onUnhandled` raises
+   * a located LL0100 for the same reason.
+   */
+  visitCall(node: ast.CallNode): any {
+    return this.onUnhandled(node, "visitCall");
+  }
+
+  visitMember(node: ast.MemberNode): any {
+    return this.onUnhandled(node, "visitMember");
   }
 
   visitIndexer(node: ast.IndexerNode): any {
