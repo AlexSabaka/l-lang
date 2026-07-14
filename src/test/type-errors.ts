@@ -74,11 +74,26 @@ function diagnose(file: string): Diagnostic[] {
 
   for (const m of context.results.all) {
     if (String(m.code).startsWith("LL02")) {
-      found.push({ channel: "reported", code: m.code, text: String(m.message).split("\n").pop()!.trim() });
+      found.push({ channel: "reported", code: m.code, text: flatten(m.message) });
     }
   }
 
   return found;
+}
+
+/**
+ * The WHOLE message, flattened -- not `.split("\n").pop()`, which kept only the LAST line and was
+ * usually the empty one, so every diagnostic printed as a blank string.
+ *
+ * The identical bug was found and fixed in the codegen harness in D9e. It matters more here: this is
+ * the instrument P6 is judged on, and a measurement you cannot read is not a measurement.
+ */
+function flatten(message: unknown): string {
+  return String(message)
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join(" ");
 }
 
 function walk(dir: string): string[] {
@@ -256,6 +271,83 @@ ${PRODUCER}
 (let bd <- Box<Dog> (Box (Dog)))
 (take bd)`,
     expect: /LL0203/,
+  },
+
+  // --- P6: the checker can see a LOCAL and a PARAMETER. ---
+  //
+  // Every one of these is silent today, and the reason is always the same: an inferred type for a
+  // non-top-level name is written through a FLAT lookup (`bindType` -> `resolveSymbol(name)`), which
+  // cannot see a child scope. The type is dropped -- and where a top-level homonym exists, it is
+  // written onto THAT symbol instead.
+  {
+    name: "P6: a nested let's annotation is real",
+    source: '(fn f [] -> Int (let x <- Int "str") (return 1))',
+    expect: /LL0200/,
+  },
+  {
+    name: "P6: a class field's annotation is real",
+    source: "(defclass C (let :private v <- String nil))",
+    expect: /LL0200/,
+  },
+  {
+    name: "P6: a parameter's type is real",
+    source: "(fn f [s <- String] -> Int (return (- s 1)))",
+    expect: /LL0204/,
+  },
+  {
+    name: "P6: an argument typed from a local",
+    source: '(fn g [n <- Int] -> Int (return n))\n(fn f [] -> Int (let s "x") (return (g s)))',
+    expect: /LL0203/,
+  },
+  {
+    name: "P6: an optional PARAMETER must be unwrapped",
+    source: "(fn f [t <- String?] -> Int (return (t.length)))",
+    expect: /LL0205/,
+  },
+  {
+    name: "P6: assignment to an annotated local",
+    source: '(fn f [] -> Void (mut x <- Int 1) (x := "str"))',
+    expect: /LL0202/,
+  },
+  {
+    // The aliasing bug, from the other side: the parameter `g` currently OVERWRITES the top-level
+    // function `g`'s inferred type with `String`, so `(g 1 2)` no longer sees a function at all and
+    // the arity check silently disappears.
+    name: "P6: arity survives a same-named parameter",
+    source: "(fn g [a <- Int] -> Int (return a))\n(fn shadow [g <- String] -> Int (return 1))\n(g 1 2)",
+    expect: /LL0211/,
+  },
+
+  // ...and the false-positive guards. These matter MORE: a checker that gets loud is only half the
+  // proof. The two shadowing cases are expected to be RED TODAY -- as false positives -- which is the
+  // cleanest possible demonstration that the flat table aliases names across scopes.
+  {
+    name: "P6: a local SHADOWS a top-level of another type",
+    source: '(let x <- String "a")\n(fn f [] -> Int (let x <- Int 5) (return x))',
+    silent: true,
+  },
+  {
+    name: "P6: a parameter SHADOWS a top-level name",
+    source: '(let n <- String "a")\n(fn f [n <- Int] -> Int (return (+ n 1)))',
+    silent: true,
+  },
+  {
+    name: "P6: a nil-guard on a PARAMETER is believed (== form)",
+    source: "(fn f [t <- String?] -> Int (if (== t nil) (return 0)) (return (t.length)))",
+    silent: true,
+  },
+  {
+    name: "P6: a nil-guard on a PARAMETER is believed (!= form)",
+    source: "(fn f [t <- String?] -> Int (if (!= t nil) (return (t.length))) (return 0))",
+    silent: true,
+  },
+  {
+    // The ruling: an unannotated `nil` initializer is `T?` with an unknown payload -- nilable, so
+    // D9's forced unwrap still applies, but assignable FROM anything. Inferring `Nil` (today) makes
+    // every later assignment an LL0202 false positive.
+    name: "P6: an unannotated (mut x nil) accepts a later value",
+    source: "(fn f [] -> Void (mut r nil) (r := 5))",
+    silent: true,
   },
 
   // --- P7d: declaration-site variance (LL0214). ---
