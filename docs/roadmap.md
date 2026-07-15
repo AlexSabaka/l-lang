@@ -220,10 +220,13 @@ protocol**, so lowering is the native form, not a reimplemented state machine.
 
 *   [x] **Ita — the iteration protocol.** `Iterable<T>` / `Iterator<T>` in `lib/std/iter.lisp`; `next`
         returns `T?` (nil = done, folding D9). **D29**, **D30**. Interfaces only, no behaviour change.
-*   [ ] **Itb — `for :each` types its element.** The checker binds the loop variable to `T` via
-        `Iterable<T>` (user types) or blanket conformance (native `T[]`/`String`/`Map`). Closes the
-        element-typing inference gap (the `__ll_member` thermometer); a known non-iterable is diagnosed.
-        JS codegen unchanged (`for...of` already is the protocol).
+*   [x] **Itb — `for :each` types its element.** `visitForEach` binds the loop variable to `T` via a
+        user type's `:implements Iterable<T>` conformance or a native `T[]`'s blanket conformance
+        (String/Map bind Unknown for now -- `for...of` over a Map yields `[K,V]` pairs and l-lang has no
+        settled tuple type; naming it wrongly is worse than Unknown). A known non-iterable scalar in
+        `:from` is **LL0221**. Codegen unchanged (`for...of`). The mechanism is gated (an array-of-structs
+        loop-var field now resolves instead of hitting `__ll_member`); the corpus thermometer holds at 23
+        because its own `for :each` sites are array-of-MAPS, which need record types to resolve `user.name`.
 *   [ ] **Generators.** `:gen` + `yield` → `function*`; user-type `Iterable` conformance wired into the
         JS `for...of` lowering (`iterator()` → `[Symbol.iterator]`, with the `T? ↔ {value, done}`
         bridge). The first non-native `Iterable`.

@@ -1051,6 +1051,56 @@ ${PRODUCER}
       "The guard. Making the checker reach dropped items is only a fix if it does not start inventing " +
       "diagnostics on code that was always fine.",
   },
+  // -----------------------------------------------------------------------------------------------
+  // Itb -- `for :each` types its element against Iterable<T> (D30). Was: the loop var was Unknown.
+  // -----------------------------------------------------------------------------------------------
+  {
+    name: "Itb: the :each loop var is typed as the array element",
+    source: `(let xs [1 2 3])
+(for :each x :from xs :then (
+  (let bad <- String x)
+))`,
+    expect: /LL0200/,
+    why:
+      "the loop variable had NO type -- `(for :each x :from [1 2 3])` left `x` Unknown, so nothing " +
+      "downstream could be checked against it. It is `Int` (the element type of `Int[]`), and assigning " +
+      "it to a `String` must be caught.",
+  },
+  {
+    name: "Itb: a :each loop var typed Int rejects a string operand",
+    source: `(for :each n :from [10 20 30] :then (
+  (let bad <- Int (+ n "s"))
+))`,
+    expect: /LL0200|LL0204/,
+    why: "`n : Int`, so `(+ n \"s\")` is a type error -- the element type must reach the operator check.",
+  },
+  {
+    name: "Itb: a KNOWN non-iterable collection is diagnosed",
+    source: `(for :each x :from 5 :then (console.log x))`,
+    expect: /LL0221/,
+    why:
+      "5 is an Int -- not iterable. A scalar in `:from` is a mistake, and the checker now says so " +
+      "(conservatively: only for a KNOWN non-iterable scalar, never for Unknown).",
+  },
+  {
+    name: "Itb: an Unknown collection stays SILENT (gradual)",
+    source: `(fn mystery [] (return 42))
+(for :each x :from (mystery) :then (console.log x))`,
+    silent: true,
+    why:
+      "GUARD. `(mystery)` returns an un-annotated 42, so its type is Unknown -- and the rule that " +
+      "governs this whole checker is: never report against Unknown. `x` binds Unknown, no diagnostic.",
+  },
+  {
+    name: "Itb: the loop BODY is still checked (reachability)",
+    source: `(for :each x :from [1 2 3] :then (
+  (console.log (totally-undefined-fn x))
+))`,
+    expect: /LL0210/,
+    why:
+      "GUARD, and the Xf lesson: adding `visitForEach` OVERRIDES the generic child-walk, so it must " +
+      "visit the body itself or every check silently stops running inside the loop.",
+  },
 ];
 
 function runCases(): { failed: number; pending: number } {

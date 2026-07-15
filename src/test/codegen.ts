@@ -1900,6 +1900,21 @@ const CASES: Case[] = [
       "D9) is part of what compiles here.",
   },
 
+  {
+    name: "Itb: a field on a :each loop var over an array-of-structs resolves",
+    source: `(defstruct P (let :ctor x <- Int) (let :ctor y <- Int))
+(let pts [(new P 1 2) (new P 3 4)])
+(for :each p :from pts :then (
+  (console.log (p.x))
+))`,
+    expect: ["1", "3"],
+    emitted: { mustNot: [/__ll_member\(p/] },
+    wasBroken:
+      "`p` had no type, so `(p.x)` fell to the untyped `__ll_member` run-time fallback. With `pts : P[]` " +
+      "the loop var is `P` (Itb), so `p.x` is a known field and emits a direct read. The clean win the " +
+      "element-typing gap was blocking (array-of-STRUCTS; array-of-maps still needs record types).",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",

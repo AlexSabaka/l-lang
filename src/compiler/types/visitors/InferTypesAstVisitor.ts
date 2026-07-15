@@ -1845,6 +1845,79 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     this.visit(item);
   }
 
+  /**
+   * `(for :each x :from coll :then body [:else e])` -- D30/Itb.
+   *
+   * The loop variable is bound to the collection's ELEMENT type, so `x.field` and `(+ x 1)` inside the
+   * body are checked. It had no type at all before -- `x` was Unknown, and the loop body was a hole in
+   * the type system (the biggest cluster on the `__ll_member` thermometer that was not JS interop).
+   *
+   * Element type comes from `Iterable<T>` (D30): a user type via its recorded conformance, a native
+   * `T[]` by blanket conformance. `next` is not consulted here -- that is codegen's concern; the
+   * checker only needs `T`.
+   *
+   * OVERRIDING the generic walk means this must visit the body itself, or every check silently stops
+   * inside the loop -- the exact Xf failure. So `then` and `else` are visited explicitly.
+   */
+  visitForEach(node: ast.ForEachNode) {
+    const collType = this.inferExpressionType(node.collection);
+    const elemType = this.iterableElementType(collType);
+
+    // Diagnose a KNOWN non-iterable, and ONLY that. Gradual typing forbids reporting against Unknown,
+    // and a map/string/user-type-without-Iterable is "we cannot type the element", not "wrong" -- so
+    // the diagnostic is narrow: a scalar primitive in `:from` is the mistake it catches.
+    if (!elemType && this.isKnownNonIterable(collType)) {
+      this.reportTypeError(
+        node.collection,
+        "LL0221",
+        `${TypeChecker.formatType(collType)} is not iterable. ` +
+          `A '(for :each ...)' collection must be an array or a type that implements Iterable<T>.`
+      );
+    }
+
+    // Bind the loop variable. A destructuring `:each [k v]` binds N names, not typed yet (D5/P8),
+    // exactly as destructuring parameters and lets are left; a plain name gets the element type, or
+    // Unknown when we could not resolve one (so a same-named outer symbol cannot leak in).
+    if (!ast.isBindingPattern(node.variable)) {
+      const name = (node.variable as ast.IdentifierNode).id;
+      this.typeEnv.bindIdentifier(name, elemType ?? TypeEnvironment.unknown(), node.variable);
+    }
+
+    if (node.then) this.visit(node.then);
+    if (node.else) this.visit(node.else);
+  }
+
+  /**
+   * The `T` of an `Iterable<T>`, for the two conformances Itb supports: a native array `T[]`, and a
+   * user type that declares `:implements Iterable<T>`.
+   *
+   * NOT maps or strings. `for...of` over a JS Map yields `[K,V]` pairs (not values), and l-lang has no
+   * settled tuple type to name that; a string yields single characters and l-lang has no `Char`. Naming
+   * either wrongly would bind the loop var to a type the body then mis-checks against -- a false
+   * positive is worse than Unknown. Those bind Unknown and stay silent, deliberately.
+   */
+  private iterableElementType(coll: InferredType): InferredType | undefined {
+    const t = TypeChecker.unwrapType(coll, this.symbolTable);
+    if (!t) return undefined;
+
+    if (t.isArray || (t.kind === "generic" && t.name === "Array")) {
+      return t.inner ?? t.generics?.[0];
+    }
+
+    const impl = (t.implementedInterfaces ?? []).find(
+      (i: any) => i.interfaceName === "Iterable"
+    );
+    const g = impl?.interfaceType?.generics?.[0];
+    return g ?? undefined;
+  }
+
+  /** A collection we can be SURE is not iterable -- a scalar primitive. Everything else is "not sure". */
+  private isKnownNonIterable(coll: InferredType): boolean {
+    const t = TypeChecker.unwrapType(coll, this.symbolTable);
+    if (!t || t.kind !== "primitive") return false;
+    return ["Int", "Real", "Float", "Number", "Boolean", "Bool", "Char"].includes(t.name);
+  }
+
   visitVariable(node: ast.VariableNode) {
     // See CollectTypesPass.visitVariable: destructuring bindings are not typed yet (D5/P8).
     if (ast.isBindingPattern(node.name)) {
