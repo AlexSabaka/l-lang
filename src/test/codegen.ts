@@ -1862,6 +1862,25 @@ const CASES: Case[] = [
       "ran. Both now use the composite-identifier's SOURCE `id`.",
   },
 
+  {
+    name: "infer: an INHERITED field on `this` resolves through :extends",
+    source: `(defclass Animal
+  (let :ctor name)
+  (fn speak [] -> Void (console.log "...")))
+(defclass Dog :extends Animal
+  (let :ctor breed)
+  (fn describe [] -> Void (console.log (this.name) (this.breed))))
+(let d (new Dog "Buddy" "Corgi"))
+(d.describe)`,
+    expect: ["Buddy Corgi"],
+    emitted: { mustNot: [/__ll_member\(this/] },
+    wasBroken:
+      "a class's stored `members` are its OWN only, so `this.name` -- inherited from `Animal` via " +
+      "`:extends` -- was not found on Dog and fell to the untyped `__ll_member` fallback, while Dog's " +
+      "own `this.breed` resolved. `memberKindOn` now walks the `parentClass` chain until the member is " +
+      "found or the chain ends.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",

@@ -3518,9 +3518,30 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     memberName: string,
     from?: ast.ASTNode
   ): "method" | "field" | undefined {
-    const typeInfo = this.receiverType(objectName, from);
-    if (!typeInfo) return undefined;
+    let typeInfo = this.receiverType(objectName, from);
 
+    // Walk the inheritance chain. A class's stored `members` are its OWN only, so an INHERITED field
+    // -- `this.name` in a subclass whose `name` came from `:extends Animal` -- is not in the subclass
+    // type and fell to the untyped `__ll_member` fallback, while its own `this.breed` resolved. The
+    // parent link is on the type (`parentClass`); follow it until the member is found or the chain ends.
+    const seen = new Set<any>();
+    while (typeInfo && !seen.has(typeInfo)) {
+      seen.add(typeInfo);
+      const kind = this.memberKindIn(typeInfo, memberName);
+      if (kind) return kind;
+
+      const parent = typeInfo.parentClass ?? typeInfo.codegenMetadata?.parentClass;
+      if (!parent) break;
+      const parentSym = this.context.symbolTable?.resolveSymbol(parent);
+      typeInfo = parentSym?.inferredType
+        ? this.unwrapReceiverType(parentSym.inferredType)
+        : undefined;
+    }
+    return undefined;
+  }
+
+  /** Is `memberName` a method or field DIRECTLY on this type (no inheritance)? */
+  private memberKindIn(typeInfo: any, memberName: string): "method" | "field" | undefined {
     if (typeInfo.methodSignatures?.has(memberName)) return "method";
     if (typeInfo.codegenMetadata?.methodSignatures?.has(memberName)) return "method";
 
@@ -3531,8 +3552,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     if (member) {
       return member.type?.kind === "function" ? "method" : "field";
     }
-
-    // The type is known and has no such member. Not our guess to make -- LL02xx territory, not codegen's.
     return undefined;
   }
 
@@ -3558,25 +3577,28 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         : this.context.symbolTable?.resolveSymbol(objectName);
       if (!symbol?.inferredType) return undefined;
 
-      let typeInfo: any = symbol.inferredType;
-
-      if (typeInfo.kind === "type-ref" && typeInfo.refName) {
-        const typeSymbol = this.context.symbolTable?.resolveSymbol(typeInfo.refName);
-        if (typeSymbol?.inferredType) typeInfo = typeSymbol.inferredType;
-      }
-
-      if (
-        typeInfo.name &&
-        (typeInfo.kind === "class" || typeInfo.kind === "struct" || typeInfo.kind === "unknown")
-      ) {
-        const classSymbol = this.context.symbolTable?.resolveSymbol(typeInfo.name);
-        if (classSymbol?.inferredType) typeInfo = classSymbol.inferredType;
-      }
-
-      return typeInfo;
+      return this.unwrapReceiverType(symbol.inferredType);
     } catch {
       return undefined;
     }
+  }
+
+  /** Follow a type-ref (and a bare class name) to the full type carrying members/methods. */
+  private unwrapReceiverType(typeInfo: any): any {
+    if (typeInfo?.kind === "type-ref" && typeInfo.refName) {
+      const typeSymbol = this.context.symbolTable?.resolveSymbol(typeInfo.refName);
+      if (typeSymbol?.inferredType) typeInfo = typeSymbol.inferredType;
+    }
+
+    if (
+      typeInfo?.name &&
+      (typeInfo.kind === "class" || typeInfo.kind === "struct" || typeInfo.kind === "unknown")
+    ) {
+      const classSymbol = this.context.symbolTable?.resolveSymbol(typeInfo.name);
+      if (classSymbol?.inferredType) typeInfo = classSymbol.inferredType;
+    }
+
+    return typeInfo;
   }
 
   /** The class or struct that lexically encloses `node`, by name. */
