@@ -13,6 +13,7 @@ import {
 } from "../../../utils";
 import { createRule, RuleSeverity } from "../../../rules/RuleBuilder";
 import { TypeChecker } from "../../../types/TypeChecker";
+import { nativeMemberKind } from "../../../types/nativeMembers";
 import { isBuiltinModifier, hasModifier } from "../../../helpers/modifiers";
 import * as acorn from "acorn";
 import { ClassBuilder } from "../JSClassBuilder";
@@ -3605,6 +3606,12 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     if (member) {
       return member.type?.kind === "function" ? "method" : "field";
     }
+
+    // Native String/Array members (Phase T / Jb): the same table the checker consults (Ja), so a typed
+    // `(s.toUpperCase)` / `(arr.length)` emits a direct call/read instead of the `__ll_member` fallback.
+    const native = nativeMemberKind(typeInfo, memberName);
+    if (native) return native;
+
     return undefined;
   }
 

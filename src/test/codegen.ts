@@ -2270,6 +2270,44 @@ const CASES: Case[] = [
       "`IEnumerable.Where` with `yield`. Countdown 5 -> 5 4 3 2 1; where (> 2) -> 5 4 3, lazily.",
   },
 
+  // ===============================================================================================
+  // Phase T / Jb -- codegen honours the native member table. A member access on a typed String/Array
+  // receiver emits the DIRECT `.member()` / `.member`, not the untyped `__ll_member` fallback -- the
+  // thermometer drops. (Ja taught the checker the types; this is the codegen half.)
+  // ===============================================================================================
+  {
+    name: "Jb: a String method on a typed receiver emits a direct call, not __ll_member",
+    source: `(let s "hello")
+(console.log (s.toUpperCase))`,
+    expect: ["HELLO"],
+    emitted: { must: [/\.toUpperCase\(\)/], mustNot: [/__ll_member\(s/] },
+    wasBroken:
+      "After Ja the checker knows `s : String` and `s.toUpperCase : () -> String`, but codegen's " +
+      "`memberKindIn` still returned undefined for a primitive receiver, so `(s.toUpperCase)` emitted " +
+      "`__ll_member(s, \"toUpperCase\")`. Jb makes `memberKindIn` consult the same native table -> " +
+      "`\"method\"` -> a direct `s.toUpperCase()`.",
+  },
+  {
+    name: "Jb: a String field (length) emits a direct read, not __ll_member",
+    source: `(let s "hello")
+(console.log (s.length))`,
+    expect: ["5"],
+    emitted: { must: [/s\.length/], mustNot: [/__ll_member\(s/] },
+    wasBroken:
+      "`String.length` is a FIELD -> `memberKindIn` returns `\"field\"`, and a 0-arg field access emits " +
+      "the bare `s.length` read rather than `__ll_member`.",
+  },
+  {
+    name: "Jb: an Array field (length) emits a direct read",
+    source: `(let arr [10 20 30])
+(console.log (arr.length))`,
+    expect: ["3"],
+    emitted: { must: [/arr\.length/], mustNot: [/__ll_member\(arr/] },
+    wasBroken:
+      "Same for arrays: `arr : Int[]`, `arr.length : Int` (field) -> direct `arr.length`, not the " +
+      "run-time fallback.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",
