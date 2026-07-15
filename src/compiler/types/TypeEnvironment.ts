@@ -1,5 +1,6 @@
 import * as ast from "../frontend/ast";
 import { InferredType, SymbolTable, TypeParameter } from "../analysis/SymbolTable";
+import { nativeFieldType } from "./nativeMembers";
 import { TypeChecker } from "./TypeChecker";
 
 /**
@@ -230,8 +231,16 @@ export class TypeEnvironment {
                    return undefined;
                }
            } else {
-               // Cannot access property on non-object type (primitive/func)
-               return undefined;
+               // A native FIELD on a String/Array receiver (Phase T / Ja): `s.length` -> `Int`. Methods
+               // (`s.toUpperCase`, `arr.shift`) are resolved by the method-call path, which takes their
+               // return type directly -- modelling them as functions here would arity-check the args.
+               const native = nativeFieldType(currentType, memberName);
+               if (native) {
+                   currentType = native;
+               } else {
+                   // Cannot access property on non-object type (primitive/func)
+                   return undefined;
+               }
            }
         }
         return currentType;

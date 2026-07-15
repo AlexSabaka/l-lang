@@ -1267,6 +1267,35 @@ ${PRODUCER}
     silent: true,
     why: "GUARD. After (!= h nil), D9 narrows h from Int? to Int, so `+` is fine.",
   },
+
+  // Phase T / Ja -- native member types. The checker learns String/Array/Date/Error members, so member
+  // access on a native receiver types instead of degrading to Unknown. (Codegen still __ll_member until Jb.)
+  {
+    name: "Ja: `s.length` types as Int",
+    source: `(let s "hello")
+(let n <- String s.length)`,
+    expect: /LL0200/,
+    why:
+      "`String.length` is `Int`, so binding it to `<- String` is a mismatch (LL0200). RED before Ja: " +
+      "`s.length` was Unknown, assignable to anything, silent.",
+  },
+  {
+    name: "Ja: `arr.shift` types as T? (the element, optional)",
+    source: `(let arr [1 2 3])
+(let x (arr.shift))
+(console.log (+ x 1))`,
+    expect: /LL0205/,
+    why:
+      "`Array<T>.shift` is `T?` -- here `Int?` -- so `(+ x 1)` on the un-narrowed optional is LL0205. " +
+      "RED before Ja: `arr.shift` was Unknown, silent. `T` comes from the receiver, not call-site solving.",
+  },
+  {
+    name: "Ja: `s.length` bound to Int is silent",
+    source: `(let s "hello")
+(let n <- Int s.length)`,
+    silent: true,
+    why: "GUARD. `String.length` is `Int`, assignable to `<- Int`. A user shadow of a native member would win.",
+  },
 ];
 
 function runCases(): { failed: number; pending: number } {

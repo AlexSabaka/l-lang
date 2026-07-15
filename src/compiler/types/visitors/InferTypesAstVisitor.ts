@@ -17,6 +17,7 @@ import { TypeChecker } from "../TypeChecker";
 import { createRule, RuleSeverity } from "../../rules/RuleBuilder";
 import { RuntimeProvider } from "../../runtime";
 import { SymbolTable, SymbolEntry, PackageRegistry } from "../../analysis";
+import { nativeMethodReturn } from "../nativeMembers";
 import * as path from "node:path";
 
 /**
@@ -1552,6 +1553,20 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   }
 
   /**
+   * The return type of a native METHOD call `(receiver.member ...)` on a String/Array receiver (Phase
+   * T / Ja) -- `(s.toUpperCase)` -> `String`, `(arr.shift)` -> `T?`. Like `inferTotalAccessorType`, it
+   * takes the return type directly and ignores the arguments (a method's params are the runtime's).
+   * `funcName` is the dotted head; the receiver's element type flows into `Array<T>` method returns.
+   */
+  private inferNativeMethodType(funcName: string, node: ast.ASTNode): InferredType | undefined {
+    const dot = funcName.lastIndexOf(".");
+    if (dot < 0) return undefined;
+    const receiverType = this.typeEnv.resolveIdentifier(funcName.slice(0, dot), node);
+    if (!receiverType) return undefined;
+    return nativeMethodReturn(receiverType, funcName.slice(dot + 1));
+  }
+
+  /**
    * The type checker had never looked inside a loop body, a match arm, or a try block.
    *
    * The dispatch above calls `visitFor` for a `for` node -- and `visitFor` DOES exist, inherited
@@ -3076,6 +3091,15 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           const totalAccessor = this.inferTotalAccessorType(funcName, listNode.nodes.slice(1));
           if (totalAccessor) {
             inferredType = totalAccessor;
+            break;
+          }
+
+          // A native METHOD on a String/Array receiver -- `(s.toUpperCase)`, `(arr.shift)` (Phase T /
+          // Ja). Like the total accessors, its RETURN type is taken directly; the arguments are the
+          // host runtime's business (modelling it as a function would arity-check `csv.split(",")`).
+          const nativeMethod = this.inferNativeMethodType(funcName, firstNode);
+          if (nativeMethod) {
+            inferredType = nativeMethod;
             break;
           }
 
