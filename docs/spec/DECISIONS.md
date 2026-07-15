@@ -3102,14 +3102,25 @@ documentation with no teeth, and a live risk of false positives. They are gradua
 RUN correctly (what laziness needs). When call-site generics land, the annotations go on and the
 `Iterator :implements Iterable` refinement makes the chains check end to end.
 
-### The `std/seq` overlap (flagged, not resolved)
+### The `std/seq` boundary (the ruling)
 
-`std/seq` already has `map`/`filter`/`reduce` -- collection-**last**, eager, array-only
+`std/seq` already has `map`/`filter`/`reduce`/`zip` -- collection-**last**, eager, array-only
 (`(fn map [op coll] (coll.map op))`), and its `reduce` is `[op init coll]` where `std/linq`'s is
-`[coll f init]`. Two `map`s of different argument order is a smell. It is non-breaking (imports are
-per-file; a file picks one module), so reconciling them is a deliberate follow-up, not folded into this
-phase. `enumerate`/`zip` yield 2-element arrays (`[i x]`, `[x y]`), not tuples -- l-lang has no tuple
-type, same as eager `seq.zip`.
+`[coll f init]`. Two `map`s of different argument order looks like a smell; it is a **deliberate
+two-convention split**, and the reconciliation is to draw the boundary, not to merge:
+
+- **`std/seq`** -- EAGER, collection-LAST, array-in/array-out. `(map f coll)` runs now and returns an
+  array: the classic functional order (Clojure, Haskell), for when you just want the array. Also the
+  home of `range` and the total accessors `first`/`last`/`at`/`length`.
+- **`std/linq`** -- LAZY, collection-FIRST, pipe-surfaced. `(coll |> (map f))` is a generator that does
+  nothing until pulled. `to-list` bridges a lazy chain back to a `seq`-style array.
+
+The two are the same split C# draws between an eager `foreach`/`List` and lazy LINQ. The names collide
+but the modules do not: imports are per-file, **no corpus file imports both** (verified), and the ruling
+is that a file picks ONE convention -- eager-array (`std/seq`) or lazy-pipe (`std/linq`). Merging them
+would force one argument order on both call styles; keeping them distinct serves each. `enumerate`/`zip`
+yield 2-element arrays (`[i x]`, `[x y]`), not tuples -- l-lang has no tuple type, same as eager
+`seq.zip`.
 
 ### Phases
 

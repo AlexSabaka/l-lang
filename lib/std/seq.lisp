@@ -1,3 +1,18 @@
+;; std/seq -- EAGER, array-oriented sequence utilities, in FUNCTIONAL argument order.
+;;
+;; The counterpart to `std/linq`, and the boundary between them is a DELIBERATE two-convention split
+;; (D33), not a duplication to collapse:
+;;
+;;   std/seq   EAGER, collection-LAST, array-in/array-out. `(map f coll)` runs NOW and returns an
+;;             array -- the classic functional order (Clojure, Haskell), for when you just want the
+;;             array. This is where `range` and the total accessors `first`/`last`/`at`/`length` live.
+;;   std/linq  LAZY, collection-FIRST, pipe-surfaced. `(coll |> (map f))` builds a generator that does
+;;             nothing until pulled -- for pipelines, `|>` chains, and large or infinite sources.
+;;             `to-list` is how a lazy linq chain comes back to a seq-style array.
+;;
+;; Both export `map`/`filter`/`reduce`/`zip`: the NAMES collide, the modules do not. Imports are
+;; per-file, so a file picks ONE convention -- import `std/seq` for eager array work OR `std/linq` for
+;; lazy pipelines, not both in the same file.
 (
   (fn range [start <- Int end <- Int step <- Int] -> Int[]
     (let result [])

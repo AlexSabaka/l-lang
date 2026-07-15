@@ -1,5 +1,10 @@
 ;; std/linq -- the LAZY SEQUENCE operators (the C# LINQ steal). Phase L.
 ;;
+;; The counterpart to `std/seq` (D33): this module is LAZY, collection-FIRST, pipe-surfaced; `std/seq`
+;; is EAGER, collection-LAST, functional-order (`(map f coll)` -> array). Both export
+;; `map`/`filter`/`reduce`/`zip` -- pick ONE per file (imports are per-file; do not import both). Use
+;; `to-list` to turn a lazy chain here back into a `std/seq`-style array.
+;;
 ;; Each operator is a collection-FIRST `:gen` function over the iteration protocol (D30/D31). Two
 ;; consequences make this the whole design:
 ;;
