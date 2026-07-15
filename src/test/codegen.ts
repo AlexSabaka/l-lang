@@ -1971,6 +1971,19 @@ const CASES: Case[] = [
       "is already a JS iterable -- so this is only for the hand-written iterable.",
   },
 
+  {
+    name: "D32/Aa: std/async is importable and Awaitable is implementable",
+    source: `(import "std/async")
+(defstruct Later :implements Awaitable<Int>
+  (fn then [cb] -> Any (return nil)))
+(console.log "ok")`,
+    expect: ["ok"],
+    wasBroken:
+      "NOT broken -- a GUARD, the 'who calls it?' rule again. Aa ships `lib/std/async.lisp` " +
+      "(`Awaitable<T>`, `Task<T>`), consumed by nothing until Ab wires the type rules. A stdlib file " +
+      "with no test rots. This pins that the interfaces parse, import, and are conformable-to.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",

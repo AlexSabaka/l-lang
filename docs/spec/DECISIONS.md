@@ -2997,3 +2997,48 @@ method is injected on any `:implements Iterable` type, delegating to the runtime
 adapts the user's `next() -> T?` to JS's `{value, done}`. So a hand-written iterable drives `for...of`
 too, and Itb's user-conformance path is consumable end to end. A generator needs none of it -- a
 `function*` is already a JS iterable.
+
+## D32 — async/await: the `Awaitable<T>` / `Task<T>` protocol
+
+The third construct under D29, in `lib/std/async.lisp`. On JS it is nearly free -- `:async` is already
+an `async function`, `await` an `AwaitExpression` -- so unlike generators, the *runtime* was live from
+the start. What was missing is the TYPE layer, and that is the point of this ruling.
+
+```lisp
+(definterface Awaitable<T> (fn then [on-fulfilled] -> Any))   ;; a thenable -- what await consumes
+(definterface Task<T> :implements Awaitable<T>)               ;; the standard awaitable; on JS a Promise<T>
+```
+
+### The shape mirrors generators (D31) exactly
+
+| | generator (`:gen`) | async (`:async`) |
+|---|---|---|
+| declared type | `Iterator<T>` (the full wrapper) | `Task<T>` (the full wrapper) |
+| produce | `(yield x)` -- x checked against `T` | `(return x)` -- x checked against `T`, the PAYLOAD |
+| consume | `for :each` / `next` unwraps to `T` | `(await e)` unwraps `Task<T>` to `T` |
+| the keyword's scope | `yield` only inside `:gen` | `await` only inside `:async` |
+| wrong wrapper type | non-`Iterator` return → error | non-`Task`/`Awaitable` return → error |
+
+The one asymmetry worth stating: a generator's `yield x` is checked against the element `T`, and an
+async's `(return x)` is *also* checked against `T` -- the Task's PAYLOAD, not the wrapper. So
+`(fn :async f [] -> Task<Int> (return 5))` is correct: `5` is the `Int` the Task resolves to. Checking
+the return against `Task<Int>` (which is what the checker did before this ruling) is a **false
+positive** -- it reported LL0213 on every annotated async function.
+
+### The rules (Ab enforces them)
+
+- **`(await e)` unwraps.** If `e : Task<T>` / `Awaitable<T>` / `Promise<T>`, then `(await e) : T`. The
+  three names are one thing on JS (Promise is the native awaitable); the checker treats them alike.
+- **`(return x)` in an `:async` produces the payload.** Checked against `T`, not `Task<T>` -- the fix
+  for the LL0213 false positive.
+- **`await` only inside an `:async` function** -- an error otherwise (l-lang does not do top-level
+  await). Mirrors `yield` outside `:gen`.
+- **an `:async`'s declared return type must be `Task<T>` / `Awaitable<T>`** (or absent, left to
+  inference). A non-awaitable is an error.
+
+### What Aa ships, and what Ab owes
+
+**Aa** (this): the two interfaces and this ruling. No behaviour change -- the runtime already worked;
+the checker is untouched, so the LL0213 false positive is still live until Ab. **Ab** owes the four
+rules above: the `await`-unwrap inference, the payload-return check (fixing LL0213), the
+`await`-outside-`:async` error, and the non-awaitable-return error.
