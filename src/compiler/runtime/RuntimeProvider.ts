@@ -385,6 +385,23 @@ function __ll_is_type(val, type) {
     "elem": `const elem = (a, i) => a?.[i] ?? null;`,
     "list": `const list = (...args) => [...args];`,
 
+    // Phase L / La: the UNIFORM CURSOR. `iter` turns ANY iterable into an l-lang `Iterator<T>` --
+    // `next() -> T?`, nil = done (D9/D30). It cannot be written in l-lang: it reaches through
+    // `[Symbol.iterator]`, which is JS interop with no surface syntax -- the same reason `head`/`elem`
+    // cannot leave SYMBOL_MAP. After Gc, EVERY iterable carries `[Symbol.iterator]` (arrays and
+    // generators natively, `:implements Iterable` structs via the injected bridge), so one primitive
+    // spans all three. This is the exact inverse of `__ll_js_iter`: that adapts our `T?` to JS's
+    // `{value,done}`; this adapts `{value,done}` back to `T?`. The lazy LINQ operators stand on it, and
+    // the early-exit ones (`take`, `take-while`) need this raw pull because `for :each` has no `break`.
+    "iter": `const iter = (x) => {
+  if (x == null || typeof x[Symbol.iterator] !== 'function') throw new TypeError('value is not iterable');
+  const _cur = x[Symbol.iterator]();
+  return { next() { const _r = _cur.next(); return _r.done ? null : _r.value; } };
+};`,
+    // Advance a cursor. Its `next()` already speaks `T?` (nil = done), so this just forwards it. An
+    // ordinary, shadowable name like `head`/`list` -- a local or import of `next` wins, as it should.
+    "next": `const next = (it) => (it != null && typeof it.next === 'function') ? it.next() : null;`,
+
     // Call wrapper
     "call": `const call = (f, args) => !!args && Array.isArray(args) ? f(...args) : f();`,
     "eval": ``,

@@ -1984,6 +1984,71 @@ const CASES: Case[] = [
       "with no test rots. This pins that the interfaces parse, import, and are conformable-to.",
   },
 
+  // ===============================================================================================
+  // Phase L / La -- the UNIFORM CURSOR. `(iter coll)` yields an `Iterator<T>` (next() -> T?, nil =
+  // done) over ANY iterable -- array, generator, or `:implements Iterable` struct -- because after Gc
+  // everything iterable carries `[Symbol.iterator]`. `(next it)` advances it. These are the substrate
+  // the lazy LINQ operators (Lb/Lc) stand on; the early-exit ones (`take`) need this raw pull.
+  // ===============================================================================================
+  {
+    name: "La: (iter)/(next) drive a cursor over an ARRAY, nil = done",
+    source: `(let it (iter [1 2 3]))
+(mut v (next it))
+(while (!= v nil) (
+  (console.log v)
+  (v := (next it))))`,
+    expect: ["1", "2", "3"],
+    emitted: { must: [/const iter =/] },
+    wasBroken:
+      "RED first: `iter`/`next` were undefined (LL0210), because the uniform cursor did not exist. La " +
+      "adds them as runtime builtins (the `head`/`elem` family in SYMBOL_MAP) -- `iter` needs " +
+      "`[Symbol.iterator]`, which is inexpressible in l-lang source, exactly why `head`/`elem` cannot " +
+      "leave the code generator either. `next` returning nil at exhaustion is what stops the loop.",
+  },
+  {
+    name: "La: (iter) drives a cursor over a GENERATOR",
+    source: `(import "std/iter")
+(fn :gen count-up [n <- Int] -> Iterator<Int> (
+  (mut i 0)
+  (while (< i n) (
+    (yield i)
+    (i := (+ i 1))))))
+(let it (iter (count-up 3)))
+(mut v (next it))
+(while (!= v nil) (
+  (console.log v)
+  (v := (next it))))`,
+    expect: ["0", "1", "2"],
+    wasBroken:
+      "Same substrate, proven over a `:gen` generator object -- natively JS-iterable, so `iter` reaches " +
+      "it through the same `[Symbol.iterator]` path as the array. One cursor primitive, every source.",
+  },
+  {
+    name: "La: (iter) drives a cursor over a :implements Iterable STRUCT",
+    source: `(import "std/iter")
+(defstruct Countdown :implements Iterable<Int>
+  (mut :ctor n <- Int)
+  (fn iterator [] -> Iterator<Int> (return this))
+  (fn next [] -> Int? (
+    (if (<= this.n 0)
+        (return nil)
+        (
+          (let cur this.n)
+          (this.n := (- this.n 1))
+          (return cur))))))
+(let it (iter (new Countdown 3)))
+(mut v (next it))
+(while (!= v nil) (
+  (console.log v)
+  (v := (next it))))`,
+    expect: ["3", "2", "1"],
+    wasBroken:
+      "The third source kind: a hand-written iterable, reached through the `[Symbol.iterator]` bridge Gc " +
+      "injected. `iter` adapts that bridge's `{value,done}` back to `T?` -- so array, generator and " +
+      "struct all present the SAME `Iterator<T>` to the operators above. (Also pins `Iterator<T> " +
+      ":implements Iterable<T>`: the struct's `iterator()` returns `this`, an Iterator used AS an Iterable.)",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",

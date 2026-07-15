@@ -16,15 +16,22 @@
 ;; consumer writes `(let v (next it))` and D9's narrowing gives it a `T` after the nil-check, with no
 ;; new machinery.
 (
-  ;; The cursor. One method, and it is the whole protocol: hand back the next element, or `nil` when
-  ;; the sequence is exhausted. Calling `next` again after `nil` keeps returning `nil`.
-  (definterface Iterator<T>
-    (fn next [] -> T?))
-
   ;; The source. `iterator` produces a FRESH cursor each call, so a collection can be walked more than
   ;; once (`for :each` over the same array twice must start over both times).
   (definterface Iterable<T>
     (fn iterator [] -> Iterator<T>))
 
-  (export Iterator Iterable)
+  ;; The cursor. One method, and it is the whole protocol: hand back the next element, or `nil` when
+  ;; the sequence is exhausted. Calling `next` again after `nil` keeps returning `nil`.
+  ;;
+  ;; An Iterator IS an Iterable (Phase L / La): a cursor can stand wherever a source is wanted, and it
+  ;; iterates AS ITSELF -- true in JS, Rust (`Iterator: IntoIterator`) and Python. This is what lets the
+  ;; lazy operators chain: `map` returns an `Iterator<U>`, `filter` takes an `Iterable<T>`, and the pipe
+  ;; `(coll |> (map f) |> (filter p))` type-checks because the former satisfies the latter. A
+  ;; hand-written iterator satisfies it by returning `this` from `iterator()`, which every one already
+  ;; does (the `Countdown` fixture, `std/iter`'s own conformance test).
+  (definterface Iterator<T> :implements Iterable<T>
+    (fn next [] -> T?))
+
+  (export Iterable Iterator)
 )
