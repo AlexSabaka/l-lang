@@ -316,7 +316,7 @@ Optional named arguments: `:init`, `:cond`, `:step`, `:then`. If skipped C-style
 ```lisp
 (match value {
     0              => "Literal zero"
-    x :is Int      => "Some integer"
+    x :of Int      => "Some integer"
     [1 2 _]        => "Vector: [1, 2, anything]"
     { :type "A" }  => "Map with key :type = 'A'"
     _              => "Default case (matches everything)"

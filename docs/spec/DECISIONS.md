@@ -2762,3 +2762,44 @@ prints `just a baby`.
 `:of` **type patterns still compile to `false`** (dead since forever), so `x :of String :when …` does
 not yet work — the `:when` half is real, the `:of` half is not. Likewise `rest-pattern` (`[1 ...rest]`)
 and `functional-pattern`. Those are separate defects; this ruling is guards.
+
+## D27 — `:of` type patterns
+
+`x :of T` matches when the scrutinee is a `T`, and binds it to `x`. It is the value-level companion to
+`catch e :of Error` — the corpus already uses `:of` for "this VALUE is a T", and `:is` for TYPE-level
+statements (`:where T :is class`, `:is Carrot & Potato`). Two keywords, two jobs; they are not aliases.
+
+```lisp
+(match v {
+  n :of Int    :when (> n 10) => "big int"   ;; composes with a D26 guard
+  n :of Int                   => "int"
+  d :of Dog                   => (d.speak)   ;; `d` is bound and typed
+  _                           => "other"
+})
+```
+
+**Wiring, not inventing.** Type patterns *parsed* into a `type-pattern` node all along, and then died:
+`generateCondition`'s `default:` returned `literal(false)`, so every one fell through. The runtime test
+was never missing either — `__ll_is_type(val, "T")` lives in the always-on preamble, handles primitives
+by `typeof` and classes by walking the prototype chain on `__ll_name`, and is already live (the operator
+registry dispatches through it). `RuntimeProvider` even documented the intended call:
+*"generateCondition calling __ll_is_type"*. This ruling is that call, finally made.
+
+Codegen emits `(x = v, true) && __ll_is_type(v, "T")`: bind first (so `x` is usable in the body and in a
+guard), then test. `findIdentifiersToDefine` now declares the type-pattern's binding too, or the `x = v`
+would assign to a global.
+
+### Two frontend bugs, one real
+
+- grammar_v2 parsed `:of` correctly; only codegen was dead.
+- PEG's `TypePattern = id:Identifier OfModKw type:Type` had **no whitespace** around `:of`, so `x :of Int`
+  (as anyone writes it, with spaces) never matched — `x` fell through to an identifier-pattern and the
+  leftover `:of Int` broke the whole `MatchCase`, so `match` read as a plain call. Same fall-back
+  signature as the D26 guard bug. Fixed with `_` around `OfModKw`.
+
+The docs said `x :is Int`, which never parsed (the grammar wires `:of`) and would have muddied the
+`:of`/`:is` split; corrected to `:of`.
+
+### Still out of scope
+
+`rest-pattern` (`[1 ...rest]`) and `functional-pattern` still compile to `false`. Separate defects.

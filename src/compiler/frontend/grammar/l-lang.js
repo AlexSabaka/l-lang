@@ -6525,7 +6525,7 @@ function peg$parse(input, options) {
   }
 
   function peg$parseTypePattern() {
-    let s0, s1, s2, s3;
+    let s0, s1, s2, s3, s4, s5;
 
     const key = peg$currPos * 170 + 87;
     const cached = peg$resultsCache[key];
@@ -6539,12 +6539,14 @@ function peg$parse(input, options) {
     s0 = peg$currPos;
     s1 = peg$parseIdentifier();
     if (s1 !== peg$FAILED) {
-      s2 = peg$parseOfModKw();
-      if (s2 !== peg$FAILED) {
-        s3 = peg$parseType();
-        if (s3 !== peg$FAILED) {
+      s2 = peg$parse_();
+      s3 = peg$parseOfModKw();
+      if (s3 !== peg$FAILED) {
+        s4 = peg$parse_();
+        s5 = peg$parseType();
+        if (s5 !== peg$FAILED) {
           peg$savedPos = s0;
-          s0 = peg$f82(s1, s3);
+          s0 = peg$f82(s1, s5);
         } else {
           peg$currPos = s0;
           s0 = peg$FAILED;

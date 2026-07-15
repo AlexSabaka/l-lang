@@ -1688,6 +1688,62 @@ const CASES: Case[] = [
       "case that has none. This is every match in the corpus.",
   },
 
+  // ===============================================================================================
+  // D27 -- `:of` type patterns. `x :of T` matches when the value is a T, and binds it.
+  // Dead since forever: `generateCondition`'s `default:` returned `literal(false)`, so every type
+  // pattern fell through. The runtime check it needed (`__ll_is_type`) existed and was live (the
+  // operator registry calls it); RuntimeProvider even documents the intent -- "generateCondition
+  // calling __ll_is_type". Never wired.
+  // ===============================================================================================
+  {
+    name: "D27: `:of Int` matches an integer and binds it",
+    source: `(console.log (match 5 {
+  n :of Int => n
+  _         => 0
+}))`,
+    expect: ["5"],
+    wasBroken: "type-pattern hit `default: false`; the arm never matched. `n` also had to be bound and usable.",
+  },
+  {
+    name: "D27: `:of` DISCRIMINATES -- the wrong type falls through",
+    source: `(console.log (match 5 {
+  s :of String => "string"
+  n :of Int    => "int"
+  _            => "other"
+}))`,
+    expect: ["int"],
+    wasBroken:
+      "if every `:of` returned false, this fell to `_`. If a fixed `:of` matched unconditionally, it " +
+      "would wrongly say `string`. It must test the ACTUAL type.",
+  },
+  {
+    name: "D27: `:of` matches a class instance by its type",
+    source: `(defclass Dog (fn speak [] -> String (return "woof")))
+(defclass Cat (fn speak [] -> String (return "meow")))
+(let a (new Dog))
+(console.log (match a {
+  c :of Cat => "cat"
+  d :of Dog => "dog"
+  _         => "other"
+}))`,
+    expect: ["dog"],
+    wasBroken:
+      "the class case: `__ll_is_type` walks the prototype chain by `__ll_name`, so it must pick Dog over " +
+      "Cat and over the `_` default.",
+  },
+  {
+    name: "D27: `:of` composes with a `:when` guard",
+    source: `(console.log (match 5 {
+  n :of Int :when (> n 10) => "big int"
+  n :of Int                => "int"
+  _                        => "other"
+}))`,
+    expect: ["int"],
+    wasBroken:
+      "D26 + D27 together: the type pattern narrows and the guard tests. `(> n 10)` is false for 5, so " +
+      "the first arm's GUARD rejects it and the second (unguarded `:of Int`) wins -- not the `_`.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",

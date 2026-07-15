@@ -35,6 +35,15 @@ function findIdentifiersToDefine(node: ast.MatchNode): string[] {
           predefinedVariables.push(encodeIdentifier(id));
         }
         return true;
+      case "type-pattern": {
+        // `x :of T` binds `x` too (D27), so it must be declared alongside the identifier-pattern
+        // bindings -- otherwise the `x = value` that codegen emits assigns to an undeclared global.
+        const tid = (p as ast.TypePatternNode).id.id;
+        if (!tid.includes(":") && !RuntimeProvider.isRuntimeReference(tid)) {
+          predefinedVariables.push(encodeIdentifier(tid));
+        }
+        return true;
+      }
       case "map-pattern":
         return (p as ast.MapPatternNode).pairs.every((x) =>
           walkPattern(x.pattern)
@@ -2182,6 +2191,41 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           left: matchVarId,
           right: this.visitExpr(pattern.constant),
         } as ESTree.BinaryExpression;
+
+      // `x :of T` (D27). Test the type AND bind the value -- `x` is usable in the body and in a `:when`
+      // guard, exactly like a bare identifier-pattern, but only when the value is a T.
+      //
+      // Dead until now: this landed on the `default: false` below, so every type pattern fell through.
+      // The runtime check was never missing -- `__ll_is_type` (in the always-on LL_RUNTIME preamble,
+      // and already live via the operator registry) handles primitives by `typeof` and classes by
+      // walking the prototype chain on `__ll_name`. RuntimeProvider even records the intended wiring:
+      // "generateCondition calling __ll_is_type". This is that call, finally made.
+      case "type-pattern": {
+        const tp = pattern as ast.TypePatternNode;
+        const typeName = this.getTypeName(tp.type);
+        const isType = ESTreeBuilder.callExpression(
+          pattern,
+          ESTreeBuilder.identifier(pattern, "__ll_is_type"),
+          [matchVarId, ESTreeBuilder.literal(pattern, typeName)]
+        );
+        // `(x = v, true) && __ll_is_type(v, "T")` -- bind first (findIdentifiersToDefine declared `x`),
+        // then test. The bind is a side effect that always yields true, so the AND reduces to the type
+        // test, and `x` holds the value in whatever runs to the right.
+        return {
+          type: "LogicalExpression",
+          operator: "&&",
+          left: ESTreeBuilder.sequenceExpression(pattern, [
+            {
+              type: "AssignmentExpression",
+              operator: "=",
+              left: this.visit(tp.id) as ESTree.Identifier,
+              right: matchVarId,
+            } as ESTree.AssignmentExpression,
+            ESTreeBuilder.literal(pattern, true),
+          ]),
+          right: isType,
+        } as ESTree.LogicalExpression;
+      }
 
       case "list-pattern":
       case "vector-pattern":

@@ -838,7 +838,11 @@ FunctionalPattern
   }
 
 TypePattern
-  = id:Identifier OfModKw type:Type {
+  // `_` around `:of` -- without it `x :of Int` (with spaces, the way anyone writes it) did not match:
+  // `Identifier` took `x`, then `OfModKw` demanded `:of` immediately but found a space, so TypePattern
+  // failed, `x` fell through to IdentifierPattern, and the leftover `:of Int` broke the whole MatchCase
+  // (`match` then read as a plain call -- the same fall-back-to-a-list signature as the D26 guard bug).
+  = id:Identifier _ OfModKw _ type:Type {
     return makeNode("type-pattern", { id, type });
   }
 
