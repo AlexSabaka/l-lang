@@ -2101,7 +2101,23 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       };
 
       for (const c of node.cases) {
-        const condition = this.generateCondition(c.pattern, matchVar);
+        const patternCond = this.generateCondition(c.pattern, matchVar);
+
+        // `:when <expr>` (D26). ANDed AFTER the pattern, and the order is load-bearing: an
+        // identifier-pattern's condition is `(x = matchVar, true)` -- it BINDS `x` as a side effect --
+        // so the guard, evaluated to its right, sees the binding the pattern just made. `&&` also
+        // short-circuits, so the guard never runs when the pattern did not match: `[a b] :when (> a b)`
+        // does not read `a`/`b` off a non-array.
+        const condition = c.guard
+          ? ({
+              type: "LogicalExpression",
+              operator: "&&",
+              left: patternCond,
+              right: this.visitExpr(c.guard),
+              loc: ESTreeBuilder.loc(c),
+            } as ESTree.LogicalExpression)
+          : patternCond;
+
         const body = this.visit(c.body) as ESTree.Node;
         const bodyStatements = ensureReturns(body);
 

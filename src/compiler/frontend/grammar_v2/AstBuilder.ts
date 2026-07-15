@@ -1103,8 +1103,10 @@ export class LLangAstBuilder extends BaseCstVisitor {
 
   matchCase(ctx: any): ast.MatchCaseNode {
     const pattern = this.visit(ctx.pattern[0]);
-    const body = this.visit(ctx.expression[0]);
-    return this.makeNode("match-case", ctx, { pattern, body });
+    // `:when <expr>` (D26). Labelled `guard`/`body` in the rule so the two expressions never collide.
+    const guard = ctx.guard ? this.visit(ctx.guard[0]) : undefined;
+    const body = this.visit(ctx.body[0]);
+    return this.makeNode("match-case", ctx, { pattern, guard, body });
   }
 
   // ========================================================================

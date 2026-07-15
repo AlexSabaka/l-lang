@@ -598,6 +598,8 @@ export interface MatchNode extends ASTNode<"match"> {
 
 export interface MatchCaseNode extends ASTNode<"match-case"> {
   pattern: PatternNode;
+  /** `:when <expr>` (D26). The pattern binds; this reads those bindings and gates the arm. */
+  guard?: ASTNode;
   body: ASTNode;
 }
 

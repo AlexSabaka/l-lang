@@ -2703,3 +2703,62 @@ block that computes a *function*, discards it, and moves on is not a block anyon
 `Unknown`, so LL0220 fires only where the head's type is actually *known* to be a function — which
 today means where the return type was **inferred**, not declared `-> Any`. Both cases are gated. A
 checker that guessed here would report on correct code, and that trade is the right way round.
+
+## D26 — match guards: `pattern :when expr`
+
+A `match` case tests a **pattern**; a **guard** narrows it with a boolean the pattern alone cannot
+express. `Math.random()` returns `[0, 1)`, so this always takes the second arm — deterministically:
+
+```lisp
+(match (Math.random) {
+  x :when (< x 0)   => "unborn"
+  x :when (< x 10)  => "just a baby"     ;; always this one
+  _                 => "impossible"
+})
+```
+
+**Ruling.** A guard is a separate clause, `:when`, between the pattern and `=>`. It is **not** a kind of
+pattern.
+
+```
+<pattern> [:when <expr>] => <body>
+```
+
+The pattern **binds**; the guard **reads** those bindings and returns a boolean. A case matches iff the
+pattern matches **and** the guard is truthy. It composes with any pattern:
+
+```lisp
+x :when (< x 0)                  ;; bind x, test it
+[a b] :when (> a b)              ;; destructure, then compare the parts
+x :of String :when (= x "hi")    ;; type-narrow, then test  (see the note below)
+```
+
+### Why a clause, and not a predicate-shaped pattern
+
+Two predicate-shaped syntaxes were on the table and both were rejected, for the same reason:
+
+- `(< _ 0)` — what `03_matching.lisp` actually writes. It is **ambiguous with a parenthesised
+  destructure** `(1 2 3)`, and disambiguating it would mean asking the symbol table whether the head
+  names an operator — a third copy of the D1/D25 question, in a place that does not need one.
+- `(fn [x] (< x 10))` — what the design sketch `W99_L_sloth_design_v1.lisp` writes. Unambiguous, but it
+  invents a per-arm lambda and a placeholder convention where a plain expression will do.
+
+`:when` is unambiguous with **no** lookup — the pattern and the guard are lexically separate — and it is
+what Rust, Scala and F# all chose. The guard reads the pattern's own bindings by name (`x`), not a
+magic `_`, so it composes with type patterns and destructuring rather than replacing them.
+
+### What `03_matching.lisp` was, and what its golden asserted
+
+That file is the reason this ruling exists. It wrote guards as `(< _ 0)`, which **do not parse as
+guards at all** — `(< _ 0)` is read as a three-element *list-pattern* `[<, _, 0]`, where `<` is an
+identifier-pattern that **binds** and thereby emits an assignment to the `<` operator's own `const`
+(saved from a `TypeError` only because `Array.isArray` short-circuits first). Every guarded arm fell
+through, and **the golden recorded that fall-through as the expected answer** —
+`how da fck are you still alive?`. A passing test asserting a bug. Re-authored under this ruling, it
+prints `just a baby`.
+
+### Out of scope, surfaced not absorbed
+
+`:of` **type patterns still compile to `false`** (dead since forever), so `x :of String :when …` does
+not yet work — the `:when` half is real, the `:of` half is not. Likewise `rest-pattern` (`[1 ...rest]`)
+and `functional-pattern`. Those are separate defects; this ruling is guards.

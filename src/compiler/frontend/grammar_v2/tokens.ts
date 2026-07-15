@@ -138,6 +138,7 @@ export const FromModKw = createToken({ name: "FromModKw", pattern: new RegExp(`:
 export const AsModKw = createToken({ name: "AsModKw", pattern: new RegExp(`:as${modKwTail}`) });
 export const OfModKw = createToken({ name: "OfModKw", pattern: new RegExp(`:of${modKwTail}`) });
 export const IsModKw = createToken({ name: "IsModKw", pattern: new RegExp(`:is${modKwTail}`) });
+export const WhenModKw = createToken({ name: "WhenModKw", pattern: new RegExp(`:when${modKwTail}`) });
 
 // ============================================================================
 // OPERATORS (Multi-char before single-char!)
@@ -314,7 +315,7 @@ export const defaultModeTokens: TokenType[] = [
   ImplementsModKw, ExtendsModKw, WhereModKw,
   CondModKw, ThenModKw, ElseModKw,
   InitModKw, StepModKw, EachModKw, FromModKw,
-  AsModKw, OfModKw, IsModKw,
+  AsModKw, OfModKw, IsModKw, WhenModKw,
   // Multi-char operators first!
   RightDoubleArrow, LeftArrow, RightArrow,
   PlusEq, MinusEq, StarEq, SlashEq, PercentEq,
@@ -358,7 +359,7 @@ export const formatExprModeTokens: TokenType[] = [
   ImplementsModKw, ExtendsModKw, WhereModKw,
   CondModKw, ThenModKw, ElseModKw,
   InitModKw, StepModKw, EachModKw, FromModKw,
-  AsModKw, OfModKw, IsModKw,
+  AsModKw, OfModKw, IsModKw, WhenModKw,
   // Operators
   RightDoubleArrow, LeftArrow, RightArrow,
   PlusEq, MinusEq, StarEq, SlashEq, PercentEq,

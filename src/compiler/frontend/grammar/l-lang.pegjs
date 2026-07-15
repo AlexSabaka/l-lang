@@ -808,8 +808,10 @@ Match
   }
 
 MatchCase
-  = _ pattern:Pattern _ RightDoubleArrowKw _ body:Expression _ {
-    return makeNode("match-case", { pattern, body });
+  = _ pattern:Pattern _ guard:(WhenModKw __ @Expression _)? RightDoubleArrowKw _ body:Expression _ {
+    // `:when <expr>` (D26). Optional, lexically separate from the pattern. `guard` is null when absent,
+    // which the codegen already treats as "no guard".
+    return makeNode("match-case", { pattern, guard: guard ?? undefined, body });
   }
 
 // ConstantPattern BEFORE IdentifierPattern (D9). `nil` is a legal identifier character sequence here,
@@ -1085,6 +1087,7 @@ ConstraintKw
 IsModKw = ":is"i
 AsModKw = ":as"i
 OfModKw = ":of"i
+WhenModKw = ":when"i
 
 CondModKw = ":cond"i
 ThenModKw = ":then"i
@@ -1100,7 +1103,12 @@ RightArrowKw = "->"i
 LeftDoubleArrowKw = "<="i
 RightDoubleArrowKw = "=>"i
 
-AssignmentOperatorKw = "="i
+// `=` must not swallow the `=` of `=>`. Without the lookahead, `x :when true => body` parsed the
+// guard as `true = >` -- a simple-assignment of the operator `>` -- and the `=>` vanished, so the whole
+// MatchCase (and thus the Match) failed and fell back to a plain list (D26). `=>` is a distinct token
+// used only by match and enum; an assignment has no business consuming it. (grammar_v2 never had this
+// because `=>` is one token there -- D2 territory: `=` is not an assignment operator in v2 at all.)
+AssignmentOperatorKw = "="i !">"
 
 // Misc
 // NOTE: Under review to get cut coz almost identical

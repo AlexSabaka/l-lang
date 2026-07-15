@@ -1621,6 +1621,73 @@ const CASES: Case[] = [
       "It must keep working, and it must agree with the plain path.",
   },
 
+  // ===============================================================================================
+  // D26 -- match guards. `pattern :when expr`.
+  // ===============================================================================================
+  {
+    name: "D26: a guard picks the arm the pattern alone cannot",
+    source: `(let n 5)
+(console.log (match n {
+  x :when (< x 0)   => "neg"
+  x :when (< x 10)  => "small"
+  _                 => "big"
+}))`,
+    expect: ["small"],
+    wasBroken:
+      "guards did not exist. `:when` was not a grammar rule, `MatchCaseNode` had no `guard` field, and " +
+      "the corpus's own guards -- written `(< _ 0)` -- parsed as a THREE-ELEMENT list-pattern `[<, _, 0]`. " +
+      "So every guarded arm fell through.",
+  },
+  {
+    name: "D26: the guard reads the pattern's BINDING by name",
+    source: `(let n 42)
+(console.log (match n {
+  x :when (> x 40)  => x
+  _                 => 0
+}))`,
+    expect: ["42"],
+    wasBroken:
+      "the whole point of a clause over a `(< _ 0)` predicate: the pattern BINDS `x` and the guard READS " +
+      "it. `x` must be in scope in the guard, and it must be the matched value.",
+  },
+  {
+    name: "D26: a guard composes with a VECTOR destructure",
+    source: `(console.log (match [3 1] {
+  [a b] :when (> a b)  => "descending"
+  [a b]                => "not"
+  _                    => "other"
+}))`,
+    expect: ["descending"],
+    wasBroken:
+      "a guard is a separate clause, so it must ride on ANY pattern -- here a destructure -- and read the " +
+      "names that pattern introduced (`a`, `b`).",
+  },
+  {
+    name: "D26: a false guard FALLS THROUGH to the next arm",
+    source: `(let n 5)
+(console.log (match n {
+  x :when (> x 100)  => "huge"
+  x :when (> x 3)    => "medium"
+  _                  => "small"
+}))`,
+    expect: ["medium"],
+    wasBroken:
+      "a guard that is false must not match -- the arm is skipped and the NEXT is tried, pattern included. " +
+      "The first arm's pattern (`x`) matches everything; only its guard rejects.",
+  },
+  {
+    name: "D26: an UNguarded arm still matches (guard is optional)",
+    source: `(console.log (match 7 {
+  1 => "one"
+  7 => "seven"
+  _ => "other"
+}))`,
+    expect: ["seven"],
+    wasBroken:
+      "NOT broken -- a GUARD (the other kind). `:when` is optional; adding the clause must not disturb a " +
+      "case that has none. This is every match in the corpus.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",

@@ -1268,8 +1268,15 @@ class LLangParser extends CstParser {
 
     this.matchCase = this.RULE("matchCase", () => {
       this.SUBRULE(this.pattern);
+      // `:when <expr>` (D26). Optional, and lexically SEPARATE from the pattern -- which is the whole
+      // reason it is unambiguous where a predicate-shaped pattern would not be. The pattern binds; the
+      // guard reads those bindings.
+      this.OPTION(() => {
+        this.CONSUME(t.WhenModKw);
+        this.SUBRULE1(this.expression, { LABEL: "guard" });
+      });
       this.CONSUME(t.RightDoubleArrow);
-      this.SUBRULE(this.expression);
+      this.SUBRULE2(this.expression, { LABEL: "body" });
     });
 
     // ========================================================================
