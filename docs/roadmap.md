@@ -230,10 +230,13 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
 
 *   **`__ll_member` is a thermometer.** Where the checker cannot type a receiver, `(obj.m)` is dispatched
     at run time rather than guessed (D1, amended by Xe). It is correct, and it is also a **measurement**:
-    every site that reaches it is a receiver the type checker failed to infer. Today that is ~50 sites,
-    including `v3.x`, `user.age` and `final-account.balance` — plain struct fields. Each one the checker
-    learns to type stops reaching the shim and goes back to a direct `.x` / `.m()`. Watching that number
-    fall is the cheapest available measure of the "does not infer every expression" gap.
+    every site that reaches it is a receiver the type checker failed to infer. It read **50** sites; two
+    mechanical gaps closed it to **24**: a self-referential return type stored as Unknown
+    (`(fn :operator + [o <- V] -> V ...)`, 1b9bec5) and a member looked up by its ENCODED rather than
+    SOURCE name (`get-area` → `get2darea`, 801b660). The remaining 24 are mostly genuine JS interop
+    (`toUpperCase`, `trim`, `Date.now`, `.message`) that the compiler correctly cannot type, plus a
+    handful of harder receivers. Watching that number fall is the cheapest available measure of the
+    "does not infer every expression" gap.
 
 *   ~~**The checker silently stops walking a block nested in a block**~~ — **FIXED (Xf).**
     `visitStatement`'s final branch is commented *"a wrapped special form — if / for / while / match"*
@@ -255,9 +258,11 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     query, so the identical `if` node compiles two ways depending on what encloses it. The same disease
     Phase F cured in the call decision. **Ruled: D25. Phase X in flight; gates are RED.** (A trailing
     `if` no longer loses its value — that is **D18**.)
-*   **The type checker does not infer every expression.** 114 `list` nodes have no entry in the type
-    channel, which caps what codegen can prove and is why the struct-copy elision came in at 138
-    rather than the 353 predicted.
+*   **The type checker does not infer every expression** (improving). 114 `list` nodes once had no
+    entry in the type channel; self-referential return types and dashed-member lookup are now fixed
+    (the thermometer above fell 50 → 24). What remains uninferred: some receivers reached through
+    multi-step expressions, and untyped JS-interop values. Caps what codegen can prove — the reason the
+    struct-copy elision came in at 138 rather than the 353 predicted.
 *   **The call-vs-block rule is implemented three times** — codegen, the checker, and the desugarer —
     and all three guess it from the same proxy, `head._type === "simple-identifier"`. That proxy is why
     an applied lambda cannot be written. **Ruled: D25.**
