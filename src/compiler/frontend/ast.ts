@@ -310,6 +310,8 @@ export interface VariableNode extends ASTNode<"variable"> {
 export interface FunctionNode extends ASTNode<"function"> {
   name: IdentifierNode;
   async: boolean;
+  /** `:gen` (D31). The function lowers to a JS `function*`; `(yield x)` in its body produces. */
+  generator: boolean;
   extern: boolean;
   modifiers: ModifierNode[];
   params: ParameterNode[];

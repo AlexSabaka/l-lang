@@ -688,6 +688,8 @@ export class LLangAstBuilder extends BaseCstVisitor {
     // `ctx.AsyncKw` alone meant the flag stayed false for every real async function in the corpus.
     // `ctx.AsyncKw` here is the `(async fn ...)` prefix form, which this frontend also accepts.
     const async = !!ctx.AsyncKw || modifiers.some((m: any) => m.modifier === "async");
+    // `:gen` (D31): this function lowers to a JS `function*`.
+    const generator = modifiers.some((m: any) => m.modifier === "gen");
     const name = ctx.identifier ? this.visit(ctx.identifier[0]) : null;
     const params = ctx.parameter ? ctx.parameter.map((p: any) => this.visit(p)) : [];
     const returns = ctx.type ? this.visit(ctx.type[0]) : null;
@@ -700,6 +702,7 @@ export class LLangAstBuilder extends BaseCstVisitor {
     return this.makeNode("function", ctx, {
       name,
       async,
+      generator,
       extern,
       modifiers,
       generics,

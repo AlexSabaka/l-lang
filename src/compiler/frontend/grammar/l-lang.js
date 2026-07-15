@@ -515,9 +515,10 @@ function peg$parse(input, options) {
   function peg$f35(modifiers, decl, params, returns, body) {
     const extern = !!modifiers.find(x => x.modifier === "extern");
     const async = !!modifiers.find(x => x.modifier === "async");
+    const generator = !!modifiers.find(x => x.modifier === "gen");  // :gen (D31)
     const name = decl ? decl.name : null;
     const generics = decl && decl.generics ? decl.generics : undefined;
-    return makeNode("function", { name, async, extern, generics, modifiers, params, returns, body });
+    return makeNode("function", { name, async, generator, extern, generics, modifiers, params, returns, body });
   }
   function peg$f36(name, generics) {
     return { name: makeNode("simple-identifier", { id: name }), generics };

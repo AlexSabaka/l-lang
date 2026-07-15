@@ -409,9 +409,10 @@ Function
   {
     const extern = !!modifiers.find(x => x.modifier === "extern");
     const async = !!modifiers.find(x => x.modifier === "async");
+    const generator = !!modifiers.find(x => x.modifier === "gen");  // :gen (D31)
     const name = decl ? decl.name : null;
     const generics = decl && decl.generics ? decl.generics : undefined;
-    return makeNode("function", { name, async, extern, generics, modifiers, params, returns, body });
+    return makeNode("function", { name, async, generator, extern, generics, modifiers, params, returns, body });
   }
 
 // A function's name, and its `<T>` if it has one (Phase 5).

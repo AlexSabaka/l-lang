@@ -1915,6 +1915,38 @@ const CASES: Case[] = [
       "element-typing gap was blocking (array-of-STRUCTS; array-of-maps still needs record types).",
   },
 
+  // ===============================================================================================
+  // D31/Ga -- generators. `:gen` + `yield` lower to a JS `function*`. A generator object is natively
+  // iterable, so `for :each` over one works through the existing `for...of` -- no bridge yet.
+  // ===============================================================================================
+  {
+    name: "D31: a :gen function is a function* and for :each drives it",
+    source: `(import "std/iter")
+(fn :gen count-up [n <- Int] -> Iterator<Int> (
+  (mut i 0)
+  (while (< i n) (
+    (yield i)
+    (i := (+ i 1))))))
+(for :each x :from (count-up 3) :then (console.log x))`,
+    expect: ["0", "1", "2"],
+    emitted: { must: [/function\*/, /yield /] },
+    wasBroken:
+      "`:gen` was an unknown modifier (LL0015); codegen hardcoded `generator: false`; and `(yield i)` " +
+      "-- `yield` is a SPECIAL_FORM with no codegen -- emitted `_yield(i)`, a call to a function that " +
+      "does not exist. Now `:gen` sets the generator flag, the function emits `function*`, `(yield i)` " +
+      "is a JS YieldExpression, and `for...of` over the resulting generator object just works.",
+  },
+  {
+    name: "D31: a plain function is NOT a generator",
+    source: `(fn plain [] -> Int (return 7))
+(console.log (plain))`,
+    expect: ["7"],
+    emitted: { mustNot: [/function\*\s+plain/] },
+    wasBroken:
+      "GUARD. Only `:gen` makes a `function*`. A normal function must stay `function` -- the generator " +
+      "flag is read from the modifier, not defaulted on.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",

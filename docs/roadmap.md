@@ -227,9 +227,14 @@ protocol**, so lowering is the native form, not a reimplemented state machine.
         `:from` is **LL0221**. Codegen unchanged (`for...of`). The mechanism is gated (an array-of-structs
         loop-var field now resolves instead of hitting `__ll_member`); the corpus thermometer holds at 23
         because its own `for :each` sites are array-of-MAPS, which need record types to resolve `user.name`.
-*   [ ] **Generators.** `:gen` + `yield` → `function*`; user-type `Iterable` conformance wired into the
-        JS `for...of` lowering (`iterator()` → `[Symbol.iterator]`, with the `T? ↔ {value, done}`
-        bridge). The first non-native `Iterable`.
+*   **Generators (D31).**
+    *   [x] **Ga** — `:gen` + `yield` → `function*`. A generator object is natively iterable, so
+            `for :each` over one runs through the existing `for...of`, end to end.
+    *   [ ] **Gb** — the diagnostics: `yield` outside `:gen`, value-`return` inside `:gen`, a
+            non-`Iterator` return type, an empty-`:gen` warning; and `yield x` checked against `T`.
+    *   [ ] **Gc** — the bridge for a hand-written `:implements Iterable` struct (a NON-generator):
+            `iterator()` → `[Symbol.iterator]`, with the `T? ↔ {value, done}` adapter. Makes Itb's
+            user-conformance path actually consumable by `for...of`.
 *   [ ] **LINQ.** Lazy `map`/`filter`/`take`/`zip`/`enumerate` as generators over `Iterable<T>` -- pure
         stdlib once generators land. The C# LINQ steal.
 *   [ ] **async** (parallel track). `Awaitable<T>` / `Task<T>`, lowered to JS Promise/`async`. `fn :async`

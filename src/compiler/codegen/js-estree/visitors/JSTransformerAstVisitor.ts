@@ -1125,7 +1125,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
             id: null,
             params,
             body,
-            generator: false,
+            generator: node.generator,  // `:gen` (D31) -- a generator method `*m() {}`
             async: node.async,
           },
           kind: "method",
@@ -1155,7 +1155,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           id: name,
           params,
           body,
-          generator: false,
+          generator: node.generator,  // `:gen` (D31) -- `function* f() {}`
           async: node.async,
           loc: ESTreeBuilder.loc(node),
         } as ESTree.FunctionDeclaration;
@@ -1163,7 +1163,21 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         // Apply custom modifiers if present
         result = this.applyModifiersToDeclaration(node, declaration, originalName);
       } else {
-        const funcExpr: ESTree.ArrowFunctionExpression = {
+        // A nested/anonymous function is normally an arrow -- but a generator CANNOT be an arrow
+        // (`() => {}` has no `function*` form). A `:gen` here emits a `function*` EXPRESSION instead,
+        // which is a legal value and still a closure. `this` differs between an arrow and a function
+        // expression, but a generator that needs an enclosing `this` is a method, which took form 1.
+        const funcExpr: ESTree.ArrowFunctionExpression | ESTree.FunctionExpression = node.generator
+          ? ({
+              type: "FunctionExpression",
+              id: null,
+              params,
+              body,
+              generator: true,
+              async: node.async,
+              loc: ESTreeBuilder.loc(node),
+            } as ESTree.FunctionExpression)
+          : ({
           type: "ArrowFunctionExpression",
           expression: false,
           params,
@@ -1171,7 +1185,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           generator: false,
           async: node.async,
           loc: ESTreeBuilder.loc(node),
-        };
+        } as ESTree.ArrowFunctionExpression);
 
         if (name) {
           let variableDecl: ESTree.VariableDeclaration = {
@@ -2749,6 +2763,19 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         // returned LOCAL is the corpus's whole construct-mutate-return idiom, which must not hand out
         // an alias either (D11).
         return ESTreeBuilder.returnStatement(node, this.asValue(returnValue, rest[0]));
+      }
+
+      // `(yield x)` / `(yield)` -> a JS YieldExpression (D31). `yield` is a SPECIAL_FORM, so without
+      // this it fell through to the call path and emitted `_yield(x)` -- a call to a function that does
+      // not exist. Only legal inside a `:gen` function; the checker enforces that (Gb). An empty
+      // `(yield)` yields nil.
+      if (head._type === "simple-identifier" && headId === "yield") {
+        return {
+          type: "YieldExpression",
+          argument: rest.length > 0 ? this.visitExpr(rest[0]) : null,
+          delegate: false,
+          loc: ESTreeBuilder.loc(node),
+        } as ESTree.YieldExpression;
       }
 
       // Handle (new ClassName args...) -> new ClassName(args...)

@@ -2934,3 +2934,62 @@ are explicitly the *next* phase, because they arrive together:
 
 Until then, native collections flow through the protocol (via `for...of`, which already is the
 protocol) and user `:implements Iterable` type-checks but is not yet consumable by `for :each` codegen.
+
+## D31 — generators: `:gen` + `yield`
+
+A generator is a function that produces a **sequence** by suspending, under D29/D30. The second
+protocol construct, and on the JS backend it is nearly free: `:gen` lowers to `function*`, `yield` to
+`yield`, and a `function*`'s result object is *already* iterable, so `for :each` drives it through the
+existing `for...of` -- no bridge.
+
+```lisp
+(fn :gen count-up [n <- Int] -> Iterator<Int>
+  (mut i 0)
+  (while (< i n)
+    (yield i)              ;; produce i, SUSPEND, resume here on the next pull
+    (i := (+ i 1))))
+
+(for :each x :from (count-up 3) :then (console.log x))   ;; 0 1 2
+```
+
+### `yield` is not redundant with `return`, and here is why
+
+They are different operations: **`yield` produces-and-suspends, `return` produces-and-terminates.** A
+function has ONE exit; a generator has MANY suspension points. "yield 0, then 1, then 2" has no
+`return`-based expression -- `return` on the first pull ends the function and never resumes. So the
+multi-yield case, which is the whole point, requires `yield`. Collapsing `return` into an implicit
+yield would help only the degenerate single-value generator, and it would cost the early-exit meaning
+of `return` and invert the JS lowering (l-lang `return` → JS `yield` reads as nonsense).
+
+### The rules (C#'s model, chosen deliberately)
+
+| | inside a `:gen` function |
+|---|---|
+| produce a value | **`(yield x)`** -- the only way. `(yield)` yields nil. |
+| stop early | **`(return)`** -- valueless. Ends the sequence. |
+| `(return x)` with a value | **error.** Its value has no place in the sequence; silently discarding it (JS/Python) is the trap C# avoids by forbidding it. |
+| implicit return of the tail | **suppressed.** A generator's tail value is not a sequence element. |
+
+And because `:gen` is EXPLICIT (the ruling), two consistency checks fall out:
+
+- **`yield` outside a `:gen` function is an error** -- you are not in a generator.
+- **a `:gen` function with no `yield` is a warning** -- an empty generator is almost always a mistake.
+
+### The return type is the full `Iterator<T>` (the ruling)
+
+```lisp
+(fn :gen f [] -> Iterator<Int> ...)     ;; the honest type; `yield x` is checked against T
+```
+
+Not `-> Int` "meaning yields Int". The annotation is *always* the real type -- the less surprising
+rule -- and the compiler **errors on a non-`Iterator` return type** for a `:gen`. A called generator's
+object is both iterator and iterable (JS `function*` gives exactly that), so `-> Iterator<Int>` flows
+straight into `for :each`, which needs `Iterable<Int>` -- the protocol clicking together.
+
+### What Ga ships, and what Gb owes
+
+**Ga** (this): the `:gen` modifier, the `function*` lowering, `yield` codegen, and `for :each` over a
+generator end to end -- because a generator is natively iterable, that already runs. **Gb** owes the
+diagnostics above (yield-outside-gen, value-`return`, non-`Iterator` return type, empty-`:gen`
+warning) and the type-level check that `yield x` matches the declared `T`. **Gc** owes the bridge that
+makes a hand-written `:implements Iterable` struct (a NON-generator) consumable by `for...of`.

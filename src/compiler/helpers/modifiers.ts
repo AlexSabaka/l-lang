@@ -13,7 +13,7 @@ export const CLASS_MODIFIERS = ["static", "override", "extern"] as const;
 // `T?`, in the type, where the checker can see it. D4/LL0015 refuses `:nullable` by name now; the
 // corpus never used it.
 export const TYPE_MODIFIERS = ["explicit-cast", "implicit-cast", "readonly"] as const;
-export const FUNCTION_MODIFIERS = ["extension", "operator", "comptime", "async"] as const;
+export const FUNCTION_MODIFIERS = ["extension", "operator", "comptime", "async", "gen"] as const;
 export const MEMBER_MODIFIERS = ["ctor"] as const;
 
 export const BUILTIN_MODIFIERS = [
