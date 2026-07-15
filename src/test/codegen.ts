@@ -2049,6 +2049,54 @@ const CASES: Case[] = [
       ":implements Iterable<T>`: the struct's `iterator()` returns `this`, an Iterator used AS an Iterable.)",
   },
 
+  // ===============================================================================================
+  // Phase L / Lb -- the STRAIGHT-THROUGH lazy operators (`std/linq`). Each is a collection-FIRST
+  // `:gen` over `for :each`, so the working infix `|>` threads the collection through: `(coll |> (map
+  // f) |> (filter p))` is `filter(map(coll, f), p)`, a pipeline of generators. Consumed here by
+  // `for :each` (Lc adds the terminal `to-list`). This is the roadmap's "C# LINQ steal", pure stdlib.
+  // ===============================================================================================
+  {
+    name: "Lb: map |> filter, piped and consumed by for :each",
+    source: `(import "std/linq")
+(fn square [x <- Int] -> Int (* x x))
+(fn is-even [x] (== (% x 2) 0))
+(for :each v :from ([1 2 3 4 5] |> (map square) |> (filter is-even)) :then (console.log v))`,
+    expect: ["4", "16"],
+    emitted: { must: [/function\*/] },
+    wasBroken:
+      "RED first: `std/linq` did not exist, so `map`/`filter` were undefined. Lb ships them as " +
+      "collection-first `:gen` functions. The pipe threads `[1..5]` first -> `map` squares (1 4 9 16 " +
+      "25), `filter` keeps evens (4 16); both are lazy generators, driven by the outer `for :each`.",
+  },
+  {
+    name: "Lb: enumerate yields [index value], destructured in the loop var",
+    source: `(import "std/linq")
+(for :each [i x] :from (["a" "b" "c"] |> enumerate) :then (console.log i x))`,
+    expect: ["0 a", "1 b", "2 c"],
+    wasBroken:
+      "`enumerate` pairs each element with its index as a 2-element array (l-lang has no tuple type, " +
+      "same as eager `seq.zip`). A bare `|> enumerate` stage threads the array as its sole argument.",
+  },
+  {
+    name: "Lb: concat |> skip",
+    source: `(import "std/linq")
+(for :each v :from ([1 2] |> (concat [3 4 5]) |> (skip 1)) :then (console.log v))`,
+    expect: ["2", "3", "4", "5"],
+    wasBroken:
+      "`concat` runs `a` then `b` (1 2 3 4 5); `skip 1` drops the first (2 3 4 5). Two `:gen`s composed " +
+      "by the pipe -- `skip` uses a counter and `for :each`, no early exit needed.",
+  },
+  {
+    name: "Lb: flat-map |> skip-while",
+    source: `(import "std/linq")
+(fn dup [x <- Int] -> Int[] [x x])
+(for :each v :from ([1 2 3] |> (flat-map dup) |> (skip-while (fn [n] (< n 2)))) :then (console.log v))`,
+    expect: ["2", "2", "3", "3"],
+    wasBroken:
+      "`flat-map dup` expands each x to `[x x]` and flattens (1 1 2 2 3 3) via a nested `for :each`; " +
+      "`skip-while (< n 2)` drops the leading 1s and yields from the first failure on (2 2 3 3).",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",
