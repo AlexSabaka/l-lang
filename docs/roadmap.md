@@ -365,21 +365,24 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     so `((get-fn) 2)` is caught when `get-fn`'s return type is *inferred* as a function and NOT when it
     is declared `-> Any`. Both halves are gated. This gets strictly better as return-type inference does.
 
-*   **Expression vs statement.** `(console.log (when false 1))` and `((D).hi)` emit **invalid
-    JavaScript** (`LL0101`). One shared root: `isExpressionContext()` asks *"is a `variable` or `match`
-    scope anywhere above me on the stack"* — a **positional** property answered by an **ambient-state**
-    query, so the identical `if` node compiles two ways depending on what encloses it. The same disease
-    Phase F cured in the call decision. **Ruled: D25. Phase X in flight; gates are RED.** (A trailing
-    `if` no longer loses its value — that is **D18**.)
+*   ~~**Expression vs statement.**~~ — **FIXED (Phase X + Xg).** `isExpressionContext()` — a **positional**
+    property answered by an **ambient-state** query — is gone from the active (Estree) backend, replaced by
+    the positional `visitExpr`/`asExpression` scheme: each form emits one canonical shape and the consumer,
+    which owns the slot, coerces. So `(console.log (when false 1))` emits `console.log(false ? 1 : null)`.
+    The last shape, `((D).hi)` — a member on a COMPUTED object — is fixed by **Xg** (a desugar rewrite to
+    the `MemberNode`/`CallNode` core nodes). The same disease Phase F cured in the call decision; only the
+    deprecated `legacy-js` backend still carries `isExpressionContext`. (A trailing `if` keeping its value
+    is **D18**.)
 *   **The type checker does not infer every expression** (improving). 114 `list` nodes once had no
     entry in the type channel; the three mechanical gaps are fixed (thermometer 50 → 23), and Phase T
     then typed the String/Array native members. What remains uninferred is a harder class — collection
     element types over array-of-maps (record types), `Date`/`Error` interop, and field-access chains
     (see the thermometer entry). Caps what codegen can prove — the reason the struct-copy elision came
     in at 138 rather than the 353 predicted.
-*   **The call-vs-block rule is implemented three times** — codegen, the checker, and the desugarer —
-    and all three guess it from the same proxy, `head._type === "simple-identifier"`. That proxy is why
-    an applied lambda cannot be written. **Ruled: D25.**
+*   ~~**The call-vs-block rule is implemented three times.**~~ — **FIXED (D25).** All three live passes —
+    codegen's `visitList`, the checker, and the desugarer — now read the single source, `listForm.ts`
+    (`classifyList`/`isCallList`/`valueIsTail`), instead of each guessing from `head._type ===
+    "simple-identifier"`. Only the deprecated `legacy-js` backend keeps an independent copy.
 *   ~~**`03_matching.lisp`'s golden asserts a bug**~~ — **FIXED (D26).** `(< _ 0)` was never a guard;
     it parsed as a 3-element list-pattern `[<, _, 0]` and every arm fell through, and the golden recorded
     the fall-through as the answer. Guards are now a real clause (`n :when (< n 0)`), and the golden is
@@ -391,10 +394,9 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     *signature* — which may not be meaningfully implementable on a JS target (a closure carries no
     parameter types at run time). Rest is trailing-only and named-only; a mid-list rest and anonymous
     `[a ...]` are unbuilt.
-*   **`((fn [x] …) 21)` does not compile** (`LL0101`). *Corrected on measurement:* it **parses fine** —
-    the grammar was never the problem. Its head is a **lambda**, and codegen's call test is "is the head
-    an identifier", so it falls into the implicit-block path and emits statements into an expression
-    slot. **Ruled a call: D25.**
+*   ~~**`((fn [x] …) 21)` does not compile.**~~ — **FIXED (D25/Xc).** Its head is a **lambda**;
+    `classifyList` now reads a lambda-literal head with arguments as an `apply` (`lambdaLiteralIn`), and
+    codegen emits the call. `((fn [x] (* x 2)) 21)` → `42`.
 *   ~~**`(call f a b)` is the tenth "written and never wired in"**~~ — **FIXED (Xc), and the original
     claim was wrong.** `call` was not missing; it was a runtime shim `(f, args) => Array.isArray(args)
     ? f(...args) : f()`, whose second parameter is an argument ARRAY — so `(call g 2)` **silently drops

@@ -2704,6 +2704,18 @@ block that computes a *function*, discards it, and moves on is not a block anyon
 today means where the return type was **inferred**, not declared `-> Any`. Both cases are gated. A
 checker that guessed here would report on correct code, and that trade is the right way round.
 
+### `(expr).member` — a member of a COMPUTED object (Xg)
+
+The sibling of `(call f a b)`: `((Vault).reveal)`, `((mk).method a b)` — a member access on a
+parenthesised/computed object. A `.member` suffix attaches only to a NAME, so on a `(...)` group the
+`.member` fell out as a separate headless `composite-identifier`, the 2-node list read as a block, and
+codegen emitted `{ new Vault(); reveal; }` — a bare `reveal` (`ReferenceError`), or invalid JS
+(`LL0101`) in an expression slot. **Xg** desugars the shape `[computed-object, headless-.member, …args]`
+into `CallNode(MemberNode(object, member), args)` — the same core nodes the pipeline `(x |> .length)`
+already produces, and what `ast.ts:487-504` reserves them for. A parenthesised member-list is a call, so
+`((Vault).reveal)` → `new Vault().reveal()` (the computed receiver goes through the `__ll_member` runtime
+fallback, a thermometer site). Desugared, not parsed — both frontends hand over the identical shape.
+
 ## D26 — match guards: `pattern :when expr`
 
 A `match` case tests a **pattern**; a **guard** narrows it with a boolean the pattern alone cannot
