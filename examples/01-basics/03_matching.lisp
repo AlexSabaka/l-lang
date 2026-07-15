@@ -1,6 +1,6 @@
 (
     (let x 3)
-    (let y 
+    (let y
         (match x {
             1 => ("1 1 1 1")
             2 => ("2 2 2 2")
@@ -10,15 +10,24 @@
             }))
     (console.log y)
 
+    ;; Guards (D26): `pattern :when expr`. The pattern binds `n`, the guard tests it.
+    ;;
+    ;; This file used to write these as `(< _ 0)` -- which does NOT parse as a guard. `(< _ 0)` is a
+    ;; three-element list-pattern `[<, _, 0]`, so every arm fell through, and the golden recorded that
+    ;; fall-through -- `how da fck are you still alive?` -- as the expected answer. A passing test that
+    ;; asserted a bug.
+    ;;
+    ;; `Math.random` takes no arguments and returns [0, 1), so `n` is always in [0, 1): `(< n 0)` is
+    ;; false and `(< n 10)` is true. The second arm wins, deterministically.
     (match (Math.random 0 100)
         {
-            (< _ 0)  => (console.log "unborn")
-            (< _ 10) => (console.log "just a baby")
-            (< _ 20) => (console.log "yo yo yo a teenager here")
-            (< _ 40) => (console.log "nothing spectacular a middleage person")
-            (< _ 60) => (console.log "i see youve seen some shit in life")
-            (< _ 90) => (console.log "have you bought yourself a place at graveyard?")
-            _        => (console.log "how da fck are you still alive?")
+            n :when (< n 0)  => (console.log "unborn")
+            n :when (< n 10) => (console.log "just a baby")
+            n :when (< n 20) => (console.log "yo yo yo a teenager here")
+            n :when (< n 40) => (console.log "nothing spectacular a middleage person")
+            n :when (< n 60) => (console.log "i see youve seen some shit in life")
+            n :when (< n 90) => (console.log "have you bought yourself a place at graveyard?")
+            _                => (console.log "how da fck are you still alive?")
         }
     )
 )

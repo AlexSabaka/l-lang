@@ -261,12 +261,16 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
 *   **The call-vs-block rule is implemented three times** — codegen, the checker, and the desugarer —
     and all three guess it from the same proxy, `head._type === "simple-identifier"`. That proxy is why
     an applied lambda cannot be written. **Ruled: D25.**
-*   **`03_matching.lisp`'s golden asserts a bug.** `(< _ 0)` — a guard-shaped list pattern — parses as
-    a 3-element array *destructure* and falls through to `_`; the golden bakes in
-    `how da fck are you still alive?`. A **passing test that asserts the wrong answer**. Its `_3c`
-    (encoded `<`) is also emitted as an implicit global.
-*   **Pattern matching is half-built.** `:is` is not a grammar rule at all (the keyword is `:of`), and
-    `type-pattern`, `rest-pattern` and `functional-pattern` all compile to literal `false`.
+*   ~~**`03_matching.lisp`'s golden asserts a bug**~~ — **FIXED (D26).** `(< _ 0)` was never a guard;
+    it parsed as a 3-element list-pattern `[<, _, 0]` and every arm fell through, and the golden recorded
+    the fall-through as the answer. Guards are now a real clause (`n :when (< n 0)`), and the golden is
+    re-authored from intent: `just a baby` (Math.random is [0,1), so `(< n 10)` wins deterministically).
+    The one golden this session that was *supposed* to move.
+*   **Pattern matching is still half-built (guards excepted).** `:of` **type patterns**, `rest-pattern`
+    and `functional-pattern` all still compile to literal `false`. The docs say `:is` and the grammar
+    says `:of` — both tokens exist (`OfModKw`, `IsModKw`), only `:of` is wired, so `x :is Int` is a
+    parse error and `x :of Int` silently never matches. So `x :of String :when …` does not work: the
+    `:when` half is real (D26), the `:of` half is dead. A separate defect, surfaced not absorbed.
 *   **`((fn [x] …) 21)` does not compile** (`LL0101`). *Corrected on measurement:* it **parses fine** —
     the grammar was never the problem. Its head is a **lambda**, and codegen's call test is "is the head
     an identifier", so it falls into the implicit-block path and emits statements into an expression
