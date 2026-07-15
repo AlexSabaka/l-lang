@@ -2097,6 +2097,77 @@ const CASES: Case[] = [
       "`skip-while (< n 2)` drops the leading 1s and yields from the first failure on (2 2 3 3).",
   },
 
+  // ===============================================================================================
+  // Phase L / Lc -- EARLY-EXIT operators (`take`, `take-while`, `zip`) and TERMINALS (`to-list`,
+  // `reduce`, `count`, `for-each`). The early-exit ones cannot use `for :each` (a `for...of` has no
+  // `break`), so they pull La's raw cursor -- `(iter coll)` + `(next it)` -- under a `while` and stop
+  // the instant they have enough. That is what makes them safe over an INFINITE source.
+  // ===============================================================================================
+  {
+    name: "Lc: the LAZINESS PROOF -- take over an unbounded generator terminates",
+    source: `(import "std/linq")
+(fn :gen nats [] (
+  (mut i 0)
+  (while true (
+    (yield i)
+    (i := (+ i 1))))))
+(fn square [x <- Int] -> Int (* x x))
+(let result ((nats) |> (map square) |> (take 3) |> to-list))
+(console.log result.length)
+(console.log result[0] result[1] result[2])`,
+    expect: ["3", "0 1 4"],
+    wasBroken:
+      "The star gate, falsifiable by construction: `nats` never stops, so this HANGS forever unless " +
+      "`take` is genuinely lazy -- pulling exactly what it needs through the cursor and stopping. An " +
+      "eager `take` (materialise then slice) would spin on `(while true)` and never return. It prints " +
+      "`[0 1 4]` only because `map` and `take` do no work until `to-list` drives them element by element.",
+  },
+  {
+    name: "Lc: take-while stops at the first failure, over an unbounded source",
+    source: `(import "std/linq")
+(fn :gen nats [] (
+  (mut i 0)
+  (while true (
+    (yield i)
+    (i := (+ i 1))))))
+(fn square [x <- Int] -> Int (* x x))
+(let result ((nats) |> (map square) |> (take-while (fn [n] (< n 20))) |> to-list))
+(console.log result.length)
+(console.log result[0] result[4])`,
+    expect: ["5", "0 16"],
+    wasBroken:
+      "`take-while (< n 20)` over the infinite squares 0 1 4 9 16 25... yields the leading run below 20 " +
+      "(0 1 4 9 16) and stops at 25 -- again, only terminating because the cursor is pulled lazily.",
+  },
+  {
+    name: "Lc: zip advances two cursors in lockstep, stops at the shorter",
+    source: `(import "std/linq")
+(for :each [n s] :from ([1 2 3] |> (zip ["a" "b"])) :then (console.log n s))`,
+    expect: ["1 a", "2 b"],
+    wasBroken:
+      "`zip` pulls a cursor from each side and yields `[x y]` until EITHER is exhausted -- so a 3-long " +
+      "and a 2-long source produce two pairs. The `[n s]` destructuring loop var unpacks each pair.",
+  },
+  {
+    name: "Lc: reduce folds, count sizes",
+    source: `(import "std/linq")
+(console.log ([1 2 3 4] |> (reduce (fn [a b] (+ a b)) 0)))
+(console.log ([10 20 30] |> count))`,
+    expect: ["10", "3"],
+    wasBroken:
+      "The terminals that COLLAPSE a sequence. `reduce` threads an accumulator (1+2+3+4 = 10); `count` " +
+      "walks and tallies (3). Collection-first, so `|>` threads them like every other operator.",
+  },
+  {
+    name: "Lc: for-each drives a sequence for its side effects",
+    source: `(import "std/linq")
+([1 2 3] |> (for-each (fn [x] (console.log (* x 10)))))`,
+    expect: ["10", "20", "30"],
+    wasBroken:
+      "`for-each` is the eager terminal for effects -- it pulls every element and calls `f`, returning " +
+      "nothing. Drives the whole (finite) sequence, unlike `take` which stops early.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",
