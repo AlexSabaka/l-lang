@@ -2128,6 +2128,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         this.checkReturns(node);
         this.checkGeneratorRules(node);
         this.checkAsyncRules(node);
+        this.checkExtensionRules(node);
       }
     );
     this.deferredDepth--;
@@ -2231,6 +2232,25 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    * Enforce D31 on generators, and catch a `yield` that escaped one. Runs for EVERY function, because
    * the "yield outside a generator" rule is about the NON-generators.
    */
+  /**
+   * Phase E / Eb: an `:extension` function needs a RECEIVER -- its first parameter, the value that
+   * `(x.m ...)` dispatches on. With no parameter it extends nothing and can never be reached as an
+   * extension. Runs for every function, beside the generator/async rules.
+   */
+  private checkExtensionRules(node: ast.FunctionNode): void {
+    const isExtension = (node.modifiers ?? []).some(
+      (m: any) => m.modifier === "extension" || m.modifier === ":extension"
+    );
+    if (!isExtension) return;
+    if (!node.params || node.params.length === 0) {
+      this.reportTypeError(
+        node,
+        "LL0229",
+        "an ':extension' function needs a receiver parameter -- the value it extends. With none it extends nothing and can never be reached as '(x.m ...)'."
+      );
+    }
+  }
+
   private checkGeneratorRules(node: ast.FunctionNode): void {
     const yields = this.collectHeaded(node.body, "yield");
 

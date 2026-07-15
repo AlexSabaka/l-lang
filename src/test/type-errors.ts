@@ -1225,6 +1225,24 @@ ${PRODUCER}
     silent: true,
     why: "GUARD. A well-formed async: awaitable return type, payload return, no stray await.",
   },
+
+  // Phase E / Eb -- the :extension discipline.
+  {
+    name: "Eb: an :extension with no receiver parameter is an error",
+    source: `(fn :extension nothing [] -> Int (return 1))`,
+    expect: /LL0229/,
+    why:
+      "An extension method IS a method on its first parameter -- the receiver. With no parameter it " +
+      "extends nothing and can never dispatch. LL0229 names it, rather than letting it compile into a " +
+      "free function nobody can reach as `(x.nothing)`.",
+  },
+  {
+    name: "Eb: a well-formed :extension is silent",
+    source: `(defstruct Box (let :ctor v <- Int))
+(fn :extension doubled [self <- Box] -> Int (* self.v 2))`,
+    silent: true,
+    why: "GUARD. A receiver parameter is all it needs; an untyped receiver is allowed (it just never dispatches).",
+  },
 ];
 
 function runCases(): { failed: number; pending: number } {

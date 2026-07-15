@@ -275,6 +275,17 @@ JS, `hidden`/`internal` symbol linkage on native) — emission later; the model 
         (file/type — **LL0206** cross-file). `protected` **removed** (a no-op, and the impl-inheritance
         leak Go/Rust drop): `:protected` is now **LL0015**.
 
+## ✅ Phase E: `:extension` methods (D34)
+Adding behaviour to a type from outside its public API (OCP) — a struct you own, a protocol, a foreign
+type. Dispatch is **compile-time nominal**, correcting D34's runtime-registry sketch: `__ll_is_type`
+can't match an interface, but the checker knows `:implements` conformance.
+*   [x] **Ea** — the mechanism. `(x.m a)` lowers to `m(x, a)` when x's static type is a nominal user
+        type lacking a native `m` and an `:extension m` conforms (nominal walk of the receiver's type).
+        Native members win; arrays never resolve (no shadowing `arr.map`); untyped → `__ll_member`.
+        Codegen-only, no runtime registry.
+*   [x] **Eb** — the discipline: an `:extension` with no receiver parameter is **LL0229**. `:extension
+        :gen` demonstrated — a lazy filter method (`(c.where p)` → the generator `where(c, p)`).
+
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."
 

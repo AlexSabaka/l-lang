@@ -3153,10 +3153,28 @@ modifiers split into two kinds by **which compiler phase they govern**.
 The one combination that is **nonsense** is two DISPATCH modifiers on one function (`:operator
 :extension`): a call cannot route two ways. That is the only pairing to forbid.
 
-**Status.** `:gen` (D31), `:async` (D32) and `:operator` are built; **`:extension` is unwired --
-reserved.** This ruling is what makes its eventual build unambiguous: it is a call-site rewrite (mirror
-`:operator`'s runtime dispatch -- `(+ a b)` → `_2b(a,b)` + a registry), and it composes with `:gen`/
-`:async` for free, because dispatch and body are different phases.
+**Status.** All four are built: `:gen` (D31), `:async` (D32), `:operator`, and now **`:extension`
+(Phase E)**.
+
+**`:extension` dispatch is COMPILE-TIME nominal — this ruling's "mirror `:operator`'s runtime dispatch"
+sketch was WRONG, and Phase E corrects it.** `:operator` dispatches at run time via `__ll_op_registry` +
+`__ll_is_type`, which matches a concrete class name on the JS prototype chain — but an interface is not
+a JS constructor and never appears there, so `__ll_is_type(anyArray, "Iterable")` is permanently false.
+A protocol extension (`self <- Iterable<T>`) could never be name-matched at run time, and protocol
+extension is the primary use case. The checker, however, already knows nominal conformance
+(`isSubtype` walks `:implements`), and member access already resolves statically when the type is known.
+So `(x.m a)` lowers to the free call `m(x, a)` at COMPILE time, when x's static type is a nominal user
+type lacking a native `m` and some `:extension m` conforms to it — concrete types and protocols alike.
+Native members always win; arrays/primitives never resolve (their methods are not modelled), so an
+`Iterable` extension never shadows `arr.map`; an untyped receiver falls to `__ll_member` as before.
+
+The **composition** D34 rules still holds, and Phase E demonstrates it: `:extension` (dispatch, call
+site) and `:gen` (body, `function*`) touch different phases, so `(fn :extension :gen where [self <-
+Iterable<T> pred] ...)` is a lazy filter METHOD — C#'s `IEnumerable.Where` with `yield` — `(c.where p)`
+dispatching to the free generator `where(c, p)`. An `:extension` with no receiver parameter is **LL0229**
+(it extends nothing). Result typing is gradual for now (the call types as the extension's declared
+return); runtime dispatch for untyped receivers (`[Symbol.iterator]` duck-typing / `__ll_name`-keyed
+metadata) is a possible later widening, not built.
 
 ## D35 — the compilation unit is a PACKAGE, and visibility is package-scoped (Phase M)
 

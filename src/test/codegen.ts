@@ -2243,6 +2243,33 @@ const CASES: Case[] = [
       "never arrays/primitives -- so `arr.map` stays the native eager map: 2 4 6, not 999.",
   },
 
+  {
+    name: "Eb: :extension :gen composes -- a lazy filter METHOD (D34)",
+    source: `(import "std/iter")
+(defstruct Countdown :implements Iterable<Int>
+  (mut :ctor n <- Int)
+  (fn iterator [] -> Iterator<Int> (return this))
+  (fn next [] -> Int? (
+    (if (<= this.n 0)
+        (return nil)
+        (
+          (let cur this.n)
+          (this.n := (- this.n 1))
+          (return cur))))))
+(fn :extension :gen where [self <- Iterable<Int> pred] -> Iterator<Int>
+  (for :each x :from self :then (
+    (when (pred x) :then (yield x)))))
+(let c (new Countdown 5))
+(for :each x :from (c.where (fn [n] (> n 2))) :then (console.log x))`,
+    expect: ["5", "4", "3"],
+    emitted: { must: [/where\(c,/, /function\*/] },
+    wasBroken:
+      "D34's composition on real code: `:extension` is a DISPATCH modifier (call site), `:gen` a BODY " +
+      "modifier (the emitted `function*`). They touch different phases, so they compose for free -- " +
+      "`(c.where pred)` dispatches to the free `where(c, pred)`, which IS a generator: exactly C#'s " +
+      "`IEnumerable.Where` with `yield`. Countdown 5 -> 5 4 3 2 1; where (> 2) -> 5 4 3, lazily.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",
