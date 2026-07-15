@@ -2787,12 +2787,24 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
       let memberName = calleeStr;
       let objectName: string | null = null;
+      // SOURCE names, for the type lookup below. `calleeStr` is the EMITTED callee, so its parts are
+      // ENCODED (`get-area` -> `get2darea`), but `methodSignatures` and `members` are keyed on the
+      // SOURCE name. Looking up the encoded name found nothing, so every DASHED method -- `get-area`,
+      // `to-string`, `get-info` -- fell to the untyped `__ll_member` fallback while its own definition
+      // was emitted as `get2darea() {...}`. The composite-identifier's `id` is the source dotted path.
+      let sourceMember = calleeStr;
+      let sourceObject: string | null = null;
       if (head._type === "composite-identifier") {
         const parts = calleeStr.split(".");
         memberName = parts[parts.length - 1];
         if (parts.length >= 2) {
           objectName = parts[0];  // For type lookup
         }
+        const sourceParts = String((head as any).id ?? calleeStr).split(".");
+        sourceMember = sourceParts[sourceParts.length - 1];
+        // The receiver name is encoded too: `final-account` -> `final2daccount`, which the symbol table
+        // (keyed on source names) cannot resolve, so `receiverType` failed even before the member lookup.
+        if (sourceParts.length >= 2) sourceObject = sourceParts[0];
       }
 
       // D1, answered: `(x)` is a CALL iff `x` names a FUNCTION. From the symbol table, not from a
@@ -2817,8 +2829,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // properties: breed, species, color, weight". Field names lifted out of the examples and
       // hardcoded into the compiler.
       const memberKind =
-        head._type === "composite-identifier" && objectName
-          ? this.memberKindOn(objectName, memberName, head)
+        head._type === "composite-identifier" && (sourceObject ?? objectName)
+          ? this.memberKindOn((sourceObject ?? objectName)!, sourceMember, head)
           : undefined;
 
       // A FIELD is a read. Full stop -- and it does not matter what it is called.

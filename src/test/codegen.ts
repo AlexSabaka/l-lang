@@ -1844,6 +1844,24 @@ const CASES: Case[] = [
       "and `(a.withX 99)` had no type -- see the method-call-return companion gate. (Ib also required.)",
   },
 
+  {
+    name: "infer: a DASHED method on a typed receiver is a call, not a run-time member",
+    source: `(defclass Circle
+  (let :ctor r <- Int)
+  (fn get-area [] -> Int (return (* this.r this.r))))
+(let c (new Circle 5))
+(console.log (c.get-area))`,
+    expect: ["25"],
+    emitted: { must: [/c\.get2darea\(\)/], mustNot: [/__ll_member\(c/] },
+    wasBroken:
+      "the method `get-area` is emitted as `get2darea()` (the `-` encodes to `2d`), but `memberKindOn` " +
+      "was handed the ENCODED name `get2darea` while `methodSignatures` is keyed on the SOURCE name " +
+      "`get-area`. So the lookup missed and every dashed method on a known receiver fell to the untyped " +
+      "`__ll_member` fallback -- while its own definition emitted fine. The receiver name is encoded too " +
+      "(`final-account` -> `final2daccount`), which broke `resolveSymbol` before the member lookup even " +
+      "ran. Both now use the composite-identifier's SOURCE `id`.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",
