@@ -1804,6 +1804,46 @@ const CASES: Case[] = [
       "is `[]` (length 0). It must MATCH (length >= 2), not fall through.",
   },
 
+  // ===============================================================================================
+  // Inference: a self-referential return type. `(fn :operator + [o <- V] -> V ...)` returns the very
+  // struct being defined -- and during collection that name does not resolve yet, so `convertAstType`
+  // degraded `-> V` to Unknown. The operator's result therefore had no type, so `(let v3 (+ v1 v2))`
+  // was Unknown and `v3.x` fell to the __ll_member run-time fallback (measured: 14 corpus sites).
+  // ===============================================================================================
+  {
+    name: "infer: an operator that returns its own struct types the result",
+    source: `(defstruct V
+  (let :ctor x <- Int)
+  (fn :operator + [o <- V] -> V (return (new V (+ this.x o.x)))))
+(let v1 (new V 10))
+(let v2 (new V 5))
+(let v3 (+ v1 v2))
+(console.log (v3.x))`,
+    expect: ["15"],
+    // The thermometer AS a gate: `v3` is typed as V, so `v3.x` is a KNOWN field and must NOT reach the
+    // untyped-receiver run-time fallback.
+    emitted: { mustNot: [/__ll_member\([^,]*,\s*"x"\)/] },
+    wasBroken:
+      "the `+` overload declares `-> V`, but V is the struct being defined, so during collection " +
+      "`convertAstType` could not resolve it and returned Unknown. `findOperator` then handed back a " +
+      "function whose `returns` was Unknown, `(+ v1 v2)` was Unknown, and `v3.x` compiled to " +
+      "`__ll_member(v3, \"x\")` -- correct at run time, but only because the compiler had given up.",
+  },
+  {
+    name: "infer: a method that returns its own type types the result",
+    source: `(defstruct P
+  (let :ctor x <- Int)
+  (fn withX [nx <- Int] -> P (return (new P nx))))
+(let a (new P 1))
+(let b (a.withX 99))
+(console.log (b.x))`,
+    expect: ["99"],
+    emitted: { mustNot: [/__ll_member\([^,]*,\s*"x"\)/] },
+    wasBroken:
+      "same root, via a method: `withX` declares `-> P` (self), so its stored return type was Unknown, " +
+      "and `(a.withX 99)` had no type -- see the method-call-return companion gate. (Ib also required.)",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",

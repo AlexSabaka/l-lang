@@ -96,6 +96,25 @@ function collectTypeNames(typeNode: ast.ASTNode | undefined): Set<string> {
  * and `basicType` grammar rules carry the suffix: `(A | B)?` lands on the wrapper, a plain `String?`
  * on the inner simple-type.
  */
+/**
+ * Does this symbol DECLARE a type -- a class, struct, enum, interface or type alias?
+ *
+ * The point is to recognise a type by its DECLARATION, before its `inferredType` has been computed.
+ * A struct's own members are collected while the struct is still mid-definition, so a self-reference
+ * (`-> V` inside `V`) sees a registered symbol with no `inferredType` yet. That is a real type, and a
+ * reference to it must defer rather than collapse to Unknown.
+ */
+function declaresAType(entry: SymbolEntry): boolean {
+  const kind = entry.nodeType as string;
+  return (
+    kind === "class" ||
+    kind === "struct" ||
+    kind === "enum" ||
+    kind === "interface" ||
+    kind === "type-def"
+  );
+}
+
 function convertAstType(
   typeNode: ast.TypeNode,
   symbolTable: SymbolTable,
@@ -168,9 +187,20 @@ function convertAstTypeCore(
 
     // A user-defined type (class/struct/interface/alias) -- was only in copy 1. Without this,
     // every class annotation degraded into a primitive of the same name.
+    //
+    // `|| declaresAType(...)` is the fix for SELF- and FORWARD-references. A struct's own methods refer
+    // to it (`(fn :operator + [o <- V] -> V ...)`), and during collection V is REGISTERED (nodeType
+    // "struct") but not yet TYPED (`inferredType` is still empty) -- so the `inferredType` check alone
+    // fell through to Unknown, and every self-returning method or operator lost its return type. That
+    // made `(let v3 (+ v1 v2))` Unknown and `v3.x` an untyped run-time member access -- the single
+    // biggest cluster on the `__ll_member` thermometer (14 sites).
+    //
+    // A deferred type-ref is safe because it is RESOLVED LAZILY: `unwrapType` looks `refName` up at the
+    // USE site, by which time V's collection is complete. A genuine typo still has no symbol at all and
+    // still becomes Unknown below -- the gradual-typing behaviour the corpus depends on.
     const userType = symbolTable.resolveSymbol(name);
-    if (userType && userType.inferredType) {
-      return withArray({ kind: "type-ref", name, refName: name, resolved: true });
+    if (userType && (userType.inferredType || declaresAType(userType))) {
+      return withArray({ kind: "type-ref", name, refName: name, resolved: !!userType.inferredType });
     }
 
     if (name === "Any") {
