@@ -2935,6 +2935,11 @@ are explicitly the *next* phase, because they arrive together:
 Until then, native collections flow through the protocol (via `for...of`, which already is the
 protocol) and user `:implements Iterable` type-checks but is not yet consumable by `for :each` codegen.
 
+> **Refined by La (D33):** `Iterator<T>` was later declared `:implements Iterable<T>` -- a cursor
+> iterates as itself (JS, Rust, Python), which is what lets lazy operators chain (`map` returns an
+> `Iterator`, `filter` wants an `Iterable`). The code block above shows the original two interfaces; the
+> live `std/iter` has the `:implements` clause.
+
 ## D31 — generators: `:gen` + `yield`
 
 A generator is a function that produces a **sequence** by suspending, under D29/D30. The second
@@ -3044,3 +3049,100 @@ inference (a case in inferExpressionType), the payload-return check (checkReturn
 `T` for an async, fixing LL0213), the `await`-outside-`:async` error (LL0227), and the non-awaitable
 return-type error (LL0228). The last two live in `checkAsyncRules`, which runs for every function --
 the await-outside rule is about the NON-async ones -- exactly as `checkGeneratorRules` does for yield.
+
+## D33 — LINQ: the lazy sequence library (`std/linq`)
+
+The first real *consumer* of the D29 protocols. The operators a query language needs -- `map`, `filter`,
+`take`, `zip`, `enumerate`, the C# LINQ steal -- are now **pure stdlib**, in `lib/std/linq.lisp`, with no
+new language construct: they are ordinary `:gen` functions over the iteration protocol (D30/D31). Three
+rulings make them what they are.
+
+### The surface is the PIPE, not method-chaining
+
+`(coll |> (map f) |> (filter p) |> (take 3))`. The infix `|>` threads the collection as the FIRST
+argument of each stage, so the chain desugars to `take(filter(map(coll, f), p), 3)` -- left-to-right,
+and type-checked (a pipeline types as its final stage's return; the desugarer feeds one tree to both the
+checker and codegen). That "the pipe works and is typed" is itself a correction: DECISIONS' own earlier
+"the desugarer is abandoned, incomplete, and wrong" is **superseded** -- it was since wired into the
+`"desugar"` stage and its codegen rival removed. (Only the *prefix* `(|> a b)` form is still garbage.)
+
+This settles the surface question the phase opened: **l-lang's LINQ surface is the pipe.** `:extension`
+-- which would let `(coll.map f)` dispatch to a free `map` -- is genuinely unwired (it parses, clears
+D4, and is read by NOTHING), and building it is a real feature: a member-call→free-call rewrite plus a
+runtime-dispatch registry mirroring `:operator`. The working pipe covers the ergonomics without it.
+Collection-first is not a concession to the pipe: it is *also* C#'s `this`-receiver order, so the
+identical signatures become extension methods the day `:extension` is built (D34). Method-chaining is
+**reserved, not rejected**.
+
+### Lazy by construction; the uniform cursor (La)
+
+- **Lazy.** Each operator is `:gen` → `function*`, so a chain is a pipeline of generators that does no
+  work until a terminal pulls it. `to-list` / `reduce` / `count` / `for-each` are the terminals -- a
+  chain becomes a value only when one drives it. `(nats |> (map square) |> (take 3) |> to-list)` over an
+  *infinite* `nats` **terminates** and yields `[0 1 4]` -- the falsifiable proof that laziness is real
+  (an eager `take` spins on `(while true)` forever).
+- **The cursor.** Straight-through operators (`map`/`filter`/`enumerate`/`concat`/`skip`/`skip-while`/
+  `flat-map`) consume via `for :each`, which already unifies array/generator/struct through `for...of`.
+  The **early-exit** ones (`take`/`take-while`/`zip`) cannot -- a `for...of` has no `break` -- so they
+  pull a raw cursor: `(iter coll)` yields an `Iterator<T>` over ANY iterable (after Gc everything carries
+  `[Symbol.iterator]`), `(next it)` advances it, and a `while` stops the instant they are done. `iter`
+  and `next` are **runtime builtins** (the `head`/`elem` family in `SYMBOL_MAP`): `iter` reaches through
+  `[Symbol.iterator]`, which has no l-lang surface syntax -- the same reason `head`/`elem` cannot leave
+  the code generator. `iter` is the exact inverse of `__ll_js_iter` (that adapts `T?`→`{value,done}`;
+  this adapts it back).
+- **`Iterator<T> :implements Iterable<T>` (La).** A cursor iterates AS ITSELF (JS, Rust's
+  `Iterator: IntoIterator`, Python), so `map`'s `Iterator<U>` result satisfies `filter`'s `Iterable<T>`
+  parameter and the chains type-check. Pure type-level; the Gc bridge fires on structs, not interfaces.
+
+### Gradually typed, for now
+
+Like `std/seq`, the operators ship **without** `-> Iterator<T>` annotations: call-site generic inference
+does not exist (Phase 5), so `Iterable<T> -> Iterator<U>` on a free function would only infer Unknown --
+documentation with no teeth, and a live risk of false positives. They are gradually typed; the chains
+RUN correctly (what laziness needs). When call-site generics land, the annotations go on and the
+`Iterator :implements Iterable` refinement makes the chains check end to end.
+
+### The `std/seq` overlap (flagged, not resolved)
+
+`std/seq` already has `map`/`filter`/`reduce` -- collection-**last**, eager, array-only
+(`(fn map [op coll] (coll.map op))`), and its `reduce` is `[op init coll]` where `std/linq`'s is
+`[coll f init]`. Two `map`s of different argument order is a smell. It is non-breaking (imports are
+per-file; a file picks one module), so reconciling them is a deliberate follow-up, not folded into this
+phase. `enumerate`/`zip` yield 2-element arrays (`[i x]`, `[x y]`), not tuples -- l-lang has no tuple
+type, same as eager `seq.zip`.
+
+### Phases
+
+**La** (cursor substrate: `iter`/`next` builtins, `Iterator :implements Iterable`), **Lb** (straight-
+through `:gen` operators), **Lc** (early-exit + terminals, and the laziness proof), **Ld** (this ruling
+and D34).
+
+## D34 — modifier composition: DISPATCH modifiers vs BODY modifiers
+
+Raised by "how should `:extension :gen` interact?". The ruling generalizes past that pair: function
+modifiers split into two kinds by **which compiler phase they govern**.
+
+- **DISPATCH modifiers** govern the CALL SITE -- how a call resolves to this function. `:operator` (the
+  call `(+ a b)` routes to the overload) and `:extension` (the member call `(x.m a)` routes to a free
+  `m`) are dispatch modifiers. They change *how you get here*, not *what runs*.
+- **BODY modifiers** govern the EMITTED FUNCTION -- what the definition lowers to. `:gen` (`function*`)
+  and `:async` (`async function`) are body modifiers. They change *what runs*, not *how you got here*.
+
+**One dispatch + one body always composes** -- different phases, orthogonal concerns:
+
+- **`:extension :gen`** = a lazy extension method. Exactly C#'s
+  `IEnumerable<U> Select<T,U>(this IEnumerable<T>, Func<T,U>)`: the extension routes `(coll.map f)` to
+  the free `map`, `:gen` makes its body a `function*`. This is what a method-chaining LINQ surface would
+  be built from -- D33 reserves it.
+- **`:extension :async`** = an async extension method. Same orthogonality.
+- **`:async :gen`** = an async generator (`async function*`, consumed by `for await…of`). Even two body
+  modifiers compose here, because `async function*` is a real lowering -- but it needs an `AsyncIterable`
+  protocol, a future phase, not built.
+
+The one combination that is **nonsense** is two DISPATCH modifiers on one function (`:operator
+:extension`): a call cannot route two ways. That is the only pairing to forbid.
+
+**Status.** `:gen` (D31), `:async` (D32) and `:operator` are built; **`:extension` is unwired --
+reserved.** This ruling is what makes its eventual build unambiguous: it is a call-site rewrite (mirror
+`:operator`'s runtime dispatch -- `(+ a b)` → `_2b(a,b)` + a registry), and it composes with `:gen`/
+`:async` for free, because dispatch and body are different phases.

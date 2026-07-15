@@ -237,8 +237,22 @@ protocol**, so lowering is the native form, not a reimplemented state machine.
             `[Symbol.iterator]()` method is injected on any `:implements Iterable` type, delegating to
             `__ll_js_iter` which adapts the user's `next() -> T?` to JS's `{value, done}`. Makes Itb's
             user-conformance path actually consumable by `for...of`. Generators need none of it.
-*   [ ] **LINQ.** Lazy `map`/`filter`/`take`/`zip`/`enumerate` as generators over `Iterable<T>` -- pure
-        stdlib once generators land. The C# LINQ steal.
+*   **LINQ (D33).** The C# LINQ steal, now pure stdlib (`lib/std/linq.lisp`): lazy `:gen` operators over
+    the iteration protocol, surfaced by the working infix `|>` -- `(coll |> (map f) |> (filter p) |>
+    (take 3))`. Collection-first, so the pipe threads each stage (and the same signatures become
+    extension methods the day `:extension` is built, D34). Gradually typed, like `std/seq`.
+    *   [x] **La** — the uniform cursor. `iter`/`next` runtime builtins (`iter` reaches through
+            `[Symbol.iterator]`, inexpressible in l-lang -- the `head`/`elem` family), spanning array,
+            generator and `:implements Iterable` struct alike. `Iterator<T> :implements Iterable<T>` so
+            chains type-check. The inverse of Gc's `__ll_js_iter`.
+    *   [x] **Lb** — the straight-through operators: `map filter enumerate concat skip skip-while
+            flat-map`, each a collection-first `:gen` over `for :each`.
+    *   [x] **Lc** — early-exit (`take take-while zip`, pulling the raw cursor since `for :each` has no
+            `break`) and terminals (`to-list reduce count for-each`). The **laziness proof**: an
+            unbounded generator `|> (map ...) |> (take 3) |> to-list` terminates and yields `[0 1 4]`.
+    *   [x] **Ld** — the rulings: **D33** (the library) and **D34** (modifier composition: `:extension`
+            is a DISPATCH modifier, `:gen`/`:async` are BODY modifiers -- orthogonal, so `:extension
+            :gen` is coherent). `std/seq` overlap flagged for a later reconciliation.
 *   **async (D32).** The JS runtime already gives it -- `:async` is an `async function`, `await` an
     `AwaitExpression` -- so unlike generators the RUNTIME was live; the TYPE layer was absent.
     *   [x] **Aa** — the protocol: `Awaitable<T>` / `Task<T>` in `lib/std/async.lisp`. **D32**. No
