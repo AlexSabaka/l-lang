@@ -697,6 +697,116 @@ const CASES: Case[] = [
         : { ok: false, detail: `expected "42", got ${JSON.stringify(stdout)}` };
     },
   },
+
+  // -----------------------------------------------------------------------------------------------
+  // Phase M / Mb: the PACKAGE is the compilation/visibility unit, not the file.
+  //
+  // Two consequences: (1) files of one package see each other's names with NO export/import between
+  // them -- same package, no boundary; (2) importing a package brings in the UNION of its files'
+  // exports. And a guard: the widening stops at the package -- it must not leak to other packages.
+  // -----------------------------------------------------------------------------------------------
+  {
+    name: "Mb: a package's files see each other; an importer sees the UNION of their exports",
+    why:
+      "The unit is the package. `from-b` (b.lisp) calls `helper` (a.lisp) with NO import -- same " +
+      "package, no boundary -- and a consumer importing the package sees `from-a` AND `from-b` though " +
+      "they live in different files. Before Mb the importer resolved to ONE file (the other's exports " +
+      "absent) and `helper` was LL0215 across a file boundary. Verified RED before co-processing + the " +
+      "package-scoped boundary.",
+    run: () => {
+      const root = path.join(TMP, "mb-pkg-root");
+      fs.rmSync(root, { recursive: true, force: true });
+      const pkgDir = path.join(root, "twofile");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "package.yaml"), `name: two\nsources: ["*.lisp"]\n`);
+      // a.lisp: an UNEXPORTED helper, plus an exported function.
+      fs.writeFileSync(
+        path.join(pkgDir, "a.lisp"),
+        `(\n  (fn helper [] -> Int (return 40))     ;; NOT exported\n` +
+          `  (fn from-a [] -> Int (return 2))\n  (export from-a)\n)\n`
+      );
+      // b.lisp: uses a.lisp's UNEXPORTED helper with NO import (same package, no boundary).
+      fs.writeFileSync(
+        path.join(pkgDir, "b.lisp"),
+        `(\n  (fn from-b [] -> Int (return (helper)))  ;; sees a.lisp's unexported helper\n` +
+          `  (export from-b)\n)\n`
+      );
+
+      const entry = fixture(
+        "mb-consumer",
+        { "main.lisp": `(\n  (import "two")\n  (console.log (+ (from-a) (from-b)))\n)\n` },
+        "main.lisp"
+      );
+
+      PackageRegistry.clear();
+      const ctx = new Context(entry, {
+        ...options(),
+        libPaths: [root, ...ModuleResolver.defaultLibPaths()],
+      });
+      let result: any;
+      try {
+        result = ctx.process(entry);
+      } catch (e: any) {
+        return { ok: false, detail: `crash: ${String(e?.message ?? e).split("\n")[0]}` };
+      }
+      if (ctx.results.hasErrors || !result?.code) {
+        return {
+          ok: false,
+          detail: `did not compile: ${ctx.results.all.map((m: any) => m.code).join(",") || "no code"}`,
+        };
+      }
+      const js = entry.replace(/\.lisp$/, ".js");
+      fs.writeFileSync(js, result.code);
+      const run = spawnSync("node", [js], { encoding: "utf-8", timeout: 10_000 });
+      const stdout = (run.stdout ?? "").trim();
+      // from-a() = 2, from-b() = helper() = 40 -> 42
+      return stdout === "42"
+        ? { ok: true, detail: "same-package files see each other; the importer sees both files' exports" }
+        : { ok: false, detail: `expected "42", got ${JSON.stringify(stdout)}` };
+    },
+  },
+  {
+    name: "Mb: package visibility does NOT leak across a package boundary (guard)",
+    why:
+      "The widening is to the PACKAGE, not the world. A consumer that references another package's " +
+      "UNEXPORTED name must still be rejected -- otherwise `internal` would mean nothing. This is what " +
+      "keeps same-package visibility from becoming global.",
+    run: () => {
+      const root = path.join(TMP, "mb-leak-root");
+      fs.rmSync(root, { recursive: true, force: true });
+      const pkgDir = path.join(root, "secretpkg");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "package.yaml"), `name: secret-pkg\nsources: ["*.lisp"]\n`);
+      fs.writeFileSync(
+        path.join(pkgDir, "s.lisp"),
+        `(\n  (fn hidden [] -> Int (return 7))   ;; NOT exported\n` +
+          `  (fn shown [] -> Int (return 1))\n  (export shown)\n)\n`
+      );
+
+      // A consumer OUTSIDE the package reaches for the unexported `hidden`.
+      const entry = fixture(
+        "mb-leak-consumer",
+        { "main.lisp": `(\n  (import "secret-pkg")\n  (console.log (hidden))\n)\n` },
+        "main.lisp"
+      );
+
+      PackageRegistry.clear();
+      const ctx = new Context(entry, {
+        ...options(),
+        libPaths: [root, ...ModuleResolver.defaultLibPaths()],
+      });
+      try {
+        ctx.process(entry);
+      } catch {
+        /* diagnostics are the point, not a clean compile */
+      }
+      const diags = ctx.results.all.map((m: any) => String(m.code));
+      const rejected = diags.some((d) => /LL0215|LL0210/.test(d));
+      return rejected
+        ? { ok: true, detail: "an unexported name is not visible across a package boundary" }
+        : { ok: false, detail: `expected a visibility error, got: ${diags.join(",") || "none (it compiled)"}` };
+    },
+  },
 ];
 
 function main() {

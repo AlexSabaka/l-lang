@@ -1,5 +1,10 @@
 ;; std/linq -- the LAZY SEQUENCE operators (the C# LINQ steal). Phase L.
 ;;
+;; This package spans TWO files (Phase M / Mb): the STRAIGHT-THROUGH operators here, and the EARLY-EXIT
+;; and TERMINAL operators in `linq-early.lisp`. They are one compilation unit -- `package.yaml` names
+;; `std/linq` over `sources: ["*.lisp"]` -- so `(import "std/linq")` brings in the union of both files'
+;; exports, and neither file imports the other.
+;;
 ;; The counterpart to `std/seq` (D33): this module is LAZY, collection-FIRST, pipe-surfaced; `std/seq`
 ;; is EAGER, collection-LAST, functional-order (`(map f coll)` -> array). Both export
 ;; `map`/`filter`/`reduce`/`zip` -- pick ONE per file (imports are per-file; do not import both). Use
@@ -23,9 +28,6 @@
 ;; would only infer Unknown -- documentation with no teeth. They are gradually typed; the chains RUN
 ;; correctly, which is what laziness needs. When call-site generics land, the annotations go on and the
 ;; `Iterator<T> :implements Iterable<T>` already in `std/iter` makes the chains check end to end.
-;;
-;; The EARLY-EXIT operators (`take`, `take-while`, `zip`) live in a follow-up: they cannot use the
-;; `for :each` sugar (a `for...of` has no `break`), so they pull a raw cursor with `(iter)`/`(next)`.
 (
   ;; map -- produce (f x) for each element.
   (fn :gen map [coll f]
@@ -71,74 +73,5 @@
       (for :each y :from (f x) :then (
         (yield y))))))
 
-  ;; ------------------------------------------------------------------------------------------------
-  ;; EARLY-EXIT / LOCKSTEP. These cannot use `for :each` -- a `for...of` has no `break` -- so they PULL
-  ;; a raw cursor (La's `iter`/`next`) under a `while` and stop the instant they are done. That is what
-  ;; makes them safe over an INFINITE source: `(nats |> (take 3))` terminates.
-  ;; ------------------------------------------------------------------------------------------------
-
-  ;; take -- the first `n` elements, then stop. One-element lookahead: it may pull one past the last it
-  ;; yields, which for a lazy source is produced on demand and harmless.
-  (fn :gen take [coll n]
-    (let it (iter coll))
-    (mut i 0)
-    (mut v (next it))
-    (while (&& (< i n) (!= v nil)) (
-      (yield v)
-      (i := (+ i 1))
-      (v := (next it)))))
-
-  ;; take-while -- the leading run where (pred x) holds, stopping at the first element that fails it.
-  (fn :gen take-while [coll pred]
-    (let it (iter coll))
-    (mut v (next it))
-    (while (&& (!= v nil) (pred v)) (
-      (yield v)
-      (v := (next it)))))
-
-  ;; zip -- pair elements of `a` and `b` in lockstep as `[x y]`, stopping when EITHER runs out.
-  (fn :gen zip [a b]
-    (let ia (iter a))
-    (let ib (iter b))
-    (mut x (next ia))
-    (mut y (next ib))
-    (while (&& (!= x nil) (!= y nil)) (
-      (yield [x y])
-      (x := (next ia))
-      (y := (next ib)))))
-
-  ;; ------------------------------------------------------------------------------------------------
-  ;; TERMINALS. These CONSUME a sequence (not `:gen`) -- they are how a lazy chain becomes a value.
-  ;; `to-list` bridges back to an array; the rest collapse the sequence to one result.
-  ;; ------------------------------------------------------------------------------------------------
-
-  ;; to-list -- drain the sequence into an array. The usual end of a chain.
-  (fn to-list [coll]
-    (let out [])
-    (for :each x :from coll :then (
-      (out.push x)))
-    (return out))
-
-  ;; reduce -- fold left with `f`, seeded by `init`.
-  (fn reduce [coll f init]
-    (mut acc init)
-    (for :each x :from coll :then (
-      (acc := (f acc x))))
-    (return acc))
-
-  ;; count -- how many elements the sequence produces.
-  (fn count [coll]
-    (mut n 0)
-    (for :each x :from coll :then (
-      (n := (+ n 1))))
-    (return n))
-
-  ;; for-each -- call `f` on each element for its effect; produce nothing.
-  (fn for-each [coll f]
-    (for :each x :from coll :then (
-      (f x))))
-
-  (export map filter enumerate concat skip skip-while flat-map
-          take take-while zip
-          to-list reduce count for-each)
+  (export map filter enumerate concat skip skip-while flat-map)
 )

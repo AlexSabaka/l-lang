@@ -16,7 +16,7 @@ import {
 import { TypeChecker } from "../TypeChecker";
 import { createRule, RuleSeverity } from "../../rules/RuleBuilder";
 import { RuntimeProvider } from "../../runtime";
-import { SymbolTable, SymbolEntry } from "../../analysis";
+import { SymbolTable, SymbolEntry, PackageRegistry } from "../../analysis";
 import * as path from "node:path";
 
 /**
@@ -3577,6 +3577,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const declaredIn = (entry.value as any)?._location?.source;
     const where = declaredIn ? path.basename(declaredIn) : "another module";
 
+    // NO BOUNDARY WITHIN A PACKAGE (Phase M / Mb). The module is the package, not the file: sibling
+    // files of one compilation unit see each other's names directly, with no `(export)`/`(import)`
+    // between them. That is what makes a package a UNIT. Cross-package still runs the checks below --
+    // an unexported name does not leak past the package, which is what gives `internal` its meaning.
+    if (askingFile && declaredIn && this.samePackage(declaredIn, askingFile)) return;
+
     // The EXPORT side (Sb): does that module offer this name?
     if (!SymbolTable.isVisibleFrom(entry, askingFile)) {
       this.reportTypeError(
@@ -3616,6 +3622,20 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const entry = symbols.resolveSymbol(head, node);
     if (!entry) return; // unresolved is LL0210's business, and only where LL0210 is asked
     this.checkSymbolVisible(node, head, entry);
+  }
+
+  /**
+   * Are two files members of the SAME package (Phase M / Mb)? Same file is trivially the same unit
+   * (this subsumes the old file-level "same module" rule); otherwise the file->package map the manifest
+   * registry built decides. Two files with no package, or in different packages, are NOT the same unit
+   * -- so the boundary holds and an unexported name stays package-private.
+   */
+  private samePackage(a: string, b: string): boolean {
+    if (path.resolve(a) === path.resolve(b)) return true;
+    const registry = PackageRegistry.forPaths(this.context.libPaths);
+    const pa = registry.packageOf(a);
+    const pb = registry.packageOf(b);
+    return pa !== undefined && pa === pb;
   }
 
   /**

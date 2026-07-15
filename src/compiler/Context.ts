@@ -26,6 +26,7 @@ import { SymbolTable, InferredType } from "./analysis/SymbolTable";
 import { AstProvider } from "./frontend/AstProvider";
 import { DependencyGraph } from "./analysis/DependencyGraph";
 import { ModuleResolver } from "./analysis/ModuleResolver";
+import { PackageRegistry } from "./analysis/PackageRegistry";
 import { formatLogMessage, getCaller } from "./utils";
 import chalk from "chalk";
 import { PerformanceMetrics } from "./PerformanceMetrics";
@@ -167,6 +168,34 @@ export class Context {
 
     this.recordImport(file, prelude, null);
     this.process(prelude, "types");
+  }
+
+  /**
+   * Co-process the rest of `file`'s PACKAGE (Phase M / Mb). A package is one compilation unit, so
+   * processing any of its files pulls in the others -- which is what makes a name in one file visible
+   * to another WITHOUT an import between them (the package-scoped boundary, in checkSymbolVisible), and
+   * what makes importing the package expose the UNION of its files' exports.
+   *
+   * A single-file package (every stdlib package today) has no siblings, so this is a no-op until a
+   * package is genuinely split. Re-entry is bounded by the same `processing`/cache guards as the
+   * prelude: a package with A<->B cross-references does not loop.
+   */
+  private injectPackageSiblings(file: string): void {
+    const registry = PackageRegistry.forPaths(this.libPaths);
+    const pkgName = registry.packageOf(file);
+    if (!pkgName) return;
+    const pkg = registry.get(pkgName);
+    if (!pkg) return;
+
+    const self = path.resolve(file);
+    for (const sibling of pkg.files) {
+      if (path.resolve(sibling) === self) continue;
+      // A same-package sibling reaches this file's names by BELONGING to the unit, not by name-binding;
+      // recording a whole-module import keeps the dependency graph honest (codegen inlining order) and
+      // leaves importBinds permissive, while the actual visibility is decided package-scoped.
+      this.recordImport(file, sibling, null);
+      this.process(sibling, "types");
+    }
   }
 
   /** Called once per resolved `(import ...)`, from the dependency-graph pass. */
@@ -441,6 +470,12 @@ export class Context {
     if (stopAt === "symbols") {
       return { ast: ast as ASTNode, symbols: moduleSymbols };
     }
+
+    // The rest of this file's PACKAGE (Mb) -- co-processed AFTER this file's own symbols are joined and
+    // cached (above), so a sibling that references THIS file resolves it, and re-entry back to this file
+    // hits the cache. A single-file package makes this a no-op. Only for a types+ pass: a symbols-only
+    // scan does not need siblings, and running it there would recurse before the cache exists.
+    this.injectPackageSiblings(fullPath);
 
     // STOP HERE if an import did not RESOLVE (LL0217) -- and only then.
     //

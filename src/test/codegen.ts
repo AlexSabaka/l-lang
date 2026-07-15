@@ -2168,6 +2168,20 @@ const CASES: Case[] = [
       "nothing. Drives the whole (finite) sequence, unlike `take` which stops early.",
   },
 
+  {
+    name: "Mb: std/linq is a TWO-FILE package -- one import, union of both files' ops",
+    source: `(import "std/linq")
+(fn square [x <- Int] -> Int (* x x))
+(console.log ([1 2 3 4 5] |> (map square) |> (take 3) |> count))`,
+    expect: ["3"],
+    wasBroken:
+      "The Mb demonstrator on real code: `map` lives in `lib/std/linq/linq.lisp`, `take` and `count` " +
+      "in `lib/std/linq/linq-early.lisp` -- two files, ONE package (`std/linq`). A single `(import " +
+      "\"std/linq\")` yields the union of both files' exports (co-processing joins the sibling; neither " +
+      "file imports the other). Before Mb an import resolved to a single file, so half these ops would " +
+      "be undefined. Squares 1 4 9 16 25 -> take 3 -> count = 3.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",
