@@ -988,6 +988,51 @@ ${PRODUCER}
     why: "Na: isSubtype must re-resolve an interface's super-interfaces by name (C -> B -> A).",
   },
 
+  // --- Nb: the checker TYPES an `:extension` call as its (instantiated) return, instead of Unknown.
+  // This is what lets method-style LINQ chain -- a typed intermediate `(gen.map f)` for the next hop to
+  // resolve on -- and it is observable here as a mismatch that only fires if the result really is typed. ---
+  {
+    name: "Nb: an :extension call types as its return -- a wrong assignment is caught",
+    source:
+      "(defstruct Foo (let :ctor v <- Int 0))\n" +
+      "(fn :extension as-int [self <- Foo] -> Int 42)\n" +
+      "(let f (Foo 1))\n" +
+      "(let s <- String (f.as-int))",
+    expect: /LL0200|Type mismatch/,
+    why: "Nb: (f.as-int) must type as Int (its return), so String := Int is a mismatch. Was Unknown.",
+  },
+  {
+    name: "Nb: an :extension call result is usable at its return type (guard)",
+    source:
+      "(defstruct Foo (let :ctor v <- Int 0))\n" +
+      "(fn :extension as-int [self <- Foo] -> Int 42)\n" +
+      "(let f (Foo 1))\n" +
+      "(let n <- Int (f.as-int))",
+    silent: true,
+  },
+  {
+    name: "Nb: a generic :extension call solves its return -- a wrong assignment is caught",
+    source:
+      "(defstruct Foo (let :ctor v <- Int 0))\n" +
+      "(fn :extension echo<T> [self <- Foo x <- T] -> T x)\n" +
+      "(let f (Foo 1))\n" +
+      "(let bad <- Int (f.echo \"hi\"))",
+    expect: /LL0200|Type mismatch/,
+    why: "Nb: T solves to String from the arg, so (f.echo \"hi\") is String; Int := String is a mismatch.",
+  },
+  {
+    name: "Nb: a computed-receiver :extension call (chain 2nd hop) types as its return",
+    source:
+      "(defstruct Foo (let :ctor v <- Int 0))\n" +
+      "(defstruct Bar (let :ctor v <- Int 0))\n" +
+      "(fn :extension to-bar [self <- Foo] -> Bar (Bar 0))\n" +
+      "(fn :extension bar-int [self <- Bar] -> Int 7)\n" +
+      "(let f (Foo 1))\n" +
+      "(let bad <- String ((f.to-bar).bar-int))",
+    expect: /LL0200|Type mismatch/,
+    why: "Nb: (f.to-bar) types as Bar (computed intermediate), so .bar-int resolves to Int; String := Int is a mismatch.",
+  },
+
   // --- P5d: the erasure rule is GONE. `T` is no longer a universal escape hatch. ---
   {
     // `(fn pair<T> [a <- T b <- T])` called as `(pair 1 "x")`: `T` is solved to `Int` from the first

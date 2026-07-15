@@ -1599,6 +1599,81 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   }
 
   /**
+   * The return type of an `:extension` call on a NAMED receiver -- `(gen.map f)`, `(rect.area)` (Phase
+   * Nb). Splits the dotted head, resolves the receiver, and defers to `typeExtensionCall`. Called AFTER
+   * `inferNativeMethodType`, so a native member always wins -- codegen's dispatch order, mirrored.
+   */
+  private inferExtensionCallType(
+    funcName: string,
+    node: ast.ASTNode,
+    argNodes: ast.ASTNode[]
+  ): InferredType | undefined {
+    const dot = funcName.lastIndexOf(".");
+    if (dot < 0) return undefined;
+    const receiverType = this.typeEnv.resolveIdentifier(funcName.slice(0, dot), node);
+    if (!receiverType) return undefined;
+    const argTypes = argNodes.map((a) => this.inferExpressionType(a));
+    return this.typeExtensionCall(receiverType, funcName.slice(dot + 1), argTypes, node);
+  }
+
+  /** The names of every `:extension` function in the (joined) symbol forest. Built once. */
+  private _extensionNames?: Set<string>;
+  private extensionNames(): Set<string> {
+    if (this._extensionNames) return this._extensionNames;
+    const names = new Set<string>();
+    for (const [name, entry] of this.symbolTable.getAllSymbols()) {
+      if (entry.nodeType === "function" && entry.modifiers?.has("extension")) {
+        names.add(name);
+      }
+    }
+    this._extensionNames = names;
+    return names;
+  }
+
+  /**
+   * The shared core of `:extension` result-typing. Given the RECEIVER's type, a member name and the
+   * argument types, resolve an `:extension memberName` whose declared receiver the value NOMINALLY
+   * conforms to, and return its INSTANTIATED return -- so a generic `map<T,U> ... -> Iterator<U>` yields
+   * `Iterator<U>`. This is what makes method-style LINQ chain: the intermediate `(gen.map f)` gets a real
+   * `Iterator` type (published to the node-type channel), so the next `.filter` resolves on it.
+   *
+   * Conformance is `isSubtype` against the extension's receiver NAME (Na made this walk `:implements`) --
+   * the same nominal test codegen's `receiverConformsTo` runs, so both passes pick the same extension.
+   * Arrays/primitives never conform (no matching name or `:implements`), so a native `arr.map` is never
+   * captured. (One extension per name is resolved via the type env; overloading a name across receivers
+   * is not disambiguated here -- LINQ operator names are unique.)
+   */
+  private typeExtensionCall(
+    receiverType: InferredType,
+    memberName: string,
+    argTypes: InferredType[],
+    node: ast.ASTNode
+  ): InferredType | undefined {
+    if (!this.extensionNames().has(memberName)) return undefined;
+    const funcType = this.typeEnv.resolveIdentifier(memberName, node);
+    if (!funcType || funcType.kind !== "function") return undefined;
+    const recvParam = funcType.params?.[0];
+    if (!recvParam?.name) return undefined;
+    const conforms = TypeChecker.isSubtype(
+      receiverType,
+      { kind: "interface", name: recvParam.name } as InferredType,
+      this.symbolTable
+    );
+    if (!conforms) return undefined;
+    const solved = this.instantiateSignature(funcType, [receiverType, ...argTypes]);
+    return solved.returns ?? TypeEnvironment.unknown();
+  }
+
+  /** The member name from a `MemberNode.property`, stripping any leading `.` a headless member carries. */
+  private memberPropertyName(property: ast.ASTNode): string | undefined {
+    if (!property) return undefined;
+    const raw = (property as any).id ?? (property as any).name;
+    if (typeof raw !== "string") return undefined;
+    const parts = raw.split(".").filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : undefined;
+  }
+
+  /**
    * The type checker had never looked inside a loop body, a match arm, or a try block.
    *
    * The dispatch above calls `visitFor` for a `for` node -- and `visitFor` DOES exist, inherited
@@ -3056,6 +3131,18 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           const solved = this.instantiateSignature(funcType, argTypes);
           this.checkCallArguments(solved, funcName, callNode.arguments, argTypes, callNode);
           inferredType = solved.returns ?? TypeEnvironment.unknown();
+        } else if (callee._type === "member") {
+          // A computed-receiver `:extension` call -- the 2nd+ hop of a method chain,
+          // `((gen.map f).filter g)` (Phase Nb). The receiver is an EXPRESSION, not a name; type it,
+          // then resolve the extension by the member name. This is what publishes the chain
+          // intermediate's type (via `setType` on this node) for codegen's dispatch (Nc) to read.
+          const memberNode = callee as ast.MemberNode;
+          const receiverType = this.inferExpressionType(memberNode.object);
+          const memberName = this.memberPropertyName(memberNode.property);
+          const ext = memberName
+            ? this.typeExtensionCall(receiverType, memberName, argTypes, callNode)
+            : undefined;
+          inferredType = ext ?? TypeEnvironment.unknown();
         } else {
           // A callee we cannot type -- an imported member, a JS global, a computed expression.
           // Its EXISTENCE is still worth asserting when it is a name.
@@ -3132,6 +3219,15 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           const nativeMethod = this.inferNativeMethodType(funcName, firstNode);
           if (nativeMethod) {
             inferredType = nativeMethod;
+            break;
+          }
+
+          // An `:extension` call on a NAMED receiver -- `(gen.map f)`, `(rect.area)` (Phase Nb). Types as
+          // the extension's instantiated return, so the value can chain or be checked. AFTER the native
+          // branch, so a native member always wins -- codegen's dispatch order.
+          const extCall = this.inferExtensionCallType(funcName, firstNode, listNode.nodes.slice(1));
+          if (extCall) {
+            inferredType = extCall;
             break;
           }
 
