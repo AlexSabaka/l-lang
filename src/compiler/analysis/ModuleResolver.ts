@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { PackageRegistry } from "./PackageRegistry";
 
 /**
  * Turning `(import "…")` into a file on disk. The ONLY place that does.
@@ -75,15 +76,30 @@ export class ModuleResolver {
     const explicitlyRelative =
       spec.startsWith("./") || spec.startsWith("../") || path.isAbsolute(spec);
 
-    const roots = explicitlyRelative
-      ? [path.dirname(importerFile)]
-      : [path.dirname(importerFile), ...searchPaths];
-
-    for (const root of roots) {
+    const tryPath = (root: string): string | undefined => {
       for (const form of [spec, spec + ModuleResolver.EXTENSION]) {
         const candidate = path.resolve(root, form);
         if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
       }
+      return undefined;
+    };
+
+    // 1. The IMPORTER'S OWN DIRECTORY, always first (the anti-shadowing rule: a file's neighbours win,
+    //    so a project's own `std/io.lisp` is never displaced by the shipped one). A relative spec stops
+    //    here -- "./config" is not a request the search path or a package may answer.
+    const nearby = tryPath(path.dirname(importerFile));
+    if (nearby || explicitlyRelative) return nearby;
+
+    // 2. A PACKAGE by name (Phase M). At search-path priority -- after the importer's neighbours, before
+    //    a bare path scan -- so `(import "std/linq")` finds the package `std/linq` wherever its manifest
+    //    lives. Additive: an empty registry (no manifests) resolves nothing and falls through unchanged.
+    const viaPackage = PackageRegistry.forPaths(searchPaths).resolve(spec);
+    if (viaPackage) return viaPackage;
+
+    // 3. A bare PATH under a search root -- the fallback for files that are not (yet) in any package.
+    for (const root of searchPaths) {
+      const hit = tryPath(root);
+      if (hit) return hit;
     }
 
     return undefined;

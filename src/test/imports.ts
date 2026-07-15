@@ -18,6 +18,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
+import { ModuleResolver } from "../compiler/analysis/ModuleResolver";
+import { PackageRegistry } from "../compiler/analysis/PackageRegistry";
 
 const VERBOSE = process.argv.includes("--verbose");
 const TMP = path.join(os.tmpdir(), "llang-import-tests");
@@ -628,6 +630,71 @@ const CASES: Case[] = [
               `x is a String in the source, but resolveSymbol says ${seen}. A STALE symbol, from a ` +
               `version of the file that no longer exists, won.`,
           };
+    },
+  },
+
+  // -----------------------------------------------------------------------------------------------
+  // Phase M / Ma: a PACKAGE resolves by its manifest NAME, not by its path.
+  //
+  // This is what makes `package.yaml` load-bearing rather than cosmetic. The fixture is built so a
+  // path search CANNOT succeed -- the manifest name matches neither the directory nor the filename --
+  // so a green result can only come from the registry reading the manifest.
+  // -----------------------------------------------------------------------------------------------
+  {
+    name: "Ma: a package resolves by its manifest NAME, not its path",
+    why:
+      "Before Ma there was no registry: `(import \"pkg-alias\")` could only be a path search under the " +
+      "lib roots, which finds nothing (the dir is `realdir`, the file `thing.lisp`). The manifest's " +
+      "`name: pkg-alias` is the only thing that can resolve it, so a green result proves resolution is " +
+      "name-driven. Verified RED by disabling the registry consult in ModuleResolver.",
+    run: () => {
+      // A package whose manifest NAME matches neither its directory (`realdir`) nor its file
+      // (`thing.lisp`), under a lib root.
+      const root = path.join(TMP, "ma-pkg-root");
+      fs.rmSync(root, { recursive: true, force: true });
+      const pkgDir = path.join(root, "realdir");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "package.yaml"), `name: pkg-alias\nsources: ["*.lisp"]\n`);
+      fs.writeFileSync(
+        path.join(pkgDir, "thing.lisp"),
+        `(\n  (fn answer [] -> Int (return 42))\n  (export answer)\n)\n`
+      );
+
+      // The consumer lives OUTSIDE the lib root and imports by the manifest name.
+      const entry = fixture(
+        "ma-consumer",
+        { "main.lisp": `(\n  (import "pkg-alias")\n  (console.log (answer))\n)\n` },
+        "main.lisp"
+      );
+
+      // Fresh scan (the manifest was just written); lib root FIRST so `pkg-alias` resolves there, plus
+      // the shipped lib/ so the `std/js` prelude (console, ...) still resolves.
+      PackageRegistry.clear();
+      const ctx = new Context(entry, {
+        ...options(),
+        libPaths: [root, ...ModuleResolver.defaultLibPaths()],
+      });
+
+      let result: any;
+      try {
+        result = ctx.process(entry);
+      } catch (e: any) {
+        return { ok: false, detail: `crash: ${String(e?.message ?? e).split("\n")[0]}` };
+      }
+      if (ctx.results.hasErrors || !result?.code) {
+        return {
+          ok: false,
+          detail: `did not resolve by name: ${ctx.results.all.map((m: any) => m.code).join(",") || "no code"}`,
+        };
+      }
+
+      const js = entry.replace(/\.lisp$/, ".js");
+      fs.writeFileSync(js, result.code);
+      const run = spawnSync("node", [js], { encoding: "utf-8", timeout: 10_000 });
+      const stdout = (run.stdout ?? "").trim();
+      return stdout === "42"
+        ? { ok: true, detail: "imported by manifest name; a path search could not have found it" }
+        : { ok: false, detail: `expected "42", got ${JSON.stringify(stdout)}` };
     },
   },
 ];
