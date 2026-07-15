@@ -2308,6 +2308,42 @@ const CASES: Case[] = [
       "run-time fallback.",
   },
 
+  // ===============================================================================================
+  // Phase Xg -- the last D25 correctness gap: member access / method call on a COMPUTED (parenthesised)
+  // expression. `((Vault).reveal)` emitted invalid JS (LL0101) because a `.member` suffix attaches only
+  // to a NAME, so on a `(...)` group it falls out as a separate headless `composite-identifier` and the
+  // 2-node list reads as a block. A desugar rewrite folds `[computed, .member, ...args]` into the
+  // desugar-only `CallNode(MemberNode(...))`, which codegen already emits (the pipeline `|> .length`
+  // proves the path). No codegen change.
+  // ===============================================================================================
+  {
+    name: "Xg: a method call on a PARENTHESISED expression -- ((Vault).reveal)",
+    source: `(defclass Vault
+  (let :private secret 42)
+  (fn reveal [] -> Int (return this.secret)))
+(console.log ((Vault).reveal))`,
+    expect: ["42"],
+    wasBroken:
+      "`((Vault).reveal)` was broken: the `.reveal` had no NAME to attach to (the object is a `(...)` " +
+      "group), so it parsed as a separate headless `.reveal` and the 2-node list read as a block -> " +
+      "`{ new Vault(); reveal; }` (bare `reveal` -> ReferenceError; in an expression slot, invalid JS / " +
+      "LL0101). The workaround was `(let v (Vault))` first. Now `(expr).member` desugars to " +
+      "`CallNode(MemberNode(expr, member))`. The computed object goes through the `__ll_member` runtime " +
+      "fallback (a thermometer site -- codegen can't `memberKindOn` a computed receiver), which calls " +
+      "`reveal()` -> 42. Correct output; the direct `.reveal()` would need typing the computed receiver.",
+  },
+  {
+    name: "Xg: a method call with ARGS on a computed object -- ((Counter 10).plus 5)",
+    source: `(defclass Counter
+  (mut :ctor n <- Int)
+  (fn plus [k <- Int] -> Int (return (+ this.n k))))
+(console.log ((Counter 10).plus 5))`,
+    expect: ["15"],
+    wasBroken:
+      "The arg-bearing form: `((Counter 10).plus 5)` -> `new Counter(10).plus(5)` = 15. `nodes.slice(2)` " +
+      "are the arguments to the computed method; before Xg this too was LL0101.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",

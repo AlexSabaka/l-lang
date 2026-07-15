@@ -107,10 +107,54 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     const applied = this.transformCall(node);
     if (applied) return applied;
 
+    const computedMember = this.transformComputedMember(node);
+    if (computedMember) return computedMember;
+
     return {
       ...node,
       nodes: node.nodes.map((n) => this.visit(n) as ast.ASTNode),
     } as ast.ListNode;
+  }
+
+  /**
+   * `((Vault).reveal)` / `((mk).method a b)` -- a member access or method call on a COMPUTED (parenthesised)
+   * object, into a `CallNode(MemberNode(...))`. Phase Xg.
+   *
+   * A `.member` suffix attaches only to a NAME (an `IndexerNode`'s base is an `IdentifierNode`), so when the
+   * object is a `(...)` group the `.member` has nothing to attach to and parses as a SEPARATE headless
+   * `composite-identifier`. The 2-node list then reads as a block and codegen emits `{ new Vault(); reveal; }`
+   * -- invalid JS (LL0101), or a bare `reveal` ReferenceError. The desugar-only `member`/`call` nodes exist
+   * for exactly "member/call of a computed value" (the pipeline `(x |> .length)` already produces them); this
+   * lifts the surface `(expr).member` form into them. Mirrors `transformPipeline`'s member/call construction.
+   *
+   * D1/D25: a parenthesised member-list is a CALL, so `((Vault).reveal)` -> `new Vault().reveal()`. The narrow
+   * residual is a bare FIELD read on a computed object, which keeps the pipeline `|> .field` / name-binding form.
+   */
+  private transformComputedMember(node: ast.ListNode): ast.CallNode | undefined {
+    const [obj, member, ...args] = node.nodes;
+    if (!obj || !member) return undefined;
+    // A NAME head is an ordinary call/read (D1) -- untouched. Only a COMPUTED object reaches here.
+    if (obj._type === "simple-identifier" || obj._type === "composite-identifier") return undefined;
+    // The member is the `.name` that fell out as its own headless composite-identifier.
+    if (member._type !== "composite-identifier" || !(member as any).headless) return undefined;
+
+    const loc = { ...node._location };
+    const memberNode: ast.MemberNode = {
+      _type: "member",
+      _location: loc,
+      _parent: node._parent,
+      object: this.visit(obj) as ast.ASTNode,
+      property: this.visit(member) as ast.ASTNode,
+      computed: false,
+    } as ast.MemberNode;
+
+    return {
+      _type: "call",
+      _location: loc,
+      _parent: node._parent,
+      callee: memberNode,
+      arguments: args.map((a) => this.visit(a) as ast.ASTNode),
+    } as ast.CallNode;
   }
 
   /**
