@@ -1744,6 +1744,66 @@ const CASES: Case[] = [
       "the first arm's GUARD rejects it and the second (unguarded `:of Int`) wins -- not the `_`.",
   },
 
+  // ===============================================================================================
+  // D28 -- rest patterns. `[a ...rest]` matches an array of length >= (fixed count) and binds the tail.
+  // Dead: the rest element hit `generateCondition`'s `default: false`, and the array length check was
+  // `=== elements.length` -- so a rest pattern demanded an EXACT length and then failed on the rest
+  // element anyway. PEG had no RestPattern rule at all.
+  // ===============================================================================================
+  {
+    name: "D28: `[a ...rest]` binds head and tail",
+    // Asserts rest.length then rest[0] -- NOT `console.log rest`, which node prints as `[ 2, 3 ]`
+    // (array formatting), a brittle thing to pin. Two plain numbers say the same and cannot be misread.
+    source: `(match [1 2 3] {
+  [a ...rest] => ((console.log rest.length) (console.log rest[0]))
+  _           => (console.log "no")
+})`,
+    expect: ["2", "2"],
+    wasBroken:
+      "the length check was `=== 2` so `[1 2 3]` (length 3) never matched, and the rest element hit " +
+      "`default: false` regardless. `rest` also had to be BOUND to the slice.",
+  },
+  {
+    name: "D28: the head element still binds and is usable",
+    source: `(console.log (match [10 20 30] {
+  [a ...rest] => a
+  _           => 0
+}))`,
+    expect: ["10"],
+    wasBroken: "`a` is a normal element binding; the rest must not disturb it.",
+  },
+  {
+    name: "D28: two fixed elements before the rest",
+    source: `(match [1 2 3 4] {
+  [a b ...rest] => ((console.log rest.length) (console.log rest[0]))
+  _             => (console.log "no")
+})`,
+    expect: ["2", "3"],
+    wasBroken: "length must be `>= 2` and the rest bind `slice(2)`.",
+  },
+  {
+    name: "D28: a too-short array FALLS THROUGH",
+    source: `(console.log (match [1] {
+  [a b ...rest] => "matched"
+  _             => "too short"
+}))`,
+    expect: ["too short"],
+    wasBroken:
+      "the length floor is a floor, not a formality: `[a b ...rest]` needs at least the two fixed " +
+      "elements. A rest pattern that matched ANY array would say `matched` here.",
+  },
+  {
+    name: "D28: an empty rest is an empty array, not a miss",
+    source: `(match [1 2] {
+  [a b ...rest] => (console.log rest.length)
+  _             => (console.log "no")
+})`,
+    expect: ["0"],
+    wasBroken:
+      "`[1 2]` against `[a b ...rest]`: length is exactly 2, the fixed elements consume both, and `rest` " +
+      "is `[]` (length 0). It must MATCH (length >= 2), not fall through.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",

@@ -2803,3 +2803,42 @@ The docs said `x :is Int`, which never parsed (the grammar wires `:of`) and woul
 ### Still out of scope
 
 `rest-pattern` (`[1 ...rest]`) and `functional-pattern` still compile to `false`. Separate defects.
+
+## D28 — rest patterns: `[a ...rest]`
+
+`[a ...rest]` matches an array of length **at least** the fixed count, binds the leading elements
+positionally, and binds `rest` to the remaining tail (an array, possibly empty).
+
+```lisp
+(match xs {
+  [first ...others] => (console.log others.length)   ;; first = xs[0], others = xs.slice(1)
+  []                => (console.log "empty")
+  _                 => (console.log "not an array")
+})
+```
+
+**Two dead spots and a missing rule.** The rest element was double-dead in codegen:
+`generateArrayPatternCondition` demanded `length === elements.length` (an *exact* length, so a rest
+pattern could never match a longer array) and then ran the rest element through `generateCondition`,
+where it hit `default: false`. Fixed: with a trailing rest the length check is `>= fixedCount`, and the
+rest element emits `(rest = matchVar.slice(fixedCount), true)` -- a binding, not a test.
+`findIdentifiersToDefine` declares the `rest` name, or the assignment would hit a global.
+
+And **PEG had no `RestPattern` rule at all** -- `[a ...rest]` never parsed; `VectorPattern`'s `Pattern*`
+stopped at `a`, met `...`, and failed to close `]`, so the whole match fell back to a plain list. Added
+`RestPattern = _ "..." id _`, before `IdentifierPattern` in the `Pattern` choice. The leading `_` is
+load-bearing: without it `[...rest]` alone parsed but `[a ...rest]` did not, because the space after `a`
+had nowhere to go.
+
+Rest is **trailing only** -- a rest in the middle (`[a ...mid z]`) is a separate, harder feature -- and
+**named only**: `RestPatternNode` has no anonymous form, so `[a ...]` is not accepted.
+
+Destructuring `let [a ...rest] = xs` already worked; this brings match to parity, and it nudged the
+frontends one file closer to agreement (18 → 19 identical in the differential).
+
+### The last dead pattern
+
+`functional-pattern` -- `(Int Int) => Int`, matching a value by its function *signature* -- still
+compiles to `false`. Unlike the others, it may not be meaningfully implementable on a JS target: a
+closure does not carry its parameter types at run time, so there is nothing to test against. Left dead,
+and now the *only* thing `generateCondition`'s `default: false` still catches.

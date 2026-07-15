@@ -266,10 +266,12 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     the fall-through as the answer. Guards are now a real clause (`n :when (< n 0)`), and the golden is
     re-authored from intent: `just a baby` (Math.random is [0,1), so `(< n 10)` wins deterministically).
     The one golden this session that was *supposed* to move.
-*   **Pattern matching: `rest-pattern` and `functional-pattern` still compile to `false`.** Guards
-    (D26) and `:of` type patterns (D27) now work — `x :of Int :when (> n 10)` composes. What remains
-    dead: `[1 ...rest]` (rest binding) and the function-type pattern. Both hit `generateCondition`'s
-    `default: false`, the same place `:of` used to. Separate defects.
+*   **Pattern matching: only `functional-pattern` is still dead.** Guards (D26), `:of` type patterns
+    (D27) and `[a ...rest]` rest patterns (D28) all work now and compose. The last kind hitting
+    `generateCondition`'s `default: false` is `functional-pattern` — matching a value by its function
+    *signature* — which may not be meaningfully implementable on a JS target (a closure carries no
+    parameter types at run time). Rest is trailing-only and named-only; a mid-list rest and anonymous
+    `[a ...]` are unbuilt.
 *   **`((fn [x] …) 21)` does not compile** (`LL0101`). *Corrected on measurement:* it **parses fine** —
     the grammar was never the problem. Its head is a **lambda**, and codegen's call test is "is the head
     an identifier", so it falls into the implicit-block path and emits statements into an expression

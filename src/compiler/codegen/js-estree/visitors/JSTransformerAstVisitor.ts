@@ -51,6 +51,15 @@ function findIdentifiersToDefine(node: ast.MatchNode): string[] {
       case "list-pattern":
       case "vector-pattern":
         return (p as ast.ListPatternNode).elements.every((x) => walkPattern(x));
+      case "rest-pattern": {
+        // `[a ...rest]` binds `rest` to the tail slice (D28); declare it like any other binding, or the
+        // `rest = matchVar.slice(...)` codegen emits assigns to a global.
+        const rid = (p as ast.RestPatternNode).id.id;
+        if (!rid.includes(":") && !RuntimeProvider.isRuntimeReference(rid)) {
+          predefinedVariables.push(encodeIdentifier(rid));
+        }
+        return true;
+      }
       default:
         return true;
     }
@@ -2252,6 +2261,13 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     const matchVarId = ESTreeBuilder.identifier(pattern, matchVar);
     const conditions: ESTree.Expression[] = [];
 
+    // A trailing rest -- `[a ...rest]` -- changes two things: the length is a FLOOR, not an equality,
+    // and the rest element binds the SLICE rather than one index. Only the last position is a rest
+    // (a rest in the middle is a different, harder feature); anything else there stays exact.
+    const restIdx = pattern.elements.findIndex((e) => e._type === "rest-pattern");
+    const hasRest = restIdx === pattern.elements.length - 1 && restIdx >= 0;
+    const fixedCount = hasRest ? restIdx : pattern.elements.length;
+
     conditions.push(
       ESTreeBuilder.callExpression(
         pattern,
@@ -2266,22 +2282,46 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     conditions.push({
       type: "BinaryExpression",
-      operator: "===",
+      // `>=` with a rest (at least the fixed elements), `===` without (exact shape). This was
+      // unconditionally `===`, so a rest pattern demanded an exact length and never matched a longer
+      // array -- and then failed on the rest element too, which was double-dead.
+      operator: hasRest ? ">=" : "===",
       left: ESTreeBuilder.memberExpression(
         pattern,
         matchVarId,
         ESTreeBuilder.identifier(pattern, "length")
       ),
-      right: ESTreeBuilder.literal(pattern, pattern.elements.length),
+      right: ESTreeBuilder.literal(pattern, fixedCount),
     } as ESTree.BinaryExpression);
 
     pattern.elements.forEach((elem, idx) => {
-      const elemAccess = ESTreeBuilder.memberExpression(
-        elem,
-        matchVarId,
-        ESTreeBuilder.literal(elem, idx),
-        true
-      );
+      if (elem._type === "rest-pattern") {
+        // `rest = matchVar.slice(fixedCount)`, always true -- a binding, not a test. The length floor
+        // above already guaranteed the slice is valid (possibly empty). An anonymous rest would bind
+        // nothing, but the grammar requires a name, so there is always an id here.
+        const restId = this.visit((elem as ast.RestPatternNode).id) as ESTree.Identifier;
+        const slice = ESTreeBuilder.callExpression(
+          elem,
+          ESTreeBuilder.memberExpression(
+            elem,
+            matchVarId,
+            ESTreeBuilder.identifier(elem, "slice")
+          ),
+          [ESTreeBuilder.literal(elem, fixedCount)]
+        );
+        conditions.push(
+          ESTreeBuilder.sequenceExpression(elem, [
+            {
+              type: "AssignmentExpression",
+              operator: "=",
+              left: restId,
+              right: slice,
+            } as ESTree.AssignmentExpression,
+            ESTreeBuilder.literal(elem, true),
+          ])
+        );
+        return;
+      }
       conditions.push(this.generateCondition(elem, `${matchVar}[${idx}]`));
     });
 

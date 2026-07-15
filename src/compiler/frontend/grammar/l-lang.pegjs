@@ -821,6 +821,7 @@ MatchCase
 // NilKw is boundary-guarded (D9c), so `nilish` is still an identifier.
 Pattern
   = AnyPattern
+  / RestPattern
   / FunctionalPattern
   / ListPattern
   / VectorPattern
@@ -831,6 +832,12 @@ Pattern
 
 AnyPattern
   = "_" _ { return makeNode("any-pattern"); }
+
+// `...rest` inside a vector/list pattern (D28). PEG had no such rule, so every rest pattern failed to
+// parse and fell back to a list. `SpreadKw` is `...`; the id is required (the AST node has no anonymous
+// form). Ordered before IdentifierPattern in Pattern -- it starts with `...`, so there is no ambiguity.
+RestPattern
+  = _ SpreadKw _ id:Identifier _ { return makeNode("rest-pattern", { id }); }
 
 FunctionalPattern
   = "(" _ params:Pattern* _ ")" _ RightArrowKw _ ret:Pattern _ {
