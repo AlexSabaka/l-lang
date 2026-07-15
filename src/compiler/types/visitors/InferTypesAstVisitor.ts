@@ -742,6 +742,37 @@ class CollectTypesPass extends BaseAstTreeWalker {
   visitInterface(node: ast.InterfaceNode) {
     const interfaceName = node.name.name;
 
+    // `:implements` on an interface -- D30's `Iterator<T> :implements Iterable<T>` is the load-bearing
+    // case. This clause used to be DROPPED (the type was built from name + generics only), so no
+    // sub-interface ever conformed to its super: `isSubtype(Iterator, Iterable)` and codegen's
+    // `receiverConformsTo` both WALK `implementedInterfaces`, and there was simply never an entry to
+    // walk. Mirror `visitClass` (:531): convert inside the interface's type-parameter scope so a
+    // generic super (`Iterable<T>`) resolves the interface's own `T`. The grammar allows one
+    // super-interface (a single `ImplementsNode`); normalise defensively so an array or null both work.
+    this.typeEnv.enterScope(node);
+    this.bindTypeParameters(node.generics);
+    const implClauses: ast.ImplementsNode[] = Array.isArray(node.implements)
+      ? node.implements
+      : node.implements
+      ? [node.implements]
+      : [];
+    const implementedInterfaces: InterfaceImplementation[] = [];
+    for (const impl of implClauses) {
+      if (impl?.type?.name) {
+        const typeArgs = (impl.generics ?? []).map((g) => this.convertAstTypeToInferred(g));
+        implementedInterfaces.push({
+          interfaceName: impl.type.name,
+          interfaceType: {
+            kind: "interface",
+            name: impl.type.name,
+            ...(typeArgs.length ? { generics: typeArgs } : {}),
+          },
+          methodMappings: new Map(),
+        });
+      }
+    }
+    this.typeEnv.exitScope();
+
     const interfaceType: InferredType = {
       kind: "interface",
       name: interfaceName,
@@ -750,8 +781,9 @@ class CollectTypesPass extends BaseAstTreeWalker {
         name: g.name,
         variance: g.variance,
       })),
+      ...(implementedInterfaces.length ? { implementedInterfaces } : {}),
     };
-    
+
     this.typeEnv.bindIdentifier(interfaceName, interfaceType, node);
     this.context.log(LogLevel.Debug, `Collected interface type '${interfaceName}'`);
   }

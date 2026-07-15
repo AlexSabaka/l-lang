@@ -2270,6 +2270,35 @@ const CASES: Case[] = [
       "`IEnumerable.Where` with `yield`. Countdown 5 -> 5 4 3 2 1; where (> 2) -> 5 4 3, lazily.",
   },
 
+  {
+    name: "Na: an :extension on a super-interface dispatches on a sub-interface receiver",
+    source: `(import "std/iter")
+(definterface Countable :implements Iterable<Int>)
+(defstruct Countdown :implements Countable
+  (mut :ctor n <- Int)
+  (fn iterator [] -> Iterator<Int> (return this))
+  (fn next [] -> Int? (
+    (if (<= this.n 0)
+        (return nil)
+        (
+          (let cur this.n)
+          (this.n := (- this.n 1))
+          (return cur))))))
+(fn :extension label [self <- Iterable<Int>] -> String "iterable!")
+(fn probe [x <- Countable] -> String (x.label))
+(console.log (probe (new Countdown 3)))`,
+    expect: ["iterable!"],
+    emitted: { must: [/label\(x\)/] },
+    wasBroken:
+      "Na's codegen half, isolated to DISPATCH. `Countable :implements Iterable<Int>` and `label` targets " +
+      "`Iterable<Int>`, so a `Countable`-typed receiver `x` must dispatch `(x.label)` -> `label(x)`. Before " +
+      "Na, `visitInterface` dropped the `:implements` clause, so `Countable`'s type carried no " +
+      "`implementedInterfaces` and `receiverConformsTo(Countable, \"Iterable\")` was false -- `(x.label)` " +
+      "fell to `__ll_member` and read `undefined`. With the clause recorded, the one-hop conformance holds. " +
+      "(`label` does not iterate `self`: codegen's `[Symbol.iterator]` synthesis for a TRANSITIVELY-Iterable " +
+      "struct is a separate multi-hop gap, not LINQ-relevant -- generators are natively iterable.)",
+  },
+
   // ===============================================================================================
   // Phase T / Jb -- codegen honours the native member table. A member access on a typed String/Array
   // receiver emits the DIRECT `.member()` / `.member`, not the untyped `__ll_member` fallback -- the

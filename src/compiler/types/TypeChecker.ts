@@ -152,17 +152,28 @@ export class TypeChecker {
         return true;
       }
 
+      // Re-resolve to the DECLARED type to reach its TRANSITIVE supers. The `interfaceType` stored on
+      // an `:implements` entry is a bare `{name, generics}` with no supers of its own, so a multi-hop
+      // interface chain (`Iterator :implements Iterable`, or `C :implements B :implements A`) is
+      // invisible without this. The direct-match check above still uses the passed `type`, which
+      // carries the concrete type ARGUMENTS from the `:implements` clause; the recursion below uses the
+      // re-resolved declaration, which carries the SUPERS. (`seen` keys on name, so we cannot visit
+      // both a bare and a declared node of the same name -- fold them into one step here.)
+      const declared = symbolTable.resolveSymbol(type.name)?.inferredType;
+      const supersFrom = declared ?? type;
+
       // The interfaces it declares. Their type ARGUMENTS come from the `:implements` clause, so a
       // DogProducer arrives here as `Producer<Dog>` rather than a bare `Producer`.
-      for (const impl of type.implementedInterfaces ?? []) {
+      for (const impl of supersFrom.implementedInterfaces ?? []) {
         if (visit(impl.interfaceType ?? { kind: "interface", name: impl.interfaceName })) {
           return true;
         }
       }
 
       // Its parent, resolved by name.
-      if (type.parentClass) {
-        const parent = symbolTable.resolveSymbol(type.parentClass);
+      const parentClass = supersFrom.parentClass ?? type.parentClass;
+      if (parentClass) {
+        const parent = symbolTable.resolveSymbol(parentClass);
         if (visit(parent?.inferredType)) {
           return true;
         }

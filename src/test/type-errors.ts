@@ -962,6 +962,32 @@ ${PRODUCER}
     silent: true,
   },
 
+  // --- Na: an interface may `:implements` another interface. `Iterator<T> :implements Iterable<T>`
+  // (std/iter, D30) is the load-bearing case, but the bug was general: `visitInterface` built an
+  // interface's type from name + generics ONLY, dropping the `:implements` clause, so no sub-interface
+  // ever conformed to its super and `isSubtype(Iterator, Iterable)` was always false. ---
+  {
+    name: "Na: a sub-interface value satisfies its super-interface (one hop)",
+    source:
+      "(definterface Shape (fn area [] -> Float))\n" +
+      "(definterface Circle :implements Shape (fn radius [] -> Float))\n" +
+      "(fn describe [s <- Shape] -> String \"a shape\")\n" +
+      "(fn use-circle [c <- Circle] -> String (describe c))",
+    silent: true,
+    why: "Na: visitInterface must record :implements so isSubtype(Circle, Shape) holds.",
+  },
+  {
+    name: "Na: sub-interface conformance is transitive (two hops)",
+    source:
+      "(definterface A (fn a [] -> Int))\n" +
+      "(definterface B :implements A (fn b [] -> Int))\n" +
+      "(definterface C :implements B (fn c [] -> Int))\n" +
+      "(fn wants-a [x <- A] -> Int 0)\n" +
+      "(fn give [z <- C] -> Int (wants-a z))",
+    silent: true,
+    why: "Na: isSubtype must re-resolve an interface's super-interfaces by name (C -> B -> A).",
+  },
+
   // --- P5d: the erasure rule is GONE. `T` is no longer a universal escape hatch. ---
   {
     // `(fn pair<T> [a <- T b <- T])` called as `(pair 1 "x")`: `T` is solved to `Int` from the first
