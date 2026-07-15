@@ -2988,8 +2988,9 @@ straight into `for :each`, which needs `Iterable<Int>` -- the protocol clicking 
 
 ### What Ga ships, and what Gb owes
 
-**Ga** (this): the `:gen` modifier, the `function*` lowering, `yield` codegen, and `for :each` over a
-generator end to end -- because a generator is natively iterable, that already runs. **Gb** owes the
-diagnostics above (yield-outside-gen, value-`return`, non-`Iterator` return type, empty-`:gen`
-warning) and the type-level check that `yield x` matches the declared `T`. **Gc** owes the bridge that
-makes a hand-written `:implements Iterable` struct (a NON-generator) consumable by `for...of`.
+**Ga**: the `:gen` modifier, the `function*` lowering, `yield` codegen, and `for :each` over a
+generator end to end (a generator is natively iterable, so that already runs). **Gb** (done): the
+diagnostics that enforce the rules above -- `yield` outside a `:gen` (LL0222), a value-`return` inside
+one (LL0223), a non-`Iterator` return type (LL0224), a `yield x` whose type is not the declared `T`
+(LL0225), and a warning for a `:gen` that never yields (LL0226). **Gc** owes the bridge that makes a
+hand-written `:implements Iterable` struct (a NON-generator) consumable by `for...of`.

@@ -1256,6 +1256,18 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     this.context.results.add(node, rule, this.context);
   }
 
+  /** Like `reportTypeError`, but a WARNING -- the program still compiles. For "legal but suspicious". */
+  protected reportTypeWarning(node: ast.ASTNode, code: string, message: string): void {
+    const rule = createRule<ast.ASTNode>()
+      .addSeverity(RuleSeverity.Warning)
+      .addCode(code)
+      .addMessage(message)
+      .addTest(() => true)
+      .build();
+
+    this.context.results.add(node, rule, this.context);
+  }
+
   /**
    * Type the arguments of a call whose CALLEE we could not resolve -- `(console.log h.length)`, a
    * member call, a JS global. The callee tells us nothing; the ARGUMENTS still have to be checked.
@@ -2114,7 +2126,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     this.visitBlock(
       this.blockItems(node.body),
       (stmt) => this.visitStatement(stmt),
-      () => this.checkReturns(node)
+      () => {
+        this.checkReturns(node);
+        this.checkGeneratorRules(node);
+      }
     );
     this.deferredDepth--;
 
@@ -2165,6 +2180,18 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
   /** The `(return x)` forms belonging to THIS function -- a nested function owns its own. */
   private collectReturns(body: ast.ASTNode[]): { node: ast.ASTNode; value?: ast.ASTNode }[] {
+    return this.collectHeaded(body, "return");
+  }
+
+  /**
+   * The `(name x)` special forms belonging to THIS function -- `return` or `yield`. Stops at a nested
+   * function boundary: that function's `return`s and `yield`s are its own, checked when it is visited.
+   * This is what lets `yield` in a nested non-`:gen` lambda be caught as ITS error, not this one's.
+   */
+  private collectHeaded(
+    body: ast.ASTNode[],
+    name: string
+  ): { node: ast.ASTNode; value?: ast.ASTNode }[] {
     const found: { node: ast.ASTNode; value?: ast.ASTNode }[] = [];
 
     const walk = (n: any): void => {
@@ -2175,12 +2202,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       }
       if (!n._type) return;
 
-      // Do not descend into a nested function: its returns are checked against ITS declaration.
       if (n._type === "function") return;
 
       if (ast.isListNode(n) && n.nodes.length > 0) {
         const head = n.nodes[0];
-        if (head?._type === "simple-identifier" && (head as ast.SimpleIdentifierNode).id === "return") {
+        if (head?._type === "simple-identifier" && (head as ast.SimpleIdentifierNode).id === name) {
           found.push({ node: n, value: n.nodes[1] });
           return;
         }
@@ -2191,6 +2217,89 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
     body.forEach(walk);
     return found;
+  }
+
+  /**
+   * Enforce D31 on generators, and catch a `yield` that escaped one. Runs for EVERY function, because
+   * the "yield outside a generator" rule is about the NON-generators.
+   */
+  private checkGeneratorRules(node: ast.FunctionNode): void {
+    const yields = this.collectHeaded(node.body, "yield");
+
+    // `yield` only means something inside a `:gen`. Because `:gen` is explicit, a yield anywhere else
+    // is unambiguous -- report each and stop (the other rules are about a real generator).
+    if (!node.generator) {
+      for (const y of yields) {
+        this.reportTypeError(
+          y.node,
+          "LL0222",
+          "'yield' is only valid inside a ':gen' function. Declare the function ':gen' to make it a generator."
+        );
+      }
+      return;
+    }
+
+    const genName = node.name ? ast.symbolName(node.name) : "<anonymous>";
+
+    // The declared type must be Iterator<T> (or Iterable<T>) -- the ruling. Only when one is DECLARED
+    // and known; an absent or Unknown return type is left to inference, not reported.
+    let elementType: InferredType | undefined;
+    if (node.returns) {
+      const rt = this.convertAstTypeToInferred(node.returns);
+      if (!TypeChecker.isUnknown(rt)) {
+        if (this.isIteratorType(rt)) {
+          elementType = rt.generics?.[0];
+        } else {
+          this.reportTypeError(
+            node,
+            "LL0224",
+            `a ':gen' function must return Iterator<T> (or Iterable<T>), but '${genName}' declares ${TypeChecker.formatType(rt)}.`
+          );
+        }
+      }
+    }
+
+    // A generator STOPS with a valueless `(return)`. A value has nowhere to go in the sequence.
+    for (const ret of this.collectReturns(node.body)) {
+      if (ret.value) {
+        this.reportTypeError(
+          ret.node,
+          "LL0223",
+          "a ':gen' function stops with a valueless '(return)'; it cannot '(return x)'. Produce values with '(yield x)'."
+        );
+      }
+    }
+
+    // Every `yield x` must produce the element type.
+    if (elementType && !TypeChecker.isUnknown(elementType)) {
+      for (const y of yields) {
+        if (!y.value) continue;
+        const vt = this.inferExpressionType(y.value);
+        if (TypeChecker.isUnknown(vt)) continue;
+        if (!TypeChecker.isAssignable(vt, elementType, this.symbolTable)) {
+          this.reportTypeError(
+            y.node,
+            "LL0225",
+            `this generator produces ${TypeChecker.formatType(elementType)}, but yields ${TypeChecker.formatType(vt)}.`
+          );
+        }
+      }
+    }
+
+    // An empty generator is legal but almost always a mistake.
+    if (yields.length === 0) {
+      this.reportTypeWarning(
+        node,
+        "LL0226",
+        `':gen' function '${genName}' never yields -- it produces an empty sequence. Did you forget a '(yield ...)'?`
+      );
+    }
+  }
+
+  /** Is this declared type an `Iterator<T>` or `Iterable<T>` -- the only return types a `:gen` may have? */
+  private isIteratorType(t: InferredType): boolean {
+    const name = t?.name ?? t?.refName;
+    return name === "Iterator" || name === "Iterable";
   }
 
   visitClass(node: ast.ClassNode) {

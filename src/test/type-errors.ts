@@ -1101,6 +1101,71 @@ ${PRODUCER}
       "GUARD, and the Xf lesson: adding `visitForEach` OVERRIDES the generic child-walk, so it must " +
       "visit the body itself or every check silently stops running inside the loop.",
   },
+  // -----------------------------------------------------------------------------------------------
+  // Gb -- the diagnostics that ENFORCE D31. yield/return discipline, the Iterator return type.
+  // -----------------------------------------------------------------------------------------------
+  {
+    name: "Gb: `yield` outside a `:gen` function is an error",
+    source: `(fn plain [] -> Int (
+  (yield 1)
+  (return 2)
+))`,
+    expect: /LL0222/,
+    why:
+      "`yield` produces-and-suspends; it has no meaning in a function that is not a generator. Because " +
+      "`:gen` is explicit (D31), a yield in a non-`:gen` function is unambiguously a mistake.",
+  },
+  {
+    name: "Gb: a value `(return x)` inside a `:gen` is an error",
+    source: `(fn :gen g [] -> Iterator<Int> (
+  (yield 1)
+  (return 5)
+))`,
+    expect: /LL0223/,
+    why:
+      "a generator STOPS with a valueless `(return)`; a value has no place in the sequence. Silently " +
+      "discarding it is the JS/Python trap; C# forbids it, and so do we. Produce with `(yield x)`.",
+  },
+  {
+    name: "Gb: a `:gen` with a non-Iterator return type is an error",
+    source: `(fn :gen g [] -> Int (
+  (yield 1)
+))`,
+    expect: /LL0224/,
+    why:
+      "the ruling: a generator's declared type is the full `Iterator<T>` -- what a called generator " +
+      "actually is. `-> Int` is not it.",
+  },
+  {
+    name: "Gb: `yield x` is checked against the generator's element type",
+    source: `(fn :gen g [] -> Iterator<Int> (
+  (yield "not an int")
+))`,
+    expect: /LL0225/,
+    why: "`Iterator<Int>` yields Ints; `(yield \"s\")` is a type error, like a mismatched return.",
+  },
+  {
+    name: "Gb: a `:gen` that never yields is WARNED",
+    source: `(fn :gen g [] -> Iterator<Int> (
+  (return)
+))`,
+    expect: /LL0226/,
+    why:
+      "an empty generator is almost always a mistake -- a `:gen` you forgot to `yield` in. A warning, " +
+      "not an error: an empty sequence is legal, just suspicious.",
+  },
+  {
+    name: "Gb: a CORRECT generator is silent",
+    source: `(fn :gen count-up [n <- Int] -> Iterator<Int> (
+  (mut i 0)
+  (while (< i n) (
+    (yield i)
+    (i := (+ i 1))))))`,
+    silent: true,
+    why:
+      "GUARD. All five rules must leave a well-formed generator alone: it yields, it returns nothing, " +
+      "its type is Iterator<Int>, and every yield is an Int.",
+  },
 ];
 
 function runCases(): { failed: number; pending: number } {

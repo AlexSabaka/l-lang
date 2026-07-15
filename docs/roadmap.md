@@ -230,8 +230,9 @@ protocol**, so lowering is the native form, not a reimplemented state machine.
 *   **Generators (D31).**
     *   [x] **Ga** — `:gen` + `yield` → `function*`. A generator object is natively iterable, so
             `for :each` over one runs through the existing `for...of`, end to end.
-    *   [ ] **Gb** — the diagnostics: `yield` outside `:gen`, value-`return` inside `:gen`, a
-            non-`Iterator` return type, an empty-`:gen` warning; and `yield x` checked against `T`.
+    *   [x] **Gb** — the diagnostics: `yield` outside `:gen` (LL0222), value-`return` inside `:gen`
+            (LL0223), a non-`Iterator` return type (LL0224), `yield x` checked against `T` (LL0225), and
+            an empty-`:gen` warning (LL0226).
     *   [ ] **Gc** — the bridge for a hand-written `:implements Iterable` struct (a NON-generator):
             `iterator()` → `[Symbol.iterator]`, with the `T? ↔ {value, done}` adapter. Makes Itb's
             user-conformance path actually consumable by `for...of`.
