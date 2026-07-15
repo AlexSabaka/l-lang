@@ -239,8 +239,8 @@ protocol**, so lowering is the native form, not a reimplemented state machine.
             user-conformance path actually consumable by `for...of`. Generators need none of it.
 *   **LINQ (D33).** The C# LINQ steal, now pure stdlib (`lib/std/linq.lisp`): lazy `:gen` operators over
     the iteration protocol, surfaced by the working infix `|>` -- `(coll |> (map f) |> (filter p) |>
-    (take 3))`. Collection-first, so the pipe threads each stage (and the same signatures become
-    extension methods the day `:extension` is built, D34). Gradually typed, like `std/seq`.
+    (take 3))`. Collection-first, so the pipe threads each stage — and, as of **Phase N**, the SAME
+    signatures ARE extension methods (`((coll.map f).filter p)`), typed and lazy. Pipe stays primary.
     *   [x] **La** — the uniform cursor. `iter`/`next` runtime builtins (`iter` reaches through
             `[Symbol.iterator]`, inexpressible in l-lang -- the `head`/`elem` family), spanning array,
             generator and `:implements Iterable` struct alike. `Iterator<T> :implements Iterable<T>` so
@@ -302,6 +302,26 @@ the real work.
 *   [x] **Jb** — codegen honours it: a typed String/Array member emits a direct `.member()` / `.member`,
         not `__ll_member`. `std/string` (receivers `<- String`) now emits ZERO. Closes the String/Array
         half of the thermometer.
+
+## ✅ Phase N: LINQ method-chaining (D33, built)
+D33's "method-chaining surface is **reserved, not built**" is now **built**: the collection-first
+`:extension` operators chain method-style (`((coll.map f).filter p).take 3).to-list)`) over any `Iterable`,
+lazily, alongside the pipe (which stays primary). Four enablers, a dependency chain.
+*   [x] **Na** — interfaces record `:implements`. `visitInterface` dropped it, so `Iterator :implements
+        Iterable` never held and `isSubtype(Iterator, Iterable)` was always false — a latent
+        interface-extends-interface bug, not just LINQ. `isSubtype`/`receiverConformsTo` walk it transitively.
+*   [x] **Nb** — the checker TYPES an `:extension` call as its instantiated return (was Unknown), via
+        `conformsNominally` (array-excluding) + `instantiateSignature`, published to the node-type channel.
+        A chain intermediate `(gen.map f)` now types as `Iterator<…>`, so the next `.filter` resolves.
+*   [x] **Nc** — codegen dispatches on a COMPUTED chain intermediate, reading the node-type channel Nb
+        filled (the 2nd+ hop `((gen.map f).filter g)` was raw `map(gen,f).filter(g)` — a crash).
+*   [x] **Nd** — the linq operators are typed `:extension`; a `:gen` `seq` gateway lifts a bare array into
+        a lazy chain (`((seq arr).map f)`). `isSubtype` treats the iteration protocol nominally +
+        element-gradually (an array satisfies `Iterable`, so the PIPE still threads it) while dispatch stays
+        nominal (a bare `.map` stays native-eager). Headline: the chain runs lazily over an INFINITE
+        generator. (Also fixed a latent bug — dispatched IMPORTED extensions were never inlined.)
+*   [x] **Ne** — a lazy-only op method-style on a bare array (`(arr.take 3)`) is **LL0230** with a fix hint
+        (the pipe, or `seq`), not a silent compile → runtime `arr.take is not a function`.
 
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."

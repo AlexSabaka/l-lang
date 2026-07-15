@@ -3084,7 +3084,14 @@ This settles the surface question the phase opened: **l-lang's LINQ surface is t
 mirroring `:operator`" guessed here is **wrong** -- an interface cannot be name-matched at run time
 (see D34). The working pipe covers the ergonomics regardless. Collection-first is not a concession to
 the pipe: it is *also* C#'s `this`-receiver order, so the identical signatures can become extension
-methods (D34). A method-chaining LINQ surface is **reserved, not built** -- the pipe stays primary.
+methods (D34). A method-chaining LINQ surface is now **BUILT** (Phase N, Na–Ne): the collection-first
+operators are marked `:extension` and typed, so `((coll.map f).filter p).take 3).to-list)` chains
+method-style over any `Iterable` -- a generator, or `(seq arr)` for a bare array -- **lazily, proven over
+an infinite source**. The pipe stays **primary** (this ruling stands); the method surface is the SAME
+operators, one definition. A bare array keeps native eager `.map`/`.filter`; a lazy-only op called on one
+(`(arr.take 3)`) is **LL0230** with a fix hint (Ne). The four enablers were a chain: interfaces recording
+`:implements` (Na, below), the checker typing extension-call results into the node-type channel (Nb),
+codegen dispatching on a computed chain intermediate (Nc), and the typed operators + `seq` gateway (Nd).
 
 ### Lazy by construction; the uniform cursor (La)
 
@@ -3105,14 +3112,23 @@ methods (D34). A method-chaining LINQ surface is **reserved, not built** -- the 
 - **`Iterator<T> :implements Iterable<T>` (La).** A cursor iterates AS ITSELF (JS, Rust's
   `Iterator: IntoIterator`, Python), so `map`'s `Iterator<U>` result satisfies `filter`'s `Iterable<T>`
   parameter and the chains type-check. Pure type-level; the Gc bridge fires on structs, not interfaces.
+  **Correction (Na).** This clause was in the source but the type system **dropped it**: `visitInterface`
+  built an interface's type from name + generics only, so `Iterator`'s `implementedInterfaces` was empty
+  and `isSubtype(Iterator, Iterable)` was always **false** -- the conformance silently never held (no
+  `definterface … :implements …` did). Na records it, which fixes interface-extends-interface generally
+  and is the foundation the method surface stands on.
 
 ### Gradually typed, for now
 
 Like `std/seq`, the operators ship **without** `-> Iterator<T>` annotations. When this phase was written,
 call-site generic inference did not exist, so `Iterable<T> -> Iterator<U>` on a free function would only
-infer Unknown. It **exists now** (Phase 5, P5b-d), and Phase T spent it on `first`/`last`/`at`; the linq
-operators still ship untyped for now (a follow-up), and the annotations can go on whenever, with the
-`Iterator :implements Iterable` refinement making the chains check end to end. They are gradually typed
+infer Unknown. It **exists now** (Phase 5, P5b-d), and Phase T spent it on `first`/`last`/`at`. **Now typed (Nd).** The
+operators carry `Iterable<T> -> Iterator<...>`, so the method chains resolve hop to hop; element types
+stay loose where inference cannot recover them (an element-CHANGING op `map`/`flat-map`, and `enumerate`/
+`zip` whose element is a tuple, return `Iterator<Any>`; element-preserving ops keep `Iterator<T>`). The
+pipe threads a bare array through them because `isSubtype` treats the iteration protocol nominally and
+element-gradually -- an array satisfies `Iterable<_>` (it is iterable), though it is NOT a nominal
+conformer for DISPATCH, which is what keeps `(arr.map f)` on native eager array.map. Still gradually typed
 and RUN correctly regardless (what laziness needs).
 
 ### The `std/seq` boundary (the ruling)
