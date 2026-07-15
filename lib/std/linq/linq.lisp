@@ -20,14 +20,14 @@
 ;;   PIPED.  Collection-first means the working infix `|>` threads it: `(coll |> (map f) |> (filter p))`
 ;;           desugars to `filter(map(coll, f), p)` -- left-to-right LINQ, no `:extension` machinery, and
 ;;           it type-checks (the pipe types as its final stage's return). Collection-first also matches
-;;           C#'s `this`-receiver, so the same signatures become extension methods the day `:extension`
-;;           is built.
+;;           C#'s `this`-receiver, so -- now that `:extension` is built (D34) -- the same signatures
+;;           COULD be exposed as extension methods; the pipe stays the primary surface.
 ;;
-;; UNTYPED, on purpose. Like `std/seq`, these ship without `-> Iterator<T>` annotations: call-site
-;; generic inference does not exist yet (Phase 5), so `Iterable<T> -> Iterator<U>` on a free function
-;; would only infer Unknown -- documentation with no teeth. They are gradually typed; the chains RUN
-;; correctly, which is what laziness needs. When call-site generics land, the annotations go on and the
-;; `Iterator<T> :implements Iterable<T>` already in `std/iter` makes the chains check end to end.
+;; UNTYPED, on purpose (for now). Like `std/seq`'s eager ops, these ship without `-> Iterator<T>`
+;; annotations. Call-site generic inference EXISTS now (Phase 5, P5b-d) -- `std/seq`'s `first`/`last`/
+;; `at` are typed with it -- but the linq operators stay untyped for the moment (a follow-up); the
+;; annotations can go on whenever, and the `Iterator<T> :implements Iterable<T>` already in `std/iter`
+;; makes the chains check end to end. Gradually typed, they RUN correctly regardless -- what laziness needs.
 (
   ;; map -- produce (f x) for each element.
   (fn :gen map [coll f]

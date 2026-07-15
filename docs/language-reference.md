@@ -2,7 +2,7 @@
 
 Complete API reference for the **l-lang** standard library and compiler introspection.
 
-> Note: Standard library is under development. Core data manipulation functions are available; full stdlib coming in Phase 4.
+> Note: the standard library ships as ten packages under `lib/std/` — `iter`, `linq`, `seq`, `async`, `io`, `math`, `fn`, `js`, `types`, `string`. Each is a `package.yaml` compilation unit; import one by name, e.g. `(import "std/seq")`. `std/linq` adds lazy, pipe-surfaced sequence operators (`(coll |> (map f) |> (filter p))`).
 
 ---
 
@@ -40,7 +40,7 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 | `>=` | `(>= a b)` | Greater or equal | `(>= 5 5)` → `true` |
 | `!` | `(! b)` | Logical NOT | `(! false)` → `true` |
 | `&&` | `(&& ...bs)` | Logical AND | `(&& true true)` → `true` |
-| `` | `( ...bs)` | Logical OR | `( true false)` → `true` |
+| `\|\|` | `(\|\| ...bs)` | Logical OR | `(\|\| true false)` → `true` |
 
 ### String Operations
 
@@ -369,8 +369,9 @@ call site always means the operator, even if a module you imported happens to de
 ### Inheritance
 
 Inheritance is spelled `:extends`. There is no `:inherits` synonym (D11) — the compiler has never
-accepted one, and `(defclass Dog :inherits Animal ...)` is a parse error. `:inherits` exists only
-inside a generic *constraint*: `:where T :inherits Base`.
+accepted one, and `(defclass Dog :inherits Animal ...)` is a parse error. The only place `:inherits`
+is even *intended* is a generic *constraint* (`:where T :inherits Base`) — but generic constraints do
+**not parse yet** (planned; see the syntax guide), so that form is aspirational, not usable today.
 
 ```lisp
 (defclass Dog :extends Animal
@@ -391,16 +392,22 @@ inside a generic *constraint*: `:where T :inherits Base`.
 
 ### Visibility
 
+The three levels are package-scoped (a package is a `package.yaml` compilation unit):
+
 ```lisp
-;; Public (default)
+;; Public -- exported; crosses the package boundary. Via (export ...), or the :public modifier.
 (fn :public get-value [] ...)
 
-;; Internal (same module only)
+;; Internal -- the DEFAULT (unexported): visible within the package, not to importers.
 (fn :internal helper [] ...)
 
-;; Private (not yet supported)
+;; Private -- file-scoped (or, for a class member, type-scoped). ENFORCED: a cross-file/outside
+;; reference to a :private name is LL0206.
 (fn :private internal-only [] ...)
 ```
+
+`protected` was **removed** from the language (it was a no-op, and the implementation-inheritance leak
+Go/Rust drop) — `:protected` is now rejected as an unknown modifier (LL0015).
 
 ---
 
@@ -489,27 +496,39 @@ The `|>` operator chains function calls left-to-right:
 
 ---
 
-## 📦 Module System
+## 📦 Module System & Packages
 
-### Define Module
+A **module** is a file; a **package** is a compilation unit — a directory with a `package.yaml`
+(`name` + `sources`) — that groups one or more files. The stdlib is ten such packages under `lib/std/`.
+Files of one package see each other's names with no export/import between them; a name crosses the
+package boundary only when exported.
+
+### Define a module / package
 
 ```lisp
 ;; math-utils.lisp
 (fn add [a b] (+ a b))
 (fn multiply [a b] (* a b))
 
-(export add multiply)
+(export add multiply)   ;; the public surface
 ```
 
-### Import Module
+```yaml
+# package.yaml -- makes a directory a package
+name: my/math
+sources: ["*.lisp"]
+```
+
+### Import
 
 ```lisp
 ;; main.lisp
-(import { M as mu } from math-utils)
-(import { max } math-utils)
+(import "std/seq")                 ;; a whole package, resolved by NAME
+(import "./math-utils.lisp")       ;; a sibling file, by relative path
+(import { add, multiply :as mul } from "./math-utils.lisp")  ;; selected names; alias with :as
 
-(mu.add 5 3)
-(add 5 3)  ;; Direct import
+(add 5 3)
+(mul 4 2)
 ```
 
 ---
@@ -625,8 +644,8 @@ l-lang compiles to JavaScript, enabling direct interop:
 
 ## 📚 Related Resources
 
-- **Language Reference**: [language/SYNTAX.md](language/SYNTAX.md)
-- **Type System Details**: [compiler/TYPE_SYSTEM.md](compiler/TYPE_SYSTEM.md)
+- **Language Syntax**: [language-syntax.md](language-syntax.md)
+- **Type System Details**: [compiler/TYPE_SYSTEM.md](spec/DECISIONS.md)
 - **Examples**: [examples/](../examples/)
 - **Test Suite**: Tests for all APIs in `src/test/`
 
@@ -675,6 +694,6 @@ l-lang compiles to JavaScript, enabling direct interop:
 
 ---
 
-**Last Updated**: January 16, 2026
+**Last Updated**: July 2026
 
-For more details, see [language/SYNTAX.md](language/SYNTAX.md) and [QUICK_START.md](QUICK_START.md).
+For more details, see [language-syntax.md](language-syntax.md) and [quick-start.md](quick-start.md).

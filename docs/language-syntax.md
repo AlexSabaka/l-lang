@@ -195,9 +195,16 @@ Pass results forward. First argument by default.
 l-lang includes several built-in modifiers for functions:
 
 ```lisp
-(fn :operator + [a <- Int, b <- Int] -> Int ...)  ;; Operator overloading
-(fn :async fetch-data [url] ...)                  ;; Async function
+(fn :operator + [a <- Int, b <- Int] -> Int ...)  ;; Operator overloading (dispatch modifier)
+(fn :async fetch-data [url] ...)                  ;; Async function (body modifier)
+(fn :gen count-up [n <- Int] -> Iterator<Int> ...) ;; Generator: function*, produces via (yield x)
+(fn :extension area [self <- Rectangle] -> Int ...) ;; Extension method: (rect.area) -> area(rect)
 ```
+
+Modifiers split into **dispatch** (`:operator`, `:extension` — govern the call site) and **body**
+(`:gen`, `:async` — govern the emitted function); one of each composes, e.g. `:extension :gen` is a lazy
+extension method. `:extension` dispatch is compile-time and nominal: `(x.m a)` lowers to the free call
+`m(x, a)` when `x`'s type conforms to the extension's receiver and has no native `m`.
 
 ### Custom Modifiers with `defmodifier`
 
@@ -417,7 +424,9 @@ Supported operators: `+`, `-`, `*`, `/`, `==`, `!=` etc.
 
 ### Generics
 
-Generics enable type-safe parameterization of classes, interfaces, and functions (function generics planned for future).
+Generics enable type-safe parameterization of classes, interfaces, and functions. Function generics
+work via **call-site inference**: `(fn first<T> [coll <- T[]] -> T? ...)` and `(first [1 2 3])` infers
+`Int?`, solving `T` from the argument and substituting into the return (optional flag and all).
 
 **Generic Classes:**
 

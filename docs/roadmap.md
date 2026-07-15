@@ -163,10 +163,10 @@ itself. Enforcing the boundary costs **one export list**.
         guaranteed runtime crashes. A 3-name residual remains, named as a language defect: types and
         values share one namespace.
 *   [x] **Se — the dead half of `SYMBOL_MAP` is deleted; the live half CANNOT leave.**
-        `get`/`head`/`elem` are the language's only `T?` producers and their type is **inexpressible**
-        until call-site generic inference exists (**Phase 5**) — and the mechanism *self-disables* the
-        moment the name resolves, so even declaring them would silently delete every optional check.
-        The gate marks the day `std/core` becomes possible.
+        `get`/`head`/`elem` are the language's only `T?` producers and their type WAS inexpressible until
+        call-site generic inference — which **now exists** (Phase 5, P5b-d), so `first`/`last`/`at` are
+        declared `<T> … -> T?` (Phase T / Ga) and `std/core` is unblocked. (The builtins still self-
+        disable the moment a name resolves, which is why they stay in `SYMBOL_MAP`.)
 *   [x] **Sf — THE STDLIB RUNS.** D22's layout; `length`/`first`/`last`/`at` exist; `test_stdlib` has a
         golden and executes in **both frontends**. Running it found **three real bugs** immediately —
         `(pow 2 3)` was `NaN` because an inlined function's *parameter* was replaced by a same-named
@@ -225,8 +225,8 @@ protocol**, so lowering is the native form, not a reimplemented state machine.
         (String/Map bind Unknown for now -- `for...of` over a Map yields `[K,V]` pairs and l-lang has no
         settled tuple type; naming it wrongly is worse than Unknown). A known non-iterable scalar in
         `:from` is **LL0221**. Codegen unchanged (`for...of`). The mechanism is gated (an array-of-structs
-        loop-var field now resolves instead of hitting `__ll_member`); the corpus thermometer holds at 23
-        because its own `for :each` sites are array-of-MAPS, which need record types to resolve `user.name`.
+        loop-var field now resolves instead of hitting `__ll_member`); the corpus `for :each` sites that
+        stay on the thermometer are array-of-MAPS, which need record types to resolve `user.name`.
 *   **Generators (D31).**
     *   [x] **Ga** — `:gen` + `yield` → `function*`. A generator object is natively iterable, so
             `for :each` over one runs through the existing `for...of`, end to end.
@@ -252,7 +252,10 @@ protocol**, so lowering is the native form, not a reimplemented state machine.
             unbounded generator `|> (map ...) |> (take 3) |> to-list` terminates and yields `[0 1 4]`.
     *   [x] **Ld** — the rulings: **D33** (the library) and **D34** (modifier composition: `:extension`
             is a DISPATCH modifier, `:gen`/`:async` are BODY modifiers -- orthogonal, so `:extension
-            :gen` is coherent). `std/seq` overlap flagged for a later reconciliation.
+            :gen` is coherent).
+    *   [x] **Le** — the `std/seq` × `std/linq` boundary, ruled a **deliberate two-convention split**
+            (D33): `std/seq` is eager/collection-last/functional-order, `std/linq` is lazy/collection-
+            first/pipe. Not a duplication to collapse — pick one per file.
 *   **async (D32).** The JS runtime already gives it -- `:async` is an `async function`, `await` an
     `AwaitExpression` -- so unlike generators the RUNTIME was live; the TYPE layer was absent.
     *   [x] **Aa** — the protocol: `Awaitable<T>` / `Task<T>` in `lib/std/async.lisp`. **D32**. No
@@ -286,6 +289,20 @@ can't match an interface, but the checker knows `:implements` conformance.
 *   [x] **Eb** — the discipline: an `:extension` with no receiver parameter is **LL0229**. `:extension
         :gen` demonstrated — a lazy filter method (`(c.where p)` → the generator `where(c, p)`).
 
+## ✅ Phase T: typed surfaces — the generic stdlib, and native member types
+Two thermometer/stdlib pieces. Both smaller than they looked: **call-site generic inference already
+worked** (Phase 5, P5b-d), so the generics half was just declaring signatures; native member typing was
+the real work.
+*   [x] **Ga** — `first`/`last`/`at` in `std/seq` declared generic `<T> [coll <- T[]] -> T?`, so
+        `(first [1 2 3])` types `Int?`. No new machinery — the stale "Se" gate (`-> T?` at the call site)
+        was passing and is un-pended. No corpus ripple.
+*   [x] **Ja** — a native-member side table (`nativeMembers.ts`, String/Array), so the checker types
+        `s.toUpperCase` → `String`, `s.length` → `Int`, `arr.shift` → `T?`. Never a nominal String/Array
+        symbol (that breaks primitive assignability); a table both resolvers consult.
+*   [x] **Jb** — codegen honours it: a typed String/Array member emits a direct `.member()` / `.member`,
+        not `__ll_member`. `std/string` (receivers `<- String`) now emits ZERO. Closes the String/Array
+        half of the thermometer.
+
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."
 
@@ -315,16 +332,21 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     - a member looked up by its ENCODED rather than SOURCE name (`get-area` → `get2darea`, `801b660`),
     - an INHERITED member not followed through `:extends` (`this.name` in a subclass, `5f705de`).
 
-    The remaining **23** are two populations, and neither is a mechanical lookup bug:
-    - **~14 genuine JS interop** — `toUpperCase`, `trim`, `Date.now`, `.message`, `.length`, `reverse`.
-      The receiver is a plain JS String/Array/Date/Error and the compiler *correctly* cannot type it.
-      Closing these is prelude work — declare the JS surface in `lib/std/js.lisp` — not inference.
-    - **~9 harder inference**, in three sub-problems, each its own phase: **collection element types**
-      (`(for :each user :from users)` — no `visitFor` binds the loop var; `containerElementType` exists
-      but is unused there), **array-accessor returns** (`(queue.shift)` → element type), and
-      **field-access chains** (`game-state.player.pos.y`, where `player` was declared `nil`).
-      Caveat measured: `10_for_each`'s `users` is an array of MAP literals, so element typing alone does
-      not resolve `user.name` — that needs record types too.
+    **Phase T then closed the String/Array half.** A native-member side table (`nativeMembers.ts`),
+    consulted by BOTH the checker and codegen, types `s.toUpperCase` / `s.length` / `arr.shift` /
+    `arr.reverse` and emits a direct `.member()` instead of `__ll_member` — so `lib/std/string` (its
+    receivers annotated `<- String`) now emits ZERO. What line 319 called "genuine JS interop the
+    compiler *correctly* cannot type" was, for String and Array, prelude work after all — just via a
+    hardcoded side table (checker + codegen), not `js.lisp` declarations.
+
+    What remains, and neither is a mechanical lookup bug:
+    - **`Date` / `Error` interop** — `Date.now`, `err.message`. `:extern` values with no clean type
+      representation; a smaller residual than the "~14" that included the now-typed String/Array members.
+    - **~9 harder inference**, each its own phase: **collection element types over array-of-MAPS**
+      (`(for :each user :from users)` — `visitForEach` binds the loop var to `T` (Itb), but `users` is an
+      array of MAP literals, so `user.name` needs **record types**), and **field-access chains**
+      (`game-state.player.pos.y`, where `player` was declared `nil`). (`arr.shift`'s element return is
+      now typed by Phase T.)
 
     Watching that number fall is the cheapest available measure of the "does not infer every expression"
     gap.
@@ -350,10 +372,11 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     Phase F cured in the call decision. **Ruled: D25. Phase X in flight; gates are RED.** (A trailing
     `if` no longer loses its value — that is **D18**.)
 *   **The type checker does not infer every expression** (improving). 114 `list` nodes once had no
-    entry in the type channel; the three mechanical gaps above are fixed (thermometer 50 → 23). What
-    remains uninferred is a harder class — collection element types, array-accessor returns, and
-    field-access chains (see the thermometer entry). Caps what codegen can prove — the reason the
-    struct-copy elision came in at 138 rather than the 353 predicted.
+    entry in the type channel; the three mechanical gaps are fixed (thermometer 50 → 23), and Phase T
+    then typed the String/Array native members. What remains uninferred is a harder class — collection
+    element types over array-of-maps (record types), `Date`/`Error` interop, and field-access chains
+    (see the thermometer entry). Caps what codegen can prove — the reason the struct-copy elision came
+    in at 138 rather than the 353 predicted.
 *   **The call-vs-block rule is implemented three times** — codegen, the checker, and the desugarer —
     and all three guess it from the same proxy, `head._type === "simple-identifier"`. That proxy is why
     an applied lambda cannot be written. **Ruled: D25.**

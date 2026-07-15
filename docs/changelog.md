@@ -183,7 +183,7 @@ Implemented a complete compile-time metaprogramming system for user-defined func
 ;; const fibonacci = __ll_modifier_memoized()(function (n) { ... });
 ```
 
-**Documentation**: Complete implementation guide at [docs/compiler/DEFMODIFIER_IMPLEMENTATION.md](../../docs/compiler/DEFMODIFIER_IMPLEMENTATION.md)
+**Documentation**: Complete implementation guide at [docs/compiler/DEFMODIFIER_IMPLEMENTATION.md](spec/DECISIONS.md)
 
 ---
 
@@ -249,7 +249,7 @@ Added support for user-defined type-aliases and struct types through comprehensi
 - [src/compiler/types/visitors/InferTypesAstVisitor.ts](../../src/compiler/types/visitors/InferTypesAstVisitor.ts) - Type inference implementation
 - [src/compiler/types/TypeChecker.ts](../../src/compiler/types/TypeChecker.ts) - Type compatibility rules
 
-**Related Documentation**: See [DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md)
+**Related Documentation**: See [DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](spec/DECISIONS.md)
 
 ---
 
@@ -286,7 +286,7 @@ Parse → Syntax → Symbols → Desugar → Types → Codegen
                        Syntax      Types
 ```
 
-**Related Documentation**: See [docs/architecture/COMPILER_ARCHITECTURE.md](../architecture/COMPILER_ARCHITECTURE.md)
+**Related Documentation**: See [docs/architecture/COMPILER_ARCHITECTURE.md](language-compiler.md)
 
 ---
 
@@ -376,7 +376,7 @@ Implemented forward references with two-pass symbol table:
 ## 🐛 Known Issues
 
 ### None Currently Reported
-All priority tasks completed. See [TODO.md](TODO.md) for future work items.
+All priority tasks completed. See [TODO.md](roadmap.md) for future work items.
 
 ---
 
@@ -434,4 +434,4 @@ LLVM IR generation for native binaries
 
 **Last Updated**: January 2026
 
-For detailed implementation information, see [IMPLEMENTATION_GUIDE.md](../development/IMPLEMENTATION_GUIDE.md)
+For detailed implementation information, see [IMPLEMENTATION_GUIDE.md](spec/DECISIONS.md)

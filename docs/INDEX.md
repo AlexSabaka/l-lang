@@ -15,6 +15,6 @@ Welcome to the **l-lang** compiler documentation.
 *   **[Compiler Guide](language-compiler.md)** - Architecture, Type System, Internals.
 
 ### 🤝 Contributing & Status
-*   **[Contributing](contributing.md)** - Build & Test guide.
+*   **[Contributing](CONTRIBUTING.md)** - Build & Test guide.
 *   **[Roadmap & Status](roadmap.md)** - Vision & Tasks.
 *   **[Changelog](changelog.md)** - History.

@@ -635,9 +635,9 @@ When extending the type system:
 
 ## Related Documentation
 
-- [Language Syntax Reference](../language/SYNTAX.md) - How to use types in l-lang
-- [Compiler Architecture](../architecture/COMPILER_ARCHITECTURE.md) - How types flow through compilation
-- [Implementation Details](../development/TYPE_SYSTEM_PLAN.md) - Detailed implementation roadmap
+- [Language Syntax Reference](language-syntax.md) - How to use types in l-lang
+- [Compiler Architecture](language-compiler.md) - How types flow through compilation
+- [Implementation Details](spec/DECISIONS.md) - Detailed implementation roadmap
 
 
 # 🧩 Implementation Details

@@ -3067,12 +3067,12 @@ checker and codegen). That "the pipe works and is typed" is itself a correction:
 `"desugar"` stage and its codegen rival removed. (Only the *prefix* `(|> a b)` form is still garbage.)
 
 This settles the surface question the phase opened: **l-lang's LINQ surface is the pipe.** `:extension`
--- which would let `(coll.map f)` dispatch to a free `map` -- is genuinely unwired (it parses, clears
-D4, and is read by NOTHING), and building it is a real feature: a member-call→free-call rewrite plus a
-runtime-dispatch registry mirroring `:operator`. The working pipe covers the ergonomics without it.
-Collection-first is not a concession to the pipe: it is *also* C#'s `this`-receiver order, so the
-identical signatures become extension methods the day `:extension` is built (D34). Method-chaining is
-**reserved, not rejected**.
+-- which lets `(coll.map f)` dispatch to a free `map` -- was unwired when this phase was written; it is
+**built now** (compile-time nominal dispatch, D34 / Phase E), and the "runtime-dispatch registry
+mirroring `:operator`" guessed here is **wrong** -- an interface cannot be name-matched at run time
+(see D34). The working pipe covers the ergonomics regardless. Collection-first is not a concession to
+the pipe: it is *also* C#'s `this`-receiver order, so the identical signatures can become extension
+methods (D34). A method-chaining LINQ surface is **reserved, not built** -- the pipe stays primary.
 
 ### Lazy by construction; the uniform cursor (La)
 
@@ -3096,11 +3096,12 @@ identical signatures become extension methods the day `:extension` is built (D34
 
 ### Gradually typed, for now
 
-Like `std/seq`, the operators ship **without** `-> Iterator<T>` annotations: call-site generic inference
-does not exist (Phase 5), so `Iterable<T> -> Iterator<U>` on a free function would only infer Unknown --
-documentation with no teeth, and a live risk of false positives. They are gradually typed; the chains
-RUN correctly (what laziness needs). When call-site generics land, the annotations go on and the
-`Iterator :implements Iterable` refinement makes the chains check end to end.
+Like `std/seq`, the operators ship **without** `-> Iterator<T>` annotations. When this phase was written,
+call-site generic inference did not exist, so `Iterable<T> -> Iterator<U>` on a free function would only
+infer Unknown. It **exists now** (Phase 5, P5b-d), and Phase T spent it on `first`/`last`/`at`; the linq
+operators still ship untyped for now (a follow-up), and the annotations can go on whenever, with the
+`Iterator :implements Iterable` refinement making the chains check end to end. They are gradually typed
+and RUN correctly regardless (what laziness needs).
 
 ### The `std/seq` boundary (the ruling)
 
@@ -3231,3 +3232,32 @@ lower the boundary per backend: on JS the package's public surface becomes `pack
 field (Node refuses to resolve an unlisted deep import -- real enforcement); on a native backend the
 `public` names become the library's exported (`default`-visibility) symbols and everything else
 `hidden`/`internal`-linkage, enforced by the linker. Emission is a later phase; the model is settled.
+
+## D36 — typed surfaces: the generic accessors, and native member types (Phase T)
+
+Two long-standing "the stdlib ships Unknown" / "`__ll_member` thermometer" gaps, closed together.
+
+**Call-site generic inference already worked.** The Phase 5 machinery (`unify` / `substitute` /
+`instantiateSignature`) solves a type variable from the arguments and substitutes into the return,
+optional flag and all -- the gate "a generic `-> T?` produces an optional at the call site" was `pending`
+but PASSING, never un-pended. So `first`/`last`/`at` in `std/seq` are now declared `<T> [coll <- T[]] ->
+T?` and `(first [1 2 3])` types `Int?` (Ga). The corpus uses them safely, so the new `LL0205` risk did
+not fire: `corpus onTests` stayed 0.
+
+**Native member types are a SIDE TABLE, never a nominal `String`/`Array` symbol.** A `String` receiver is
+`{kind:"primitive"}` and an `Int[]` is `{kind:"generic", isArray}`; neither carries a `members` list, so
+`(s.toUpperCase)` / `(arr.shift)` degraded to Unknown and, in codegen, to `__ll_member`. Introducing a
+nominal `String`/`Array` *symbol* is not an option -- it flips every `<- String` annotation to a type-ref
+and breaks primitive assignability project-wide (the documented `LL0203` conflict, `js.lisp`). So
+`nativeMembers.ts` is a hardcoded table (the member analogue of `inferTotalAccessorType`), keyed by
+receiver kind/name + member, consulted by BOTH resolvers -- the checker (a field-read path and a
+method-call path) and codegen (`memberKindIn`). A member is a FIELD (its value type -- `length -> Int`)
+or a METHOD (its RETURN type only -- never a `() -> R` function type, which would arity-check the args
+and fail `csv.split(",")`). For `Array<T>` members the element `T` comes from the RECEIVER. String and
+Array only for now; `Date`/`Error` receivers (`:extern` values) are the residual (Ja/Jb).
+
+The consequence: a typed String/Array member access emits a direct `.member()` / `.member` instead of
+`__ll_member` -- `std/string` (receivers annotated `<- String`) now emits ZERO. The thermometer's
+"genuine JS interop the compiler correctly cannot type" was, for String and Array, prelude work after
+all. What remains is `Date`/`Error` interop and the harder inference (array-of-maps element typing, which
+needs record types; field-access chains).

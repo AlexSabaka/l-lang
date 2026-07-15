@@ -7,9 +7,9 @@ Thanks for being interested in contributing to l-lang! This guide explains how t
 ## 📋 Before You Start
 
 1. **Read the philosophy**: l-lang is about **static typing** + **Lisp elegance** + **pragmatism**. Not every feature request will fit.
-2. **Check [TODO.md](docs/development/TODO.md)** for planned work
+2. **Check [TODO.md](roadmap.md)** for planned work
 3. **Check [open issues](https://github.com/AlexSabaka/l-lang/issues)** for what's being worked on
-4. **Review [recent fixes](docs/development/BUG_FIXES_SUMMARY.md)** to understand current state
+4. **Review [recent fixes](spec/DECISIONS.md)** to understand current state
 
 ---
 
@@ -34,7 +34,7 @@ npm test          # Should see: ✅ 36/39 passing
 
 ### 2. Understand the Pipeline
 
-Read [docs/architecture/COMPILER_ARCHITECTURE.md](docs/architecture/COMPILER_ARCHITECTURE.md) (15 min) to understand the **6-stage compilation pipeline**:
+Read [docs/architecture/COMPILER_ARCHITECTURE.md](language-compiler.md) (15 min) to understand the **6-stage compilation pipeline**:
 
 ```
 Input (.lisp) → [Parse] → [Syntax] → [Symbols] → [Desugar] → [Types] → [Codegen] → Output (.js)
@@ -44,10 +44,10 @@ Each stage is a visitor that transforms the AST.
 
 ### 3. Learn the Codebase
 
-- **Start**: [docs/QUICK_START.md](docs/QUICK_START.md)
-- **Deep dive**: [docs/development/IMPLEMENTATION_GUIDE.md](docs/development/IMPLEMENTATION_GUIDE.md)
-- **Architecture details**: [docs/architecture/COMPILER_ARCHITECTURE.md](docs/architecture/COMPILER_ARCHITECTURE.md)
-- **Type system**: [docs/compiler/TYPE_SYSTEM.md](docs/compiler/TYPE_SYSTEM.md)
+- **Start**: [docs/QUICK_START.md](quick-start.md)
+- **Deep dive**: [docs/development/IMPLEMENTATION_GUIDE.md](spec/DECISIONS.md)
+- **Architecture details**: [docs/architecture/COMPILER_ARCHITECTURE.md](language-compiler.md)
+- **Type system**: [docs/compiler/TYPE_SYSTEM.md](spec/DECISIONS.md)
 
 ---
 
@@ -56,7 +56,7 @@ Each stage is a visitor that transforms the AST.
 ### Finding Work
 
 **Easy starter issues** (good first contribution):
-- Bug fixes flagged in [BUG_FIXES_SUMMARY.md](docs/development/BUG_FIXES_SUMMARY.md)
+- Bug fixes flagged in [BUG_FIXES_SUMMARY.md](spec/DECISIONS.md)
 - Grammar improvements in [l-lang.pegjs](src/compiler/frontend/grammar/l-lang.pegjs)
 - Test coverage in `examples/` directory
 - Documentation & examples
@@ -92,7 +92,7 @@ git checkout -b feature/your-feature-name
 
 **Follow patterns**:
 - Study existing implementations in `docs/compiler/`
-- Follow the pattern from [IMPLEMENTATION_GUIDE.md](docs/development/IMPLEMENTATION_GUIDE.md)
+- Follow the pattern from [IMPLEMENTATION_GUIDE.md](spec/DECISIONS.md)
 - Use the same style as existing code
 
 **Common patterns**:
@@ -158,10 +158,10 @@ cat examples/YOUR_FILE.types.json | jq '.'  # Inspect result
 - Update docstrings if changing APIs
 
 **In docs**:
-- Update [CHANGELOG.md](docs/history/CHANGELOG.md) with your changes
-- Update [TODO.md](docs/development/TODO.md) to mark items complete
-- Update [ROADMAP.md](docs/planning/ROADMAP.md) if scope changed
-- Add implementation details if adding major feature (see [DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](docs/compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md) as example)
+- Update [CHANGELOG.md](changelog.md) with your changes
+- Update [TODO.md](roadmap.md) to mark items complete
+- Update [ROADMAP.md](roadmap.md) if scope changed
+- Add implementation details if adding major feature (see [DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](spec/DECISIONS.md) as example)
 
 #### 5. Commit & Push
 
@@ -322,7 +322,7 @@ When adding features, ask:
 
 4. **Is it documented?**
    - Added to grammar if syntax
-   - Documented in [SYNTAX.md](docs/language/SYNTAX.md)
+   - Documented in [SYNTAX.md](language-syntax.md)
    - Examples provided
 
 ---
@@ -330,27 +330,27 @@ When adding features, ask:
 ## 📚 Key Documentation Files
 
 **Must read**:
-- [docs/QUICK_START.md](docs/QUICK_START.md) - Setup & overview
-- [docs/architecture/COMPILER_ARCHITECTURE.md](docs/architecture/COMPILER_ARCHITECTURE.md) - Pipeline & design
-- [docs/development/IMPLEMENTATION_GUIDE.md](docs/development/IMPLEMENTATION_GUIDE.md) - How to add features
-- [docs/compiler/TYPE_SYSTEM.md](docs/compiler/TYPE_SYSTEM.md) - Type system design
+- [docs/QUICK_START.md](quick-start.md) - Setup & overview
+- [docs/architecture/COMPILER_ARCHITECTURE.md](language-compiler.md) - Pipeline & design
+- [docs/development/IMPLEMENTATION_GUIDE.md](spec/DECISIONS.md) - How to add features
+- [docs/compiler/TYPE_SYSTEM.md](spec/DECISIONS.md) - Type system design
 
 **Reference**:
-- [docs/API_REFERENCE.md](docs/API_REFERENCE.md) - Built-in functions
-- [docs/language/SYNTAX.md](docs/language/SYNTAX.md) - Complete syntax
-- [docs/development/BUG_FIXES_SUMMARY.md](docs/development/BUG_FIXES_SUMMARY.md) - Recent patterns
+- [docs/API_REFERENCE.md](language-reference.md) - Built-in functions
+- [docs/language/SYNTAX.md](language-syntax.md) - Complete syntax
+- [docs/development/BUG_FIXES_SUMMARY.md](spec/DECISIONS.md) - Recent patterns
 
 **Example implementations**:
-- [docs/compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](docs/compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md) - Type aliases & structs
-- [docs/compiler/DEFMODIFIER_IMPLEMENTATION.md](docs/compiler/DEFMODIFIER_IMPLEMENTATION.md) - User-defined modifiers
+- [docs/compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](spec/DECISIONS.md) - Type aliases & structs
+- [docs/compiler/DEFMODIFIER_IMPLEMENTATION.md](spec/DECISIONS.md) - User-defined modifiers
 
 ---
 
 ## 🆘 Getting Help
 
-- **Questions about architecture?** → Read [COMPILER_ARCHITECTURE.md](docs/architecture/COMPILER_ARCHITECTURE.md)
+- **Questions about architecture?** → Read [COMPILER_ARCHITECTURE.md](language-compiler.md)
 - **Stuck on implementation?** → Check [IMPLEMENTATION_GUIDE.md](docs/development/IMPLEMENTATION_GUIDE.md#debugging-tools)
-- **Need to understand types?** → Read [TYPE_SYSTEM.md](docs/compiler/TYPE_SYSTEM.md)
+- **Need to understand types?** → Read [TYPE_SYSTEM.md](spec/DECISIONS.md)
 - **Want to see patterns?** → Check existing implementations in `docs/compiler/`
 - **Issues?** → Open a GitHub issue with details
 
@@ -358,7 +358,7 @@ When adding features, ask:
 
 ## 📖 Code Change Rules
 
-See [code change instructions in README](README.md) - summary:
+See [code change instructions in README](../README.md) - summary:
 - ✅ Make minimal modifications
 - ✅ Change only what's necessary
 - ✅ Don't fix unrelated bugs
@@ -372,26 +372,26 @@ See [code change instructions in README](README.md) - summary:
 ## 🎓 Learning Path
 
 ### Week 1: Understand the Basics
-- [ ] Read [QUICK_START.md](docs/QUICK_START.md)
+- [ ] Read [QUICK_START.md](quick-start.md)
 - [ ] Run a few examples
 - [ ] Try the REPL
-- [ ] Read [SYNTAX.md](docs/language/SYNTAX.md) (first 3 sections)
+- [ ] Read [SYNTAX.md](language-syntax.md) (first 3 sections)
 
 ### Week 2: Understand the Compiler
-- [ ] Read [COMPILER_ARCHITECTURE.md](docs/architecture/COMPILER_ARCHITECTURE.md)
+- [ ] Read [COMPILER_ARCHITECTURE.md](language-compiler.md)
 - [ ] Run `npm test` and understand test structure
 - [ ] Test compilation stages: `ts-node src/index.ts transform --stage types examples/01-basics/00_vars.lisp`
 - [ ] Inspect `.json` artifacts with `jq`
 
 ### Week 3: Make Your First Change
-- [ ] Pick an easy issue from [TODO.md](docs/development/TODO.md)
-- [ ] Read [IMPLEMENTATION_GUIDE.md](docs/development/IMPLEMENTATION_GUIDE.md)
+- [ ] Pick an easy issue from [TODO.md](roadmap.md)
+- [ ] Read [IMPLEMENTATION_GUIDE.md](spec/DECISIONS.md)
 - [ ] Make a small change
 - [ ] Run tests
 - [ ] Submit PR
 
 ### Week 4+: Deeper Work
-- [ ] Choose feature from [ROADMAP.md](docs/planning/ROADMAP.md)
+- [ ] Choose feature from [ROADMAP.md](roadmap.md)
 - [ ] Study related code
 - [ ] Implement & test
 - [ ] Document & submit PR
@@ -412,4 +412,4 @@ Thanks for contributing! You're helping build a language that combines elegance,
 
 **Questions?** → Create an issue or discussion on GitHub
 
-**Ready to contribute?** → Start with [QUICK_START.md](docs/QUICK_START.md) and pick an issue!
+**Ready to contribute?** → Start with [QUICK_START.md](quick-start.md) and pick an issue!

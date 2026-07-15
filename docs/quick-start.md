@@ -153,7 +153,7 @@ Available symbols: +, -, *, /, greet, ...
 > .exit
 ```
 
-For detailed REPL docs: [development/REPL_GUIDE.md](development/REPL_GUIDE.md)
+For detailed REPL docs: [development/REPL_GUIDE.md](repl.md)
 
 ---
 
@@ -201,22 +201,22 @@ cat examples/01-basics/00_vars.js
 ### I want to...
 
 **Learn the language**
-→ Read [language/SYNTAX.md](language/SYNTAX.md) (starts with basics, goes to advanced features)
+→ Read [language/SYNTAX.md](language-syntax.md) (starts with basics, goes to advanced features)
 
 **Understand the compiler**
-→ Read [architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md) (6-stage pipeline explanation)
+→ Read [architecture/COMPILER_ARCHITECTURE.md](language-compiler.md) (6-stage pipeline explanation)
 
 **Contribute features**
-→ Read [development/IMPLEMENTATION_GUIDE.md](development/IMPLEMENTATION_GUIDE.md) (step-by-step patterns)
+→ Read [development/IMPLEMENTATION_GUIDE.md](spec/DECISIONS.md) (step-by-step patterns)
 
 **Debug issues**
 → Read [architecture/COMPILER_ARCHITECTURE.md#critical-context--gotchas](architecture/COMPILER_ARCHITECTURE.md#critical-context--gotchas) (common pitfalls)
 
 **Check progress**
-→ Read [development/TODO.md](development/TODO.md) (what's done & what's next)
+→ Read [development/TODO.md](roadmap.md) (what's done & what's next)
 
 **See what's coming**
-→ Read [planning/ROADMAP.md](planning/ROADMAP.md) (future phases)
+→ Read [planning/ROADMAP.md](roadmap.md) (future phases)
 
 ---
 
@@ -286,8 +286,8 @@ cat FILE.types.json | jq '.symbols.entries.YOUR_VAR.inferredType'
 ## 📖 Full Documentation
 
 - **[INDEX.md](INDEX.md)** - Complete documentation hub
-- **[language/SYNTAX.md](language/SYNTAX.md)** - Complete language reference
-- **[architecture/COMPILER_ARCHITECTURE.md](architecture/COMPILER_ARCHITECTURE.md)** - Deep dive into how it works
+- **[language/SYNTAX.md](language-syntax.md)** - Complete language reference
+- **[architecture/COMPILER_ARCHITECTURE.md](language-compiler.md)** - Deep dive into how it works
 
 ---
 

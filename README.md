@@ -19,6 +19,9 @@ It's a general-purpose language currently transpiling to JavaScript (LLVM backen
 - **Pipeline Operators:** Native `|>` support because `(f (g (h x)))` is visual torture.
 - **Pattern Matching:** Actual `match` expressions that make `switch` statements look like a joke from the 1970s.
 - **Trimmed RTTI:** C#-style reflection but lighter—just enough to inspect types at runtime without the bloat.
+- **Lazy LINQ:** collection-first `:gen` operators (`map`/`filter`/`take`/`zip`/…) over an iteration protocol, chained through the `|>` pipe. `(nums |> (map square) |> (take 3) |> to-list)` — lazy end to end, so it terminates over an infinite generator.
+- **Packages & visibility:** a `package.yaml` compilation unit (the C# assembly / Rust crate steal), with package-scoped `public`/`internal`/`private`. No `protected` — the implementation-inheritance leak Go and Rust drop.
+- **Extension methods:** `(fn :extension area [self <- Rectangle] ...)` so `(rect.area)` dispatches to a free function — compile-time and nominal, protocol-aware, and it composes with `:gen` for lazy extension methods.
 
 ---
 
@@ -79,7 +82,7 @@ It's a general-purpose language currently transpiling to JavaScript (LLVM backen
 
 The compiler transpiles to JavaScript. Stabilizing syntax and building the standard library while trying not to add every feature that seems cool.
 
-See [ROADMAP.md](docs/planning/ROADMAP.md) for the details.
+See the [roadmap](docs/roadmap.md) for the details.
 
 ---
 
@@ -87,25 +90,19 @@ See [ROADMAP.md](docs/planning/ROADMAP.md) for the details.
 
 **New to l-lang?** Start here:
 
-1. **[docs/QUICK_START.md](docs/QUICK_START.md)** ⚡ - Get running in 5 minutes
-2. **[docs/API_REFERENCE.md](docs/API_REFERENCE.md)** 🔌 - Built-in functions & standard library
-3. **[docs/language/SYNTAX.md](docs/language/SYNTAX.md)** 📖 - Complete language reference
-4. **[TABLE_OF_CONTENTS.md](TABLE_OF_CONTENTS.md)** 📑 - Full documentation index
+1. **[Quick Start](docs/quick-start.md)** ⚡ - Get running in 5 minutes
+2. **[Language Reference](docs/language-reference.md)** 🔌 - Built-in functions & standard library
+3. **[Language Syntax](docs/language-syntax.md)** 📖 - The complete syntax guide
+4. **[Documentation Index](docs/INDEX.md)** 📑 - Full documentation hub
 
-**For contributors:**
-1. **[CONTRIBUTING.md](CONTRIBUTING.md)** 🤝 - How to contribute to l-lang
-2. **[docs/architecture/COMPILER_ARCHITECTURE.md](docs/architecture/COMPILER_ARCHITECTURE.md)** 🏗️ - 6-stage compilation pipeline
-3. **[docs/development/IMPLEMENTATION_GUIDE.md](docs/development/IMPLEMENTATION_GUIDE.md)** 🛠️ - How to add features
-4. **[docs/development/TODO.md](docs/development/TODO.md)** ✅ - Current tasks & progress
+**Going deeper:**
+- **[Compiler](docs/language-compiler.md)** 🏗️ - The compilation pipeline
+- **[Decisions log](docs/spec/DECISIONS.md)** 🧭 - Every ruling (D1..D36), with the evidence
+- **[Roadmap](docs/roadmap.md)** 🗺️ - Phases, status, and the known gaps
+- **[REPL](docs/repl.md)** - Interactive REPL features
+- **[Changelog](docs/changelog.md)** - What changed
 
-**Other useful docs:**
-- **[docs/INDEX.md](docs/INDEX.md)** - Documentation hub (role-based pathways)
-- **[docs/SIDEBAR.md](docs/SIDEBAR.md)** - Navigation sidebar for all topics
-- **[docs/compiler/TYPE_SYSTEM.md](docs/compiler/TYPE_SYSTEM.md)** - Type inference deep dive
-- **[docs/repl.md](docs/repl.md)** - Interactive REPL features
-- **[docs/planning/ROADMAP.md](docs/planning/ROADMAP.md)** - Future roadmap
-
-**See [TABLE_OF_CONTENTS.md](TABLE_OF_CONTENTS.md) for the complete documentation index.**
+**For contributors:** read **[Contributing](docs/CONTRIBUTING.md)** 🤝, and the [decisions log](docs/spec/DECISIONS.md) for how rulings are made and gated.
 
 ---
 
@@ -135,7 +132,7 @@ node examples/01-basics/00_vars.js
 ts-node src/index.ts transform --perf examples/05-oop/00_inheritance.lisp
 ts-node src/index.ts run --perf examples/01-basics/08_pipelines.lisp
 
-# Run test suite (50/81 passing ✅)
+# Run the golden test suite (green on both frontends; a handful of tracked xfails)
 npm test
 
 # Run tests with detailed output
@@ -162,7 +159,9 @@ See [docs/repl.md](docs/repl.md) for complete documentation.
 
 ### Test Status
 
-**50/81 tests passing (62%)** ✅
+**The golden suite is green on both frontends** (grammar_v2 and the legacy PEG), with a handful of
+tracked `xfail`s — each an example that asks for a feature not yet built, not a regression. Alongside it
+run the codegen, type-error (corpus reports **0** diagnostics), import, REPL, and grammar-smoke suites.
 
 All core features validated:
 - ✅ Variables, functions, closures
@@ -183,13 +182,13 @@ See [src/test/README.md](src/test/README.md) for testing documentation.
 
 Sloths and turtle followers are welcomed! Here's how to get started:
 
-1. **Read [CONTRIBUTING.md](CONTRIBUTING.md)** for contribution guidelines
-2. **Check [docs/development/TODO.md](docs/development/TODO.md)** for tasks
-3. **Read [docs/architecture/COMPILER_ARCHITECTURE.md](docs/architecture/COMPILER_ARCHITECTURE.md)** to understand the compiler
-4. **Follow patterns** in [docs/development/IMPLEMENTATION_GUIDE.md](docs/development/IMPLEMENTATION_GUIDE.md)
+1. **Read [Contributing](docs/CONTRIBUTING.md)** for contribution guidelines
+2. **Check the [roadmap](docs/roadmap.md)** for status and the known gaps
+3. **Read the [Compiler doc](docs/language-compiler.md)** to understand the pipeline
+4. **Follow the rulings** in the [decisions log](docs/spec/DECISIONS.md) — every change is measured and gated
 
 **Want to help?** We need:
-- Bug fixes (see [docs/development/BUG_FIXES_SUMMARY.md](docs/development/BUG_FIXES_SUMMARY.md))
+- Bug fixes (the [decisions log](docs/spec/DECISIONS.md) records past ones and their evidence)
 - Documentation & examples
 - Standard library implementation
 - Type system improvements
