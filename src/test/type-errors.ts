@@ -1166,6 +1166,65 @@ ${PRODUCER}
       "GUARD. All five rules must leave a well-formed generator alone: it yields, it returns nothing, " +
       "its type is Iterator<Int>, and every yield is an Int.",
   },
+  // -----------------------------------------------------------------------------------------------
+  // Ab -- the async TYPE rules (D32). The runtime already worked; these make the checker agree.
+  // -----------------------------------------------------------------------------------------------
+  {
+    name: "Ab: an :async returning its payload under -> Task<T> is SILENT",
+    source: `(fn :async f [] -> Task<Int> (
+  (return 5)
+))`,
+    silent: true,
+    why:
+      "THE BUG D32 names. `(return 5)` produces the Int the Task RESOLVES to -- the payload, not the " +
+      "wrapper. Checking it against `Task<Int>` false-positived LL0213 on EVERY annotated async " +
+      "function. The return is checked against the unwrapped `T`.",
+  },
+  {
+    name: "Ab: a wrong-payload return in an :async is caught",
+    source: `(fn :async f [] -> Task<Int> (
+  (return "not an int")
+))`,
+    expect: /LL0213/,
+    why: "unwrapping to the payload does not mean skipping the check -- `Task<Int>` resolves an Int, not a String.",
+  },
+  {
+    name: "Ab: `(await e)` unwraps Task<T> to T",
+    source: `(fn :async f [] -> Task<Int> (return 5))
+(fn :async g [] -> Task<Int> (
+  (let r (await (f)))
+  (let bad <- String r)
+  (return 0)
+))`,
+    expect: /LL0200/,
+    why: "`(f)` is `Task<Int>`, so `(await (f))` is `Int`; assigning it to a `String` must be caught.",
+  },
+  {
+    name: "Ab: `await` outside an :async function is an error",
+    source: `(fn plain [] -> Int (
+  (let r (await (some-task)))
+  (return 1)
+))`,
+    expect: /LL0227/,
+    why:
+      "`await` suspends on an awaitable; it has no meaning outside an `:async` function, and l-lang " +
+      "does not do top-level await. Mirrors `yield` outside `:gen`.",
+  },
+  {
+    name: "Ab: an :async with a non-Task return type is an error",
+    source: `(fn :async f [] -> Int (
+  (return 5)
+))`,
+    expect: /LL0228/,
+    why: "the ruling: an async function's declared type is the awaitable wrapper -- `Task<T>` -- not the bare `T`.",
+  },
+  {
+    name: "Ab: a correct async function is silent",
+    source: `(fn :async fetch [id <- Int] -> Task<Int> (
+  (return (+ id 100))))`,
+    silent: true,
+    why: "GUARD. A well-formed async: awaitable return type, payload return, no stray await.",
+  },
 ];
 
 function runCases(): { failed: number; pending: number } {

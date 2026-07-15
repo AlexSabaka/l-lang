@@ -243,9 +243,9 @@ protocol**, so lowering is the native form, not a reimplemented state machine.
     `AwaitExpression` -- so unlike generators the RUNTIME was live; the TYPE layer was absent.
     *   [x] **Aa** — the protocol: `Awaitable<T>` / `Task<T>` in `lib/std/async.lisp`. **D32**. No
             behaviour change.
-    *   [ ] **Ab** — the type rules: `(await Task<T>)` unwraps to `T`; `(return x)` in an `:async` is
-            checked against the PAYLOAD `T` (fixes a live LL0213 false positive on every annotated async
-            function); `await` outside `:async` and a non-`Task` return type are errors.
+    *   [x] **Ab** — the type rules: `(await Task<T>)` unwraps to `T`; `(return x)` in an `:async` is
+            checked against the PAYLOAD `T` (fixed the live LL0213 false positive on every annotated
+            async function); `await` outside `:async` is **LL0227**; a non-`Task` return type is **LL0228**.
 
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."

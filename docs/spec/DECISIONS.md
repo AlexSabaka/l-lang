@@ -3039,6 +3039,8 @@ positive** -- it reported LL0213 on every annotated async function.
 ### What Aa ships, and what Ab owes
 
 **Aa** (this): the two interfaces and this ruling. No behaviour change -- the runtime already worked;
-the checker is untouched, so the LL0213 false positive is still live until Ab. **Ab** owes the four
-rules above: the `await`-unwrap inference, the payload-return check (fixing LL0213), the
-`await`-outside-`:async` error, and the non-awaitable-return error.
+the checker is untouched, so the LL0213 false positive is still live until Ab. **Ab** (done): the `await`-unwrap
+inference (a case in inferExpressionType), the payload-return check (checkReturns unwraps `Task<T>` to
+`T` for an async, fixing LL0213), the `await`-outside-`:async` error (LL0227), and the non-awaitable
+return-type error (LL0228). The last two live in `checkAsyncRules`, which runs for every function --
+the await-outside rule is about the NON-async ones -- exactly as `checkGeneratorRules` does for yield.

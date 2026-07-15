@@ -2129,6 +2129,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       () => {
         this.checkReturns(node);
         this.checkGeneratorRules(node);
+        this.checkAsyncRules(node);
       }
     );
     this.deferredDepth--;
@@ -2153,8 +2154,17 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   private checkReturns(node: ast.FunctionNode): void {
     if (!node.returns) return;
 
-    const declared = this.convertAstTypeToInferred(node.returns);
+    let declared = this.convertAstTypeToInferred(node.returns);
     if (TypeChecker.isUnknown(declared)) return;
+
+    // An `:async` function's `(return x)` produces the Task's PAYLOAD, not the wrapper (D32). Check the
+    // return against the unwrapped `T`, not against `Task<T>` -- checking against the wrapper reported
+    // LL0213 on every annotated async function, which is the bug D32 names. A `:gen` returns nothing
+    // via `return` (its returns are handled by checkGeneratorRules), so this only reshapes async.
+    if (node.async) {
+      const payload = this.awaitableElement(declared);
+      if (payload) declared = payload;
+    }
 
     // A Void/nil declaration says nothing useful about the value's type here. `Void` and `Nil` are
     // the same type (D9e) -- see TypeChecker.isNil.
@@ -2300,6 +2310,66 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   private isIteratorType(t: InferredType): boolean {
     const name = t?.name ?? t?.refName;
     return name === "Iterator" || name === "Iterable";
+  }
+
+  /** Is this type awaitable -- `Task<T>`, `Awaitable<T>`, or the JS-native `Promise<T>` (D32)? */
+  private isAwaitableType(t: InferredType): boolean {
+    const name = t?.name ?? t?.refName;
+    return name === "Task" || name === "Awaitable" || name === "Promise";
+  }
+
+  /** The `T` an awaitable resolves to -- `Task<Int>` -> `Int`. Undefined if `t` is not awaitable. */
+  private awaitableElement(t: InferredType | undefined): InferredType | undefined {
+    if (!t || !this.isAwaitableType(t)) return undefined;
+    return t.generics?.[0];
+  }
+
+  /**
+   * Enforce D32 on `:async` functions, and catch an `await` that escaped one. Runs for EVERY function,
+   * because the "await outside async" rule is about the NON-async ones -- exactly like checkGeneratorRules.
+   */
+  private checkAsyncRules(node: ast.FunctionNode): void {
+    const awaits = this.collectAwaits(node.body);
+
+    if (!node.async) {
+      for (const a of awaits) {
+        this.reportTypeError(
+          a,
+          "LL0227",
+          "'await' is only valid inside an ':async' function. Declare the function ':async'."
+        );
+      }
+      return;
+    }
+
+    // An async function's declared type is the awaitable wrapper -- Task<T>. Only checked when one is
+    // DECLARED and known; absent/Unknown is left to inference.
+    if (node.returns) {
+      const rt = this.convertAstTypeToInferred(node.returns);
+      if (!TypeChecker.isUnknown(rt) && !TypeChecker.isNil(rt) && !this.isAwaitableType(rt)) {
+        const genName = node.name ? ast.symbolName(node.name) : "<anonymous>";
+        this.reportTypeError(
+          node,
+          "LL0228",
+          `an ':async' function must return Task<T> (or Awaitable<T>), but '${genName}' declares ${TypeChecker.formatType(rt)}.`
+        );
+      }
+    }
+  }
+
+  /** The `(await e)` nodes belonging to THIS function -- a nested function owns its own. */
+  private collectAwaits(body: ast.ASTNode[]): ast.ASTNode[] {
+    const found: ast.ASTNode[] = [];
+    const walk = (n: any): void => {
+      if (!n || typeof n !== "object") return;
+      if (Array.isArray(n)) { n.forEach(walk); return; }
+      if (!n._type) return;
+      if (n._type === "function") return; // a nested function's awaits are its own
+      if (n._type === "await") { found.push(n); return; }
+      for (const key of ast.getNodeIterableKeys(n)) walk((n as any)[key]);
+    };
+    body.forEach(walk);
+    return found;
   }
 
   visitClass(node: ast.ClassNode) {
@@ -2807,6 +2877,15 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     let inferredType: InferredType;
 
     switch (node._type) {
+      // `(await e)` UNWRAPS (D32/Ab). If `e : Task<T>` / `Awaitable<T>` / `Promise<T>`, the await is
+      // `T`. Awaiting a non-awaitable is identity (JS `await 5` is 5), so an un-awaitable or Unknown
+      // operand passes through -- gradual, and correct for the JS semantics.
+      case "await": {
+        const inner = this.inferExpressionType((node as ast.AwaitNode).expression);
+        inferredType = this.awaitableElement(inner) ?? inner;
+        break;
+      }
+
       // Literals
       case "integer-number":
         inferredType = TypeEnvironment.primitive("Int");
