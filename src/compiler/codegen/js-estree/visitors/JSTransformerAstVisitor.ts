@@ -3141,11 +3141,44 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * the point of a core node: the transform decides, and the backend just writes it down.
    */
   visitCall(node: ast.CallNode): ESTree.Expression {
+    // Phase Nc: a computed-receiver `:extension` call -- the 2nd+ hop of a method chain,
+    // `((gen.map f).filter g)`. The callee is a `MemberNode` whose object is an EXPRESSION, so the
+    // name-keyed dispatch in `visitList` cannot reach it; without this it would emit the raw
+    // `map(gen,f).filter(g)` and fail at run time. Ask the per-node type channel for the object's type
+    // (the checker published it in Nb) and, if it conforms to an `:extension`, lower to `ext(object, ...)`.
+    if (node.callee._type === "member") {
+      const ext = this.computedExtensionCall(node);
+      if (ext) return ext;
+    }
     return ESTreeBuilder.callExpression(
       node,
       this.visitExpr(node.callee),
       node.arguments.map((a) => this.visitExpr(a))
     );
+  }
+
+  /** The extension call for a `CallNode` whose callee is a computed `MemberNode`, or undefined. */
+  private computedExtensionCall(node: ast.CallNode): ESTree.Expression | undefined {
+    const member = node.callee as ast.MemberNode;
+    if (member.computed) return undefined; // `a[b](...)` is an index, not a member name
+    const memberName = this.memberNodeName(member.property);
+    if (!memberName) return undefined;
+    const objectType = this.context.nodeTypes?.get(member.object);
+    if (!objectType) return undefined; // gradual: no type -> fall through to the raw member call
+    const extFn = this.extensionForType(objectType, memberName);
+    if (!extFn) return undefined;
+    return ESTreeBuilder.callExpression(node, ESTreeBuilder.identifier(node, extFn), [
+      this.visitExpr(member.object),
+      ...node.arguments.map((a) => this.visitExpr(a)),
+    ]);
+  }
+
+  /** The member name from a `MemberNode.property`, stripping any leading `.` a headless member carries. */
+  private memberNodeName(property: ast.ASTNode): string | undefined {
+    const raw = (property as any)?.id ?? (property as any)?.name;
+    if (typeof raw !== "string") return undefined;
+    const parts = raw.split(".").filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : undefined;
   }
 
   visitMember(node: ast.MemberNode): ESTree.Expression {
@@ -3694,35 +3727,70 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * already does, so coverage grows as inference does.
    */
   private extensionFor(objectName: string, memberName: string, from?: ast.ASTNode): string | undefined {
-    const candidates = this.extensionTable().get(memberName);
-    if (!candidates?.length) return undefined;
     const typeInfo = this.receiverType(objectName, from);
     if (!typeInfo) return undefined;
+    return this.extensionForType(typeInfo, memberName);
+  }
+
+  /**
+   * The TYPE-keyed twin of `extensionFor` (Phase Nc). The receiver of a chain's 2nd+ hop --
+   * `((gen.map f).filter g)` -- is an EXPRESSION, not a name, so there is no symbol to resolve; its type
+   * comes from the per-node channel (`nodeTypes`) instead. Both paths share the `extensionTable` +
+   * `receiverConformsTo` resolution.
+   */
+  private extensionForType(typeInfo: any, memberName: string): string | undefined {
+    const candidates = this.extensionTable().get(memberName);
+    if (!candidates?.length) return undefined;
+    const t = this.unwrapReceiverType(typeInfo);
     for (const c of candidates) {
-      if (this.receiverConformsTo(typeInfo, c.receiverType)) return encodeIdentifier(c.fnName);
+      if (this.receiverConformsTo(t, c.receiverType)) return encodeIdentifier(c.fnName);
     }
     return undefined;
   }
 
   /**
    * Nominal conformance -- the same shape the checker's `isSubtype` walks: the type IS `typeName`, or it
-   * `:implements` it, or an ancestor does. This is what excludes arrays and primitives: their
-   * `InferredType` carries neither a matching name nor an `implements` entry, so a native `arr.map` is
-   * never captured by an `Iterable` extension.
+   * `:implements` it (transitively), or an ancestor does. This is what excludes arrays and primitives:
+   * their `InferredType` carries neither a matching name nor an `implements` entry, so a native `arr.map`
+   * is never captured by an `Iterable` extension. Re-resolves each interface by name to reach its own
+   * supers (`Iterator :implements Iterable`, or `C :implements B :implements A`) -- an implements entry
+   * stores a bare `{interfaceName}` with none of its own, so multi-hop needs the declaration. Mirrors the
+   * checker's `isSubtype` (Na parity).
    */
   private receiverConformsTo(typeInfo: any, typeName: string): boolean {
-    const seen = new Set<any>();
-    let t = typeInfo;
-    while (t && !seen.has(t)) {
-      seen.add(t);
+    const seen = new Set<string>();
+    const visit = (t: any): boolean => {
+      if (!t) return false;
+      const name: string | undefined = typeof t.name === "string" ? t.name : undefined;
+      if (name) {
+        if (seen.has(name)) return false;
+        seen.add(name);
+      }
       if (t.name === typeName) return true;
-      if (t.implementedInterfaces?.some((i: any) => i.interfaceName === typeName)) return true;
-      const parent = t.parentClass ?? t.codegenMetadata?.parentClass;
-      if (!parent) break;
-      const parentSym = this.context.symbolTable?.resolveSymbol(parent);
-      t = parentSym?.inferredType ? this.unwrapReceiverType(parentSym.inferredType) : undefined;
-    }
-    return false;
+
+      // Re-resolve to the DECLARED type for its transitive supers (the passed `t` may be a bare
+      // implements-entry type with none of its own).
+      const declared = name ? this.context.symbolTable?.resolveSymbol(name)?.inferredType : undefined;
+      const supersFrom = declared ? this.unwrapReceiverType(declared) : t;
+
+      for (const i of supersFrom.implementedInterfaces ?? []) {
+        if (i.interfaceName === typeName) return true;
+        const sup = this.context.symbolTable?.resolveSymbol(i.interfaceName)?.inferredType;
+        if (sup && visit(this.unwrapReceiverType(sup))) return true;
+      }
+
+      const parent =
+        supersFrom.parentClass ??
+        supersFrom.codegenMetadata?.parentClass ??
+        t.parentClass ??
+        t.codegenMetadata?.parentClass;
+      if (parent) {
+        const parentSym = this.context.symbolTable?.resolveSymbol(parent);
+        if (parentSym?.inferredType && visit(this.unwrapReceiverType(parentSym.inferredType))) return true;
+      }
+      return false;
+    };
+    return visit(typeInfo);
   }
 
   /** The class or struct that lexically encloses `node`, by name. */

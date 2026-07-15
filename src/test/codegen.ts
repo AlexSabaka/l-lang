@@ -2269,6 +2269,56 @@ const CASES: Case[] = [
       "`(c.where pred)` dispatches to the free `where(c, pred)`, which IS a generator: exactly C#'s " +
       "`IEnumerable.Where` with `yield`. Countdown 5 -> 5 4 3 2 1; where (> 2) -> 5 4 3, lazily.",
   },
+  {
+    name: "Nc: a computed-receiver :extension dispatches -- method chaining `((c.dbl).big)`",
+    source: `(import "std/iter")
+(defstruct Countdown :implements Iterable<Int>
+  (mut :ctor n <- Int)
+  (fn iterator [] -> Iterator<Int> (return this))
+  (fn next [] -> Int? (
+    (if (<= this.n 0)
+        (return nil)
+        (
+          (let cur this.n)
+          (this.n := (- this.n 1))
+          (return cur))))))
+(fn :extension :gen dbl [self <- Iterable<Int>] -> Iterator<Int>
+  (for :each x :from self :then ((yield (* x 2)))))
+(fn :extension :gen big [self <- Iterable<Int>] -> Iterator<Int>
+  (for :each x :from self :then ((when (> x 3) :then (yield x)))))
+(let c (new Countdown 3))
+(for :each x :from ((c.dbl).big) :then (console.log x))`,
+    expect: ["6", "4"],
+    emitted: { must: [/big\(\s*dbl\(/, /function\*/] },
+    wasBroken:
+      "Method chaining's backend half. `(c.dbl)` (first hop, NAMED receiver) dispatches via visitList to " +
+      "`dbl(c)` : Iterator<Int>. The 2nd hop `((c.dbl).big)` is a computed CallNode(MemberNode) that flows " +
+      "through visitCall -- which emitted the RAW `dbl(c).big(...)`, and a generator has no `.big`: a runtime " +
+      "TypeError. Nc reads the intermediate's type from the node-type channel (Nb published `Iterator<Int>`) " +
+      "and lowers to `big(dbl(c))`. Countdown 3 -> dbl 6 4 2 -> big (>3) 6 4, lazily.",
+  },
+  {
+    name: "Nc: extension dispatch is transitive through interface chains (2 hops)",
+    source: `(import "std/iter")
+(definterface Countable :implements Iterable<Int>)
+(definterface Numbered :implements Countable)
+(defstruct Tally :implements Numbered
+  (mut :ctor n <- Int)
+  (fn iterator [] -> Iterator<Int> (return this))
+  (fn next [] -> Int? (return nil)))
+(fn :extension tag [self <- Iterable<Int>] -> String "tagged")
+(fn probe [x <- Numbered] -> String (x.tag))
+(console.log (probe (new Tally 3)))`,
+    expect: ["tagged"],
+    emitted: { must: [/tag\(x\)/] },
+    wasBroken:
+      "receiverConformsTo parity with the checker's isSubtype (Na). `Numbered :implements Countable " +
+      ":implements Iterable`, and `tag` targets Iterable, so a Numbered-typed receiver must dispatch " +
+      "`(x.tag)` -> `tag(x)` across TWO interface hops. The old walk checked only DIRECT " +
+      "implementedInterfaces plus the parentClass chain, so it stopped at Countable; re-resolving each " +
+      "interface by name reaches Iterable. (`tag` does not iterate self -- the struct [Symbol.iterator] " +
+      "synthesis for a transitively-Iterable struct is a separate gap.)",
+  },
 
   {
     name: "Na: an :extension on a super-interface dispatches on a sub-interface receiver",
