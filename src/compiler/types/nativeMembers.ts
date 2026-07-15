@@ -78,6 +78,15 @@ const ARRAY_MEMBERS: Record<string, NativeMember> = {
   indexOf: method(Int),
   lastIndexOf: method(Int),
   includes: method(Bool),
+  // The higher-order methods that share a NAME with a lazy `std/linq` operator (Ne). Modelling them keeps
+  // `(arr.map f)` a native EAGER method call -- its natural JS meaning -- rather than mistaking it for the
+  // lazy `map` extension a bare array cannot dispatch, and (the point) it keeps these OUT of the LL0230
+  // "arrays lack this lazy operator" diagnostic. `map`'s element changes (Any); `filter` preserves it;
+  // `reduce` folds to an unknown accumulator. The linq ops arrays genuinely lack -- `take`, `skip`,
+  // `enumerate`, `zip`, `to-list`, `for-each` (≠ JS `forEach`), `flat-map` (≠ `flatMap`)... -- stay absent.
+  map: method(arrOf(Unknown)),
+  filter: methodOf((el) => arrOf(el)),
+  reduce: method(Unknown),
 };
 
 function isArrayType(t: InferredType): boolean {

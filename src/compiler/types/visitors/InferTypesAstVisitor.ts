@@ -17,7 +17,7 @@ import { TypeChecker } from "../TypeChecker";
 import { createRule, RuleSeverity } from "../../rules/RuleBuilder";
 import { RuntimeProvider } from "../../runtime";
 import { SymbolTable, SymbolEntry, PackageRegistry } from "../../analysis";
-import { nativeMethodReturn } from "../nativeMembers";
+import { nativeMethodReturn, nativeMemberKind } from "../nativeMembers";
 import * as path from "node:path";
 
 /**
@@ -1675,6 +1675,40 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   }
 
   /**
+   * Phase Ne: a LAZY-ONLY linq operator called METHOD-style on a BARE array -- `(a.take 3)` -- is a
+   * compile error (LL0230). A bare array is not a nominal `Iterable`, so the extension does not dispatch;
+   * codegen would emit the native `arr.take(3)`, a method arrays lack, and it crashes at run time. Catch
+   * it here, with the fix: the pipe, or the `seq` gateway. Native array methods (`map`/`filter`/`reduce`,
+   * now in `ARRAY_MEMBERS`) return a `nativeMemberKind` and are NOT flagged -- they run native-eager.
+   */
+  private checkArrayExtensionMisuseType(
+    receiverType: InferredType | undefined,
+    member: string,
+    node: ast.ASTNode
+  ): void {
+    if (!receiverType) return;
+    const isArray =
+      !!receiverType.isArray ||
+      (receiverType.kind === "generic" && receiverType.name === "Array");
+    if (!isArray) return;
+    if (nativeMemberKind(receiverType, member)) return; // a real native array method -- fine
+    if (!this.extensionNames().has(member)) return; // not a linq extension -- not this diagnostic
+    this.reportTypeError(
+      node,
+      "LL0230",
+      `Array has no member '${member}'. It is a lazy sequence operator, and a bare array is not a nominal Iterable, so it cannot dispatch. Use the pipe '(xs |> (${member} ...))', or lift the array with 'seq': '((seq xs).${member} ...)'.`
+    );
+  }
+
+  /** The name-keyed entry to `checkArrayExtensionMisuseType` -- splits a dotted head `(a.take 3)`. */
+  private checkArrayExtensionMisuse(funcName: string, node: ast.ASTNode): void {
+    const dot = funcName.lastIndexOf(".");
+    if (dot < 0) return;
+    const receiverType = this.typeEnv.resolveIdentifier(funcName.slice(0, dot), node);
+    this.checkArrayExtensionMisuseType(receiverType, funcName.slice(dot + 1), node);
+  }
+
+  /**
    * The type checker had never looked inside a loop body, a match arm, or a try block.
    *
    * The dispatch above calls `visitFor` for a `for` node -- and `visitFor` DOES exist, inherited
@@ -3143,6 +3177,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           const ext = memberName
             ? this.typeExtensionCall(receiverType, memberName, argTypes, callNode)
             : undefined;
+          // Ne: the computed/literal-receiver form -- `([1 2 3].take 3)`.
+          if (!ext && memberName) {
+            this.checkArrayExtensionMisuseType(receiverType, memberName, callNode);
+          }
           inferredType = ext ?? TypeEnvironment.unknown();
         } else {
           // A callee we cannot type -- an imported member, a JS global, a computed expression.
@@ -3231,6 +3269,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             inferredType = extCall;
             break;
           }
+
+          // Ne: a lazy-only linq operator method-style on a BARE array -- `(a.take 3)` -- cannot dispatch
+          // and would crash at run time; LL0230. AFTER the native and extension paths (valid cases).
+          this.checkArrayExtensionMisuse(funcName, firstNode);
 
           // OPERATORS FIRST -- before the plain-function branch below.
           //

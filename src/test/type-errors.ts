@@ -1033,6 +1033,27 @@ ${PRODUCER}
     why: "Nb: (f.to-bar) types as Bar (computed intermediate), so .bar-int resolves to Int; String := Int is a mismatch.",
   },
 
+  // --- Ne: a LAZY-ONLY linq operator called METHOD-style on a BARE array is caught (LL0230). A bare
+  // array is not a nominal `Iterable`, so the extension does not dispatch and codegen would emit
+  // `arr.take(3)` -- a method arrays lack, a runtime crash. LL0230 turns it into a compile error that
+  // points at the pipe or the `seq` gateway. Native array methods (`map`/`filter`) are NOT flagged. ---
+  {
+    name: "Ne: a lazy-only op method-style on a bare array is LL0230",
+    source: '(import "std/linq")\n(let a [1 2 3])\n(a.take 3)',
+    expect: /LL0230/,
+    why: "Ne: arrays lack `take`; it can't dispatch (arrays aren't nominal Iterable). Use the pipe or `seq`.",
+  },
+  {
+    name: "Ne: a native array method (map) method-style is NOT flagged",
+    source: '(import "std/linq")\n(let a [1 2 3])\n(a.map (fn [x] x))',
+    silent: true,
+  },
+  {
+    name: "Ne: the `seq` gateway makes the array chainable -- no diagnostic",
+    source: '(import "std/linq")\n(let a [1 2 3])\n((seq a).take 3)',
+    silent: true,
+  },
+
   // --- P5d: the erasure rule is GONE. `T` is no longer a universal escape hatch. ---
   {
     // `(fn pair<T> [a <- T b <- T])` called as `(pair 1 "x")`: `T` is solved to `Int` from the first
