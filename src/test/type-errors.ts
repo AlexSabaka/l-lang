@@ -770,8 +770,11 @@ ${PRODUCER}
       "(let h (my-head [1 2 3]))\n" +
       "(console.log (+ h 1))",
     expect: /LL0205/,
-    pending: true,
-    why: "generic inference -- Phase 5. BLOCKS std/core",
+    why:
+      "Call-site generic inference (P5b-d) makes this real: `(my-head [1 2 3])` solves T=Int and the " +
+      "return substitutes to `Int?`, so `(+ h 1)` on the un-narrowed optional is LL0205. Was `pending` " +
+      "from before P5b-d landed; the machinery arrived, the gate was never un-pended. It unblocks " +
+      "std/core, and Phase T / Ga is what spends that.",
   },
   {
     // ...and the guard: the builtin producers must keep producing. If this ever goes silent, something
@@ -1242,6 +1245,27 @@ ${PRODUCER}
 (fn :extension doubled [self <- Box] -> Int (* self.v 2))`,
     silent: true,
     why: "GUARD. A receiver parameter is all it needs; an untyped receiver is allowed (it just never dispatches).",
+  },
+
+  // Phase T / Ga -- the generic stdlib accessors, now that call-site inference works (P5b-d).
+  {
+    name: "Ga: a generic stdlib `first` produces an optional at the call site",
+    source: `(import "std/seq")
+(let h (first [1 2 3]))
+(console.log (+ h 1))`,
+    expect: /LL0205/,
+    why:
+      "`first<T> [T[]] -> T?` -- (first [1 2 3]) is Int?, so using it in `+` without a nil-check is " +
+      "LL0205. RED before Ga (first shipped untyped -> Unknown -> silent). The stdlib mirror of the " +
+      "now-passing `Se` gate.",
+  },
+  {
+    name: "Ga: a narrowed `first` is silent",
+    source: `(import "std/seq")
+(let h (first [1 2 3]))
+(if (!= h nil) (console.log (+ h 1)) (console.log 0))`,
+    silent: true,
+    why: "GUARD. After (!= h nil), D9 narrows h from Int? to Int, so `+` is fine.",
   },
 ];
 

@@ -54,38 +54,27 @@
     (coll.sort (fn [a b] (- (key-fn a) (key-fn b)))))
 
   ;; ================================================================================================
-  ;; THE FOUR FUNCTIONS THAT NEVER EXISTED
+  ;; THE TOTAL ACCESSORS -- `first` / `last` / `at`, honest at last (`-> T?`).
   ;;
-  ;; `test_stdlib.lisp` has called `length`, `first`, `last` and `at` since it was written, and none
-  ;; of them existed -- in no std module and no SYMBOL_MAP. It was written against a stdlib nobody
-  ;; built, and nothing found out, because a `library`/`xfail` file is compiled and never RUN. That is
-  ;; the hole Sa exists to name, and Sf is where it closes: test_stdlib now has a golden.
+  ;; They are `head`-shaped: on an empty sequence there is nothing to return, and D9's argument is that
+  ;; this must be `nil`, not a lie. For a long time these shipped UNTYPED (returning Unknown), because
+  ;; `T[] -> T?` was inexpressible -- call-site generic inference did not exist, so declaring
+  ;; `(fn first<T> [xs <- T[]] -> T?)` produced NO optional at the call site.
   ;;
-  ;; `first`, `last` and `at` RETURN `T?` IN PRINCIPLE AND CANNOT SAY SO.
-  ;;
-  ;; They are `head`-shaped: on an empty sequence there is nothing to return, and D9's whole argument
-  ;; ("optionals, so `first`/`last` can be typed honestly") is that this must be `nil` rather than a
-  ;; lie. `head` DOES produce `Int?` -- but only because `inferTotalAccessorType` hardcodes three names
-  ;; inside the type checker. A library cannot join them:
-  ;;
-  ;;     (fn my-head<T> [xs <- T[]] -> T? ...)     -> produces NO optional at the call site
-  ;;     (fn first [xs] (head xs))                 -> does not inherit one either
-  ;;
-  ;; Call-site generic inference does not exist (Phase 5), so `T[] -> T?` is inexpressible. These ship
-  ;; returning Unknown, which is HONEST -- an `Unknown` silences checks, but it does not lie about
-  ;; them. The gate is in test:type-errors ("a generic `-> T?` produces an optional at the call site");
-  ;; the day it goes green, these get their real types and `std/core` becomes possible.
+  ;; It EXISTS now (Phase 5, P5b-d: `unify` / `substitute` / `instantiateSignature`). `(first [1 2 3])`
+  ;; solves `T = Int` from the argument and substitutes into the return -> `Int?`, optional flag and
+  ;; all. So these are declared generic and say what they mean (Phase T / Ga); `std/core` is unblocked.
   ;; ================================================================================================
 
   ;; Total. `nil` on an empty sequence, never `undefined` -- which is not a value this language has.
-  (fn first [coll] (head coll))
+  (fn first<T> [coll <- T[]] -> T? (head coll))
 
-  (fn last [coll]
+  (fn last<T> [coll <- T[]] -> T?
     (if (empty coll) nil (elem coll (- coll.length 1))))
 
   ;; Total, like `get` and `elem`: an out-of-range index is `nil`, not a crash and not `undefined`.
   ;; The PARTIAL counterpart is the indexer `coll[i]`, which throws (D9). The pair is the whole ruling.
-  (fn at [coll i <- Int] (elem coll i))
+  (fn at<T> [coll <- T[] i <- Int] -> T? (elem coll i))
 
   (fn length [coll] -> Int coll.length)
 
