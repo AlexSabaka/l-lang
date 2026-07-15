@@ -1947,6 +1947,30 @@ const CASES: Case[] = [
       "flag is read from the modifier, not defaulted on.",
   },
 
+  {
+    name: "D30/Gc: a hand-written :implements Iterable struct drives for :each",
+    source: `(import "std/iter")
+(defstruct Countdown :implements Iterable<Int>
+  (mut :ctor n <- Int)
+  (fn iterator [] -> Iterator<Int> (return this))
+  (fn next [] -> Int? (
+    (if (<= this.n 0)
+        (return nil)
+        (
+          (let cur this.n)
+          (this.n := (- this.n 1))
+          (return cur))))))
+(for :each x :from (new Countdown 3) :then (console.log x))`,
+    expect: ["3", "2", "1"],
+    emitted: { must: [/\[Symbol\.iterator\]\(\)/, /__ll_js_iter/] },
+    wasBroken:
+      "the struct had an `iterator()` method but no `[Symbol.iterator]`, and its `next()` returned `T?` " +
+      "(nil = done), not `{value, done}`. So `for (x of new Countdown(3))` threw `... is not iterable`. " +
+      "Gc injects a `[Symbol.iterator]` bridge on any `:implements Iterable` type, delegating through " +
+      "`__ll_js_iter` which adapts `T?` to `{value, done}`. A generator needs none of this -- `function*` " +
+      "is already a JS iterable -- so this is only for the hand-written iterable.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",

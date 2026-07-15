@@ -233,9 +233,10 @@ protocol**, so lowering is the native form, not a reimplemented state machine.
     *   [x] **Gb** — the diagnostics: `yield` outside `:gen` (LL0222), value-`return` inside `:gen`
             (LL0223), a non-`Iterator` return type (LL0224), `yield x` checked against `T` (LL0225), and
             an empty-`:gen` warning (LL0226).
-    *   [ ] **Gc** — the bridge for a hand-written `:implements Iterable` struct (a NON-generator):
-            `iterator()` → `[Symbol.iterator]`, with the `T? ↔ {value, done}` adapter. Makes Itb's
-            user-conformance path actually consumable by `for...of`.
+    *   [x] **Gc** — the bridge for a hand-written `:implements Iterable` struct (a NON-generator). A
+            `[Symbol.iterator]()` method is injected on any `:implements Iterable` type, delegating to
+            `__ll_js_iter` which adapts the user's `next() -> T?` to JS's `{value, done}`. Makes Itb's
+            user-conformance path actually consumable by `for...of`. Generators need none of it.
 *   [ ] **LINQ.** Lazy `map`/`filter`/`take`/`zip`/`enumerate` as generators over `Iterable<T>` -- pure
         stdlib once generators land. The C# LINQ steal.
 *   [ ] **async** (parallel track). `Awaitable<T>` / `Task<T>`, lowered to JS Promise/`async`. `fn :async`

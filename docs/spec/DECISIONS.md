@@ -2992,5 +2992,8 @@ straight into `for :each`, which needs `Iterable<Int>` -- the protocol clicking 
 generator end to end (a generator is natively iterable, so that already runs). **Gb** (done): the
 diagnostics that enforce the rules above -- `yield` outside a `:gen` (LL0222), a value-`return` inside
 one (LL0223), a non-`Iterator` return type (LL0224), a `yield x` whose type is not the declared `T`
-(LL0225), and a warning for a `:gen` that never yields (LL0226). **Gc** owes the bridge that makes a
-hand-written `:implements Iterable` struct (a NON-generator) consumable by `for...of`.
+(LL0225), and a warning for a `:gen` that never yields (LL0226). **Gc** (done): a `[Symbol.iterator]()`
+method is injected on any `:implements Iterable` type, delegating to the runtime `__ll_js_iter`, which
+adapts the user's `next() -> T?` to JS's `{value, done}`. So a hand-written iterable drives `for...of`
+too, and Itb's user-conformance path is consumable end to end. A generator needs none of it -- a
+`function*` is already a JS iterable.

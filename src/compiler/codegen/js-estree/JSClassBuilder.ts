@@ -408,6 +408,65 @@ export class ClassBuilder {
     return this.methods.map(m => this.visitor.visit(m) as ESTree.MethodDefinition);
   }
 
+  /**
+   * `[Symbol.iterator]() { return __ll_js_iter(this.iterator()); }`, injected when the type
+   * `:implements Iterable` (D30/Gc).
+   *
+   * The type declares an `iterator()` method (the l-lang `Iterable<T>` contract) whose result has a
+   * `next() -> T?`. JS `for...of` looks for `[Symbol.iterator]` and expects a `{value, done}` iterator,
+   * so without this a hand-written iterable threw `... is not iterable`. The bridge delegates to the
+   * user's `iterator()` and hands the result to `__ll_js_iter`, which adapts `T?` to `{value, done}`.
+   * Only ONE bridge per type, even under diamond conformance.
+   */
+  private buildIterableBridge(): ESTree.MethodDefinition[] {
+    const implementsIterable = (this.node.implements ?? []).some(
+      (impl: any) => impl?.type?.name === "Iterable"
+    );
+    if (!implementsIterable) return [];
+
+    const call = (callee: ESTree.Expression, args: ESTree.Expression[] = []): ESTree.CallExpression => ({
+      type: "CallExpression",
+      callee,
+      arguments: args,
+      optional: false,
+    });
+    const ident = (name: string): ESTree.Identifier => ({ type: "Identifier", name });
+    const member = (obj: ESTree.Expression, prop: string): ESTree.MemberExpression => ({
+      type: "MemberExpression",
+      object: obj,
+      property: ident(prop),
+      computed: false,
+      optional: false,
+    });
+
+    // return __ll_js_iter(this.iterator());
+    const bridgeBody: ESTree.ReturnStatement = {
+      type: "ReturnStatement",
+      argument: call(ident("__ll_js_iter"), [
+        call(member({ type: "ThisExpression" }, "iterator")),
+      ]),
+    };
+
+    const method: ESTree.MethodDefinition = {
+      type: "MethodDefinition",
+      // computed `[Symbol.iterator]`
+      key: member(ident("Symbol"), "iterator"),
+      computed: true,
+      kind: "method",
+      static: false,
+      value: {
+        type: "FunctionExpression",
+        id: null,
+        params: [],
+        body: { type: "BlockStatement", body: [bridgeBody] },
+        generator: false,
+        async: false,
+      },
+      loc: loc(this.node),
+    };
+    return [method];
+  }
+
   private buildOtherBody(): any[] {
     return this.otherBody.map(b => this.visitor.visit(b));
   }
@@ -506,6 +565,11 @@ export class ClassBuilder {
 
     // Add methods
     body.push(...this.buildMethods());
+
+    // D30/Gc: if this type `:implements Iterable`, give it a real JS `[Symbol.iterator]` so `for...of`
+    // (and spread, and everything else) can drive it. A generator needs none of this; this is for the
+    // HAND-WRITTEN iterable.
+    body.push(...this.buildIterableBridge());
 
     // Add other body elements (if they're valid class members)
     // Note: otherBody items need to be compatible with class body

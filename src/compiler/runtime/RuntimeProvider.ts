@@ -157,6 +157,25 @@ function __ll_member(obj, key) {
   return typeof v === 'function' ? v.call(obj) : v;
 }
 
+/**
+ * Bridge an l-lang \`Iterator<T>\` to the JS iteration protocol (D30/Gc).
+ *
+ * l-lang's \`next\` returns \`T?\` -- a value, or nil when done (D30, folding D9). JS \`for...of\` expects
+ * \`next()\` to return \`{ value, done }\`. This wraps the former as the latter, so a hand-written
+ * \`:implements Iterable\` type becomes a real JS iterable: a \`[Symbol.iterator]\` method on the type
+ * delegates here. A generator needs none of this -- \`function*\` is already a JS iterable.
+ */
+function __ll_js_iter(it) {
+  return {
+    next() {
+      const v = it.next();
+      return (v === null || v === undefined)
+        ? { value: undefined, done: true }
+        : { value: v, done: false };
+    },
+  };
+}
+
 function __ll_index(obj, key) {
   if (obj == null) throw new TypeError('cannot index into nil');
   if (Array.isArray(obj) || typeof obj === 'string') {
