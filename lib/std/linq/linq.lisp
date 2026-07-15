@@ -17,43 +17,51 @@
 ;;           chain builds a pipeline of generators; nothing materialises until a terminal (`to-list`,
 ;;           or an outer `for :each`) drives it. `(map f)` over a million elements allocates nothing.
 ;;
-;;   PIPED.  Collection-first means the working infix `|>` threads it: `(coll |> (map f) |> (filter p))`
-;;           desugars to `filter(map(coll, f), p)` -- left-to-right LINQ, no `:extension` machinery, and
-;;           it type-checks (the pipe types as its final stage's return). Collection-first also matches
-;;           C#'s `this`-receiver, so -- now that `:extension` is built (D34) -- the same signatures
-;;           COULD be exposed as extension methods; the pipe stays the primary surface.
+;;   TWO SURFACES (Phase Nd). Collection-first means the receiver IS the first parameter, so ONE
+;;           definition serves both:
+;;             PIPE    `(coll |> (map f) |> (filter p))` desugars to `filter(map(coll, f), p)` -- the
+;;                     PRIMARY surface (D33), left-to-right, and it threads an array or a generator alike.
+;;             METHOD  `:extension` makes `((coll.map f).filter p)` dispatch to the same free functions
+;;                     -- lazy method chaining, C#-style -- when `coll` is a nominal `Iterable`
+;;                     (a generator, a hand-written iterator, or `(seq arr)`). A BARE array keeps native
+;;                     `.map`/`.filter` (eager); `(seq arr)` opts it into the lazy chain.
 ;;
-;; UNTYPED, on purpose (for now). Like `std/seq`'s eager ops, these ship without `-> Iterator<T>`
-;; annotations. Call-site generic inference EXISTS now (Phase 5, P5b-d) -- `std/seq`'s `first`/`last`/
-;; `at` are typed with it -- but the linq operators stay untyped for the moment (a follow-up); the
-;; annotations can go on whenever, and the `Iterator<T> :implements Iterable<T>` already in `std/iter`
-;; makes the chains check end to end. Gradually typed, they RUN correctly regardless -- what laziness needs.
+;; TYPED (Phase Nd). The receiver is `Iterable<T>` and each transformer returns `Iterator<...>`, so a
+;; method chain type-checks hop to hop (`Iterator :implements Iterable`, std/iter). Element types stay
+;; loose where inference cannot recover them: an element-CHANGING op (`map`, `flat-map`) returns
+;; `Iterator<Any>` (a lambda's return type is not inferred yet); element-PRESERVING ops keep `Iterator<T>`.
+;; Arrays satisfy `Iterable<T>` for the pipe's sake, but are NOT a nominal conformer -- that is what keeps
+;; `(arr.map f)` on native eager array.map. Gradually typed, all of it RUNS correctly regardless.
 (
+  ;; The iteration protocol these operators are typed over -- `Iterable<T>` / `Iterator<T>` and the
+  ;; `Iterator :implements Iterable` that makes the chains conform hop to hop.
+  (import "std/iter")
+
   ;; map -- produce (f x) for each element.
-  (fn :gen map [coll f]
+  (fn :extension :gen map<T> [coll <- Iterable<T> f] -> Iterator<Any>
     (for :each x :from coll :then (
       (yield (f x)))))
 
   ;; filter -- keep the elements satisfying (pred x).
-  (fn :gen filter [coll pred]
+  (fn :extension :gen filter<T> [coll <- Iterable<T> pred] -> Iterator<T>
     (for :each x :from coll :then (
       (when (pred x) :then (yield x)))))
 
-  ;; enumerate -- pair each element with its index as `[i x]` (l-lang has no tuple type; `seq.zip`
-  ;; yields 2-element arrays the same way).
-  (fn :gen enumerate [coll]
+  ;; enumerate -- pair each element with its index as `[i x]` (l-lang has no tuple type yet; `seq.zip`
+  ;; yields 2-element arrays the same way, so the element is `Any` until the richer-types stream).
+  (fn :extension :gen enumerate<T> [coll <- Iterable<T>] -> Iterator<Any>
     (mut i 0)
     (for :each x :from coll :then (
       (yield [i x])
       (i := (+ i 1)))))
 
   ;; concat -- the elements of `a`, then those of `b`.
-  (fn :gen concat [a b]
+  (fn :extension :gen concat<T> [a <- Iterable<T> b <- Iterable<T>] -> Iterator<T>
     (for :each x :from a :then ((yield x)))
     (for :each y :from b :then ((yield y))))
 
   ;; skip -- drop the first `n` elements, produce the rest. A counter, no early exit.
-  (fn :gen skip [coll n]
+  (fn :extension :gen skip<T> [coll <- Iterable<T> n <- Int] -> Iterator<T>
     (mut i 0)
     (for :each x :from coll :then (
       (when (>= i n) :then (yield x))
@@ -61,17 +69,24 @@
 
   ;; skip-while -- drop the leading run where (pred x) holds, produce everything from the first failure
   ;; on (including it).
-  (fn :gen skip-while [coll pred]
+  (fn :extension :gen skip-while<T> [coll <- Iterable<T> pred] -> Iterator<T>
     (mut dropping true)
     (for :each x :from coll :then (
       (when (&& dropping (! (pred x))) :then (dropping := false))
       (when (! dropping) :then (yield x)))))
 
   ;; flat-map -- map each element to a sequence via `f`, then flatten one level.
-  (fn :gen flat-map [coll f]
+  (fn :extension :gen flat-map<T> [coll <- Iterable<T> f] -> Iterator<Any>
     (for :each x :from coll :then (
       (for :each y :from (f x) :then (
         (yield y))))))
 
-  (export map filter enumerate concat skip skip-while flat-map)
+  ;; seq -- lift ANY iterable (an array, most importantly) into a fresh lazy cursor, so it can chain
+  ;; method-style: `((seq arr).map f)` / `(arr |> seq |> (map f))`. A `:gen`, so its result is a real
+  ;; generator (`[Symbol.iterator]` + `next`) that the extensions dispatch on. The receiver is untyped so
+  ;; an array is accepted without ceremony -- this IS the array escape hatch out of the native `.map` shadow.
+  (fn :gen seq [coll] -> Iterator<Any>
+    (for :each x :from coll :then ((yield x))))
+
+  (export map filter enumerate concat skip skip-while flat-map seq)
 )

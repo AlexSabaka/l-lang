@@ -138,6 +138,19 @@ export class TypeChecker {
       return false;
     }
 
+    // The iteration protocol (D30) is checked NOMINALLY, GRADUALLY on the element type. A native array,
+    // or any value that (transitively) `:implements Iterable`/`Iterator`, satisfies `Iterable<_>` /
+    // `Iterator<_>`. The element type ARGUMENTS are best-effort here -- a lambda's return type is not
+    // inferred (so `map`'s element is `Any`), tuple elements are deferred -- and requiring them to match
+    // only produces false positives on correct lazy chains. This is the same nominal test codegen's
+    // dispatch (`receiverConformsTo`) already uses, so the two passes agree. (Arrays ARE iterable but are
+    // NOT a nominal conformer for DISPATCH -- that exclusion lives at the dispatch sites, via
+    // `conformsNominally`, not here.)
+    if (target.name === "Iterable" || target.name === "Iterator") {
+      if (source.isArray || source.name === "Array") return true;
+      if (this.conformsNominally(source, target.name, symbolTable)) return true;
+    }
+
     const seen = new Set<string>();
 
     const visit = (type: InferredType | undefined): boolean => {
@@ -183,6 +196,40 @@ export class TypeChecker {
     };
 
     return visit(source);
+  }
+
+  /**
+   * Purely NOMINAL conformance -- `type` IS `name`, or (transitively) `:implements`/`:extends` it -- with
+   * NO array leniency and NO element-type check. This is the dispatch question ("does `(x.m)` resolve to
+   * an `:extension m` written on `name`?"), the checker's twin of codegen's `receiverConformsTo`: a
+   * native array is NOT a nominal `Iterable`, so `(arr.map f)` stays on native eager array.map. Re-resolves
+   * each interface by name to reach its own supers (`Iterator :implements Iterable`).
+   */
+  static conformsNominally(
+    type: InferredType | undefined,
+    name: string,
+    symbolTable: SymbolTable,
+    seen: Set<string> = new Set()
+  ): boolean {
+    if (!type?.name || seen.has(type.name)) return false;
+    seen.add(type.name);
+    if (type.name === name) return true;
+
+    const declared = symbolTable.resolveSymbol(type.name)?.inferredType;
+    const from = declared ?? type;
+
+    for (const impl of from.implementedInterfaces ?? []) {
+      if (impl.interfaceName === name) return true;
+      const sup = symbolTable.resolveSymbol(impl.interfaceName)?.inferredType;
+      if (sup && this.conformsNominally(sup, name, symbolTable, seen)) return true;
+    }
+
+    const parent = from.parentClass;
+    if (parent) {
+      const p = symbolTable.resolveSymbol(parent)?.inferredType;
+      if (p && this.conformsNominally(p, name, symbolTable, seen)) return true;
+    }
+    return false;
   }
 
   /**

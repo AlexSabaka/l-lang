@@ -2319,6 +2319,44 @@ const CASES: Case[] = [
       "interface by name reaches Iterable. (`tag` does not iterate self -- the struct [Symbol.iterator] " +
       "synthesis for a transitively-Iterable struct is a separate gap.)",
   },
+  {
+    name: "Nd: METHOD-CHAINING laziness proof -- `(((ns.map).filter).take).to-list` over infinite nats",
+    source: `(import "std/linq")
+(fn :gen nats [] -> Iterator<Int> (
+  (mut i 0)
+  (while true (
+    (yield i)
+    (i := (+ i 1))))))
+(fn square [x <- Int] -> Int (* x x))
+(let ns (nats))
+(let result ((((ns.map square).filter (fn [x] (> x 4))).take 3).to-list))
+(console.log result.length)
+(console.log result[0] result[1] result[2])`,
+    expect: ["3", "9 16 25"],
+    // The chain lowers to NESTED free calls; the linq ops are imported, so each is inlined under a
+    // unique `__ll_inlined_<name>_N` name (`to-list` encodes to `to2dlist`). The infinite-generator
+    // `expect` is the real laziness proof -- it only terminates because `take` pulls the cursor lazily.
+    emitted: { must: [/__ll_inlined_take_\d+\(\s*__ll_inlined_filter_\d+\(\s*__ll_inlined_map_\d+\(/, /function\*/] },
+    wasBroken:
+      "The headline: the LINQ operators, chained as METHODS, stay lazy over an INFINITE source. `(ns.map " +
+      "square)` (named receiver) dispatches via visitList to `map(ns, square)`; each later hop " +
+      "`.filter`/`.take`/`.to-list` is a computed CallNode that Nc dispatches by reading the intermediate's " +
+      "`Iterator` type (Nb typed it, Na made the conformance real). `nats` never stops, so any eager hop " +
+      "HANGS forever -- it returns [9 16 25] only because `take` pulls the cursor lazily. Same chain as the " +
+      "pipe (D33's primary surface), method-style: squares 0 1 4 9 16 25..., >4 -> 9 16 25 36..., take 3.",
+  },
+  {
+    name: "Nd: the `seq` gateway lifts an array into a lazy method chain",
+    source: `(import "std/linq")
+(let out (((seq [10 20 30]).map (fn [x] (+ x 1))).to-list))
+(console.log out[0] out[1] out[2])`,
+    expect: ["11 21 31"],
+    emitted: { must: [/__ll_inlined_to2dlist_\d+\(\s*__ll_inlined_map_\d+\(\s*__ll_inlined_seq_\d+\(/] },
+    wasBroken:
+      "A bare array keeps native eager `.map` (the Ea guard), so `seq` is the array's opt-in to laziness: " +
+      "`(seq arr)` is a `:gen` yielding a real generator, on which `.map`/`.to-list` dispatch as " +
+      "extensions. `((seq [10 20 30]).map inc).to-list` -> to_list(map(seq([10,20,30]), inc)) = [11 21 31].",
+  },
 
   {
     name: "Na: an :extension on a super-interface dispatches on a sub-interface receiver",

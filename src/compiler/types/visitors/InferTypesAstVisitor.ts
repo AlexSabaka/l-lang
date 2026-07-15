@@ -1654,12 +1654,13 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     if (!funcType || funcType.kind !== "function") return undefined;
     const recvParam = funcType.params?.[0];
     if (!recvParam?.name) return undefined;
-    const conforms = TypeChecker.isSubtype(
-      receiverType,
-      { kind: "interface", name: recvParam.name } as InferredType,
-      this.symbolTable
-    );
-    if (!conforms) return undefined;
+    // NOMINAL conformance, NOT `isSubtype` -- the dispatch question, excluding arrays. `isSubtype` now
+    // treats an array as an `Iterable` (so the pipe's free-call arg-checks pass), but a bare array must
+    // keep native `.map`/`.filter`; `conformsNominally` is the same nominal test codegen's dispatch runs,
+    // so `(arr.map f)` types as native/Unknown here and the two passes agree.
+    if (!TypeChecker.conformsNominally(receiverType, recvParam.name, this.symbolTable)) {
+      return undefined;
+    }
     const solved = this.instantiateSignature(funcType, [receiverType, ...argTypes]);
     return solved.returns ?? TypeEnvironment.unknown();
   }

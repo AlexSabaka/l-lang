@@ -3165,7 +3165,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     if (!memberName) return undefined;
     const objectType = this.context.nodeTypes?.get(member.object);
     if (!objectType) return undefined; // gradual: no type -> fall through to the raw member call
-    const extFn = this.extensionForType(objectType, memberName);
+    const extFn = this.extensionForType(objectType, memberName, node);
     if (!extFn) return undefined;
     return ESTreeBuilder.callExpression(node, ESTreeBuilder.identifier(node, extFn), [
       this.visitExpr(member.object),
@@ -3729,7 +3729,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   private extensionFor(objectName: string, memberName: string, from?: ast.ASTNode): string | undefined {
     const typeInfo = this.receiverType(objectName, from);
     if (!typeInfo) return undefined;
-    return this.extensionForType(typeInfo, memberName);
+    return this.extensionForType(typeInfo, memberName, from);
   }
 
   /**
@@ -3738,14 +3738,34 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * comes from the per-node channel (`nodeTypes`) instead. Both paths share the `extensionTable` +
    * `receiverConformsTo` resolution.
    */
-  private extensionForType(typeInfo: any, memberName: string): string | undefined {
+  private extensionForType(typeInfo: any, memberName: string, from?: ast.ASTNode): string | undefined {
     const candidates = this.extensionTable().get(memberName);
     if (!candidates?.length) return undefined;
     const t = this.unwrapReceiverType(typeInfo);
     for (const c of candidates) {
-      if (this.receiverConformsTo(t, c.receiverType)) return encodeIdentifier(c.fnName);
+      if (this.receiverConformsTo(t, c.receiverType)) return this.emittedExtensionName(c.fnName, from);
     }
     return undefined;
+  }
+
+  /**
+   * The EMITTED name a dispatched extension resolves to. An IMPORTED extension (`std/linq`'s `map`,
+   * `to-list`) must be INLINED first -- otherwise the call names a function that was never emitted (the
+   * bug: `(chain.to-list)` lowered to `to2dlist(...)` with no definition, because member syntax is not a
+   * by-name reference the inliner sees). This mirrors `visitIdentifier` (:2571): resolve the symbol, and
+   * if it is imported, `ensureSymbolInlined` emits its body under a unique name and returns it; a LOCAL
+   * extension keeps its plain encoded name.
+   */
+  private emittedExtensionName(fnName: string, from?: ast.ASTNode): string {
+    try {
+      const resolved = from
+        ? this.context?.symbolTable?.resolveSymbol?.(fnName as any, from)
+        : this.context?.symbolTable?.resolveSymbol?.(fnName as any);
+      if (resolved && this.isImportedSymbol(resolved)) return this.ensureSymbolInlined(resolved);
+    } catch {
+      // fall through to the plain encoded name
+    }
+    return encodeIdentifier(fnName);
   }
 
   /**

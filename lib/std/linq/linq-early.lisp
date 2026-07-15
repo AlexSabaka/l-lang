@@ -4,7 +4,14 @@
 ;; ["*.lisp"]`, so both files are one compilation unit and `(import "std/linq")` yields the union of
 ;; their exports. This file needs no import of `linq.lisp` -- a package's files share a unit, not a
 ;; boundary. (It DOES lean on the `iter`/`next` cursor builtins from La, which are language-level.)
+;;
+;; Typed + `:extension` like `linq.lisp` (Phase Nd): the receiver is `Iterable<T>`, so these chain
+;; method-style (`((coll.take 3).to-list)`) as well as through the pipe. The early-exit ops PRESERVE the
+;; element type (`Iterator<T>`); `zip` yields a pair, `Any` until tuples; the terminals return a value.
 (
+  ;; The iteration protocol these operators are typed over (`Iterable<T>` / `Iterator<T>`).
+  (import "std/iter")
+
   ;; ------------------------------------------------------------------------------------------------
   ;; EARLY-EXIT / LOCKSTEP. These cannot use `for :each` -- a `for...of` has no `break` -- so they PULL
   ;; a raw cursor (La's `iter`/`next`) under a `while` and stop the instant they are done. That is what
@@ -13,7 +20,7 @@
 
   ;; take -- the first `n` elements, then stop. One-element lookahead: it may pull one past the last it
   ;; yields, which for a lazy source is produced on demand and harmless.
-  (fn :gen take [coll n]
+  (fn :extension :gen take<T> [coll <- Iterable<T> n <- Int] -> Iterator<T>
     (let it (iter coll))
     (mut i 0)
     (mut v (next it))
@@ -23,15 +30,16 @@
       (v := (next it)))))
 
   ;; take-while -- the leading run where (pred x) holds, stopping at the first element that fails it.
-  (fn :gen take-while [coll pred]
+  (fn :extension :gen take-while<T> [coll <- Iterable<T> pred] -> Iterator<T>
     (let it (iter coll))
     (mut v (next it))
     (while (&& (!= v nil) (pred v)) (
       (yield v)
       (v := (next it)))))
 
-  ;; zip -- pair elements of `a` and `b` in lockstep as `[x y]`, stopping when EITHER runs out.
-  (fn :gen zip [a b]
+  ;; zip -- pair elements of `a` and `b` in lockstep as `[x y]`, stopping when EITHER runs out. `b` is
+  ;; untyped so the two sides may differ; the pair element is `Any` until the richer-types stream.
+  (fn :extension :gen zip<T> [a <- Iterable<T> b] -> Iterator<Any>
     (let ia (iter a))
     (let ib (iter b))
     (mut x (next ia))
@@ -47,28 +55,29 @@
   ;; ------------------------------------------------------------------------------------------------
 
   ;; to-list -- drain the sequence into an array. The usual end of a chain.
-  (fn to-list [coll]
+  (fn :extension to-list<T> [coll <- Iterable<T>] -> T[]
     (let out [])
     (for :each x :from coll :then (
       (out.push x)))
     (return out))
 
-  ;; reduce -- fold left with `f`, seeded by `init`.
-  (fn reduce [coll f init]
+  ;; reduce -- fold left with `f`, seeded by `init`. The accumulator type is not recovered (the seed and
+  ;; `f` are untyped here), so the result is `Any`.
+  (fn :extension reduce<T> [coll <- Iterable<T> f init] -> Any
     (mut acc init)
     (for :each x :from coll :then (
       (acc := (f acc x))))
     (return acc))
 
   ;; count -- how many elements the sequence produces.
-  (fn count [coll]
+  (fn :extension count<T> [coll <- Iterable<T>] -> Int
     (mut n 0)
     (for :each x :from coll :then (
       (n := (+ n 1))))
     (return n))
 
   ;; for-each -- call `f` on each element for its effect; produce nothing.
-  (fn for-each [coll f]
+  (fn :extension for-each<T> [coll <- Iterable<T> f] -> Void
     (for :each x :from coll :then (
       (f x))))
 
