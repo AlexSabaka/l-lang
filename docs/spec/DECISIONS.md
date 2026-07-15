@@ -3157,3 +3157,59 @@ The one combination that is **nonsense** is two DISPATCH modifiers on one functi
 reserved.** This ruling is what makes its eventual build unambiguous: it is a call-site rewrite (mirror
 `:operator`'s runtime dispatch -- `(+ a b)` → `_2b(a,b)` + a registry), and it composes with `:gen`/
 `:async` for free, because dispatch and body are different phases.
+
+## D35 — the compilation unit is a PACKAGE, and visibility is package-scoped (Phase M)
+
+`internal` visibility ("like `private`, but module-level") needs a *module* bigger than a file -- else
+it is identical to "not exported." So **the module becomes a package**: a set of files declared as one
+compilation unit by a `package.yaml` manifest. The same unit C# means by assembly, Rust by crate
+(`pub(crate)`), Go by package.
+
+### The manifest and resolution (Ma)
+
+A `package.yaml` is a boundary MARKER, deliberately not a package manager: `name` (the import identity)
+and `sources` (the files of the unit). Nothing else -- dependencies, versions, config, authoring are a
+later phase, added when a concrete need appears.
+
+```yaml
+name: std/linq
+sources: ["*.lisp"]
+```
+
+`PackageRegistry` scans the lib roots for manifests and answers two questions: a name → its file
+(`resolve`, wired into `ModuleResolver` at search-path priority, additive -- an empty registry is a
+no-op) and a file → its package (`packageOf`, the seam visibility hangs off). The stdlib is 10 such
+packages (`lib/std/X/{X.lisp, package.yaml}`); `(import "std/X")` resolves by NAME now, not path.
+
+### The package is the unit (Mb)
+
+- **Co-processing.** Importing/processing any file of a package processes them ALL and exposes the
+  UNION of their exports. `std/linq` spans `linq.lisp` (straight-through) and `linq-early.lisp`
+  (early-exit + terminals); one import brings in both, and neither file imports the other.
+- **The boundary is the package, not the file.** `checkSymbolVisible` short-circuits when two files
+  share a package: siblings see each other's names with no `(export)`/`(import)` between them. That is
+  what makes a package a unit rather than a folder.
+
+### The three levels, and `protected`'s removal (Mc)
+
+- **`public`** -- in the `(export …)` list; crosses the package boundary (D20's LL0215/LL0216, now
+  package-scoped).
+- **`internal`** -- the DEFAULT (unexported): visible to the whole package, not to importers.
+- **`private`** -- FILE-scoped (or, for a member, type-scoped): visible only in its own file, below the
+  package default. A `:private` top-level name referenced from any other file -- even a package sibling
+  -- is **LL0206**, the same diagnostic as a private class member.
+- **`protected` is deleted.** It was a no-op (written to reflection metadata, enforced by nothing, like
+  `:nullable` before D9), and it is the tool of implementation inheritance -- the part of classical OOP
+  that Go and Rust drop outright: a second, hidden contract subclasses couple to. `:protected` is now
+  **LL0015** (D4, unknown modifier). `:extends` stays (it has uses), but a subclass across a package
+  boundary is a pure public-API relationship; within a package it may reach `internal` -- an honest
+  split the package boundary gives for free, which `protected` never did.
+
+### Enforcement is compile/link-time, and lowers per backend (future)
+
+Visibility is a compile-time contract, not a runtime fence -- the CLR enforces `internal` at load only
+because it is a late-bound VM. An AOT target enforces it earlier and harder. The manifest is designed to
+lower the boundary per backend: on JS the package's public surface becomes `package.json`'s `exports`
+field (Node refuses to resolve an unlisted deep import -- real enforcement); on a native backend the
+`public` names become the library's exported (`default`-visibility) symbols and everything else
+`hidden`/`internal`-linkage, enforced by the linker. Emission is a later phase; the model is settled.

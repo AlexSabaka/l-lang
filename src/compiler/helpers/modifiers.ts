@@ -5,7 +5,14 @@ import * as ast from "../frontend/ast";
  * Supports both built-in modifiers and arbitrary custom modifiers
  */
 
-export const VISIBILITY_MODIFIERS = ["public", "private", "protected", "internal"] as const;
+// No `protected` (Phase M / Mc). It was a no-op -- written to reflection metadata and enforced by
+// NOTHING, exactly as `:nullable` was before D9 removed it. It is also the tool of implementation
+// inheritance, the part of classical OOP that modern design (Go, Rust, "composition over inheritance")
+// deliberately dropped: a second, hidden contract that subclasses couple to. The three levels that
+// remain are the package-scoped ones -- `public` (exported, crosses the package), `internal` (the
+// default: visible within the package), `private` (file-, or for a member, type-scoped). D4/LL0015
+// refuses `:protected` by name now; the corpus never used it.
+export const VISIBILITY_MODIFIERS = ["public", "private", "internal"] as const;
 export const PARAMETER_MODIFIERS = ["in", "out", "ref"] as const;
 export const CLASS_MODIFIERS = ["static", "override", "extern"] as const;
 // No `nullable` (D9). It was accepted as a modifier name and read by NOTHING -- so `(let :nullable x

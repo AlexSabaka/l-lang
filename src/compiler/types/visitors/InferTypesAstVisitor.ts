@@ -1007,7 +1007,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     
     // Extract modifiers and visibility
     const modifiers = new Set<string>();
-    let visibility: 'public' | 'private' | 'protected' | 'internal' = 'public';
+    let visibility: 'public' | 'private' | 'internal' = 'public';
     let isConstructorParam = false;
     let isStatic = false;
     let isOperator = false;
@@ -1038,7 +1038,6 @@ class CollectTypesPass extends BaseAstTreeWalker {
 
         if (mod === 'private') { visibility = 'private'; }
         else if (mod === 'public') { visibility = 'public'; }
-        else if (mod === 'protected') { visibility = 'protected'; }
         else if (mod === 'internal') { visibility = 'internal'; }
         else if (mod === 'ctor') { isConstructorParam = true; }
         else if (mod === 'static') { isStatic = true; }
@@ -1100,7 +1099,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     
     // Extract modifiers
     const modifiers = new Set<string>();
-    let visibility: 'public' | 'private' | 'protected' | 'internal' = 'public';
+    let visibility: 'public' | 'private' | 'internal' = 'public';
     let isOperatorOverload = false;
     let operatorSymbol: string | undefined;
     let arity: number | undefined;
@@ -1120,7 +1119,6 @@ class CollectTypesPass extends BaseAstTreeWalker {
 
         if (mod === 'private') { visibility = 'private'; }
         else if (mod === 'public') { visibility = 'public'; }
-        else if (mod === 'protected') { visibility = 'protected'; }
         else if (mod === 'internal') { visibility = 'internal'; }
         else if (mod === 'operator') { isOperatorOverload = true; }
       }
@@ -3576,6 +3574,24 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const askingFile = node._location?.source;
     const declaredIn = (entry.value as any)?._location?.source;
     const where = declaredIn ? path.basename(declaredIn) : "another module";
+
+    // PRIVATE is FILE-scoped (Phase M / Mc) -- below the package default of `internal`. A `:private`
+    // top-level name is visible only in its OWN file, so a reference from any other file (even a package
+    // sibling, which `internal` would allow) is an error -- the same LL0206 as a private class member.
+    // Checked BEFORE the package short-circuit precisely so it beats it.
+    if (
+      entry.visibility === "private" &&
+      askingFile &&
+      declaredIn &&
+      path.resolve(askingFile) !== path.resolve(declaredIn)
+    ) {
+      this.reportTypeError(
+        node,
+        "LL0206",
+        `'${name}' is private to '${where}' and cannot be accessed from here.`
+      );
+      return;
+    }
 
     // NO BOUNDARY WITHIN A PACKAGE (Phase M / Mb). The module is the package, not the file: sibling
     // files of one compilation unit see each other's names directly, with no `(export)`/`(import)`

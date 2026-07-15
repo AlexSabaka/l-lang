@@ -121,7 +121,7 @@ export interface StructMember {
 export interface DetailedMember {
   name: string;
   type: InferredType;
-  visibility: 'public' | 'private' | 'protected' | 'internal';
+  visibility: 'public' | 'private' | 'internal';
   modifiers: Set<string>;
   defaultValue?: any;
   isConstructorParam: boolean;
@@ -154,7 +154,7 @@ export interface MethodSignature {
   isOperatorOverload: boolean;
   operatorSymbol?: string;
   arity?: number;
-  visibility: 'public' | 'private' | 'protected' | 'internal';
+  visibility: 'public' | 'private' | 'internal';
 }
 
 /**

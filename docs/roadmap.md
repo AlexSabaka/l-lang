@@ -261,6 +261,20 @@ protocol**, so lowering is the native form, not a reimplemented state machine.
             checked against the PAYLOAD `T` (fixed the live LL0213 false positive on every annotated
             async function); `await` outside `:async` is **LL0227**; a non-`Task` return type is **LL0228**.
 
+## ✅ Phase M: Compilation units and package-scoped visibility (D35)
+The module becomes a **package** — a `package.yaml`-declared compilation unit — so `internal` has a
+boundary to mean anything, and std **extension modules** have a home. The manifest is a boundary marker,
+not a package manager (deps/versions/config are a later phase). It lowers per backend (npm `exports` on
+JS, `hidden`/`internal` symbol linkage on native) — emission later; the model is settled.
+*   [x] **Ma** — the manifest + `PackageRegistry` + name-resolution (additive, at search-path priority);
+        the stdlib re-expressed as 10 `lib/std/X/{X.lisp, package.yaml}` packages, resolved by name.
+*   [x] **Mb** — the package as the unit: co-processing (import a package → union of its files' exports)
+        and a package-scoped visibility boundary (siblings see each other with no export/import).
+        `std/linq` split into two files, one package, as the demonstrator.
+*   [x] **Mc** — the three levels: `public` (exported), `internal` (default, package), `private`
+        (file/type — **LL0206** cross-file). `protected` **removed** (a no-op, and the impl-inheritance
+        leak Go/Rust drop): `:protected` is now **LL0015**.
+
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."
 

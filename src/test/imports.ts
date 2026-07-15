@@ -807,6 +807,85 @@ const CASES: Case[] = [
         : { ok: false, detail: `expected a visibility error, got: ${diags.join(",") || "none (it compiled)"}` };
     },
   },
+
+  // -----------------------------------------------------------------------------------------------
+  // Phase M / Mc: `:private` is FILE-scoped -- below the package default of `internal`.
+  //
+  // Mb made same-package files mutually visible. `:private` opts OUT of that: a private top-level name
+  // is visible only in its own file, not even to package siblings. So file B referencing file A's
+  // `:private` name is an error (LL0206), THOUGH they share a package.
+  // -----------------------------------------------------------------------------------------------
+  {
+    name: "Mc: a :private top-level name is not visible to a sibling file in the same package",
+    why:
+      "The three levels: `:private` (file), default `internal` (package), exported `public` (world). " +
+      "Post-Mb a sibling saw file A's unexported `secret` (same package, no boundary) -- but `:private` " +
+      "must be tighter than the package default. RED before Mc: `(secret)` in b.lisp compiled and ran. " +
+      "After: LL0206, private to its file.",
+    run: () => {
+      const root = path.join(TMP, "mc-private-root");
+      fs.rmSync(root, { recursive: true, force: true });
+      const pkgDir = path.join(root, "pv");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "package.yaml"), `name: pv\nsources: ["*.lisp"]\n`);
+      // a.lisp: a :private top-level name (file-scoped) plus an exported one.
+      fs.writeFileSync(
+        path.join(pkgDir, "a.lisp"),
+        `(\n  (fn :private secret [] -> Int (return 5))   ;; FILE-private\n` +
+          `  (fn shown [] -> Int (return 1))\n  (export shown)\n)\n`
+      );
+      // b.lisp: reaches for a.lisp's :private name -- same package, but that is not enough for private.
+      fs.writeFileSync(
+        path.join(pkgDir, "b.lisp"),
+        `(\n  (fn use [] -> Int (return (secret)))\n  (export use)\n)\n`
+      );
+
+      const entry = fixture(
+        "mc-private-consumer",
+        { "main.lisp": `(\n  (import "pv")\n  (console.log (use))\n)\n` },
+        "main.lisp"
+      );
+
+      PackageRegistry.clear();
+      const ctx = new Context(entry, {
+        ...options(),
+        libPaths: [root, ...ModuleResolver.defaultLibPaths()],
+      });
+      try {
+        ctx.process(entry);
+      } catch {
+        /* diagnostics are the point */
+      }
+      const diags = ctx.results.all.map((m: any) => String(m.code));
+      const rejected = diags.some((d) => /LL0206/.test(d));
+      return rejected
+        ? { ok: true, detail: "`:private` is file-scoped -- a sibling file cannot see it" }
+        : { ok: false, detail: `expected LL0206 (private), got: ${diags.join(",") || "none (it compiled)"}` };
+    },
+  },
+  {
+    name: "Mc: :protected is rejected -- removed from the language",
+    why:
+      "`protected` was a no-op (written to reflection metadata, enforced by nothing) and it is the " +
+      "implementation-inheritance leak modern design rejects -- Go and Rust have none. Mc deletes it " +
+      "from VISIBILITY_MODIFIERS, so D4 refuses it by name (LL0015), the way it refused `:nullable`. " +
+      "RED before Mc: `:protected` was a valid visibility modifier and compiled silently.",
+    run: () => {
+      const entry = fixture(
+        "mc-protected",
+        { "main.lisp": `(\n  (fn :protected f [] -> Int (return 1))\n  (console.log (f))\n)\n` },
+        "main.lisp"
+      );
+      const out = build(entry);
+      const rejected = out.diagnostics.some((d) => /LL0015/.test(d));
+      return rejected
+        ? { ok: true, detail: "`:protected` is refused (LL0015), like any unknown modifier" }
+        : {
+            ok: false,
+            detail: `expected LL0015, got: ${out.diagnostics.join(",") || (out.compiled ? "compiled clean" : "no diagnostics")}`,
+          };
+    },
+  },
 ];
 
 function main() {
