@@ -494,7 +494,14 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
      if (t._type === 'type-name') {
          return typeof t.name === 'string' ? t.name : 'Any';
      }
-     
+
+     // A generic type -- `Iterable<Int>` -- keeps its base under `.name` (a nested type-name); the
+     // generic ARGUMENTS are erased for a name lookup. Without this the base read as `Any`, and an
+     // `:extension` whose receiver was a generic protocol never matched (Ea).
+     if (t._type === 'generic-type') {
+         return t.name ? this.getTypeName(t.name) : 'Any';
+     }
+
      if (t._type === 'function-type') return 'Function';
      
      // Fallback for direct string or object with name
@@ -2860,6 +2867,25 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           ? this.memberKindOn((sourceObject ?? objectName)!, sourceMember, head)
           : undefined;
 
+      // Phase E / Ea: `:extension` dispatch. `(x.m a)` lowers to the free call `m(x, a)` when x's type is
+      // a nominal user type that lacks a native `m` (memberKind undefined) and an `:extension m` conforms
+      // to it. BEFORE the native branches: an extension `m` is itself a known free function, so the
+      // `isKnownFunction` branch below would otherwise emit `x.m()`.
+      if (
+        memberKind === undefined &&
+        head._type === "composite-identifier" &&
+        callee.type === "MemberExpression" &&
+        (sourceObject ?? objectName)
+      ) {
+        const extFn = this.extensionFor((sourceObject ?? objectName)!, sourceMember, head);
+        if (extFn) {
+          return ESTreeBuilder.callExpression(node, ESTreeBuilder.identifier(node, extFn), [
+            callee.object as ESTree.Expression,
+            ...args,
+          ]);
+        }
+      }
+
       // A FIELD is a read. Full stop -- and it does not matter what it is called.
       if (memberKind === "field" && args.length === 0) {
         return callee;
@@ -3626,6 +3652,70 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     }
 
     return typeInfo;
+  }
+
+  private _extensionTable?: Map<string, { fnName: string; receiverType: string }[]>;
+
+  /**
+   * Phase E / Ea: `:extension` dispatch, COMPILE-TIME and NOMINAL. Every `:extension` function in the
+   * symbol-table forest (imported ones count -- the forest is joined), keyed by its NAME, with the
+   * SOURCE name of its receiver type (the first parameter). Built once.
+   */
+  private extensionTable(): Map<string, { fnName: string; receiverType: string }[]> {
+    if (this._extensionTable) return this._extensionTable;
+    const table = new Map<string, { fnName: string; receiverType: string }[]>();
+    const symbols = this.context.symbolTable?.getAllSymbols();
+    if (symbols) {
+      for (const [name, entry] of symbols) {
+        if (entry.nodeType !== "function" || !entry.modifiers?.has("extension")) continue;
+        const receiver = (entry.value as ast.FunctionNode)?.params?.[0]?.type;
+        if (!receiver) continue; // an extension with no receiver dispatches on nothing (Eb diagnoses it)
+        const list = table.get(name) ?? [];
+        list.push({ fnName: name, receiverType: this.getTypeName(receiver) });
+        table.set(name, list);
+      }
+    }
+    this._extensionTable = table;
+    return table;
+  }
+
+  /**
+   * Does `(objectName.memberName)` resolve to an `:extension`? Only when the receiver's type is a KNOWN
+   * nominal user type that lacks a native `memberName` (checked by the caller) and NOMINALLY conforms to
+   * some `:extension memberName`'s receiver type. Returns the encoded free-function name, or undefined.
+   * An UNKNOWN receiver type returns undefined -- it falls to `__ll_member`, exactly as member access
+   * already does, so coverage grows as inference does.
+   */
+  private extensionFor(objectName: string, memberName: string, from?: ast.ASTNode): string | undefined {
+    const candidates = this.extensionTable().get(memberName);
+    if (!candidates?.length) return undefined;
+    const typeInfo = this.receiverType(objectName, from);
+    if (!typeInfo) return undefined;
+    for (const c of candidates) {
+      if (this.receiverConformsTo(typeInfo, c.receiverType)) return encodeIdentifier(c.fnName);
+    }
+    return undefined;
+  }
+
+  /**
+   * Nominal conformance -- the same shape the checker's `isSubtype` walks: the type IS `typeName`, or it
+   * `:implements` it, or an ancestor does. This is what excludes arrays and primitives: their
+   * `InferredType` carries neither a matching name nor an `implements` entry, so a native `arr.map` is
+   * never captured by an `Iterable` extension.
+   */
+  private receiverConformsTo(typeInfo: any, typeName: string): boolean {
+    const seen = new Set<any>();
+    let t = typeInfo;
+    while (t && !seen.has(t)) {
+      seen.add(t);
+      if (t.name === typeName) return true;
+      if (t.implementedInterfaces?.some((i: any) => i.interfaceName === typeName)) return true;
+      const parent = t.parentClass ?? t.codegenMetadata?.parentClass;
+      if (!parent) break;
+      const parentSym = this.context.symbolTable?.resolveSymbol(parent);
+      t = parentSym?.inferredType ? this.unwrapReceiverType(parentSym.inferredType) : undefined;
+    }
+    return false;
   }
 
   /** The class or struct that lexically encloses `node`, by name. */

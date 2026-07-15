@@ -2182,6 +2182,67 @@ const CASES: Case[] = [
       "be undefined. Squares 1 4 9 16 25 -> take 3 -> count = 3.",
   },
 
+  // ===============================================================================================
+  // Phase E / Ea -- `:extension` methods, COMPILE-TIME nominal dispatch. `(x.m a)` lowers to the free
+  // call `m(x, a)` when x's static type is a nominal user type lacking a native `m` and some
+  // `:extension m` has a receiver type the checker deems a supertype (isSubtype). Native members win;
+  // arrays/primitives never resolve (the checker does not model their methods).
+  // ===============================================================================================
+  {
+    name: "Ea: (x.m) on a typed struct dispatches to a free :extension",
+    source: `(defstruct Rectangle (let :ctor w <- Int) (let :ctor h <- Int))
+(fn :extension area [self <- Rectangle] -> Int (* self.w self.h))
+(let r (new Rectangle 3 4))
+(console.log (r.area))`,
+    expect: ["12"],
+    emitted: { must: [/area\(r\)/], mustNot: [/r\.area\(/] },
+    wasBroken:
+      "`:extension` was unwired: `(r.area)` -- `area` being a known free function -- emitted `r.area()`, " +
+      "`TypeError: r.area is not a function`. Ea resolves the extension in the checker (Rectangle has no " +
+      "`area` member; `area`'s receiver is Rectangle) and codegen emits the free call `area(r)`.",
+  },
+  {
+    name: "Ea: a PROTOCOL :extension dispatches on a nominal Iterable conformer",
+    source: `(import "std/iter")
+(defstruct Countdown :implements Iterable<Int>
+  (mut :ctor n <- Int)
+  (fn iterator [] -> Iterator<Int> (return this))
+  (fn next [] -> Int? (
+    (if (<= this.n 0)
+        (return nil)
+        (
+          (let cur this.n)
+          (this.n := (- this.n 1))
+          (return cur))))))
+(fn :extension total [self <- Iterable<Int>] -> Int (
+  (mut s 0)
+  (for :each x :from self :then (s := (+ s x)))
+  (return s)))
+(let c (new Countdown 3))
+(console.log (c.total))`,
+    expect: ["6"],
+    emitted: { must: [/total\(c\)/] },
+    wasBroken:
+      "The primary use case, and why runtime dispatch was a dead end: `total` targets `Iterable<Int>`, " +
+      "and `Countdown :implements Iterable<Int>`. `isSubtype(Countdown, Iterable<Int>)` is nominal -- the " +
+      "checker knows it -- so `(c.total)` lowers to `total(c)`, summing 3 2 1 = 6. `__ll_is_type` could " +
+      "never have matched `Countdown` against `\"Iterable\"` at run time.",
+  },
+  {
+    name: "Ea: a native array method is NOT shadowed by an Iterable :extension (guard)",
+    source: `(import "std/iter")
+(fn :extension map [self <- Iterable<Int> f] -> Int[] [999])
+(let arr [1 2 3])
+(let m (arr.map (fn [x] (* x 2))))
+(console.log m[0] m[1] m[2])`,
+    expect: ["2 4 6"],
+    wasBroken:
+      "The load-bearing guard. `arr : Int[]` conforms to `Iterable<Int>`, and the checker does not model " +
+      "the native array `.map`, so a naive resolver would rewrite `(arr.map f)` to the bogus extension " +
+      "`map` returning [999]. Resolution fires ONLY for nominal user types (struct/class/interface), " +
+      "never arrays/primitives -- so `arr.map` stays the native eager map: 2 4 6, not 999.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",
