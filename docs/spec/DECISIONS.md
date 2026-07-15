@@ -2842,3 +2842,95 @@ frontends one file closer to agreement (18 → 19 identical in the differential)
 compiles to `false`. Unlike the others, it may not be meaningfully implementable on a JS target: a
 closure does not carry its parameter types at run time, so there is nothing to test against. Left dead,
 and now the *only* thing `generateCondition`'s `default: false` still catches.
+
+## D29 — language constructs are defined by stdlib protocols, and lowered per backend
+
+The principle behind everything in this section. A surface construct -- `for :each`, a generator,
+`async`/`await`, and later `with`/`?`/custom deconstruction -- is **not** a hardcoded thing the code
+generator knows how to emit. It is **defined by an interface in the stdlib**, and each backend
+**lowers that interface its own way**.
+
+```
+  construct        protocol (stdlib)         JS lowering          LLVM lowering (future)
+  ---------        -----------------         -----------          ----------------------
+  for :each        Iterable<T>/Iterator<T>   for...of             vtable calls + loop
+  :gen / yield     Iterator<T>               function* / yield    coroutine intrinsics
+  async / await    Awaitable<T>              async / await        state machine
+```
+
+This was learned from the failure it prevents. `for :each` was hardcoded to emit `for...of`, with **no
+protocol behind it** -- so the type checker could not read an element type (the loop variable was
+Unknown, an inference gap measured on the `__ll_member` thermometer), a **user type could not be made
+iterable at all**, and the construct could never move to another backend without rewriting codegen.
+
+The insight that makes this cheap rather than heroic: **on a JS target the runtime already IS the
+protocol.** `for (x of coll)` literally calls `coll[Symbol.iterator]()` then `.next()`; `function*`/
+`yield` is a generator; `async`/`await` is a Promise state machine. So "desugar onto the protocol" does
+NOT mean rewriting `for :each` into a `while (next …)` loop -- that would uglify the JS, slow it down,
+and move every golden for no reason. It means the construct's **semantics** are the protocol, and its
+**JS lowering** happens to be the native form. The reframe matters, because the *wrong* reading of
+"desugaring" produces worse output than the thing it replaces.
+
+The C# framing -- "`await` is sugar over the `Task<T>` state machine, `foreach` over
+`IEnumerator.MoveNext`" -- is the right **mental** model and the wrong **implementation** model for a
+JS target. C# lowers to state machines because IL needs them. On JS, the runtime provides them; l-lang
+should **lean on the target's primitives**, not reimplement them. The value l-lang adds is the
+**type-level protocol** (so the checker can reason, and user types can participate), not the machine.
+
+The protocol lives at the language level precisely SO THAT it survives a backend swap. A future LLVM/HIR
+backend has all the building blocks -- vtable dispatch for the interface, `llvm.coro.*` intrinsics for
+generators -- and lowers the *same* `Iterable<T>`/`Iterator<T>` differently. The desugaring is written
+once, against the protocol; only the leaves change.
+
+## D30 — the iteration protocol: `Iterable<T>` / `Iterator<T>`
+
+The first protocol under D29, in `lib/std/iter.lisp`:
+
+```lisp
+(definterface Iterator<T>
+  (fn next [] -> T?))          ;; the cursor: next element, or nil when exhausted
+
+(definterface Iterable<T>
+  (fn iterator [] -> Iterator<T>))   ;; the source: a FRESH cursor each call
+```
+
+**`next` returns `T?`, and `nil` means done** -- not a `{value, done}` record. That folds onto D9: the
+same optional, the same forced-unwrap, the same flow-narrowing already in the language. A consumer
+writes `(let v (next it))` and D9 narrows `v` to `T` after the nil-check, with no new machinery. On the
+JS backend the `T? ↔ {value, done}` bridge is the code generator's job (it lands with generators), not
+the protocol's.
+
+**`iterator` yields a FRESH cursor per call**, so a source can be walked more than once. A generator or
+a one-shot stream can of course return a cursor that is already spent after one pass; the interface
+does not forbid it, but a collection must not.
+
+### `for :each` is defined by this protocol
+
+```
+(for :each x :from coll :then body [:else e])
+```
+
+requires `coll : Iterable<T>` and binds `x : T` in `body`. **Conformance is by interface** (the ruling):
+a user type declares `:implements Iterable<T>`. The built-in collections are blanket conformers, exactly
+as arrays implement `IEnumerable` in C# and slices implement `IntoIterator` in Rust:
+
+| collection | element `T` |
+|---|---|
+| `T[]` | `T` |
+| `String` | `Char` |
+| `Map<K,V>` | `[K, V]` (a key/value pair) |
+
+Gradual, as everywhere: an **Unknown** collection binds `x` as Unknown and reports nothing; a **known
+non-iterable** (`(for :each x :from 5 …)`) is a diagnostic.
+
+### What this ruling does NOT yet do
+
+The interfaces are DEFINED here (Ita) and `for :each` types its element against them (Itb). Two things
+are explicitly the *next* phase, because they arrive together:
+
+- **generators** (`:gen` + `yield` → `function*`), the first non-native `Iterable`, and
+- **user-type conformance in the JS `for...of` lowering** -- wiring a user `iterator()` to
+  `[Symbol.iterator]` and bridging its `next() -> T?` to JS's `{value, done}`.
+
+Until then, native collections flow through the protocol (via `for...of`, which already is the
+protocol) and user `:implements Iterable` type-checks but is not yet consumable by `for :each` codegen.

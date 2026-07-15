@@ -1881,6 +1881,25 @@ const CASES: Case[] = [
       "found or the chain ends.",
   },
 
+  {
+    name: "D30/Ita: std/iter is importable and a type conforms to Iterable<T>",
+    source: `(import "std/iter")
+(defstruct One :implements Iterable<Int>
+  (let :ctor v <- Int)
+  (fn iterator [] -> Iterator<Int> (return this))
+  (fn next [] -> Int? (return this.v)))
+(let o (new One 7))
+(console.log (o.v))`,
+    expect: ["7"],
+    wasBroken:
+      "NOT broken -- a GUARD, and the reason it exists is the 'who calls it?' rule. Ita ships the " +
+      "iteration protocol as `lib/std/iter.lisp` (`Iterable<T>`, `Iterator<T>`), and NOTHING consumes " +
+      "it until Itb/generators. A stdlib file with no test is exactly the kind of thing that rots " +
+      "unnoticed. This pins that the interfaces parse, import, and are conformable-to -- so the " +
+      "substrate Itb builds on cannot break silently. `Iterator<T>.next` returning `T?` (D30, folding " +
+      "D9) is part of what compiles here.",
+  },
+
   // --- The three that must NOT move. A careless fix breaks each of these. ---
   {
     name: "D25/Xb: a `return` inside a `cond` returns from the FUNCTION",

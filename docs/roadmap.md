@@ -207,6 +207,31 @@ quietly dropped:
 *   **Abstract classes** — `:abstract` is not a modifier (`LL0015`). Additive; belongs with the class
     surface (D11), not with the type system.
 
+## 🚧 Phase It: Protocols back the syntax (D29) — iteration first (D30)
+
+**Theme:** "A construct is an interface, lowered per backend."
+
+The strategic ruling (**D29**): surface constructs -- `for :each`, generators, `async`/`await`, later
+`with`/`?` -- are **defined by stdlib interfaces** and **lowered per backend**, not hardcoded in the
+code generator. Stolen from C#/Rust/Swift, and it is *why* Phase 6/7 can swap in an LLVM backend: the
+desugaring is written once against the protocol; only the leaves change (JS `for...of` / `function*`,
+LLVM vtable + `llvm.coro.*`). The insight that makes it cheap: **on JS the runtime already IS the
+protocol**, so lowering is the native form, not a reimplemented state machine.
+
+*   [x] **Ita — the iteration protocol.** `Iterable<T>` / `Iterator<T>` in `lib/std/iter.lisp`; `next`
+        returns `T?` (nil = done, folding D9). **D29**, **D30**. Interfaces only, no behaviour change.
+*   [ ] **Itb — `for :each` types its element.** The checker binds the loop variable to `T` via
+        `Iterable<T>` (user types) or blanket conformance (native `T[]`/`String`/`Map`). Closes the
+        element-typing inference gap (the `__ll_member` thermometer); a known non-iterable is diagnosed.
+        JS codegen unchanged (`for...of` already is the protocol).
+*   [ ] **Generators.** `:gen` + `yield` → `function*`; user-type `Iterable` conformance wired into the
+        JS `for...of` lowering (`iterator()` → `[Symbol.iterator]`, with the `T? ↔ {value, done}`
+        bridge). The first non-native `Iterable`.
+*   [ ] **LINQ.** Lazy `map`/`filter`/`take`/`zip`/`enumerate` as generators over `Iterable<T>` -- pure
+        stdlib once generators land. The C# LINQ steal.
+*   [ ] **async** (parallel track). `Awaitable<T>` / `Task<T>`, lowered to JS Promise/`async`. `fn :async`
+        already partly exists; needs the protocol interface and type-checking.
+
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."
 
