@@ -1,16 +1,9 @@
 import fs from "node:fs";
-// import peggy from "peggy";
-import { parse } from "./grammar/l-lang"
 import * as ast from "./ast";
 import path from "node:path";
-import type { CompilationFrontend } from "../Context";
 import { LLangLexer } from "./grammar_v2/tokens";
 import { parser as v2Parser } from "./grammar_v2/Parser";
 import { LLangAstBuilder } from "./grammar_v2/AstBuilder";
-
-// const grammar = fs.readFileSync("./compiler/grammar/l-lang.pegjs", {
-//   encoding: "utf-8",
-// });
 
 function assignParentNodeReferences(
   node: ast.ASTNode,
@@ -58,9 +51,6 @@ interface CacheEntry {
 
 export class AstProvider {
   private cache: Map<string, CacheEntry> = new Map<string, CacheEntry>();
-  // private parser: peggy.Parser = peggy.generate(grammar);
-
-  constructor(private frontend: CompilationFrontend = "grammar_v2") {}
 
   /**
    * grammar_v2 (Chevrotain): tokenize, parse to a CST, then build the AST.
@@ -91,13 +81,6 @@ export class AstProvider {
   }
 
   private parseSource(source: string, filePath: string): ast.ProgramNode {
-    if (this.frontend === "peg") {
-      return parse(source, {
-        startRule: "Program",
-        grammarSource: filePath, // Good: helps source maps map back to absolute path
-        cache: true,
-      });
-    }
     return this.parseWithGrammarV2(source, filePath);
   }
 

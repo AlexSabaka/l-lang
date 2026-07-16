@@ -31,8 +31,6 @@ import { spawnSync } from "node:child_process";
 import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
 
 const VERBOSE = process.argv.includes("--verbose");
-const FRONTEND = (process.argv.find((a) => a.startsWith("--frontend="))?.split("=")[1] ??
-  "grammar_v2") as any;
 const RUN_TIMEOUT_MS = 10_000;
 
 interface Case {
@@ -2565,7 +2563,6 @@ function run(c: Case, tmp: string): Outcome {
     stdout: false,
     stage: "codegen",
     language: "js",
-    frontend: FRONTEND,
   };
 
   let code: string;
@@ -2681,7 +2678,6 @@ function main() {
   fs.mkdirSync(tmp, { recursive: true });
 
   console.log(`=== codegen: emitted JavaScript is RUN, and its output asserted ===`);
-  console.log(`    frontend: ${FRONTEND}\n`);
 
   let failed = 0;
   for (const c of CASES) {

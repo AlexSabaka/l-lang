@@ -267,7 +267,6 @@ function baseOptions(stage: "types" | "codegen"): CompilerOptions {
     // to actually run, so those probes ask for "codegen".
     stage,
     language: "js",
-    frontend: "grammar_v2",
   };
 }
 

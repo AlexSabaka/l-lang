@@ -59,7 +59,6 @@ function baseOptions(collect: (d: Diagnostic) => void): CompilerOptions {
     stdout: false,
     stage: "types", // stop before codegen: we are measuring the type stage, not the backend
     language: "js",
-    frontend: "grammar_v2",
   };
 }
 

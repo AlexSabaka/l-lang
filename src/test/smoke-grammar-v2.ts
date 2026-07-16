@@ -212,8 +212,8 @@ const CASES: SmokeCase[] = [
     // `AstProvider.getSource` slices `[start, end)`. So it was right under the PEG and TRUNCATED EVERY
     // DIAGNOSTIC'S SOURCE EXCERPT BY ONE CHARACTER under grammar_v2 -- the default. It printed
     // `(let x <- Int "str"` with the closing paren missing, which reads as a wrapping artefact, which
-    // is how it hid in plain sight. `test:diff-frontends` could never have caught it: it ignores
-    // `_location`.
+    // is how it hid in plain sight. The frontend-diff harness (retired with the PEG in Pb) could never
+    // have caught it either: it compared node shapes and ignored `_location` entirely.
     //
     // Slicing the form back out of its own source is the invariant, and it is the one that matters --
     // it is what `getSource` does.

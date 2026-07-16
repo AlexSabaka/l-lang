@@ -34,8 +34,6 @@ import { MultiLineBuffer } from "../cli/repl/MultiLineBuffer";
 import { ReplCompleter } from "../cli/repl/ReplCompleter";
 
 const VERBOSE = process.argv.includes("--verbose");
-const FRONTEND = (process.argv.find((a) => a.startsWith("--frontend="))?.split("=")[1] ??
-  "grammar_v2") as any;
 
 type Step =
   /** One submitted input, evaluated by the session. */
@@ -525,7 +523,6 @@ function options(): CompilerOptions {
     stdout: false,
     stage: "codegen",
     language: "js",
-    frontend: FRONTEND,
   };
 }
 
@@ -741,7 +738,6 @@ function run(c: Case): string[] {
 
 function main() {
   console.log(`=== repl: the session is driven directly -- no pty, no readline ===`);
-  console.log(`    frontend: ${FRONTEND}\n`);
 
   let failed = 0;
   for (const c of CASES) {

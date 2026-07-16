@@ -45,7 +45,6 @@ function options(): CompilerOptions {
     stdout: false,
     stage: "codegen",
     language: "js",
-    frontend: "grammar_v2",
   };
 }
 

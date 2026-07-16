@@ -15,7 +15,7 @@ import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 import { spawnSync } from 'child_process';
-import { Context, CompilerOptions, CompilationFrontend, LogLevel } from '../compiler/Context';
+import { Context, CompilerOptions, LogLevel } from '../compiler/Context';
 import { MANIFEST, ExampleStatus } from './manifest';
 
 // Configuration
@@ -39,13 +39,6 @@ function compiledPathFor(lispPath: string): string {
 // Mirrors the CLI's defaults for `transform <file>` with no flags (see getCompilerOptions.ts).
 // logger is a no-op: the old execSync-based runner discarded the compile step's own stdout/stderr
 // entirely (stdio: ['ignore','pipe','pipe']), so warnings never surfaced through the test suite.
-// --frontend=peg runs the whole suite through the legacy scannerless PEG parser instead of the
-// default Chevrotain one. That is what makes the cutover falsifiable: both must produce the same
-// results, and any file where they don't is a finding.
-const FRONTEND: CompilationFrontend =
-  (process.argv.find((a) => a.startsWith('--frontend='))?.split('=')[1] as CompilationFrontend) ??
-  'grammar_v2';
-
 const COMPILE_OPTIONS: CompilerOptions = {
   minimumLogLevel: LogLevel.Warning,
   logger: () => {},
@@ -53,7 +46,6 @@ const COMPILE_OPTIONS: CompilerOptions = {
   stdout: false,
   stage: 'codegen',
   language: 'js',
-  frontend: FRONTEND,
 };
 
 interface TestResult {

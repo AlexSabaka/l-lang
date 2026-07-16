@@ -3,13 +3,11 @@ import { Command } from "commander";
 import {
   CompilerOptions,
   CompilationLanguage,
-  CompilationFrontend,
   LogLevel,
 } from "../compiler/Context";
 import { ModuleResolver } from "../compiler/analysis/ModuleResolver";
 
 const VALID_LANGUAGES: CompilationLanguage[] = ["js", "legacy-js"];
-const VALID_FRONTENDS: CompilationFrontend[] = ["grammar_v2", "peg"];
 
 function createFileLogger(file: string) {
   const stream = fs.createWriteStream(file, { flags: "a" });
@@ -71,13 +69,6 @@ export function getCompilerOptions(
     );
   }
 
-  const frontend: CompilationFrontend = opts.frontend || "grammar_v2";
-  if (!VALID_FRONTENDS.includes(frontend)) {
-    throw new Error(
-      `Invalid --frontend '${opts.frontend}'. Valid values are: ${VALID_FRONTENDS.join(", ")}`
-    );
-  }
-
   // `-I` APPENDS to the shipped lib/, it does not replace it. Passing `libPaths: []` would silently
   // switch the stdlib off, so an absent flag must stay `undefined` and let Context take the default.
   const extraLibs: string[] = Array.isArray(opts.lib) ? opts.lib : [];
@@ -89,7 +80,6 @@ export function getCompilerOptions(
     minimumLogLevel: logLevel,
     logger: opts.logFile ? createFileLogger(opts.logFile) : console.log,
     language,
-    frontend,
     libPaths,
     stage: opts.stage || "codegen",
     includeRuntimeShim: opts.runtimeShim !== undefined ? !!opts.runtimeShim : true, // default to true

@@ -22,7 +22,6 @@ document.onload = () => {
       minimumLogLevel: LogLevel.Error,
       includeRuntimeShim: true,
       language: "js",
-      frontend: "grammar_v2",
       stage: "codegen",
       stdout: true,
     };

@@ -21,10 +21,6 @@ program
   .option("-s, --silent", "silent mode")
   .option("--language <lang>", "target backend: js (default) or legacy-js")
   .option(
-    "--frontend <name>",
-    "parser: grammar_v2 (Chevrotain, default) or peg (legacy scannerless grammar)"
-  )
-  .option(
     "-I, --lib <dir>",
     "add a library search root for `(import \"std/...\")` (repeatable). The shipped lib/ is always searched.",
     (dir: string, acc: string[]) => acc.concat(dir),
