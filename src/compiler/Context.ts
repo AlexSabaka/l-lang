@@ -558,9 +558,9 @@ export class Context {
     // `visit${node._type}` with no capitalisation at all, so even "variable" resolved to
     // `visitvariable` and matched nothing. It did zero work, and because that visit() override
     // also suppressed the inherited child-walk, it never even recursed. Its four visitors
-    // duplicated InferAndCheckPass's, so repairing it would only have double-reported. Its one
-    // useful part -- `reportTypeError`, the type system's ONLY results.add path -- now lives in
-    // InferAndCheckPass, which has the working dispatch and the real checks.
+    // duplicated InferAndCheckPass's, so repairing it would only have double-reported. The real
+    // checks live in InferAndCheckPass, which has the working dispatch; their diagnostics route
+    // through the centralized `report()` (rules/diagnostics) -- the type system's path to hasErrors.
     const typesVisitCount = (inferTypesVisitor as any).getVisitCount?.() || 0;
     
     this.performanceMetrics.endTimer("types", desugaredNodeCount, typesVisitCount, {

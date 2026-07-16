@@ -357,6 +357,31 @@ literal) — the annotation `{:f <- T}` already parsed; it was just dropped in t
     *   Known gap: a FULLY-computed field read `(get xs i).name` (inline, no intermediate binding) drops
             the member — the `case "member"` / computed-call path; works via a named intermediate.
 
+## ✅ Diagnostics centralization: the `rules/diagnostics` registry (D38)
+Every imperative compiler diagnostic — five `report*` helpers hardcoding a `(code, message)` literal at each
+call site, across four visitors and `Context` — folded into one registry. A diagnostic is now a
+`def(code, severity, template)` in a per-domain category file; call sites read `this.report(D.X, node, params)`
+(visitors) or the free `report(ctx, D.X, node, params)` (`Context`, `JSClassBuilder`). Behaviour-preserving,
+proven by a characterization snapshot (`test:diagnostics`, 42 probes, byte-for-byte). Sub-phases Ea–Ee — the
+"E" is for *errors*, distinct from the older Phase E (`:extension`).
+*   [x] **Ea** — the core: `def`/`report` (a leaf module, imports all type-only), `BaseAstVisitor.report`, the
+        registry aggregate, and the gate — integrity (one severity per code, `LLdddd`) + a free-code ALLOCATOR
+        (next-free per band) + the characterization snapshot. Both gates proven RED-first.
+*   [x] **Eb** — the type band (LL0200–LL0230), 34 sites, `−100` lines in `InferTypesAstVisitor`. A code may
+        back several named variants (LL0204 unary/binary, LL0202); three byte-identical pairs deduped.
+*   [x] **Ec** — syntax/modifier (LL0015–0019, LL0023); the declarative `NodeValidationRules` (LL0001–0022)
+        stay self-testing, their codes registered as `EXTERNAL_CODES`.
+*   [x] **Ed** — codegen (LL0100–0102), module (LL0217, LL0300), comptime (LL0099). The two DEVIANTS
+        normalized: `reportUnfoldable`'s inline object literal, `reportImportError`'s baked-in code.
+*   [x] **Ee** — docs (D38), this entry, `rules/diagnostics/README.md`, and the stale-comment sweep. All five
+        helpers are gone; every diagnostic flows through `report()`.
+*   **FINDING (open):** LL0015–LL0019 are OVERLOADED — the imperative modifier diagnostics collide with
+        unrelated declarative rules (numbered independently). Preserved exactly (renumbering changes an emitted
+        code — corpus-affecting, a deliberate call); surfaced by a permanent NOTE in `test:diagnostics`.
+*   **Follow-ups (flagged, not done):** renumber the overloaded codes; make the `test:type-errors` `LL02*`
+        filter category-based (may surface currently-hidden diagnostics); fold the declarative rules into the
+        registry too.
+
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."
 

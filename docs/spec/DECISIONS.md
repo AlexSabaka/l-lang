@@ -3331,3 +3331,56 @@ params now type (it is blocked further on, on aspirational match-destructuring).
 FULLY-computed field read `(get xs i).name` (no intermediate binding) drops the member -- the `case
 "member"` / computed-call path returns the object type; it works via a named intermediate, and is a
 distinct fix.
+
+## D38 — diagnostics live in ONE place: the `rules/diagnostics` registry (sub-phases Ea–Ee)
+
+Every compiler diagnostic used to be born at its call site. The imperative ones -- ~50 across five `report*`
+helpers in four visitors and `Context` -- each HARDCODED a `("LLxxxx", \`message\`)` literal, so a message
+lived wherever it was thrown and the answer to "what is the next free code?" was `grep "LL0"` read carefully.
+(The declarative `NodeValidationRules`, LL0001–0022, were already centralized -- they carry their own `test`
+predicate -- but they were the exception.) The RULING: an imperative diagnostic is DATA. Its code, severity
+and message TEMPLATE live in `rules/diagnostics/`, one category file per emitting domain (`type`, `syntax`,
+`codegen`, `module`, `comptime`); the call site supplies only the node and the params. (The `E` in the
+sub-phase labels is for *errors* -- unrelated to the older Phase E, `:extension`.)
+
+### The shape
+
+`def(code, severity, message)`, where `message` is a function of typed PARAMS. A visitor reports with
+`this.report(TypeDiagnostics.X, node, {…})` (added to `BaseAstVisitor`); the two non-visitors (`Context`,
+`JSClassBuilder`) call the free `report(context, def, node, {…})`. `report` builds the same `Rule`
+(`test: () => true` -- the check already happened) and hands it to the one sink, `context.results`. No new
+error path, codegen-free, not one golden moved.
+
+Three properties are load-bearing:
+
+- **Keyed by NAME, code is a field.** A code legitimately backs several message VARIANTS the checker
+  distinguishes but one sentence cannot -- LL0204 is a unary AND a binary "operator not defined", LL0202 an
+  assignment AND an assign-BACK mismatch, LL0099 three comptime failures, LL0102 / LL0217 two each. Where two
+  sites produced a byte-identical sentence they now share ONE def (a real dedup).
+- **Leaf purity.** Params are PRIMITIVES; any type is pre-formatted at the call site (`formatType`). So
+  `rules/diagnostics/` imports nothing from the compiler at runtime (all its imports are type-only) -- it
+  cannot form a cycle, and a def needing a compiler import would be the design slipping.
+- **The declarative rules stay put.** `NodeValidationRules` is a DIFFERENT mechanism (self-checking, not
+  call-site-decided), so it is not migrated; its live codes are registered as `EXTERNAL_CODES` so the
+  allocator sees the whole picture.
+
+### The gate
+
+`test:diagnostics` is the phase's instrument and its falsifier. It (1) checks registry integrity -- one
+severity per code, `LLdddd` shape -- and prints a free-code ALLOCATOR (next-free per band, so a new code is a
+lookup, not a grep); and (2) holds a CHARACTERIZATION SNAPSHOT: every probe's raw `(code, severity, text)`,
+pinned byte-for-byte. A behaviour-preserving migration is one the snapshot does not move; every phase re-ran
+it and it did not. 42 probes cover 23 of the ~40 codes directly; the rest (internal codegen-bug paths,
+module-boundary cases needing sibling files) are verbatim-guarded and covered by the codegen/imports suites.
+
+### The finding, preserved not fixed
+
+LL0015–LL0019 are OVERLOADED: the imperative modifier diagnostics were numbered independently of the
+declarative rules and landed on codes those rules already used (LL0016 is "reserved native modifier" AND
+"class must have a name"; LL0017 fires for a duplicate `for` clause AND, twice, for If/When conditions). This
+is exactly the collision a registry exists to prevent -- and it predates the registry. Renumbering changes an
+EMITTED code, which is corpus-affecting and a semantic decision, not a refactor's; so the codes are preserved
+exactly and the overlap is surfaced by a permanent NOTE in `test:diagnostics`. Reassigning them to free
+numbers is a deliberate later task. Two further follow-ups are logged, not taken: the `test:type-errors`
+`LL02*`-only filter could become category-based (it may surface currently-hidden diagnostics), and the
+declarative rules could eventually fold into the registry too.
