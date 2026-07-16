@@ -1116,6 +1116,26 @@ ${PRODUCER}
     why: "Ue: `[0 1]` yields `[Int Int]`, not the declared `[Int String]`.",
   },
 
+  // --- Uf: a DESTRUCTURING for-each loop var is typed from the iterable's element (a tuple gives each
+  // name its positional type). This is the consumer side of enumerate/zip. Was Unknown before. ---
+  {
+    name: "Uf: a destructured for-each loop var carries its tuple element type",
+    source:
+      '(import "std/iter")\n' +
+      '(fn :gen pairs [] -> Iterator<[Int String]> (for :each x :from [1 2] :then ((yield [0 "a"]))))\n' +
+      '(for :each [i s] :from (pairs) :then ((let bad <- Int s)))',
+    expect: /LL0200|Type mismatch/,
+    why: "Uf: `s` is String (element 1 of the tuple), so assigning it to Int is a mismatch. Was Unknown -> silent.",
+  },
+  {
+    name: "Uf: a destructured for-each loop var used correctly is silent",
+    source:
+      '(import "std/iter")\n' +
+      '(fn :gen pairs [] -> Iterator<[Int String]> (for :each x :from [1 2] :then ((yield [0 "a"]))))\n' +
+      '(for :each [i s] :from (pairs) :then ((let n <- Int i)))',
+    silent: true,
+  },
+
   // --- P5d: the erasure rule is GONE. `T` is no longer a universal escape hatch. ---
   {
     // `(fn pair<T> [a <- T b <- T])` called as `(pair 1 "x")`: `T` is solved to `Int` from the first

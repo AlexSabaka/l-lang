@@ -2101,12 +2101,14 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       );
     }
 
-    // Bind the loop variable. A destructuring `:each [k v]` binds N names, not typed yet (D5/P8),
-    // exactly as destructuring parameters and lets are left; a plain name gets the element type, or
-    // Unknown when we could not resolve one (so a same-named outer symbol cannot leak in).
+    // Bind the loop variable. A plain name gets the element type (or Unknown, so a same-named outer
+    // symbol cannot leak in); a destructuring `:each [i x]` binds its names from the element type (Uf) --
+    // a tuple element gives each name its positional type, an array element gives each the same.
     if (!ast.isBindingPattern(node.variable)) {
       const name = (node.variable as ast.IdentifierNode).id;
       this.typeEnv.bindIdentifier(name, elemType ?? TypeEnvironment.unknown(), node.variable);
+    } else {
+      bindPatternToType(node.variable, elemType, node.variable, this.typeEnv);
     }
 
     if (node.then) this.visit(node.then);
@@ -2128,6 +2130,14 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
     if (t.isArray || (t.kind === "generic" && t.name === "Array")) {
       return t.inner ?? t.generics?.[0];
+    }
+
+    // The iteration protocol names its element directly: an `Iterator<X>` / `Iterable<X>` yields `X`
+    // (its own type argument). Reached by a chain's result -- `(coll |> enumerate)` is `Iterator<[Int T]>`
+    // and yields the pair `[Int T]`. (The implements-walk below reads the DECLARED clause's generic, which
+    // is the interface's own unsubstituted parameter -- right for a struct conformer, not for `Iterator<X>`.)
+    if ((t.name === "Iterator" || t.name === "Iterable") && t.generics?.length) {
+      return t.generics[0];
     }
 
     const impl = (t.implementedInterfaces ?? []).find(
