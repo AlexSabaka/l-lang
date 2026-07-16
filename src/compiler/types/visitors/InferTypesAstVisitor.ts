@@ -2144,6 +2144,34 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     return ["Int", "Real", "Float", "Number", "Boolean", "Bool", "Char"].includes(t.name);
   }
 
+  /**
+   * Phase Ue: EXPECTED-TYPE (bidirectional) inference for a vector literal. A vector literal normally
+   * types `Array<T1|T2|…>` -- its per-position types lost -- so it could never match a heterogeneous tuple.
+   * When an expected TUPLE type is in hand (a let/return/yield annotation), infer the literal element-wise
+   * against it and produce a real tuple, so `(let p <- [Int String] [1 "a"])` types `[1 "a"]` as `[Int
+   * String]`. Anything not a vector-in-a-tuple-context falls through to ordinary inference.
+   */
+  private inferValueWithExpected(
+    node: ast.ASTNode,
+    expected: InferredType | undefined
+  ): InferredType {
+    if (node?._type === "vector" && expected) {
+      const exp = TypeChecker.unwrapType(expected, this.symbolTable);
+      if (exp?.kind === "tuple") {
+        const values = (node as ast.VectorNode).values ?? [];
+        const te = exp.elements ?? [];
+        if (values.length === te.length) {
+          const tuple = TypeEnvironment.tuple(
+            values.map((v, i) => this.inferValueWithExpected(v, te[i]))
+          );
+          this.typeEnv.setType(node, tuple);
+          return tuple;
+        }
+      }
+    }
+    return this.inferExpressionType(node);
+  }
+
   visitVariable(node: ast.VariableNode) {
     // See CollectTypesPass.visitVariable: destructuring bindings are not typed yet (D5/P8).
     if (ast.isBindingPattern(node.name)) {
@@ -2156,11 +2184,13 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // D20: `(let x <- Priv nil)` names Priv just as surely as `(new Priv)` does.
     this.checkAnnotationVisible(node.type);
 
-    // If value exists, infer its type
+    // If value exists, infer its type -- against the declared type (Ue), so a vector literal in a
+    // tuple-annotated `let` infers as that tuple rather than collapsing to `Array<union>`.
     if (node.value) {
-      const valueType = this.inferExpressionType(node.value);
+      const declaredForExpected = node.type ? this.convertAstTypeToInferred(node.type) : undefined;
+      const valueType = this.inferValueWithExpected(node.value, declaredForExpected);
       this.context.log(LogLevel.Debug, `[InferAndCheckPass.visitVariable] Inferred value type structure: ${JSON.stringify(valueType).substring(0, 200)}`);
-      
+
       // If explicit type annotation exists, check compatibility.
       //
       // From the NODE, not from a name lookup. `resolveIdentifier(varName)` asks "what type is
@@ -2395,7 +2425,8 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     for (const ret of this.collectReturns(node.body)) {
       if (!ret.value) continue;
 
-      const valueType = this.inferExpressionType(ret.value);
+      // Ue: against the declared return, so `(return [1 2])` under `-> [Int Int]` infers as the tuple.
+      const valueType = this.inferValueWithExpected(ret.value, declared);
       if (TypeChecker.isUnknown(valueType)) continue;
 
       if (!TypeChecker.isAssignable(valueType, declared, this.symbolTable)) {
@@ -2523,7 +2554,9 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     if (elementType && !TypeChecker.isUnknown(elementType)) {
       for (const y of yields) {
         if (!y.value) continue;
-        const vt = this.inferExpressionType(y.value);
+        // Ue: against the element type, so `(yield [i x])` in an `Iterator<[Int T]>` generator infers the
+        // pair as the tuple `[Int T]` rather than `Array<Int|T>` (which could never match).
+        const vt = this.inferValueWithExpected(y.value, elementType);
         if (TypeChecker.isUnknown(vt)) continue;
         if (!TypeChecker.isAssignable(vt, elementType, this.symbolTable)) {
           this.reportTypeError(

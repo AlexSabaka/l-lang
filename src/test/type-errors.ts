@@ -1088,6 +1088,34 @@ ${PRODUCER}
     why: "Ud: `x` is typed `Int` from the tuple, so returning it where `String` is declared is a mismatch (was Unknown -> silent).",
   },
 
+  // --- Ue: EXPECTED-TYPE inference -- a vector literal in a tuple-annotated context infers as that tuple
+  // (element-wise), so a HETEROGENEOUS tuple value is constructible. Before Ue the literal collapsed to
+  // `Array<union>` and could never match a heterogeneous tuple. ---
+  {
+    name: "Ue: a heterogeneous vector literal constructs a tuple against its annotation",
+    source: '(let p <- [Int String] [1 "a"])',
+    silent: true,
+    why: "Ue: [1 \"a\"] infers as [Int String] from the annotation (was Array<Int|String>, wrongly rejected).",
+  },
+  {
+    name: "Ue: expected-type inference still catches a real element mismatch",
+    source: "(let q <- [Int String] [1 2])",
+    expect: /LL0200|Type mismatch/,
+    why: "Ue: element 1 is `2`:Int against the expected String -- a mismatch, correctly.",
+  },
+  {
+    name: "Ue: a `:gen` yielding a tuple pair type-checks against Iterator<[Int String]>",
+    source: '(import "std/iter")\n(fn :gen e [] -> Iterator<[Int String]> (for :each x :from [1 2] :then ((yield [0 "a"]))))',
+    silent: true,
+    why: "Ue: the yield's `[0 \"a\"]` infers as `[Int String]` from the element type -- the enumerate/zip path (Ug).",
+  },
+  {
+    name: "Ue: a wrong yielded pair is caught (Iterator<[Int String]>)",
+    source: '(import "std/iter")\n(fn :gen e [] -> Iterator<[Int String]> (for :each x :from [1 2] :then ((yield [0 1]))))',
+    expect: /LL0225/,
+    why: "Ue: `[0 1]` yields `[Int Int]`, not the declared `[Int String]`.",
+  },
+
   // --- P5d: the erasure rule is GONE. `T` is no longer a universal escape hatch. ---
   {
     // `(fn pair<T> [a <- T b <- T])` called as `(pair 1 "x")`: `T` is solved to `Int` from the first
