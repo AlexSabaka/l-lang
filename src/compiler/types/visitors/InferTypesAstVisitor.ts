@@ -346,6 +346,52 @@ function functionTail(body: ast.ASTNode[] | undefined): ast.FunctionNode | undef
   return cur?._type === "function" ? (cur as ast.FunctionNode) : undefined;
 }
 
+/**
+ * Phase Ud: bind the names of a destructuring pattern from an annotation. `[x y] <- [Int Int]` types `x`
+ * and `y` as `Int` (positional, from the tuple's elements); `[a b] <- Int[]` types each as the array's
+ * element. Recurses for nested patterns (`[x [y z]] <- [Int [A B]]`). An untyped or non-tuple/array
+ * annotation binds each name to Unknown -- the gradual behaviour destructuring had before (never a crash).
+ */
+function bindPatternToType(
+  pattern: ast.ASTNode | undefined,
+  type: InferredType | undefined,
+  at: ast.ASTNode,
+  typeEnv: TypeEnvironment
+): void {
+  if (!pattern) return;
+  const p = pattern as any;
+  switch (pattern._type) {
+    case "simple-identifier":
+    case "composite-identifier":
+      if (p.id) typeEnv.bindIdentifier(p.id, type ?? TypeEnvironment.unknown(), at);
+      return;
+    // A binding element `x` in `[x y]` is an `identifier-pattern` wrapping the name.
+    case "identifier-pattern":
+      bindPatternToType(p.id, type, at, typeEnv);
+      return;
+    // `...rest` collects the tail as an array (best-effort element type).
+    case "rest-pattern":
+      bindPatternToType(p.id, type ? TypeEnvironment.array(type) : undefined, at, typeEnv);
+      return;
+    case "vector-pattern":
+    case "list-pattern": {
+      const elements = (p.elements ?? []) as ast.ASTNode[];
+      const tupleElems = type?.kind === "tuple" ? type.elements ?? [] : undefined;
+      const arrayElem = type?.isArray ? type.generics?.[0] ?? type.inner : undefined;
+      // Positional: a tuple gives each element its own type; an array gives every name the element type.
+      elements.forEach((el, i) => bindPatternToType(el, tupleElems ? tupleElems[i] : arrayElem, at, typeEnv));
+      return;
+    }
+    default:
+      // map-pattern / any-pattern / constant / type-pattern -- bind each contained name to Unknown
+      // (the gradual pre-Ud behaviour; no crash).
+      for (const id of ast.bindingIdentifiers(pattern as any)) {
+        if ((id as any).id) typeEnv.bindIdentifier((id as any).id, TypeEnvironment.unknown(), at);
+      }
+      return;
+  }
+}
+
 class CollectTypesPass extends BaseAstTreeWalker {
   private typeEnv: TypeEnvironment;
   private symbolTable: SymbolTable;
@@ -414,6 +460,11 @@ class CollectTypesPass extends BaseAstTreeWalker {
     // honest -- this pass reports nothing today anyway (zero results.add calls) -- and it beats
     // crashing on `node.name.id`, which is undefined for a pattern.
     if (ast.isBindingPattern(node.name)) {
+      // Ud: a destructuring `let` types its names from the annotation (`(let [x y] <- [Int Int] p)`).
+      // Untyped -> Unknown, as before.
+      if (node.type) {
+        bindPatternToType(node.name, this.convertAstTypeToInferred(node.type), node, this.typeEnv);
+      }
       if (node.value) this.visit(node.value);
       return;
     }
@@ -2256,8 +2307,13 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
     // Bind parameter types in function scope
     node.params.forEach(param => {
-      // Destructuring parameters bind N names; not typed yet (D5/P8).
-      if (ast.isBindingPattern(param.name)) return;
+      // Ud: a destructuring parameter binds its N names from the annotation -- `[x y] <- [Int Int]`
+      // types `x`,`y` as `Int` (positional). Untyped -> Unknown, as before.
+      if (ast.isBindingPattern(param.name)) {
+        const patType = param.type ? this.convertAstTypeToInferred(param.type) : undefined;
+        bindPatternToType(param.name, patType, param, this.typeEnv);
+        return;
+      }
       const paramName = (param.name as ast.IdentifierNode).id;
       const paramType = param.type
         ? this.convertAstTypeToInferred(param.type)

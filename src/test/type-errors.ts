@@ -1074,6 +1074,20 @@ ${PRODUCER}
     why: "Ub: `[Int Int]` (fixed, positional) is not assignable to `Int[]` (variable-length) -- the point of tuples.",
   },
 
+  // --- Ud: a DESTRUCTURING parameter binds its names from a tuple annotation -- `[x y] <- [Int Int]`
+  // types `x`,`y` as `Int`. Destructuring was untyped (every name Unknown) before Ud. ---
+  {
+    name: "Ud: destructured tuple-param names are typed (correct use is silent)",
+    source: "(fn f [[x y] <- [Int Int]] -> Int (+ x y))",
+    silent: true,
+  },
+  {
+    name: "Ud: a destructured tuple-param name carries its element type (misuse caught)",
+    source: "(fn g [[x y] <- [Int Int]] -> String x)",
+    expect: /LL0213|LL0200|Type mismatch/,
+    why: "Ud: `x` is typed `Int` from the tuple, so returning it where `String` is declared is a mismatch (was Unknown -> silent).",
+  },
+
   // --- P5d: the erasure rule is GONE. `T` is no longer a universal escape hatch. ---
   {
     // `(fn pair<T> [a <- T b <- T])` called as `(pair 1 "x")`: `T` is solved to `Int` from the first
