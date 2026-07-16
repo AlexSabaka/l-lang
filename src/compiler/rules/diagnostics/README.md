@@ -46,5 +46,6 @@ See DECISIONS **D38**.
 `npm run test:diagnostics` — registry integrity (one severity per code, `LLdddd` shape) + the free-code
 allocator + the characterization snapshot. It must stay green; a diff means a code/severity/message changed.
 
-`NOTE: … overloaded with declarative rules` flags codes shared between a migrated diagnostic and a
-declarative rule (currently LL0015–LL0019 — a known finding, see D38).
+`NOTE: … overloaded with declarative rules` flags any code shared between a migrated diagnostic and a
+declarative rule. It is currently empty — the one such overlap (LL0015–LL0019) was resolved in D38 by moving
+the declarative colliders to LL0024–LL0028.

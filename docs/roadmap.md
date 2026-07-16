@@ -375,12 +375,12 @@ proven by a characterization snapshot (`test:diagnostics`, 42 probes, byte-for-b
         normalized: `reportUnfoldable`'s inline object literal, `reportImportError`'s baked-in code.
 *   [x] **Ee** — docs (D38), this entry, `rules/diagnostics/README.md`, and the stale-comment sweep. All five
         helpers are gone; every diagnostic flows through `report()`.
-*   **FINDING (open):** LL0015–LL0019 are OVERLOADED — the imperative modifier diagnostics collide with
-        unrelated declarative rules (numbered independently). Preserved exactly (renumbering changes an emitted
-        code — corpus-affecting, a deliberate call); surfaced by a permanent NOTE in `test:diagnostics`.
-*   **Follow-ups (flagged, not done):** renumber the overloaded codes; make the `test:type-errors` `LL02*`
-        filter category-based (may surface currently-hidden diagnostics); fold the declarative rules into the
-        registry too.
+*   [x] **Finding RESOLVED:** LL0015–LL0019 were OVERLOADED (imperative modifier diagnostics colliding with
+        unrelated declarative rules). Direction chosen by reference-weight — a live test + all docs call LL0015
+        the "unknown modifier" error — so the imperative codes KEPT LL0015–LL0019 and the five declarative
+        colliders moved to LL0024–LL0028. The `test:diagnostics` overlap NOTE is now empty.
+*   **Follow-ups (flagged, not done):** make the `test:type-errors` `LL02*` filter category-based (may surface
+        currently-hidden diagnostics); fold the declarative rules into the registry too.
 
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."

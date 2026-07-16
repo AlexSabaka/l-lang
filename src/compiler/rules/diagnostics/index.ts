@@ -40,14 +40,14 @@ export const DIAGNOSTIC_CATEGORIES: Record<
  * Codes owned by diagnostics that live OUTSIDE this registry, so the allocator's "taken" set is
  * complete and "next free" never collides with them.
  *
- * These are the LIVE declarative structural rules (`NodeValidationRules`, LL0001-LL0022 minus the
- * commented-out LL0004). They keep their `test`-predicate form and are NOT migrated -- they are a
- * different mechanism (self-checking, not call-site-decided). Listing their codes here lets the
- * allocator see the whole LL00xx band, and lets `test:diagnostics` NOTE where they OVERLAP a migrated
- * diagnostic (LL0015-LL0019 -- see SyntaxDiagnostics's finding).
+ * These are the LIVE declarative structural rules (`NodeValidationRules`). They keep their
+ * `test`-predicate form and are NOT migrated -- they are a different mechanism (self-checking, not
+ * call-site-decided). Five of them originally sat on LL0015-LL0019 and were REASSIGNED to LL0024-LL0028
+ * (D38) to resolve the overlap with the imperative modifier diagnostics of the same numbers -- the
+ * imperative codes, which the docs and a live test reference by name, kept LL0015-LL0019.
  */
 export const EXTERNAL_CODES: readonly string[] = [
   "LL0001", "LL0002", "LL0003", "LL0005", "LL0006", "LL0007", "LL0008",
-  "LL0009", "LL0010", "LL0011", "LL0012", "LL0013", "LL0014", "LL0015",
-  "LL0016", "LL0017", "LL0018", "LL0019", "LL0020", "LL0021", "LL0022",
+  "LL0009", "LL0010", "LL0011", "LL0012", "LL0013", "LL0014", "LL0020",
+  "LL0021", "LL0022", "LL0024", "LL0025", "LL0026", "LL0027", "LL0028",
 ];

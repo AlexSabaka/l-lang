@@ -106,9 +106,9 @@ function checkRegistry(): { failures: string[] } {
     }
   }
 
-  // Surface the FINDING: a registry code that ALSO appears in EXTERNAL_CODES is a migrated diagnostic
-  // sharing its number with a declarative rule (LL0015-LL0019). Preserved, but kept visible here so it
-  // cannot rot -- a later phase may renumber deliberately.
+  // Surface any overlap: a registry code that ALSO appears in EXTERNAL_CODES is a migrated diagnostic
+  // sharing its number with a declarative rule. Currently empty -- the one such case (LL0015-LL0019) was
+  // resolved in D38 by moving the declarative colliders to LL0024-LL0028. Kept as a guard against a new one.
   const external = new Set(EXTERNAL_CODES);
   const overlap = [...owners.keys()].filter((c) => external.has(c)).sort();
   if (overlap.length) {

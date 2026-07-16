@@ -3373,14 +3373,16 @@ pinned byte-for-byte. A behaviour-preserving migration is one the snapshot does 
 it and it did not. 42 probes cover 23 of the ~40 codes directly; the rest (internal codegen-bug paths,
 module-boundary cases needing sibling files) are verbatim-guarded and covered by the codegen/imports suites.
 
-### The finding, preserved not fixed
+### The finding, and its resolution
 
-LL0015–LL0019 are OVERLOADED: the imperative modifier diagnostics were numbered independently of the
-declarative rules and landed on codes those rules already used (LL0016 is "reserved native modifier" AND
-"class must have a name"; LL0017 fires for a duplicate `for` clause AND, twice, for If/When conditions). This
-is exactly the collision a registry exists to prevent -- and it predates the registry. Renumbering changes an
-EMITTED code, which is corpus-affecting and a semantic decision, not a refactor's; so the codes are preserved
-exactly and the overlap is surfaced by a permanent NOTE in `test:diagnostics`. Reassigning them to free
-numbers is a deliberate later task. Two further follow-ups are logged, not taken: the `test:type-errors`
-`LL02*`-only filter could become category-based (it may surface currently-hidden diagnostics), and the
-declarative rules could eventually fold into the registry too.
+LL0015–LL0019 were OVERLOADED: the imperative modifier diagnostics had been numbered independently of the
+declarative rules and landed on codes those rules already used (LL0016 was "reserved native modifier" AND
+"class must have a name"; LL0017 fired for a duplicate `for` clause AND, twice, for If/When conditions). This
+is exactly the collision a registry exists to prevent -- and it predated the registry. The DIRECTION of the
+fix was decided by reference-weight: every doc and a live test (`imports.ts`) calls LL0015 the "unknown
+modifier" error (the imperative one), and nothing references the declarative meanings by code. So the
+imperative codes KEPT LL0015–LL0019, and the five declarative colliders were reassigned to LL0024–LL0028 (the
+If/When "condition" pair shares LL0026, as one concept). The `test:diagnostics` overlap NOTE is now empty.
+One further follow-up is logged, not taken: the `test:type-errors` `LL02*`-only filter could become
+category-based (it may surface currently-hidden diagnostics), and the declarative rules could eventually fold
+into the registry too.

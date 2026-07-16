@@ -7,13 +7,11 @@ const { Error } = RuleSeverity;
  * The syntax/modifier diagnostics emitted imperatively by `SyntaxRulesAstVisitor` (D3/D4 and the
  * `for`-clause checks), migrated out of its `reportModifierError` helper.
  *
- * FINDING -- code collision with the declarative rules. These codes (LL0015-LL0019) are ALSO used by
- * `NodeValidationRules` for UNRELATED diagnostics: LL0015 there is "parameter modifier must be
- * in/out/ref", LL0016 "class must have a name", LL0017 an If/When "condition" clause, and so on. The
- * imperative and declarative diagnostics were numbered independently and overlapped. Preserved AS-IS
- * here -- renumbering changes an emitted code, which is a corpus-affecting, semantic decision, not a
- * refactor's call. The `test:diagnostics` allocator NOTEs the overlap so it stays visible; a later
- * phase can reassign these to free numbers deliberately.
+ * These codes (LL0015-LL0019) once COLLIDED with declarative `NodeValidationRules` of the same numbers
+ * (unrelated: "parameter modifier must be in/out/ref", "class must have a name", If/When clauses) --
+ * they had been numbered independently and overlapped. RESOLVED (D38): every doc and a live test
+ * (`imports.ts`) references LL0015 as the "unknown modifier" error (the imperative one below), so the
+ * imperative codes KEPT LL0015-LL0019 and the five declarative colliders moved to LL0024-LL0028.
  */
 export const SyntaxDiagnostics = {
   // LL0015 -- D4: an unknown `:modifier`
