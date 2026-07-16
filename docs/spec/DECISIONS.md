@@ -3386,3 +3386,80 @@ If/When "condition" pair shares LL0026, as one concept). The `test:diagnostics` 
 One further follow-up is logged, not taken: the `test:type-errors` `LL02*`-only filter could become
 category-based (it may surface currently-hidden diagnostics), and the declarative rules could eventually fold
 into the registry too.
+
+## D39 — one frontend, one backend: the PEG and js-legacy are retired (Phase P)
+
+**Ruling:** `grammar_v2` is the only parser and `js-estree` is the only JS emitter. The PEG grammar and the
+js-legacy transformer are deleted, not deprecated. "Both frontends must agree" is no longer a standing
+constraint on any phase.
+
+D14 already ruled the PEG was the wrong architecture and revived grammar_v2 to replace it, keeping the PEG
+selectable "for one cycle so the cutover is reversible with a single flag". This closes that cycle.
+
+### Why now: the receipts
+
+The post-audit adversarial sweep measured what the PEG's scannerless design costs. With no separate lexer,
+whitespace alone decides token boundaries, so any construct the grammar does not recognise degrades into an
+ordinary identifier and silently re-parses as a call. Measured, not theorised:
+
+| | the PEG does | grammar_v2 does |
+|---|---|---|
+| `<- uint8[256] [0]` | deletes the initializer, promotes the SIZE to the value, exit 0 (AF-021) | rejects |
+| `3+4i` | emits `const c = 3; 4; i;` -> ReferenceError (AF-025) | LL0100 |
+| `:where` constraints | silently discards them (AF-022) | cannot parse them (a real v2 gap) |
+| colon-paths | mangles to a junk identifier that reaches codegen (AF-029) | rejects at parse |
+| `true`/`false` arms | LL0101, blaming the CODE GENERATOR for its own misparse (AF-030) | correct |
+| malformed params | `'fn' is not defined` — a core keyword (AF-031) | located error |
+| in-block parse errors | mislocates every one to line 1 col 1 (AF-032) | located |
+
+Retiring it deletes seven audit findings outright, one of them silent-wrong-output and one a crash on valid
+input. The remaining halves of AF-004 and AF-022 survive as v2-side gaps and are filed as such.
+
+### The PEG was never ahead — it was masking corpus rot
+
+The cutover gate (`test:diff-frontends`) reported `v2-only failure 4 <-- real v2 bugs, must be 0 to cut over`.
+The label was wrong. All four were examples written in syntax the language does not have, which only the PEG
+accepted, and which the manifest blamed on compiler milestones that would never clear them:
+
+- `18_destructuring:97` — `[(pattern match) (body)]` arms; the ruled form is `(match x { pat => body })`
+- `20_scope:68` — `(for :i 0 :< 3 ...)`; D12 made `for` named-clause-only. The same file also carried
+  `(Fn [] Int)`, a capital-`Fn` function type that **never parsed on either frontend** and appears nowhere
+  else in the corpus — pure aspiration, resident in the corpus for an unknown length of time.
+- `02_maps` — colon-paths (see below)
+- `02_game_of_life:6` — `(for (let dy :of offsets) ...)`, a for-OF form D12 does not have
+
+Pa modernised all four with **zero compiler changes**, and the gate went to `v2-only 0 / peg-only 0`. The
+lesson generalises: a permissive parser does not merely fail to catch rot, it *manufactures* the appearance of
+working code, and then the rot gets attributed to the compiler. Every one of those four xfail reasons was
+pointed at the wrong culprit.
+
+Removing the PEG also removes a differential oracle. That is an accepted cost: the audit's data says the
+oracle's signal had become ~entirely "the PEG is wrong", which is negative value once the verdict is known.
+
+### js-legacy
+
+The same argument, one layer down. `legacy-js` was a second, older JS transformer kept behind
+`--language legacy-js` while js-estree took over. js-estree emits every golden, all 173 codegen cases, the
+REPL and the stdlib. Nothing measured legacy-js. An unmeasured second emitter cannot serve as the rollback it
+nominally exists to provide — no gate would notice if it broke, and none would have. Deleted.
+
+`codegen/llang/` (l-lang -> l-lang) is kept: a different target, not a duplicate emitter.
+
+### Two rulings made alongside
+
+**Colon-path map access is NOT a language feature.** `person:name` / `nested:user:name` were an early mistake
+in the examples. Maps use **dot-path** (`person.name`), with `m["my-key"]` for keys dot-access cannot reach
+(D13). grammar_v2's rejection was correct all along; the PEG's acceptance was the defect. `02_maps` was
+rewritten, not fixed. Any key must work — dashed keys and keys colliding with lexer keywords alike, which
+makes AF-044 (v2 rejects `:each`/`:from`/`:step` as map keys) a hard block now that the PEG's accidental
+workaround is gone.
+
+**`and` / `or` / `not` are IN.** They do not currently exist — `(and a b)` is `LL0210 'and' is not defined`;
+only `&&`/`||`/`!` do. Omitting them from a Lisp-syntax language was a miss, and plenty of modern languages
+carry both spellings. The aliases are ruled in; implementing them is its own work item, not Phase P.
+
+### Verification
+
+The falsifier for the whole phase: removing a frontend and a backend cannot change the surviving one's
+output, so **no golden may move**. None did. Every phase held goldens 91 / 16 xfail, type-errors corpus 0,
+diagnostics 42/42, codegen 173/0, imports 17/17, repl 26/0, smoke 11/11, tsc 0 errors. 12,580 lines deleted.

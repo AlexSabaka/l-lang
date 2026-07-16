@@ -55,9 +55,10 @@ export class AstProvider {
   /**
    * grammar_v2 (Chevrotain): tokenize, parse to a CST, then build the AST.
    *
-   * Deliberately produces the same node shapes the PEG does, so every pass downstream of here
-   * is frontend-agnostic. `_location` carries the same {source, start/end {offset,line,column}}
-   * that `getSource()` and the source-map emitter read.
+   * The node shapes were originally kept identical to the PEG's so every pass downstream stayed
+   * frontend-agnostic during the cutover. The PEG is gone (D39), so these shapes are now simply
+   * THE shapes. `_location` carries {source, start/end {offset,line,column}}; `end.offset` is
+   * EXCLUSIVE, which `getSource()` and the source-map emitter both rely on.
    */
   private parseWithGrammarV2(source: string, filePath: string): ast.ProgramNode {
     const lexResult = LLangLexer.tokenize(source);

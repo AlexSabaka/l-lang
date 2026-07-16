@@ -3066,8 +3066,9 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const targetType = this.inferExpressionType(node.assignable);
     const valueType = this.inferExpressionType(node.value);
 
-    // Gradual typing, as everywhere else. (This form is only reachable via the PEG frontend --
-    // grammar_v2 always builds a compound-assignment.)
+    // Gradual typing, as everywhere else. NOTE: this form is now UNREACHABLE -- it was only ever
+    // produced by the PEG frontend (grammar_v2 always builds a compound-assignment), and the PEG was
+    // deleted in D39/Pb. The node kind is orphaned but still declared; see the Phase P follow-ups.
     if (TypeChecker.isUnknown(targetType) || TypeChecker.isUnknown(valueType)) {
       return;
     }

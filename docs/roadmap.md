@@ -382,6 +382,39 @@ proven by a characterization snapshot (`test:diagnostics`, 42 probes, byte-for-b
 *   **Follow-ups (flagged, not done):** make the `test:type-errors` `LL02*` filter category-based (may surface
         currently-hidden diagnostics); fold the declarative rules into the registry too.
 
+## ✅ Retiring the PEG and js-legacy: one frontend, one backend (D39)
+
+*The "P" is for *pruning*. Closes the cycle D14 opened; driven by the post-audit adversarial sweep.*
+
+*   [x] **Pa** — close the cutover gate honestly. `test:diff-frontends` read `v2-only failure 4 <-- real v2
+        bugs, must be 0 to cut over`. The label was **wrong**: all four were stale corpus, not v2 bugs —
+        examples in syntax the language does not have, which only the PEG accepted. Modernized
+        `18_destructuring` (match arms), `20_scope` (D12 `for` + a capital-`Fn` type that never parsed on
+        EITHER frontend), `02_maps` (colon-path → dot-path), `02_game_of_life` (for-OF). Gate → `0 / 0`, with
+        **zero compiler changes**.
+*   [x] **Pb** — the PEG is deleted. `frontend/grammar/`, `CompilationFrontend`, the `--frontend` flag,
+        `diff-frontends`, the `peggy` dep. 11,545 lines. Seven audit findings evaporate with it (AF-009, -021,
+        -025, -029, -030, -031, -032), including one S1 and one S2.
+*   [x] **Pc** — js-legacy is deleted. An unmeasured second emitter cannot be the rollback it exists to be.
+        1,035 lines. `codegen/llang/` kept (different target, not a duplicate).
+*   [x] **Pd** — D39, this entry, and the constraint retirement.
+*   **"Both frontends must agree" is retired as a standing constraint.** Every future phase gets cheaper.
+*   **What Pa taught:** a permissive parser does not merely fail to catch corpus rot — it manufactures the
+        appearance of working code, and the rot then gets blamed on the compiler. All four xfail reasons
+        pointed at the wrong culprit. Worth re-reading before trusting any "blocked on Phase N" reason.
+*   **Follow-ups (flagged, not done):**
+    - implement the ruled `and`/`or`/`not` aliases (D39 — they do not exist today; only `&&`/`||`/`!`);
+    - **`SimpleAssignmentNode` is now ORPHANED.** Its own comment said the form "is only reachable via the
+      PEG frontend — grammar_v2 always builds a compound-assignment", and grammar_v2 indeed never emits
+      `simple-assignment`. Pb therefore made the node kind unreachable, but it is still declared in `ast.ts`
+      and still handled in `BaseAstVisitor`, `InferTypesAstVisitor`, and both emitters. Dead, not harmful —
+      removing it means editing the node union + dispatch table + three visitors, which is a refactor, not a
+      doc pass. Left standing deliberately.
+    - `VALID_LANGUAGES` never listed `"llang"`, so the llang backend has no reachable CLI spelling despite
+      Context dispatching it.
+    - Historical PEG references in test comments are kept on purpose (they explain why each test exists);
+      the ones that are now *actively* misleading were corrected in Pb/Pd, not blanket-deleted.
+
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."
 
@@ -509,7 +542,16 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     transitive is a real question, and **D20 does not answer it**.
 *   **`:as` aliasing is unimplemented.** It parses in both frontends, on both the import and the
     export side, and nothing honours it.
-*   **Harness.** `test:type-errors` and `test:imports` are pinned to grammar_v2, so "0 corpus
-    diagnostics" is a single-frontend claim. The count also covers only `status: "test"` files —
-    `library` and `xfail` are excluded — though that hole is much smaller now: the stdlib **runs**
-    (`test_stdlib` has a golden), and `lib/` is walked alongside `examples/`.
+*   **Identifier encoding escapes into DATA.** D13 ruled map keys are never mangled, but *class members*
+    still are: `player-pos` is emitted as `player2dpos` (`-` → its hex `2d`). This is invisible while the
+    program only talks to itself, and wrong the moment the data leaves — `JSON.stringify` of an instance
+    dumps `player2dpos`, and any external JSON consumer sees a key the source never wrote. Same mechanism
+    already sighted twice above: the `get-area` → `get2darea` member-lookup bug, and `count-neighbors` →
+    `count2dneighbors` in a live stack trace. Operators ride the same encoding (`&&` → `_2626`). The
+    encoding is not the bug — its escape into the serialization boundary is. Not critical; not filed as an
+    audit AF; wants a ruling on where the boundary sits.
+*   **Harness.** The "0 corpus diagnostics" count covers only `status: "test"` files — `library` and
+    `xfail` are excluded — though that hole is much smaller now: the stdlib **runs** (`test_stdlib` has a
+    golden), and `lib/` is walked alongside `examples/`. (The frontend half of this gap is **gone**: it
+    used to read "pinned to grammar_v2, so this is a single-frontend claim". Since D39 there is only one
+    frontend, so the pin is the whole truth.)
