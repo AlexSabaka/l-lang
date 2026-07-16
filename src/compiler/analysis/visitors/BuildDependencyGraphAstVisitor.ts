@@ -1,6 +1,6 @@
 import * as ast from "../../frontend/ast";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
-import { createRule, RuleSeverity } from "../../rules/RuleBuilder";
+import { ModuleDiagnostics as MD } from "../../rules/diagnostics";
 import { ModuleResolver } from "../ModuleResolver";
 
 export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
@@ -59,10 +59,9 @@ export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
       // LL0217. This used to be a raw Node ENOENT out of `fs.readFileSync` -- AstProvider.loadFile
       // has no existsSync guard, and nothing on the import path caught it. A misspelled import
       // produced a stack trace, not a diagnostic.
-      this.reportImportError(
-        fileNode ?? node,
-        `Cannot resolve import '${fileNode.value}'. Looked next to the importing file, then on the library search path.`
-      );
+      this.report(MD.UnresolvedImport, fileNode ?? node, {
+        source: fileNode.value,
+      });
       return;
     }
 
@@ -89,20 +88,10 @@ export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
    * Unsupported is fine. Unsupported and quiet is not.
    */
   private processNamespaceImport(ns: ast.IdentifierNode, node: ast.ImportNode) {
-    this.reportImportError(
-      ns ?? node,
-      `Namespace import '${ns?.id}' is not supported. Import the file instead: (import "${String(ns?.id).replace(/\./g, "/")}").`
-    );
+    this.report(MD.NamespaceImportUnsupported, ns ?? node, {
+      namespace: String(ns?.id),
+      path: String(ns?.id).replace(/\./g, "/"),
+    });
   }
 
-  private reportImportError(node: ast.ASTNode, message: string): void {
-    const rule = createRule<ast.ASTNode>()
-      .addSeverity(RuleSeverity.Error)
-      .addCode("LL0217")
-      .addMessage(message)
-      .addTest(() => true)
-      .build();
-
-    this.context.results.add(node, rule, this.context);
-  }
 };

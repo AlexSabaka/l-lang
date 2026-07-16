@@ -3,6 +3,7 @@ import * as ast from "../../frontend/ast";
 import { Context } from "../../Context";
 import { encodeIdentifier } from "../../utils";
 import { hasModifier } from "../../helpers/modifiers";
+import { report, CodegenDiagnostics } from "../../rules/diagnostics";
 
 /**
  * A constructor parameter: its name, and the AST node of its DEFAULT, if it declared one.
@@ -228,15 +229,12 @@ export class ClassBuilder {
         .slice(firstDefaulted + 1)
         .filter((p) => p.defaultValue == null);
       if (required.length > 0) {
-        this.visitor.reportCodegenError(
-          this.node,
-          "LL0102",
-          `Constructor of '${this.node.name.name}': parameter ` +
-            `'${finalConstructorParams[firstDefaulted].name}' has a default but is followed by ` +
-            `required parameter${required.length > 1 ? "s" : ""} ` +
-            `${required.map((p) => `'${p.name}'`).join(", ")}. The default can never be used -- ` +
-            `every parameter after it must still be supplied. Move the defaulted parameters last.`
-        );
+        report(this.visitor.context, CodegenDiagnostics.DefaultBeforeRequired, this.node, {
+          className: this.node.name.name,
+          param: finalConstructorParams[firstDefaulted].name,
+          plural: required.length > 1,
+          required: required.map((p) => `'${p.name}'`).join(", "),
+        });
       }
     }
 

@@ -359,6 +359,46 @@
     ]
   },
   {
+    "probe": "LL0102 non-name in binding position",
+    "diagnostics": [
+      {
+        "code": "LL0102",
+        "severity": "error",
+        "text": "'constant-pattern' cannot appear in a binding position. A destructuring binding may only contain names, nested [..] / {..} patterns, '...rest', or '_'."
+      }
+    ]
+  },
+  {
+    "probe": "LL0102 constructor default before required",
+    "diagnostics": [
+      {
+        "code": "LL0102",
+        "severity": "error",
+        "text": "Constructor of 'S': parameter 'a' has a default but is followed by required parameter 'b'. The default can never be used -- every parameter after it must still be supplied. Move the defaulted parameters last."
+      }
+    ]
+  },
+  {
+    "probe": "LL0217 unresolved import",
+    "diagnostics": [
+      {
+        "code": "LL0217",
+        "severity": "error",
+        "text": "Cannot resolve import 'no_such_xyz_module.lisp'. Looked next to the importing file, then on the library search path."
+      }
+    ]
+  },
+  {
+    "probe": "LL0099 comptime arg not literal",
+    "diagnostics": [
+      {
+        "code": "LL0099",
+        "severity": "error",
+        "text": "Cannot evaluate 'double' at compile time: argument is a 'simple-identifier', not a compile-time constant. A ':comptime' function can only be called with literals -- that is what asking for compile-time evaluation means."
+      }
+    ]
+  },
+  {
     "probe": "silent: annotated arithmetic",
     "diagnostics": []
   },

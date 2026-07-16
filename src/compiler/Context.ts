@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import { RuleSeverity, RuleValidationResultsCollection } from "./rules";
-import { createRule } from "./rules/RuleBuilder";
+import { report, ModuleDiagnostics } from "./rules/diagnostics";
 
 import {
   BaseAstTreeWalker,
@@ -360,18 +360,9 @@ export class Context {
   /** Report an import cycle. See the guard in process(). */
   private reportImportCycle(fullPath: string): void {
     const ast = this.astProvider.getAst(fullPath) as ASTNode;
-    const rule = createRule<ASTNode>()
-      .addSeverity(RuleSeverity.Warning)
-      .addCode("LL0300")
-      .addMessage(
-        `Import cycle: '${path.basename(fullPath)}' is imported while it is still being loaded. ` +
-          `This compiles -- an import brings in definitions, not execution -- but a cycle is ` +
-          `usually a sign the modules want splitting.`
-      )
-      .addTest(() => true)
-      .build();
-
-    this.results.add(ast, rule, this);
+    report(this, ModuleDiagnostics.ImportCycle, ast, {
+      name: path.basename(fullPath),
+    });
   }
 
   private processModule(

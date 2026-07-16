@@ -135,6 +135,8 @@ function nextFree(band: string, taken: Set<string>): string {
 interface Probe {
   name: string;
   source: string;
+  /** Stage to compile to. Defaults to "types"; codegen diagnostics (LL01xx) need "codegen". */
+  stage?: "types" | "codegen";
 }
 
 /**
@@ -231,19 +233,39 @@ const PROBES: Probe[] = [
   { name: "LL0018 missing for clause", source: "(for :each x :then (console.log x))" },
   { name: "LL0023 defmacro is reserved", source: "(defmacro foo [] 1)" },
 
+  // --- codegen band (LL0100-LL0102): the backend must actually run, so stage "codegen" ---
+  { name: "LL0102 non-name in binding position", source: "(let [1] [5])", stage: "codegen" },
+  {
+    name: "LL0102 constructor default before required",
+    source: "(defstruct S (let :ctor a <- Int 0) (let :ctor b <- Int))",
+    stage: "codegen",
+  },
+
+  // --- module band (LL0217): import resolution runs early, so stage "types" is enough ---
+  { name: "LL0217 unresolved import", source: '(import "no_such_xyz_module.lisp")' },
+
+  // --- comptime band (LL0099) ---
+  {
+    name: "LL0099 comptime arg not literal",
+    source: "(fn :comptime double [x <- Int] -> Int (* x 2))\n(let y 5)\n(console.log (double y))",
+    stage: "codegen",
+  },
+
   // --- guards: these are correct programs; the type stage must stay silent on them ---
   { name: "silent: annotated arithmetic", source: "(let a <- Int 1)\n(let b <- Int 2)\n(console.log (+ a b))" },
   { name: "silent: a parameter resolves", source: "(fn f [n <- Int] -> Int (return (+ n 1)))\n(console.log (f 1))" },
   { name: "silent: JS globals", source: '(console.log (Math.max 1 2) (JSON.stringify [1]))' },
 ];
 
-function baseOptions(collect: (msg: string) => void): CompilerOptions {
+function baseOptions(stage: "types" | "codegen"): CompilerOptions {
   return {
     minimumLogLevel: LogLevel.Warning,
-    logger: (msg: any) => collect(String(msg)),
+    logger: () => {},
     includeRuntimeShim: true,
     stdout: false,
-    stage: "types", // the type stage is where every LL02xx diagnostic is produced
+    // Most diagnostics are produced by the type stage; codegen diagnostics (LL01xx) need the backend
+    // to actually run, so those probes ask for "codegen".
+    stage,
     language: "js",
     frontend: "grammar_v2",
   };
@@ -257,10 +279,10 @@ interface Emitted {
 
 let TMP_DIR: string;
 
-function diagnosticsOf(source: string, idx: number): Emitted[] {
+function diagnosticsOf(probe: Probe, idx: number): Emitted[] {
   const file = path.join(TMP_DIR, `probe_${idx}.lisp`);
-  fs.writeFileSync(file, source, "utf8");
-  const context = new Context(file, baseOptions(() => {}));
+  fs.writeFileSync(file, probe.source, "utf8");
+  const context = new Context(file, baseOptions(probe.stage ?? "types"));
   try {
     context.process(file);
   } catch {
@@ -278,7 +300,7 @@ interface SnapshotEntry {
 }
 
 function capture(): SnapshotEntry[] {
-  return PROBES.map((p, i) => ({ probe: p.name, diagnostics: diagnosticsOf(p.source, i) }));
+  return PROBES.map((p, i) => ({ probe: p.name, diagnostics: diagnosticsOf(p, i) }));
 }
 
 function loadSnapshot(): SnapshotEntry[] | null {

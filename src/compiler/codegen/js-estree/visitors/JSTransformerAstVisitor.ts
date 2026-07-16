@@ -11,7 +11,7 @@ import {
   uniqueIdentifier,
   encodeIdentifier,
 } from "../../../utils";
-import { createRule, RuleSeverity } from "../../../rules/RuleBuilder";
+import { CodegenDiagnostics as CD } from "../../../rules/diagnostics";
 import { TypeChecker } from "../../../types/TypeChecker";
 import { nativeMemberKind } from "../../../types/nativeMembers";
 import { isBuiltinModifier, hasModifier } from "../../../helpers/modifiers";
@@ -196,30 +196,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * construct instead of dying on the first.
    */
   protected onUnhandled(node: ast.ASTNode, method: string): any {
-    this.reportCodegenError(
-      node,
-      "LL0100",
-      `Cannot generate JavaScript for '${node._type}': ${method} is not implemented in the ` +
-        `JS backend. The construct parses, but there is no code generator for it.`
-    );
+    this.report(CD.Unhandled, node, {
+      type: node._type,
+      method,
+    });
     return ESTreeBuilder.identifier(node, "undefined");
-  }
-
-  /**
-   * Same mechanism the rest of the compiler uses (createRule -> results.add -> hasErrors ->
-   * codegen blocked -> CLI exit 1). Deliberately not a new error path.
-   *
-   * Public because ClassBuilder needs it (LL0102): it is the only other thing that emits ESTree.
-   */
-  public reportCodegenError(node: ast.ASTNode, code: string, message: string): void {
-    const rule = createRule<ast.ASTNode>()
-      .addSeverity(RuleSeverity.Error)
-      .addCode(code)
-      .addMessage(message)
-      .addTest(() => true)
-      .build();
-
-    this.context.results.add(node, rule, this.context);
   }
 
   /**
@@ -253,12 +234,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           ? ` at emitted line ${line}:${scriptErr.loc.column}` +
             (offending ? ` -> ${JSON.stringify(offending.slice(0, 80))}` : "")
           : "";
-        this.reportCodegenError(
-          node,
-          "LL0101",
-          `The JS backend emitted code that is not valid JavaScript${at}. ` +
-            `${scriptErr?.message ?? scriptErr}. This is a bug in the code generator, not in the source.`
-        );
+        this.report(CD.InvalidEmittedJs, node, {
+          at,
+          error: String(scriptErr?.message ?? scriptErr),
+        });
       }
     }
   }
@@ -1389,12 +1368,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         };
 
       default:
-        this.reportCodegenError(
-          target,
-          "LL0102",
-          `'${target._type}' cannot appear in a binding position. A destructuring binding may ` +
-            `only contain names, nested [..] / {..} patterns, '...rest', or '_'.`
-        );
+        this.report(CD.BindingPositionInvalid, target, {
+          type: target._type,
+        });
         return ESTreeBuilder.identifier(target, "undefined");
     }
   }

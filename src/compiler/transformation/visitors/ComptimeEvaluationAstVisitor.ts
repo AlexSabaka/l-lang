@@ -1,7 +1,7 @@
 import * as ast from "../../frontend/ast";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { Context, LogLevel } from "../../Context";
-import { RuleSeverity } from "../../rules";
+import { ComptimeDiagnostics as CO } from "../../rules/diagnostics";
 import { SymbolEntry } from "../../analysis/SymbolTable";
 import { JSTransformerAstVisitor } from "../../codegen/js-estree/visitors/JSTransformerAstVisitor";
 import { DesugarAstVisitor } from "./DesugarAstVisitor";
@@ -123,10 +123,10 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
 
       // The diagnostic now says WHY. It used to be "Failed to evaluate comptime variable: x", full
       // stop -- the sandbox's actual complaint went to a logger the test harness discards.
-      this.reportUnfoldable(
-        node,
-        `Cannot evaluate comptime variable '${varName}' at compile time: ${result.error}`
-      );
+      this.report(CO.ComptimeVariable, node, {
+        name: varName,
+        error: result.error,
+      });
     }
 
     return {
@@ -181,21 +181,19 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
           const nonLiteral = args.find((arg) => !this.isLiteral(arg));
 
           if (nonLiteral) {
-            this.reportUnfoldable(
-              nonLiteral,
-              `Cannot evaluate '${symbolName}' at compile time: argument is a '${nonLiteral._type}', ` +
-                `not a compile-time constant. A ':comptime' function can only be called with literals ` +
-                `-- that is what asking for compile-time evaluation means.`
-            );
+            this.report(CO.ComptimeArgNotLiteral, nonLiteral, {
+              name: symbolName,
+              type: nonLiteral._type,
+            });
             return newNode;
           }
 
           const result = this.evaluateExpression(newNode);
           if (!result.ok) {
-            this.reportUnfoldable(
-              newNode,
-              `Cannot evaluate '${symbolName}' at compile time: ${result.error}`
-            );
+            this.report(CO.ComptimeEval, newNode, {
+              name: symbolName,
+              error: result.error,
+            });
             return newNode;
           }
 
@@ -254,20 +252,6 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
       }
       return { ok: false, error: String(e?.message ?? e) };
     }
-  }
-
-  /** LL0099 -- this thing was declared `:comptime` and could not be evaluated at compile time. */
-  private reportUnfoldable(node: ast.ASTNode, message: string): void {
-    this.context.results.add(
-      node,
-      {
-        code: "LL0099",
-        severity: RuleSeverity.Error,
-        message,
-        test: () => true,
-      },
-      this.context
-    );
   }
 
   private collectComptimeDependencies(node: ast.ASTNode): string {

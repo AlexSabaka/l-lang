@@ -1,11 +1,17 @@
 import type { DiagnosticDef } from "./Diagnostic";
 import { TypeDiagnostics } from "./TypeDiagnostics";
 import { SyntaxDiagnostics } from "./SyntaxDiagnostics";
+import { CodegenDiagnostics } from "./CodegenDiagnostics";
+import { ModuleDiagnostics } from "./ModuleDiagnostics";
+import { ComptimeDiagnostics } from "./ComptimeDiagnostics";
 
 export { def, report } from "./Diagnostic";
 export type { DiagnosticDef } from "./Diagnostic";
 export { TypeDiagnostics } from "./TypeDiagnostics";
 export { SyntaxDiagnostics } from "./SyntaxDiagnostics";
+export { CodegenDiagnostics } from "./CodegenDiagnostics";
+export { ModuleDiagnostics } from "./ModuleDiagnostics";
+export { ComptimeDiagnostics } from "./ComptimeDiagnostics";
 
 /**
  * The registry: every diagnostic category, keyed by category name, each a map of def-name -> def.
@@ -25,6 +31,9 @@ export const DIAGNOSTIC_CATEGORIES: Record<
 > = {
   type: TypeDiagnostics,
   syntax: SyntaxDiagnostics,
+  codegen: CodegenDiagnostics,
+  module: ModuleDiagnostics,
+  comptime: ComptimeDiagnostics,
 };
 
 /**
