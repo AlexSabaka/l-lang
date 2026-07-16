@@ -242,6 +242,14 @@ function convertAstTypeCore(
     return typeNode.array ? TypeEnvironment.array(generic) : generic;
   }
 
+  // Tuple types (`[Int String]`) -- fixed-length, positional, heterogeneous. `[Int Int][]` (the `array`
+  // flag on this node, set by `basicType`) is an ARRAY of tuples.
+  if (typeNode._type === "tuple-type") {
+    const tupleNode = typeNode as unknown as ast.TupleTypeNode;
+    const tuple = TypeEnvironment.tuple(tupleNode.elements.map(recur));
+    return (typeNode as any).array ? TypeEnvironment.array(tuple) : tuple;
+  }
+
   // Union types
   if (typeNode._type === "union-type") {
     const unionNode = typeNode as unknown as ast.UnionTypeNode;

@@ -1054,6 +1054,26 @@ ${PRODUCER}
     silent: true,
   },
 
+  // --- Ub: a tuple type `[Int Int]` carries meaning -- element-wise assignability, and DISTINCT from an
+  // array (`[Int String]` is not an `Int[]`). Before Ub the annotation converted to Unknown. ---
+  {
+    name: "Ub: a matching vector literal is assignable to a tuple type",
+    source: "(let p <- [Int Int] [1 2])",
+    silent: true,
+  },
+  {
+    name: "Ub: a wrong-element vector against a tuple type is caught",
+    source: '(let q <- [Int Int] [1 "a"])',
+    expect: /LL0200|Type mismatch/,
+    why: "Ub: [1 \"a\"] types Array<Int|String>; Int|String is not assignable to the tuple's Int elements.",
+  },
+  {
+    name: "Ub: a tuple is DISTINCT from an array (a `[Int Int]` is not an `Int[]`)",
+    source: "(fn g [a <- Int[]] -> Int 0)\n(fn h [t <- [Int Int]] -> Int (g t))",
+    expect: /LL0203/,
+    why: "Ub: `[Int Int]` (fixed, positional) is not assignable to `Int[]` (variable-length) -- the point of tuples.",
+  },
+
   // --- P5d: the erasure rule is GONE. `T` is no longer a universal escape hatch. ---
   {
     // `(fn pair<T> [a <- T b <- T])` called as `(pair 1 "x")`: `T` is solved to `Int` from the first

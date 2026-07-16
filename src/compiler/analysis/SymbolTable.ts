@@ -45,7 +45,7 @@ export function isNodeScope(type: any): type is ScopeType {
  * Inferred type information for a symbol
  */
 export interface InferredType {
-  kind: "primitive" | "class" | "interface" | "generic" | "function" | "union" | "unknown" | "map" | "type-alias" | "struct" | "type-ref" | "array";
+  kind: "primitive" | "class" | "interface" | "generic" | "function" | "union" | "unknown" | "map" | "type-alias" | "struct" | "type-ref" | "array" | "tuple";
   name: string;
   generics?: InferredType[];
   params?: InferredType[];  // For function types
@@ -61,6 +61,7 @@ export interface InferredType {
   valueType?: InferredType; // For map types
   inner?: InferredType;     // For array element type (alternative to generics[0])
   isArray?: boolean;
+  elements?: InferredType[]; // For tuple types (`[Int String]`) -- fixed-length, positional
   /**
    * `T?` -- this type admits nil (D9).
    *

@@ -93,6 +93,27 @@ export class TypeChecker {
       return true;
     }
 
+    // Tuples (`[Int String]`) -- fixed-length, positional. A tuple is DISTINCT from an array (a
+    // heterogeneous `[Int String]` is NOT an `Int[]`), so the only cross-shape rule is the vector-literal
+    // ergonomic below.
+    if (targetUnwrapped.kind === "tuple") {
+      const te = targetUnwrapped.elements ?? [];
+      // tuple -> tuple: same length, element-wise (covariant -- a tuple value is read positionally).
+      if (sourceUnwrapped.kind === "tuple") {
+        const se = sourceUnwrapped.elements ?? [];
+        return se.length === te.length && te.every((t, i) => this.isAssignable(se[i], t, symbolTable));
+      }
+      // A VECTOR LITERAL types as `Array<X>` (its fixed length is lost at inference), so accept it against
+      // a tuple when `X` is assignable to every element -- lenient on length (a gradual concession;
+      // precise length would need expected-type inference). A heterogeneous `[1 "a"]` is `Array<Int|String>`
+      // and correctly fails element-wise against `[Int Int]`.
+      if (sourceUnwrapped.isArray) {
+        const elem = sourceUnwrapped.generics?.[0] ?? sourceUnwrapped.inner;
+        return !!elem && te.length > 0 && te.every((t) => this.isAssignable(elem!, t, symbolTable));
+      }
+      return false;
+    }
+
     // Union types: T is assignable to T1 | T2 if T is assignable to any alternative
     if (targetUnwrapped.kind === "union") {
       // For each target alternative, unwrap it and check if source is assignable to it
@@ -391,6 +412,16 @@ export class TypeChecker {
       if (!keyOk || !valueOk) return false;
     }
 
+    // Tuple types carry `elements` (not generics), so the guards above never compared them -- `[Int Int]`
+    // would equal `[String Bool]`. Compare element-wise, same length.
+    if (a.kind === "tuple" || b.kind === "tuple") {
+      if (a.kind !== b.kind) return false;
+      const ae = a.elements ?? [];
+      const be = b.elements ?? [];
+      if (ae.length !== be.length) return false;
+      if (!ae.every((e: InferredType, i: number) => this.typesEqual(e, be[i]))) return false;
+    }
+
     // Check function signatures
     if (a.kind === "function" && b.kind === "function") {
       if (!this.typesEqual(a.returns!, b.returns!)) {
@@ -506,6 +537,10 @@ export class TypeChecker {
 
     if (type.kind === "union") {
       return type.alternatives!.map((a: any) => this.formatType(a)).join(" | ");
+    }
+
+    if (type.kind === "tuple") {
+      return `[${(type.elements ?? []).map((e: any) => this.formatType(e)).join(" ")}]`;
     }
 
     // Type-alias: format as the aliased type

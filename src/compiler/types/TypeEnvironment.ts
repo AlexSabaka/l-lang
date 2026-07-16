@@ -291,6 +291,17 @@ export class TypeEnvironment {
   }
 
   /**
+   * Helper to create tuple types (`[Int String]`) -- fixed-length, positional, heterogeneous.
+   */
+  static tuple(elements: InferredType[]): InferredType {
+    return {
+      kind: "tuple",
+      name: "Tuple",
+      elements,
+    };
+  }
+
+  /**
    * Helper to create map types (Dictionary<K, V>)
    */
   static map(keyType: InferredType, valueType: InferredType): InferredType {
