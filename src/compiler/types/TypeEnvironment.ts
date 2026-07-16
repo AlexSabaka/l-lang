@@ -225,8 +225,9 @@ export class TypeEnvironment {
            }
 
            const memberName = parts[i];
-           // Lookup member in currentType
-           if (currentType.kind === 'class' || currentType.kind === 'struct' || currentType.kind === 'interface' || currentType.kind === 'record') {
+           // Lookup member in currentType. A `map` with `members` is an INFERRED record (Rb) -- a map
+           // literal that kept its per-field types; its field access resolves the same way.
+           if (currentType.kind === 'class' || currentType.kind === 'struct' || currentType.kind === 'interface' || currentType.kind === 'record' || (currentType.kind === 'map' && (currentType as any).members)) {
                const member: any = currentType.members?.find((m: any) => m.name === memberName);
                if (member) {
                    currentType = memberSubst

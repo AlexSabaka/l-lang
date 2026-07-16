@@ -1179,6 +1179,27 @@ ${PRODUCER}
     why: "Ra: Person aliases the record; `p.name` is String, returned where Int -- caught (the alias is unwrapped to the record).",
   },
 
+  // --- Rb: INFERRED structural records -- a map LITERAL retains its per-field types (no annotation), so
+  // `{:name "x" :age 3}.name` types String. `members` is additive on the map (kind stays "map", so every
+  // map consumer keeps working; `m["k"]` still gives the common value type). ---
+  {
+    name: "Rb: a map literal's field type is inferred (mismatch caught)",
+    source: '(let m {:name "Alice" :age 30})\n(let bad <- Int m.name)',
+    expect: /LL0200|Type mismatch/,
+    why: "Rb: `m.name` is String (inferred from the literal), so assigning it to Int is caught. Was Map<String, String|Int> -> the field lost.",
+  },
+  {
+    name: "Rb: a map literal's numeric field is Int (used correctly, silent)",
+    source: '(let m {:name "Alice" :age 30})\n(let n <- Int m:age)',
+    silent: true,
+  },
+  {
+    name: "Rb: array-of-maps -- an element's field types (the JSON pattern)",
+    source: '(let us [{:name "a" :age 1}])\n(let u (get us 0))\n(let bad <- Int u.name)',
+    expect: /LL0200|Type mismatch/,
+    why: "Rb: `us` is an array of records; the element `u`'s `u.name` is String, so assigning it to Int is caught. (The array element preserves the record's members.)",
+  },
+
   // --- P5d: the erasure rule is GONE. `T` is no longer a universal escape hatch. ---
   {
     // `(fn pair<T> [a <- T b <- T])` called as `(pair 1 "x")`: `T` is solved to `Int` from the first

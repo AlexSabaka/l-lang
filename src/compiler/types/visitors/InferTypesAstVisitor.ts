@@ -3502,23 +3502,38 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           // Extract key-value pairs from values array
           const keyTypes: InferredType[] = [];
           const valueTypes: InferredType[] = [];
-          
+          // Rb: retain per-field types as a record's `members` (the STRUCTURAL view), alongside the
+          // homogeneous keyType/valueType below (the view existing map consumers -- the indexer,
+          // `containerElementType` -- read). So `{:name "x" :age 3}.name` types String while `m["k"]`
+          // still gives the common value type. A literal key is a static field name; a computed key is not.
+          const members: any[] = [];
+
           for (const item of mapNode.values) {
             if (item._type === "key-value") {
               const kvNode = item as ast.KeyValueNode;
-              keyTypes.push(this.inferExpressionType(kvNode.key));
-              valueTypes.push(this.inferExpressionType(kvNode.value));
+              const kt = this.inferExpressionType(kvNode.key);
+              const vt = this.inferExpressionType(kvNode.value);
+              keyTypes.push(kt);
+              valueTypes.push(vt);
+              const rawKey =
+                (kvNode.key as any).id ?? (kvNode.key as any).name ?? (kvNode.key as any).value;
+              const fieldName = typeof rawKey === "string" ? rawKey.replace(/^:/, "") : undefined;
+              if (fieldName) {
+                members.push({ name: fieldName, type: vt, isCtor: false, isPublic: true, isPrivate: false });
+              }
             }
           }
-          
-          const commonKeyType = keyTypes.length > 0 
+
+          const commonKeyType = keyTypes.length > 0
             ? TypeChecker.findCommonType(keyTypes) ?? TypeEnvironment.unknown()
             : TypeEnvironment.unknown();
           const commonValueType = valueTypes.length > 0
             ? TypeChecker.findCommonType(valueTypes) ?? TypeEnvironment.unknown()
             : TypeEnvironment.unknown();
-          
-          inferredType = TypeEnvironment.map(commonKeyType, commonValueType);
+
+          // Kind stays "map" (every map consumer keeps working); `members` is additive.
+          inferredType = { kind: "map", name: "Map", keyType: commonKeyType, valueType: commonValueType };
+          if (members.length) (inferredType as any).members = members; // TEMP toggle below
         }
         break;
       }
