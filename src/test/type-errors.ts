@@ -1157,6 +1157,28 @@ ${PRODUCER}
     why: "Ug: zip(Int[], String[]) is Iterator<[Int String]>, so `s` is String; assigning it to Int is caught.",
   },
 
+  // --- Ra: DECLARED records -- the `{:name <- String}` annotation (already parsed, previously dropped to
+  // Unknown) becomes a structural record; field access on a record-typed value types (dot or colon path).
+  // Reuses the struct `members` machinery + the resolveIdentifier member-walk. ---
+  {
+    name: "Ra: a record-annotated param types its field (colon path, used correctly)",
+    source: "(fn f [c <- {:host <- String :port <- Int}] -> Int c:port)",
+    silent: true,
+    why: "Ra: `c` is a record, so `c:port` is `Int`; returning it where Int is declared is silent.",
+  },
+  {
+    name: "Ra: a record field's type is enforced (dot path, mismatch caught)",
+    source: "(fn f [c <- {:host <- String}] -> Int c.host)",
+    expect: /LL0213|LL0200|Type mismatch/,
+    why: "Ra: `c.host` is String, returned where Int is declared -- a mismatch. Was Unknown -> silent.",
+  },
+  {
+    name: "Ra: a `deftype` alias to a record resolves its fields",
+    source: "(deftype Person {:name <- String :age <- Int})\n(fn g [p <- Person] -> Int p.name)",
+    expect: /LL0213|LL0200|Type mismatch/,
+    why: "Ra: Person aliases the record; `p.name` is String, returned where Int -- caught (the alias is unwrapped to the record).",
+  },
+
   // --- P5d: the erasure rule is GONE. `T` is no longer a universal escape hatch. ---
   {
     // `(fn pair<T> [a <- T b <- T])` called as `(pair 1 "x")`: `T` is solved to `Int` from the first

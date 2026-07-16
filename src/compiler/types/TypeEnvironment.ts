@@ -185,9 +185,11 @@ export class TypeEnvironment {
       return TypeEnvironment.PRIMITIVES.get(name);
     }
 
-    // Support dot notation for member access
-    if (name.includes('.')) {
-        const parts = name.split('.');
+    // Support dot- AND colon-path member access. `config.host` and the map/record `config:host` are the
+    // same field read; both split here (a record field is written either way). A leading `:` (a bare
+    // keyword like `:host`) yields an empty base and falls through to undefined, unchanged.
+    if ((name.includes('.') || name.includes(':')) && !name.startsWith(':')) {
+        const parts = name.split(/[.:]/);
         // The BASE is a value -- a local, a parameter -- so it is resolved from `from` like any
         // other. The member names after it are not; they are looked up in the base's type.
         let currentType = this.resolveIdentifier(parts[0], from);
@@ -216,10 +218,15 @@ export class TypeEnvironment {
                const resolved = this.resolveIdentifier(currentType.refName);
                if (resolved) currentType = resolved;
            }
+           // A `deftype` alias to a record (`(deftype Person {:name <- String})`) -- follow it to the
+           // record so its fields are visible.
+           if (currentType.kind === 'type-alias' && currentType.aliasedType) {
+               currentType = currentType.aliasedType;
+           }
 
            const memberName = parts[i];
            // Lookup member in currentType
-           if (currentType.kind === 'class' || currentType.kind === 'struct' || currentType.kind === 'interface') {
+           if (currentType.kind === 'class' || currentType.kind === 'struct' || currentType.kind === 'interface' || currentType.kind === 'record') {
                const member: any = currentType.members?.find((m: any) => m.name === memberName);
                if (member) {
                    currentType = memberSubst

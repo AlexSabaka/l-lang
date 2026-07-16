@@ -250,6 +250,23 @@ function convertAstTypeCore(
     return (typeNode as any).array ? TypeEnvironment.array(tuple) : tuple;
   }
 
+  // Record types (`{:name <- String :age <- Int}`) -- structural objects (Phase R). The annotation node
+  // already parses (both frontends) but was dropped here, converting to Unknown. A record reuses the
+  // struct `members` shape, so the existing member-walk (TypeEnvironment.resolveIdentifier) types field
+  // access for free.
+  if (typeNode._type === "map-type") {
+    const mapNode = typeNode as unknown as ast.MapTypeNode;
+    const members = (mapNode.keys ?? []).map((k: any) => ({
+      name: (k.key?.id ?? k.key?.name ?? k.key?.value) as string,
+      type: recur(k.type),
+      isCtor: false,
+      isPublic: true,
+      isPrivate: false,
+    }));
+    const record: InferredType = { kind: "record", name: "Record", members };
+    return (typeNode as any).array ? TypeEnvironment.array(record) : record;
+  }
+
   // Union types
   if (typeNode._type === "union-type") {
     const unionNode = typeNode as unknown as ast.UnionTypeNode;

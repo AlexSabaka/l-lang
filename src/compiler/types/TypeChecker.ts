@@ -548,6 +548,10 @@ export class TypeChecker {
       return `[${(type.elements ?? []).map((e: any) => this.formatType(e)).join(" ")}]`;
     }
 
+    if (type.kind === "record") {
+      return `{${(type.members ?? []).map((m: any) => `:${m.name} <- ${this.formatType(m.type)}`).join(" ")}}`;
+    }
+
     // Type-alias: format as the aliased type
     if (type.kind === "type-alias") {
       return `${type.name}` + (type.aliasedType ? ` (alias for ${this.formatType(type.aliasedType)})` : "");
