@@ -93,14 +93,14 @@
     ;; 13. Destructuring in pattern matching
     (console.log "--- Destructuring in Pattern Matching ---")
     (let data {:type "user" :payload {:id 1 :name "Frank"}})
-    (match data
-        [({:type "user" :payload {:id :name}} match) (
+    (match data {
+        {:type "user" :payload {:id :name}} => (
             (console.log "User data: ID=" id " Name=" name)
-        )]
-        [(_ match) (
+        )
+        _ => (
             (console.log "Unknown data type")
-        )]
-    )
+        )
+    })
 
     ;; 14. Complex nested destructuring
     (console.log "--- Complex Nested ---")

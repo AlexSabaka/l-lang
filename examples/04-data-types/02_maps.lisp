@@ -10,7 +10,7 @@
     ;; 1. Map with keyword keys
     (let person {:name "Alice" :age 30 :city "New York"})
     (console.log "Person:" person)
-    (console.log "Name:" person:name)
+    (console.log "Name:" person.name)
     (console.log "Age:" person["age"])
 
     ;; 2. Map with string keys
@@ -21,13 +21,13 @@
     ;; 3. Empty map and insertion
     (let empty {})
     (empty["key"] := "value")
-    (empty:status := "active")
+    (empty.status := "active")
     (console.log "Populated map:" empty)
 
     ;; 4. Nested maps
     (let nested {:user {:name "Bob" :contact {:email "bob@example.com"}}})
     (console.log "Nested map:" nested)
-    (console.log "User name:" nested:user:name)
+    (console.log "User name:" nested.user.name)
     (console.log "Email:" nested["user"]["contact"]["email"])
 
     ;; 5. Map iteration
@@ -49,8 +49,8 @@
 
     ;; 8. Check if key exists
     (let data {:a 1 :b 2 :c 3})
-    (if (data.hasKey :a)
-        (console.log "Key 'a' exists with value:" data:a))
+    (if (data.hasKey "a")
+        (console.log "Key 'a' exists with value:" data.a))
 
     ;; 9. Map with computed keys
     (let computed {})
@@ -62,7 +62,7 @@
 
     ;; 10. Map as function parameter
     (fn process-config [config <- {:host <- String :port <- Int}] -> String (
-        (return (+ config:host ":" config:port))
+        (return (+ config.host ":" config.port))
     ))
     (let result (process-config {:host "api.example.com" :port 443}))
     (console.log "Processed:" result)

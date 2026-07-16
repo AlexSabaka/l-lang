@@ -3,9 +3,9 @@
         (mut count 0)
         (let offsets [-1 0 1])
         
-        (for (let dy :of offsets) (
-            (for (let dx :of offsets) (
-                (if (not (and (== dx 0) (== dy 0))) (
+        (for :each dy :from offsets :then (
+            (for :each dx :from offsets :then (
+                (if (! (&& (== dx 0) (== dy 0))) (
                     ;; Logic to check bounds and add to count
                     ;; Simplified for brevity: assuming 3x3 grid without bounds check error
                     (if (== grid[(+ y dy), (+ x dx)] 1)
@@ -35,7 +35,7 @@
                 ;; 4. Reproduction (== 3) -> born
                 
                 (if (== cell 1)
-                    (if (or (== n 2) (== n 3)) (new-grid[y, x] := 1))
+                    (if (|| (== n 2) (== n 3)) (new-grid[y, x] := 1))
                     (if (== n 3) (new-grid[y, x] := 1))
                 )
                 (x := (+ x 1))

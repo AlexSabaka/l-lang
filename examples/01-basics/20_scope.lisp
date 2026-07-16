@@ -65,7 +65,7 @@
     ))
     (console.log "After if:" count)
     
-    (for :i 0 :< 3 :step 1 :then (
+    (for :init (mut i 0) :cond (< i 3) :step (i := (+ i 1)) :then (
         (let count (+ count 10))
         (console.log "In loop, iteration count:" count)
     ))
@@ -83,7 +83,7 @@
     (console.log "--- Closure Scope Capture ---")
     (let create-counter (
         (let count 0)
-        (fn get-counter [] -> (Fn [] Int) (
+        (fn get-counter [] -> (fn [] -> Int) (
             (fn increment [] -> Int (
                 (count := (+ count 1))
                 (return count)
@@ -102,14 +102,14 @@
     (console.log "--- Closures Sharing Scope ---")
     (let x 5)
     
-    (fn make-functions [] -> [(Fn [] Int) (Fn [] Int)] (
+    (fn make-functions [] -> [(fn [] -> Int) (fn [] -> Int)] (
         (let local 10)
         (fn get-x [] -> Int (return x))
         (fn get-local [] -> Int (return local))
         (return [get-x get-local])
     ))
     
-    (let [f1 f2] <- (make-functions))
+    (let [f1 f2] (make-functions))
     (console.log "Global x via closure:" (f1))
     (console.log "Local via closure:" (f2))
 
@@ -143,16 +143,16 @@
     (console.log "--- Match Scope ---")
     (let value "hello")
     
-    (match value
-        [("hello" match) (
+    (match value {
+        "hello" => (
             (let greeting "Welcome!")
             (console.log greeting)
-        )]
-        [(s <- String) (
+        )
+        s :of String => (
             (let greeting "Unknown string")
             (console.log greeting ":" s)
-        )]
-    )
+        )
+    })
 
     ;; 11. Immediate invocation with scope
     (console.log "--- IIFE Pattern ---")

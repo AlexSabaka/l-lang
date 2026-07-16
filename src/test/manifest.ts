@@ -108,11 +108,14 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "01-basics/18_destructuring.lisp": {
     status: "xfail",
     reason:
-      "Tuples (Phase U) and records (Phase R) BOTH work now: the tuple param at :48 " +
-      "`[[x y] <- [Int Int]]` parses and types its `x`,`y` as Int, and the record param at :55 " +
-      "`{:name <- String :age <- Int}` (corrected from the no-arrow form) types its fields. Blocked now " +
-      "at :97 on MATCH DESTRUCTURING -- the `[(pattern match) (body)]` arm form with a nested map-pattern, " +
-      "which the grammar does not have. Aspirational match syntax, not the richer-types layer.",
+      "Tuples (Phase U) and records (Phase R) BOTH work now. The :97 match-arm blocker is GONE (Pa): " +
+      "the `[(pattern match) (body)]` form was stale syntax only the PEG accepted; rewritten to the " +
+      "ruled `(match x { pat => body })`. The file now PARSES on grammar_v2. " +
+      "Blocked now at :19 on LL0219 'r'/'b' 'used before it is declared', both bound at :18 by " +
+      "`(let [r g b] rgb)` -- note `g`, bound by the SAME form, is not flagged, so this is not a " +
+      "plain destructuring-binding miss. `b` is separately re-declared at :78 and :80 in the same " +
+      "scope (an example bug: `(let [a b] [b a])` is a genuine TDZ read). The `r` report has no " +
+      "measured root cause yet -- it is a false positive on valid code and wants a probe.",
   },
   "01-basics/19_optional_and_mutability.lisp": {
     status: "test",
@@ -120,10 +123,15 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "01-basics/20_scope.lisp": {
     status: "xfail",
     reason:
-      "destructuring itself now works (D16). Blocked earlier in the file, at :68 " +
-      "`(for :i 0 :< 3 :step 1 :then ...)`: `:i` and `:<` are not `for` clauses, and under D12 " +
-      "`for` is named-clause-only, so this is now a located parse error rather than a silent " +
-      "slot-drift misparse. The example is at fault; it never reaches its destructuring on :112.",
+      "The :68 `for` blocker is GONE (Pa): `:i`/`:<` are not D12 clauses, rewritten to " +
+      "`:init (mut i 0) :cond (< i 3) :step (i := (+ i 1))`. Three more stale forms went with it: " +
+      "`(Fn [] Int)` -> `(fn [] -> Int)` (v2's functionType rule takes lowercase `fn` + `->`; the " +
+      "capital-`Fn` spelling never parsed on EITHER frontend and appears nowhere else in the corpus), " +
+      "the `[(pat match) (body)]` match arms -> `{pat => body}`, and `(let [f1 f2] <- (make-functions))` " +
+      "-> `(let [f1 f2] (make-functions))` (`<-` is the type arrow, so the old LL0006 was correct). " +
+      "The file now PARSES on grammar_v2. Blocked at :27 on LL0219 'x' 'used before declared': `x` is " +
+      "declared at :26 AND re-declared at :103 in the same top-level scope -- two `const x` in one " +
+      "block, an EXAMPLE bug. Fix the duplicate before re-judging the diagnostic.",
   },
   "01-basics/21_nil_handling.lisp": {
     status: "test",
@@ -155,12 +163,14 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "04-data-types/02_maps.lisp": {
     status: "xfail",
     reason:
-      "The string-key gap is FIXED (P8d): `{\"host\" \"localhost\"}` parses now, which was the last " +
-      "reason given. It is blocked one line further on, at :30 `nested:user:name` -- a COLON-PATH map " +
-      "access. grammar_v2 rejects it; PEG parses it and then type-errors, so the frontends diverge. " +
-      "Note the very NEXT line uses `nested[\"user\"][\"contact\"][\"email\"]`, which works (P8b), so " +
-      "the file does not need the colon form. Whether `map:key:key` is a language feature at all is a " +
-      "ruling, not a bug. It also has no golden.",
+      "The colon-path blocker is GONE (Pa). It was flagged here as needing a ruling, and it got one: " +
+      "`map:key:key` is NOT a language feature (D39) -- maps use dot-path. grammar_v2's rejection was " +
+      "correct all along; the PEG's acceptance was the defect (it mangled the path to a junk identifier " +
+      "that reached codegen -- audit AF-029). Every `person:name`/`nested:user:name`/`config:host` is now " +
+      "dot-access, and `(data.hasKey :a)` -> `\"a\"` per D13 (keys are strings). File now PARSES. " +
+      "Blocked at :72 on LL0202 'cannot assign Int to Map' for `(user[\"profile\"][\"score\"] := 1500)`: " +
+      "the checker drops the SECOND index in assignment position. A REAL CHECKER BUG -- the read form " +
+      "`nested[\"user\"][\"contact\"][\"email\"]` on :31 works fine. Unfiled by the audit. It also has no golden.",
   },
   "04-data-types/06_structs.lisp": {
     status: "test",
@@ -188,10 +198,16 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "10-algorithms/02_game_of_life.lisp": {
     status: "xfail",
     reason:
-      "uses `(for (let dy :of offsets) ...)`, a for-OF form that D12 does not have: `for` takes " +
-      "named clauses (:init/:each/:cond/:from/:step/:then/:else) and nothing else. Neither " +
-      "frontend ever supported it -- the PEG's For rule has no :of either. Aspirational syntax; " +
-      "either add a :of clause to D12 or rewrite the example.",
+      "The for-OF blocker is GONE (Pa): the old reason offered 'either add a :of clause to D12 or " +
+      "rewrite the example' -- the example was rewritten, to `:each dy :from offsets :then`. Its " +
+      "`(not (and ...))` / `(or ...)` also went to `!`/`&&`/`||`: the word-forms do not exist " +
+      "language-wide (`(and a b)` is LL0210 'and' is not defined). Whether `and`/`or`/`not` SHOULD " +
+      "exist as aliases is an open ruling. " +
+      "The file now COMPILES CLEAN and RUNS -- no diagnostics, exit 0 up to the throw. It fails at " +
+      "RUNTIME: `RangeError: IndexOutOfRange: -1 (length 3)`, because count-neighbors reads " +
+      "`grid[(+ y dy)]` with dy=-1 at y=0. The COMPILER IS CORRECT -- that is its emitted bounds " +
+      "check firing. The EXAMPLE is unfinished: its own comment at :10 says 'Simplified for brevity: " +
+      "assuming 3x3 grid without bounds check error'. Needs the bounds logic actually written.",
   },
   // THE STDLIB RUNS. It has a golden, it is executed on every `npm test`, in both frontends.
   //
