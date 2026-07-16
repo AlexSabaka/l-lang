@@ -341,6 +341,22 @@ and makes `enumerate`/`zip` honest.
 *   [x] **Ug** — `enumerate` → `Iterator<[Int T]>`, `zip` → `Iterator<[A B]>`: the pairs are typed, so a
         consumer's destructure carries real element types. Closes the LINQ loose end from Phase N.
 
+## ✅ Phase R: record types (`{:name <- String}`)
+The second half of richer types — structural objects, for field-typed maps and JSON-shaped data. A record
+is a JS object at runtime, so **codegen is unchanged**. Both DECLARED (annotation) and INFERRED (from a map
+literal) — the annotation `{:f <- T}` already parsed; it was just dropped in the type layer.
+*   [x] **Ra** — the DECLARED annotation is wired: `convertAstType`'s `map-type` branch → a `"record"`
+        `InferredType` reusing the struct `members`, so the member-walk types field access (dot AND colon
+        path). A `(deftype Person {...})` alias resolves its fields.
+*   [x] **Rb** — INFERRED records: a map literal retains its per-field types (`{:name "x" :age 3}.name` is
+        String), `members` additive on the `map` kind so every map consumer keeps working.
+*   [x] **Rc** — STRUCTURAL assignability: width + depth (`{:a Int :b Int}` → `{:a Int}`), field-wise
+        `typesEqual` — the first structural (non-nominal) rule in the checker.
+*   [x] **Rd** — docs + the corpus reconciliation (the `{:f <- T}` arrow form; `18_destructuring`'s tuple
+        AND record params now type, the file blocked further on aspirational match-destructuring).
+    *   Known gap: a FULLY-computed field read `(get xs i).name` (inline, no intermediate binding) drops
+            the member — the `case "member"` / computed-call path; works via a named intermediate.
+
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."
 

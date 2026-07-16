@@ -61,7 +61,7 @@
     (console.log "Computed keys map:" computed)
 
     ;; 10. Map as function parameter
-    (fn process-config [config <- {:host String :port Int}] -> String (
+    (fn process-config [config <- {:host <- String :port <- Int}] -> String (
         (return (+ config:host ":" config:port))
     ))
     (let result (process-config {:host "api.example.com" :port 443}))

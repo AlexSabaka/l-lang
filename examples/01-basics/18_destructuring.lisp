@@ -52,7 +52,7 @@
     (print-point [100 200])
 
     ;; 8. Destructuring map in function parameters
-    (fn greet [person <- {:name String :age Int}] -> nil (
+    (fn greet [person <- {:name <- String :age <- Int}] -> nil (
         (console.log "Hello" person:name "you are" person:age "years old")
     ))
     (greet {:name "Diana" :age 28})

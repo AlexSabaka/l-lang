@@ -3290,3 +3290,44 @@ The consequence: a typed String/Array member access emits a direct `.member()` /
 "genuine JS interop the compiler correctly cannot type" was, for String and Array, prelude work after
 all. What remains is `Date`/`Error` interop and the harder inference (array-of-maps element typing, which
 needs record types; field-access chains).
+
+## D37 — richer types: tuples and records (Phases U, R)
+
+Two STRUCTURAL type additions, filling the gaps the rest of the type system kept naming. Both are
+**codegen-free** — a tuple is a JS array, a record a JS object; every emitter already produces and consumes
+them. The whole of both features is grammar + type-system.
+
+### Tuples (`[Int String]`) — Phase U
+
+Fixed-length, heterogeneous, positionally typed. A LEADING `[` is the tuple; arrays stay postfix `Int[]`
+(a 1-tuple `[Int]` is legal, and `[Int Int][]` is an array of tuples). Neither frontend parsed a leading-`[`
+type before -- a hard parse error. A tuple is **DISTINCT from an array**: `[Int String]` is not an `Int[]`
+(that distinction is the point). The one cross-shape rule is ergonomic -- a vector LITERAL, whose fixed
+length is lost at inference (`[5 10]` is `Array<Int>`), is accepted against a homogeneous tuple.
+
+The load-bearing piece is **expected-type (bidirectional) inference** (Ue): a heterogeneous tuple value
+`[0 "a"]` cannot be BUILT from a literal otherwise (it collapses to `Array<Int|String>`), so a vector
+literal in a tuple context -- a `let`/return/yield annotation -- infers element-wise as that tuple.
+Destructuring binds element types from the annotation (`[x y] <- [Int Int]` types `x`,`y` as Int), on the
+param, `let`, and for-each sites. This is what let `enumerate`/`zip` become honest: `Iterator<[Int T]>` /
+`Iterator<[A B]>` (D33, updated).
+
+### Records (`{:name <- String}`) — Phase R
+
+Structural objects. The annotation `{:f <- T}` (colon key + `<-` type arrow, mirroring `param <- Type` and
+the `:key value` map literal) already PARSED in both frontends -- it was dropped in the type layer,
+converting to Unknown. Records are supported **both** DECLARED (the annotation, and `(deftype Person {...})`)
+and INFERRED (a map literal keeps its per-field types, so `{:name "x"}.name` is String with no annotation).
+
+The implementation REUSES the struct machinery: a record's `InferredType` carries the same `members` a
+struct does, so the existing member-walk types field access for free (dot `c.host` and colon `c:host`).
+Assignability is the first **STRUCTURAL** (non-nominal) rule in the checker: width + depth -- a source
+satisfies a target record when it has an assignable field for every target field (`{:a Int :b Int}` ->
+`{:a Int}`), recursing per field. Before this, any two records compared equal.
+
+**Reconciliation.** The corpus examples wrote the record annotation WITHOUT the arrow (`{:host String}`),
+which never matched the grammar; corrected to `{:host <- String}`. `18_destructuring`'s tuple and record
+params now type (it is blocked further on, on aspirational match-destructuring). **Known gap:** a
+FULLY-computed field read `(get xs i).name` (no intermediate binding) drops the member -- the `case
+"member"` / computed-call path returns the object type; it works via a named intermediate, and is a
+distinct fix.

@@ -108,10 +108,11 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "01-basics/18_destructuring.lisp": {
     status: "xfail",
     reason:
-      "destructuring itself now works (D16) -- every binding line in this file parses and runs. " +
-      "It is now blocked one line further on, at :48 `(fn print-point [[x y] <- [Int Int]])`, " +
-      "which needs a TUPLE TYPE. Neither frontend has ever supported `[Int Int]` as a type; that " +
-      "is D5/P8 type-system work, not the form layer.",
+      "Tuples (Phase U) and records (Phase R) BOTH work now: the tuple param at :48 " +
+      "`[[x y] <- [Int Int]]` parses and types its `x`,`y` as Int, and the record param at :55 " +
+      "`{:name <- String :age <- Int}` (corrected from the no-arrow form) types its fields. Blocked now " +
+      "at :97 on MATCH DESTRUCTURING -- the `[(pattern match) (body)]` arm form with a nested map-pattern, " +
+      "which the grammar does not have. Aspirational match syntax, not the richer-types layer.",
   },
   "01-basics/19_optional_and_mutability.lisp": {
     status: "test",
