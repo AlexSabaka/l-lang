@@ -6,6 +6,18 @@ import { InferredType, SymbolTable } from "../analysis/SymbolTable";
  */
 export class TypeChecker {
   /**
+   * The fields of a RECORD-shaped type -- a declared record (`{:a <- Int}`, kind "record") or an inferred
+   * map literal that kept its per-field `members`. `undefined` for a plain (homogeneous) map or a
+   * non-record, so a record target is only satisfied by a record-shaped source.
+   */
+  private static recordMembers(t: InferredType | undefined): any[] | undefined {
+    if (!t) return undefined;
+    if (t.kind === "record") return (t as any).members ?? [];
+    if (t.kind === "map" && (t as any).members) return (t as any).members;
+    return undefined;
+  }
+
+  /**
    * Check if 'source' can be assigned to 'target'
    * Returns true if assignment is valid
    */
@@ -117,6 +129,20 @@ export class TypeChecker {
         return !!elem && te.length > 0 && te.every((t) => this.isAssignable(elem!, t, symbolTable));
       }
       return false;
+    }
+
+    // Structural records -- a declared `{:a <- Int}` (kind "record") or an inferred map literal that kept
+    // its `members`. WIDTH + DEPTH subtyping (Rc): a source is assignable to a target record when for
+    // EVERY target field the source has an assignable field -- `{:a Int :b Int}` -> `{:a Int}` (width),
+    // recursing per field (depth). Only a record-shaped value satisfies a record target.
+    const targetRec = this.recordMembers(targetUnwrapped);
+    if (targetRec) {
+      const sourceRec = this.recordMembers(sourceUnwrapped);
+      if (!sourceRec) return false;
+      return targetRec.every((tf: any) => {
+        const sf = sourceRec.find((m: any) => m.name === tf.name);
+        return !!sf && this.isAssignable(sf.type, tf.type, symbolTable);
+      });
     }
 
     // Union types: T is assignable to T1 | T2 if T is assignable to any alternative
@@ -399,6 +425,20 @@ export class TypeChecker {
     }
     if (!aGenerics.every((g: InferredType, i: number) => this.typesEqual(g, bGenerics[i]))) {
       return false;
+    }
+
+    // Records / inferred-records carry `members`, not generics -- without this any two would compare
+    // equal (same kind, no generics), and isAssignable short-circuits on typesEqual. Field-wise, EXACT
+    // (isAssignable does the WIDTH version). Runs before the map branch so a map-with-members (an inferred
+    // record) is compared structurally, not by its homogeneous key/value view.
+    const aMembers = TypeChecker.recordMembers(a);
+    const bMembers = TypeChecker.recordMembers(b);
+    if (aMembers || bMembers) {
+      if (!aMembers || !bMembers || aMembers.length !== bMembers.length) return false;
+      return aMembers.every((am: any) => {
+        const bm = bMembers.find((m: any) => m.name === am.name);
+        return !!bm && this.typesEqual(am.type, bm.type);
+      });
     }
 
     // Map types carry keyType/valueType, NOT generics -- so the guard above never saw them and

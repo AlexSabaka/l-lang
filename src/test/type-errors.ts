@@ -1200,6 +1200,27 @@ ${PRODUCER}
     why: "Rb: `us` is an array of records; the element `u`'s `u.name` is String, so assigning it to Int is caught. (The array element preserves the record's members.)",
   },
 
+  // --- Rc: structural record assignability -- WIDTH (`{:a Int :b Int}` -> `{:a Int}`) + DEPTH (per-field,
+  // recursing). Before Rc any two records compared equal (no field-wise check), so everything passed. ---
+  {
+    name: "Rc: a WIDER record is assignable to a narrower one (width subtyping)",
+    source: "(fn wants [r <- {:a <- Int}] -> Int r:a)\n(fn give [x <- {:a <- Int :b <- Int}] -> Int (wants x))",
+    silent: true,
+    why: "Rc: `{:a Int :b Int}` has every field `{:a Int}` needs, so it is assignable.",
+  },
+  {
+    name: "Rc: a NARROWER record is not assignable to a wider one",
+    source: "(fn wants [r <- {:a <- Int :b <- Int}] -> Int r:a)\n(fn give [x <- {:a <- Int}] -> Int (wants x))",
+    expect: /LL0203/,
+    why: "Rc: `{:a Int}` is missing `:b`, which the target requires -- not assignable (was wrongly accepted).",
+  },
+  {
+    name: "Rc: a record with a wrong field TYPE is not assignable (depth)",
+    source: "(fn wants [r <- {:a <- Int}] -> Int r:a)\n(fn give [x <- {:a <- String}] -> Int (wants x))",
+    expect: /LL0203/,
+    why: "Rc: field `:a` is String in the source, Int in the target -- not assignable (was wrongly accepted).",
+  },
+
   // --- P5d: the erasure rule is GONE. `T` is no longer a universal escape hatch. ---
   {
     // `(fn pair<T> [a <- T b <- T])` called as `(pair 1 "x")`: `T` is solved to `Int` from the first
