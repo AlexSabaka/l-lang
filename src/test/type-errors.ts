@@ -1136,6 +1136,27 @@ ${PRODUCER}
     silent: true,
   },
 
+  // --- Ug: `enumerate`/`zip` are typed with tuples -- `enumerate` -> Iterator<[Int T]>, `zip` ->
+  // Iterator<[A B]> -- so a consumer's `[i x]` / `[n s]` destructure carries real element types (was
+  // Iterator<Any>). The payoff of the tuple stream, closing the LINQ loose end. ---
+  {
+    name: "Ug: enumerate yields a typed [Int T], the destructured element checked",
+    source: '(import "std/linq")\n(for :each [i x] :from (["a" "b"] |> enumerate) :then ((let bad <- Int x)))',
+    expect: /LL0200|Type mismatch/,
+    why: "Ug: enumerate over String[] is Iterator<[Int String]>, so `x` is String; assigning it to Int is caught.",
+  },
+  {
+    name: "Ug: enumerate's index is Int (used correctly, silent)",
+    source: '(import "std/linq")\n(for :each [i x] :from (["a" "b"] |> enumerate) :then ((let n <- Int i)))',
+    silent: true,
+  },
+  {
+    name: "Ug: zip yields a typed [A B], the destructured element checked",
+    source: '(import "std/linq")\n(for :each [n s] :from ([1 2 3] |> (zip ["a" "b"])) :then ((let bad <- Int s)))',
+    expect: /LL0200|Type mismatch/,
+    why: "Ug: zip(Int[], String[]) is Iterator<[Int String]>, so `s` is String; assigning it to Int is caught.",
+  },
+
   // --- P5d: the erasure rule is GONE. `T` is no longer a universal escape hatch. ---
   {
     // `(fn pair<T> [a <- T b <- T])` called as `(pair 1 "x")`: `T` is solved to `Int` from the first

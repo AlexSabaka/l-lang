@@ -98,10 +98,15 @@ export class TypeChecker {
     // ergonomic below.
     if (targetUnwrapped.kind === "tuple") {
       const te = targetUnwrapped.elements ?? [];
-      // tuple -> tuple: same length, element-wise (covariant -- a tuple value is read positionally).
+      // tuple -> tuple: same length, element-wise (covariant -- a tuple value is read positionally). An
+      // UNKNOWN element is accepted gradually, mirroring the whole-value Unknown skip at the check sites --
+      // a tuple built from untyped parts (`[(next a) (next b)]`) must not be rejected against `[A B]`.
       if (sourceUnwrapped.kind === "tuple") {
         const se = sourceUnwrapped.elements ?? [];
-        return se.length === te.length && te.every((t, i) => this.isAssignable(se[i], t, symbolTable));
+        return (
+          se.length === te.length &&
+          te.every((t, i) => this.isUnknown(se[i]) || this.isAssignable(se[i], t, symbolTable))
+        );
       }
       // A VECTOR LITERAL types as `Array<X>` (its fixed length is lost at inference), so accept it against
       // a tuple when `X` is assignable to every element -- lenient on length (a gradual concession;

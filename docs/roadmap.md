@@ -323,6 +323,24 @@ lazily, alongside the pipe (which stays primary). Four enablers, a dependency ch
 *   [x] **Ne** — a lazy-only op method-style on a bare array (`(arr.take 3)`) is **LL0230** with a fix hint
         (the pipe, or `seq`), not a silent compile → runtime `arr.take is not a function`.
 
+## ✅ Phase U: tuple types (`[Int String]`)
+Fixed-length, heterogeneous, positional types — the first half of richer types. A tuple is a JS array at
+runtime, so **codegen is unchanged**; the work is grammar + type-system. Unblocks the destructuring xfail
+and makes `enumerate`/`zip` honest.
+*   [x] **Ua** — grammar: a leading-`[` tuple type parses (both frontends; array stays postfix `Int[]`),
+        with a `TupleTypeNode`. Was a hard parse error.
+*   [x] **Ub** — the type: a `"tuple"` `InferredType`, `convertAstType`, and TypeChecker rules
+        (element-wise equality/assignability; a tuple is DISTINCT from an array). Absorbed the planned Uc.
+*   [x] **Ud** — destructuring bindings get element types from the annotation (`[x y] <- [Int Int]` types
+        `x`,`y` as `Int`); param, `let`, and (Uf) for-each sites.
+*   [x] **Ue** — EXPECTED-TYPE (bidirectional) inference: a vector literal infers against an expected tuple
+        (`[0 "a"]` becomes `[Int String]`), at the `let`/return/yield sites — so tuple values are
+        constructible, not just annotatable.
+*   [x] **Uf** — a destructured for-each loop var is typed from the element (`Iterator<X>` yields `X`), the
+        consumer side.
+*   [x] **Ug** — `enumerate` → `Iterator<[Int T]>`, `zip` → `Iterator<[A B]>`: the pairs are typed, so a
+        consumer's destructure carries real element types. Closes the LINQ loose end from Phase N.
+
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."
 

@@ -3148,8 +3148,9 @@ The two are the same split C# draws between an eager `foreach`/`List` and lazy L
 but the modules do not: imports are per-file, **no corpus file imports both** (verified), and the ruling
 is that a file picks ONE convention -- eager-array (`std/seq`) or lazy-pipe (`std/linq`). Merging them
 would force one argument order on both call styles; keeping them distinct serves each. `enumerate`/`zip`
-yield 2-element arrays (`[i x]`, `[x y]`), not tuples -- l-lang has no tuple type, same as eager
-`seq.zip`.
+yield 2-element pairs (`[i x]`, `[x y]`) -- typed as TUPLES as of Phase U: `enumerate` is
+`Iterator<[Int T]>` and `zip` is `Iterator<[A B]>`, so a consumer's `[i x]` / `[n s]` destructure carries
+real element types.
 
 ### Phases
 

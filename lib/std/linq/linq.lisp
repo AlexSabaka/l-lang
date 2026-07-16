@@ -47,9 +47,9 @@
     (for :each x :from coll :then (
       (when (pred x) :then (yield x)))))
 
-  ;; enumerate -- pair each element with its index as `[i x]` (l-lang has no tuple type yet; `seq.zip`
-  ;; yields 2-element arrays the same way, so the element is `Any` until the richer-types stream).
-  (fn :extension :gen enumerate<T> [coll <- Iterable<T>] -> Iterator<Any>
+  ;; enumerate -- pair each element with its index as `[i x]`, typed as the tuple `[Int T]` (Phase U). A
+  ;; consumer `(coll |> enumerate)` destructures `[i x]` with `i` an `Int` and `x` a `T`.
+  (fn :extension :gen enumerate<T> [coll <- Iterable<T>] -> Iterator<[Int T]>
     (mut i 0)
     (for :each x :from coll :then (
       (yield [i x])
