@@ -1,6 +1,7 @@
 import * as ast from "./frontend/ast";
 import { Context, LogLevel } from "./Context";
 import { formatWithOptions } from "util";
+import { DiagnosticDef, report } from "./rules/diagnostics";
 
 export class BaseAstVisitor {
   context: Context;
@@ -8,6 +9,16 @@ export class BaseAstVisitor {
 
   constructor(context: Context) {
     this.context = context;
+  }
+
+  /**
+   * Report a centralized diagnostic against `node`. The code, severity and message TEMPLATE live in a
+   * category map under `rules/diagnostics/`; the call site supplies only the node and the (primitive)
+   * params. This replaces the per-visitor `report*Error(node, code, message)` helpers -- see the
+   * category files for the free-code allocator.
+   */
+  protected report<P>(d: DiagnosticDef<P>, node: ast.ASTNode, params: P): void {
+    report(this.context, d, node, params);
   }
 
   // Add method to get visit count
