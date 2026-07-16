@@ -7,7 +7,7 @@ import {
 } from "../compiler/Context";
 import { ModuleResolver } from "../compiler/analysis/ModuleResolver";
 
-const VALID_LANGUAGES: CompilationLanguage[] = ["js", "legacy-js"];
+const VALID_LANGUAGES: CompilationLanguage[] = ["js"];
 
 function createFileLogger(file: string) {
   const stream = fs.createWriteStream(file, { flags: "a" });

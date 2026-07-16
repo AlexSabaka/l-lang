@@ -16,7 +16,6 @@ import {
 } from "./index";
 
 import {
-  JSTransformerAstVisitorLegacy,
   JSTransformerAstVisitorEstree,
   LlangTransformerAstVisitor
 } from "./codegen";
@@ -43,7 +42,7 @@ export enum LogLevel {
 
 export type CompilationStage = "parse" | "syntax" | "symbols" | "desugar" | "types" | "codegen";
 
-export type CompilationLanguage = "llang" | "js" | "legacy-js";
+export type CompilationLanguage = "llang" | "js";
 
 export interface CompilerOptions {
   logger?: (msg: any, ...args: any[]) => void;
@@ -596,11 +595,8 @@ export class Context {
     // CODEGEN STAGE
     this.performanceMetrics.startTimer("codegen");
     let transformer = undefined;
-    if (this.options.language === "legacy-js") {
-      // Use legacy transformer
-      transformer = new JSTransformerAstVisitorLegacy(this);
-    } else if (this.options.language === "js") {
-      // Use new ESTree-based transformer (default)
+    if (this.options.language === "js") {
+      // Use the ESTree-based transformer (default)
       transformer = new JSTransformerAstVisitorEstree(this);
     } else if (this.options.language === "llang") {
       // Use l-lang to l-lang transformer
