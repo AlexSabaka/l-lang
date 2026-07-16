@@ -106,6 +106,17 @@ function checkRegistry(): { failures: string[] } {
     }
   }
 
+  // Surface the FINDING: a registry code that ALSO appears in EXTERNAL_CODES is a migrated diagnostic
+  // sharing its number with a declarative rule (LL0015-LL0019). Preserved, but kept visible here so it
+  // cannot rot -- a later phase may renumber deliberately.
+  const external = new Set(EXTERNAL_CODES);
+  const overlap = [...owners.keys()].filter((c) => external.has(c)).sort();
+  if (overlap.length) {
+    console.log(
+      `  NOTE: ${overlap.length} code(s) overloaded with declarative rules (finding): ${overlap.join(", ")}`
+    );
+  }
+
   return { failures };
 }
 
@@ -209,6 +220,16 @@ const PROBES: Probe[] = [
     name: "LL0230 lazy op on a bare array",
     source: '(import "std/linq")\n(let xs [1 2 3])\n(console.log (xs.take 2))',
   },
+
+  // --- syntax/modifier band (LL0015-LL0019, LL0023), emitted by SyntaxRulesAstVisitor ---
+  { name: "LL0015 unknown modifier", source: "(fn :zzz foo [] -> Int 1)" },
+  { name: "LL0016 reserved native modifier", source: "(fn :gc foo [] -> Int 1)" },
+  {
+    name: "LL0017 duplicate for clause",
+    source: "(let xs [1 2])\n(let ys [3 4])\n(for :each x :from xs :from ys :then (console.log x))",
+  },
+  { name: "LL0018 missing for clause", source: "(for :each x :then (console.log x))" },
+  { name: "LL0023 defmacro is reserved", source: "(defmacro foo [] 1)" },
 
   // --- guards: these are correct programs; the type stage must stay silent on them ---
   { name: "silent: annotated arithmetic", source: "(let a <- Int 1)\n(let b <- Int 2)\n(console.log (+ a b))" },

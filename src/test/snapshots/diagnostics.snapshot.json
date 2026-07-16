@@ -309,6 +309,56 @@
     ]
   },
   {
+    "probe": "LL0015 unknown modifier",
+    "diagnostics": [
+      {
+        "code": "LL0015",
+        "severity": "error",
+        "text": "Unknown modifier ':zzz' on function. Declare it with (defmodifier zzz ...) if it is meant to be a custom modifier."
+      }
+    ]
+  },
+  {
+    "probe": "LL0016 reserved native modifier",
+    "diagnostics": [
+      {
+        "code": "LL0016",
+        "severity": "error",
+        "text": "':gc' is reserved for the native backend and is not implemented on the JS target."
+      }
+    ]
+  },
+  {
+    "probe": "LL0017 duplicate for clause",
+    "diagnostics": [
+      {
+        "code": "LL0017",
+        "severity": "error",
+        "text": "Duplicate 'from' clause. Each 'for' clause may appear at most once; the first wins."
+      }
+    ]
+  },
+  {
+    "probe": "LL0018 missing for clause",
+    "diagnostics": [
+      {
+        "code": "LL0018",
+        "severity": "error",
+        "text": "'for' is missing its required ':from' clause -- a `for :each` has nothing to iterate over without it."
+      }
+    ]
+  },
+  {
+    "probe": "LL0023 defmacro is reserved",
+    "diagnostics": [
+      {
+        "code": "LL0023",
+        "severity": "error",
+        "text": "'defmacro' is not implemented in 0.x. Macros are planned, and the keyword is reserved -- 'foo' is not defined. Metaprogramming today is ':comptime' (compile-time evaluation) and 'defmodifier' (a decorator)."
+      }
+    ]
+  },
+  {
     "probe": "silent: annotated arithmetic",
     "diagnostics": []
   },

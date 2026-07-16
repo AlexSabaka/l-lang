@@ -1,9 +1,11 @@
 import type { DiagnosticDef } from "./Diagnostic";
 import { TypeDiagnostics } from "./TypeDiagnostics";
+import { SyntaxDiagnostics } from "./SyntaxDiagnostics";
 
 export { def, report } from "./Diagnostic";
 export type { DiagnosticDef } from "./Diagnostic";
 export { TypeDiagnostics } from "./TypeDiagnostics";
+export { SyntaxDiagnostics } from "./SyntaxDiagnostics";
 
 /**
  * The registry: every diagnostic category, keyed by category name, each a map of def-name -> def.
@@ -22,10 +24,21 @@ export const DIAGNOSTIC_CATEGORIES: Record<
   Record<string, DiagnosticDef<any>>
 > = {
   type: TypeDiagnostics,
+  syntax: SyntaxDiagnostics,
 };
 
 /**
- * Codes owned by diagnostics that live OUTSIDE this registry (the declarative structural rules), so
- * the allocator's "taken" set is complete. Populated in Ec.
+ * Codes owned by diagnostics that live OUTSIDE this registry, so the allocator's "taken" set is
+ * complete and "next free" never collides with them.
+ *
+ * These are the LIVE declarative structural rules (`NodeValidationRules`, LL0001-LL0022 minus the
+ * commented-out LL0004). They keep their `test`-predicate form and are NOT migrated -- they are a
+ * different mechanism (self-checking, not call-site-decided). Listing their codes here lets the
+ * allocator see the whole LL00xx band, and lets `test:diagnostics` NOTE where they OVERLAP a migrated
+ * diagnostic (LL0015-LL0019 -- see SyntaxDiagnostics's finding).
  */
-export const EXTERNAL_CODES: readonly string[] = [];
+export const EXTERNAL_CODES: readonly string[] = [
+  "LL0001", "LL0002", "LL0003", "LL0005", "LL0006", "LL0007", "LL0008",
+  "LL0009", "LL0010", "LL0011", "LL0012", "LL0013", "LL0014", "LL0015",
+  "LL0016", "LL0017", "LL0018", "LL0019", "LL0020", "LL0021", "LL0022",
+];

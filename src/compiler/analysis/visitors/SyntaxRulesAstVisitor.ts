@@ -1,7 +1,7 @@
 import * as ast from "../../frontend/ast";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { checkRules, Rule, Rules as r } from "../../rules";
-import { createRule, RuleSeverity } from "../../rules/RuleBuilder";
+import { SyntaxDiagnostics as SD } from "../../rules/diagnostics";
 import {
   builtinModifiersFor,
   collectDefinedModifiers,
@@ -34,14 +34,10 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
    */
   visitMacroDef(node: ast.MacroDefNode) {
     const name = (node.name as any)?.id;
-    this.reportModifierError(
-      node,
-      "LL0023",
-      `'${node.keyword}' is not implemented in 0.x. Macros are planned, and the keyword is ` +
-        `reserved${name ? ` -- '${name}' is not defined` : ""}. ` +
-        `Metaprogramming today is ':comptime' (compile-time evaluation) and ` +
-        `'defmodifier' (a decorator).`
-    );
+    this.report(SD.MacroNotImplemented, node, {
+      keyword: node.keyword,
+      name,
+    });
     return node;
   }
 
@@ -66,11 +62,7 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
     if (construct === "parameter") return node;
 
     if ((RESERVED_NATIVE_MODIFIERS as readonly string[]).includes(name)) {
-      this.reportModifierError(
-        node,
-        "LL0016",
-        `':${name}' is reserved for the native backend and is not implemented on the JS target.`
-      );
+      this.report(SD.ReservedNativeModifier, node, { name });
       return node;
     }
 
@@ -83,26 +75,13 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
     const suggestion = suggestModifier(name, valid);
     const on = construct ? ` on ${construct}` : "";
 
-    this.reportModifierError(
-      node,
-      "LL0015",
-      `Unknown modifier ':${name}'${on}.` +
-        (suggestion ? ` Did you mean ':${suggestion}'?` : "") +
-        ` Declare it with (defmodifier ${name} ...) if it is meant to be a custom modifier.`
-    );
+    this.report(SD.UnknownModifier, node, {
+      name,
+      on,
+      suggestion,
+    });
 
     return node;
-  }
-
-  private reportModifierError(node: ast.ASTNode, code: string, message: string): void {
-    const rule = createRule<ast.ASTNode>()
-      .addSeverity(RuleSeverity.Error)
-      .addCode(code)
-      .addMessage(message)
-      .addTest(() => true)
-      .build();
-
-    this.context.results.add(node, rule, this.context);
   }
 
   /**
@@ -119,12 +98,7 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
    */
   private requireParens(node: ast.ASTNode, form: string): void {
     if ((node._parent as ast.ASTNode | undefined)?._type === "program") {
-      this.reportModifierError(
-        node,
-        "LL0019",
-        `'${form}' must be parenthesized: write (${form} ...). A bare declaration at the top ` +
-          `level silently swallows the form that follows it.`
-      );
+      this.report(SD.UnparenthesizedForm, node, { form });
     }
   }
 
@@ -222,20 +196,12 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
     required: [unknown, string, string][]
   ): void {
     for (const kind of duplicates ?? []) {
-      this.reportModifierError(
-        node,
-        "LL0017",
-        `Duplicate '${kind}' clause. Each 'for' clause may appear at most once; the first wins.`
-      );
+      this.report(SD.DuplicateForClause, node, { kind });
     }
 
     for (const [slot, name, why] of required) {
       if (slot === null || slot === undefined) {
-        this.reportModifierError(
-          node,
-          "LL0018",
-          `'for' is missing its required '${name}' clause -- ${why}.`
-        );
+        this.report(SD.MissingForClause, node, { name, why });
       }
     }
   }
