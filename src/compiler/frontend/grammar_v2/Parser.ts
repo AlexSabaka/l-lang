@@ -50,6 +50,7 @@ class LLangParser extends CstParser {
   mapType: ParserMethod<[], CstNode>;
   keyTypeDefinition: ParserMethod<[], CstNode>;
   mapKeyType: ParserMethod<[], CstNode>;
+  tupleType: ParserMethod<[], CstNode>;
   modifier: ParserMethod<[], CstNode>;
   variable: ParserMethod<[], CstNode>;
   functionExpr: ParserMethod<[], CstNode>;
@@ -599,6 +600,8 @@ class LLangParser extends CstParser {
       this.OR([
         { ALT: () => this.SUBRULE(this.functionType), GATE: () => this.isFunctionType() },
         { ALT: () => this.SUBRULE(this.mapType), GATE: () => this.LA(1)?.tokenType === t.LBrace },
+        // A TUPLE type: a LEADING `[` (the array suffix `Int[]` is postfix and never starts a type).
+        { ALT: () => this.SUBRULE(this.tupleType), GATE: () => this.LA(1)?.tokenType === t.LBracket },
         { ALT: () => this.SUBRULE(this.genericType), GATE: () => this.isGenericType() },
         { ALT: () => this.SUBRULE(this.simpleType) },
       ]);
@@ -678,6 +681,16 @@ class LLangParser extends CstParser {
         { ALT: () => this.SUBRULE(this.identifier) },
         { ALT: () => this.CONSUME(t.StringLiteral) },
       ]);
+    });
+
+    // A TUPLE type -- `[Int String]`, elements whitespace-separated like a vector literal. `AT_LEAST_ONE`
+    // stops at `]` (RBracket is not in `type`'s FIRST set). Elements are full `type`s, so `[Int[] String?]`
+    // and nested `[Int [A B]]` work. The trailing `[]` array suffix (array-of-tuples) is handled by the
+    // caller `basicType`, exactly as for every other basic type.
+    this.tupleType = this.RULE("tupleType", () => {
+      this.CONSUME(t.LBracket);
+      this.AT_LEAST_ONE(() => this.SUBRULE(this.type));
+      this.CONSUME(t.RBracket);
     });
 
     // ========================================================================

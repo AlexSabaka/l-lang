@@ -2358,6 +2358,21 @@ const CASES: Case[] = [
       "extensions. `((seq [10 20 30]).map inc).to-list` -> to_list(map(seq([10,20,30]), inc)) = [11 21 31].",
   },
 
+  // ===============================================================================================
+  // Phase U -- TUPLE types `[Int String]` (fixed-length, heterogeneous, positional). A tuple is a JS
+  // array at runtime, so codegen is unchanged; the work is grammar + type-system.
+  // ===============================================================================================
+  {
+    name: "Ua: a tuple type `[Int Int]` parses and erases (both frontends)",
+    source: `(fn f [p <- [Int Int]] -> Int (elem p 0))
+(console.log (f [1 2]))`,
+    expect: ["1"],
+    wasBroken:
+      "Neither frontend parsed `[Int Int]` as a type -- a hard parse error (grammar_v2) / a backtrack into " +
+      "a phantom LL0210 (PEG). Ua adds a `tupleType` grammar rule (both frontends) + `TupleTypeNode`. The " +
+      "type is ERASED at codegen -- a tuple IS a JS array -- so `(f [1 2])` runs and `(elem p 0)` is 1.",
+  },
+
   {
     name: "Na: an :extension on a super-interface dispatches on a sub-interface receiver",
     source: `(import "std/iter")

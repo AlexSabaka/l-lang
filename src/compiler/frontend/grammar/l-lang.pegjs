@@ -286,7 +286,7 @@ BasicTypes
   // `array` then `optional`, in that order and both un-spaced: `T[]?` is an OPTIONAL ARRAY, and an
   // array of optionals is `(T?)[]`. This is the site that fires for a plain `String?`, and it is
   // adjacency-gated for free now that TypeName no longer eats the whitespace before it.
-  = _ type:(FunctionType / MapType / GenericType / SimpleType) array:"[]"? optional:"?"? _ {
+  = _ type:(FunctionType / MapType / TupleType / GenericType / SimpleType) array:"[]"? optional:"?"? _ {
     return makeNode("", { ...type, array: !!array, optional: !!optional });
   }
 
@@ -313,6 +313,15 @@ SimpleType
 GenericType
   = _ name:TypeName _ "<" generics:Type|1.., ","?| ">" {
     return makeNode("generic-type", { name, generics });
+  }
+
+
+// Tuple types -- `[Int String]`, fixed-length heterogeneous; elements whitespace-separated (like a vector
+// literal). A LEADING `[` distinguishes it from the postfix array suffix `Int[]`. NO trailing `_`, same as
+// SimpleType, so BasicTypes' `[]`/`?` suffixes stay adjacency-gateable (array-of-tuples `[Int Int][]`).
+TupleType
+  = _ "[" _ elements:Type+ "]" {
+    return makeNode("tuple-type", { elements });
   }
 
 

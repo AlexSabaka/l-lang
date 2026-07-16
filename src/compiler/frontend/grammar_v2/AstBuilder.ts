@@ -578,6 +578,8 @@ export class LLangAstBuilder extends BaseCstVisitor {
       type = this.visit(ctx.functionType[0]);
     } else if (ctx.mapType) {
       type = this.visit(ctx.mapType[0]);
+    } else if (ctx.tupleType) {
+      type = this.visit(ctx.tupleType[0]);
     } else if (ctx.genericType) {
       type = this.visit(ctx.genericType[0]);
     } else if (ctx.simpleType) {
@@ -593,6 +595,11 @@ export class LLangAstBuilder extends BaseCstVisitor {
   simpleType(ctx: any): ast.SimpleTypeNode {
     const name = this.visit(ctx.typeName[0]);
     return this.makeNode("simple-type", ctx, { name });
+  }
+
+  tupleType(ctx: any): ast.TupleTypeNode {
+    const elements = ctx.type ? ctx.type.map((t: any) => this.visit(t)) : [];
+    return this.makeNode("tuple-type", ctx, { elements });
   }
 
   typeName(ctx: any): ast.TypeNameNode {

@@ -77,6 +77,7 @@ export type NodeType =
   | "map-type"
   | "map-key-type"
   | "mapped-type"
+  | "tuple-type"
   | "modifier"
   | "modifier-def"
   | "macro-def"
@@ -283,6 +284,16 @@ export interface MapKeyTypeNode extends ASTNode<"map-key-type"> {
 
 export interface MappedTypeNode extends ASTNode<"mapped-type"> {
   mapping: ASTNode[];
+}
+
+/**
+ * A TUPLE type -- `[Int String]`, fixed-length and heterogeneous, positionally typed. A leading `[`
+ * distinguishes it from the postfix array suffix `Int[]`; the elements are whitespace-separated like a
+ * vector literal. `[Int Int][]` is an array of tuples (the `array` suffix lands on the wrapping `TypeNode`
+ * via `basicType`, same as every other basic type).
+ */
+export interface TupleTypeNode extends ASTNode<"tuple-type"> {
+  elements: TypeNode[];
 }
 
 export interface ModifierNode extends ASTNode<"modifier"> {

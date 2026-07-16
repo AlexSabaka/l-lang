@@ -61,6 +61,7 @@ export class BaseAstVisitor {
         "map-type": this.visitMapType.bind(this),
         "map-key-type": this.visitMapKeyType.bind(this),
         "mapped-type": this.visitMappedType.bind(this),
+        "tuple-type": this.visitTupleType.bind(this),
         "modifier": this.visitModifier.bind(this),
         "modifier-def": this.visitModifierDef?.bind(this),
         "macro-def": this.visitMacroDef?.bind(this),
@@ -263,6 +264,10 @@ export class BaseAstVisitor {
 
   visitMapKeyType(node: ast.MapKeyTypeNode): any {
     return this.onUnhandled(node, "visitMapKeyType");
+  }
+
+  visitTupleType(node: ast.TupleTypeNode): any {
+    return this.onUnhandled(node, "visitTupleType");
   }
 
   visitMappedType(node: ast.MappedTypeNode): any {
