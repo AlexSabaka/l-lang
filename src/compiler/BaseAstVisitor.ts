@@ -17,8 +17,10 @@ export class BaseAstVisitor {
    * params. This replaces the per-visitor `report*Error(node, code, message)` helpers -- see the
    * category files for the free-code allocator.
    */
-  protected report<P>(d: DiagnosticDef<P>, node: ast.ASTNode, params: P): void {
-    report(this.context, d, node, params);
+  protected report(d: DiagnosticDef<void>, node: ast.ASTNode): void;
+  protected report<P>(d: DiagnosticDef<P>, node: ast.ASTNode, params: P): void;
+  protected report<P>(d: DiagnosticDef<P>, node: ast.ASTNode, params?: P): void {
+    report(this.context, d, node, params as P);
   }
 
   // Add method to get visit count

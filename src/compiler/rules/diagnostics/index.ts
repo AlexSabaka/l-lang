@@ -1,7 +1,9 @@
 import type { DiagnosticDef } from "./Diagnostic";
+import { TypeDiagnostics } from "./TypeDiagnostics";
 
 export { def, report } from "./Diagnostic";
 export type { DiagnosticDef } from "./Diagnostic";
+export { TypeDiagnostics } from "./TypeDiagnostics";
 
 /**
  * The registry: every diagnostic category, keyed by category name, each a map of def-name -> def.
@@ -18,7 +20,9 @@ export type { DiagnosticDef } from "./Diagnostic";
 export const DIAGNOSTIC_CATEGORIES: Record<
   string,
   Record<string, DiagnosticDef<any>>
-> = {};
+> = {
+  type: TypeDiagnostics,
+};
 
 /**
  * Codes owned by diagnostics that live OUTSIDE this registry (the declarative structural rules), so

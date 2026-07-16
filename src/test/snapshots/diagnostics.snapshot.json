@@ -160,6 +160,155 @@
     ]
   },
   {
+    "probe": "LL0204 operator not defined (unary)",
+    "diagnostics": [
+      {
+        "code": "LL0204",
+        "severity": "error",
+        "text": "Operator '-' is not defined for String."
+      }
+    ]
+  },
+  {
+    "probe": "LL0206 private member access",
+    "diagnostics": [
+      {
+        "code": "LL0206",
+        "severity": "error",
+        "text": "'v' is private to 'C' and cannot be accessed from here."
+      }
+    ]
+  },
+  {
+    "probe": "LL0208 in-type operator arity",
+    "diagnostics": [
+      {
+        "code": "LL0208",
+        "severity": "error",
+        "text": "The operator '+' is declared inside 'M' with 2 parameters. An operator declared inside a type takes ONE parameter -- 'this' is the left operand -- or NONE for a unary operator. For a two-operand form, declare it at top level: (fn :operator + [a <- M b <- M] ...)."
+      }
+    ]
+  },
+  {
+    "probe": "LL0212 duplicate declaration",
+    "diagnostics": []
+  },
+  {
+    "probe": "LL0221 for-each over non-iterable",
+    "diagnostics": [
+      {
+        "code": "LL0221",
+        "severity": "error",
+        "text": "Int is not iterable. A '(for :each ...)' collection must be an array or a type that implements Iterable<T>."
+      }
+    ]
+  },
+  {
+    "probe": "LL0222 yield outside :gen",
+    "diagnostics": [
+      {
+        "code": "LL0222",
+        "severity": "error",
+        "text": "'yield' is only valid inside a ':gen' function. Declare the function ':gen' to make it a generator."
+      }
+    ]
+  },
+  {
+    "probe": "LL0223 :gen returns a value",
+    "diagnostics": [
+      {
+        "code": "LL0213",
+        "severity": "error",
+        "text": "'g' declares it returns Iterator<Int>, but returns Int."
+      },
+      {
+        "code": "LL0223",
+        "severity": "error",
+        "text": "a ':gen' function stops with a valueless '(return)'; it cannot '(return x)'. Produce values with '(yield x)'."
+      }
+    ]
+  },
+  {
+    "probe": "LL0224 :gen wrong return type",
+    "diagnostics": [
+      {
+        "code": "LL0223",
+        "severity": "error",
+        "text": "a ':gen' function stops with a valueless '(return)'; it cannot '(return x)'. Produce values with '(yield x)'."
+      },
+      {
+        "code": "LL0224",
+        "severity": "error",
+        "text": "a ':gen' function must return Iterator<T> (or Iterable<T>), but 'g' declares Int."
+      }
+    ]
+  },
+  {
+    "probe": "LL0225 :gen yield type mismatch",
+    "diagnostics": [
+      {
+        "code": "LL0223",
+        "severity": "error",
+        "text": "a ':gen' function stops with a valueless '(return)'; it cannot '(return x)'. Produce values with '(yield x)'."
+      },
+      {
+        "code": "LL0225",
+        "severity": "error",
+        "text": "this generator produces Int, but yields String."
+      }
+    ]
+  },
+  {
+    "probe": "LL0226 :gen never yields",
+    "diagnostics": [
+      {
+        "code": "LL0226",
+        "severity": "warning",
+        "text": "':gen' function 'g' never yields -- it produces an empty sequence. Did you forget a '(yield ...)'?"
+      }
+    ]
+  },
+  {
+    "probe": "LL0227 await outside :async",
+    "diagnostics": [
+      {
+        "code": "LL0227",
+        "severity": "error",
+        "text": "'await' is only valid inside an ':async' function. Declare the function ':async'."
+      }
+    ]
+  },
+  {
+    "probe": "LL0228 :async wrong return type",
+    "diagnostics": [
+      {
+        "code": "LL0228",
+        "severity": "error",
+        "text": "an ':async' function must return Task<T> (or Awaitable<T>), but 'f' declares Int."
+      }
+    ]
+  },
+  {
+    "probe": "LL0229 :extension without receiver",
+    "diagnostics": [
+      {
+        "code": "LL0229",
+        "severity": "error",
+        "text": "an ':extension' function needs a receiver parameter -- the value it extends. With none it extends nothing and can never be reached as '(x.m ...)'."
+      }
+    ]
+  },
+  {
+    "probe": "LL0230 lazy op on a bare array",
+    "diagnostics": [
+      {
+        "code": "LL0230",
+        "severity": "error",
+        "text": "Array has no member 'take'. It is a lazy sequence operator, and a bare array is not a nominal Iterable, so it cannot dispatch. Use the pipe '(xs |> (take ...))', or lift the array with 'seq': '((seq xs).take ...)'."
+      }
+    ]
+  },
+  {
     "probe": "silent: annotated arithmetic",
     "diagnostics": []
   },

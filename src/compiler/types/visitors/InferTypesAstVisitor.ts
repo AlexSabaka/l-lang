@@ -14,7 +14,7 @@ import {
   CodegenMetadata 
 } from "../../analysis/SymbolTable";
 import { TypeChecker } from "../TypeChecker";
-import { createRule, RuleSeverity } from "../../rules/RuleBuilder";
+import { TypeDiagnostics as TD } from "../../rules/diagnostics";
 import { RuntimeProvider } from "../../runtime";
 import { SymbolTable, SymbolEntry, PackageRegistry } from "../../analysis";
 import { nativeMethodReturn, nativeMemberKind } from "../nativeMembers";
@@ -1339,41 +1339,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   private typeEnv: TypeEnvironment;
   private symbolTable: SymbolTable;
 
-  /**
-   * The type system's ONLY route to `hasErrors` -- and therefore the only way a type error can
-   * block codegen and exit 1.
-   *
-   * It used to live in TypeCheckingValidatorAstVisitor, a 360-line class that could never run:
-   * its dispatch built `visit${node._type}` with no capitalisation, so even "variable" resolved
-   * to `visitvariable` and matched nothing. Every check in the type system was therefore either
-   * unreachable (there) or print-only (here, via context.log, which touches the logger and
-   * nothing else). Moved to the pass that actually runs.
-   *
-   * Nothing calls this yet -- the six existing checks still log. Arming them is P4b, and it must
-   * not happen until the false positives are gone, or 19 passing tests break at once.
-   */
-  protected reportTypeError(node: ast.ASTNode, code: string, message: string): void {
-    const rule = createRule<ast.ASTNode>()
-      .addSeverity(RuleSeverity.Error)
-      .addCode(code)
-      .addMessage(message)
-      .addTest(() => true)
-      .build();
-
-    this.context.results.add(node, rule, this.context);
-  }
-
-  /** Like `reportTypeError`, but a WARNING -- the program still compiles. For "legal but suspicious". */
-  protected reportTypeWarning(node: ast.ASTNode, code: string, message: string): void {
-    const rule = createRule<ast.ASTNode>()
-      .addSeverity(RuleSeverity.Warning)
-      .addCode(code)
-      .addMessage(message)
-      .addTest(() => true)
-      .build();
-
-    this.context.results.add(node, rule, this.context);
-  }
+  // Type diagnostics route through `this.report(TD.X, node, params)` (BaseAstVisitor) into
+  // `context.results` -- this pass is the type system's ONLY path to `hasErrors`, hence the only way a
+  // type error blocks codegen and exits 1. The checks once lived in TypeCheckingValidatorAstVisitor, a
+  // class whose dispatch built `visit${node._type}` with no capitalisation and so resolved nothing;
+  // every check there was unreachable, and they were moved here, to the pass that actually runs. Codes
+  // and message templates now live in rules/diagnostics/TypeDiagnostics.ts (Eb).
 
   /**
    * Type the arguments of a call whose CALLEE we could not resolve -- `(console.log h.length)`, a
@@ -1431,12 +1402,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     what: string
   ): boolean {
     if (!type?.optional) return true;
-    this.reportTypeError(
-      node,
-      "LL0205",
-      `${what} is possibly nil (${TypeChecker.formatType(type)}). Check it against nil first, ` +
-        `or use a non-optional value.`
-    );
+    this.report(TD.PossiblyNil, node, {
+      what,
+      type: TypeChecker.formatType(type),
+    });
     return false;
   }
 
@@ -1496,11 +1465,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // Inside the declaring class. `this.secret` is the overwhelmingly common case.
     if (this.classStack[this.classStack.length - 1] === owner.name) return;
 
-    this.reportTypeError(
-      node,
-      "LL0206",
-      `'${memberName}' is private to '${owner.name}' and cannot be accessed from here.`
-    );
+    this.report(TD.PrivateAccess, node, {
+      name: memberName,
+      owner: owner.name,
+    });
   }
 
   /**
@@ -1769,11 +1737,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     if (!isArray) return;
     if (nativeMemberKind(receiverType, member)) return; // a real native array method -- fine
     if (!this.extensionNames().has(member)) return; // not a linq extension -- not this diagnostic
-    this.reportTypeError(
-      node,
-      "LL0230",
-      `Array has no member '${member}'. It is a lazy sequence operator, and a bare array is not a nominal Iterable, so it cannot dispatch. Use the pipe '(xs |> (${member} ...))', or lift the array with 'seq': '((seq xs).${member} ...)'.`
-    );
+    this.report(TD.ArrayLazyMember, node, { member });
   }
 
   /** The name-keyed entry to `checkArrayExtensionMisuseType` -- splits a dotted head `(a.take 3)`. */
@@ -1917,11 +1881,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
         if (name && !isOperatorDecl) {
           if (declaredHere.has(name)) {
-            this.reportTypeError(
-              decl,
-              "LL0212",
-              `'${name}' is already declared in this scope.`
-            );
+            this.report(TD.AlreadyDeclared, decl, { name });
           } else {
             declaredHere.set(name, decl);
           }
@@ -2110,12 +2070,9 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // and a map/string/user-type-without-Iterable is "we cannot type the element", not "wrong" -- so
     // the diagnostic is narrow: a scalar primitive in `:from` is the mistake it catches.
     if (!elemType && this.isKnownNonIterable(collType)) {
-      this.reportTypeError(
-        node.collection,
-        "LL0221",
-        `${TypeChecker.formatType(collType)} is not iterable. ` +
-          `A '(for :each ...)' collection must be an array or a type that implements Iterable<T>.`
-      );
+      this.report(TD.NotIterable, node.collection, {
+        type: TypeChecker.formatType(collType),
+      });
     }
 
     // Bind the loop variable. A plain name gets the element type (or Unknown, so a same-named outer
@@ -2248,11 +2205,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         if (!unknownEither && !TypeChecker.isAssignable(valueType, declaredType, this.symbolTable)) {
           // For recursive types with array/union structure, skip the error since the structure is correct
           if (!isLikelyRecursive) {
-            this.reportTypeError(
-              node,
-              "LL0200",
-              `Type mismatch: cannot assign ${TypeChecker.formatType(valueType)} to ${TypeChecker.formatType(declaredType)} for variable '${varName}'.`
-            );
+            this.report(TD.VariableAssignMismatch, node, {
+              value: TypeChecker.formatType(valueType),
+              declared: TypeChecker.formatType(declaredType),
+              variable: varName,
+            });
           } else {
             // Log as warning instead for recursive types
             this.context.log(
@@ -2457,11 +2414,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       if (TypeChecker.isUnknown(valueType)) continue;
 
       if (!TypeChecker.isAssignable(valueType, declared, this.symbolTable)) {
-        this.reportTypeError(
-          ret.node,
-          "LL0213",
-          `'${funcName}' declares it returns ${TypeChecker.formatType(declared)}, but returns ${TypeChecker.formatType(valueType)}.`
-        );
+        this.report(TD.ReturnMismatch, ret.node, {
+          func: funcName,
+          declared: TypeChecker.formatType(declared),
+          got: TypeChecker.formatType(valueType),
+        });
       }
     }
   }
@@ -2522,11 +2479,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     );
     if (!isExtension) return;
     if (!node.params || node.params.length === 0) {
-      this.reportTypeError(
-        node,
-        "LL0229",
-        "an ':extension' function needs a receiver parameter -- the value it extends. With none it extends nothing and can never be reached as '(x.m ...)'."
-      );
+      this.report(TD.ExtensionNoReceiver, node);
     }
   }
 
@@ -2537,11 +2490,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // is unambiguous -- report each and stop (the other rules are about a real generator).
     if (!node.generator) {
       for (const y of yields) {
-        this.reportTypeError(
-          y.node,
-          "LL0222",
-          "'yield' is only valid inside a ':gen' function. Declare the function ':gen' to make it a generator."
-        );
+        this.report(TD.YieldOutsideGen, y.node);
       }
       return;
     }
@@ -2557,11 +2506,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         if (this.isIteratorType(rt)) {
           elementType = rt.generics?.[0];
         } else {
-          this.reportTypeError(
-            node,
-            "LL0224",
-            `a ':gen' function must return Iterator<T> (or Iterable<T>), but '${genName}' declares ${TypeChecker.formatType(rt)}.`
-          );
+          this.report(TD.GenReturnType, node, {
+            func: genName,
+            declared: TypeChecker.formatType(rt),
+          });
         }
       }
     }
@@ -2569,11 +2517,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // A generator STOPS with a valueless `(return)`. A value has nowhere to go in the sequence.
     for (const ret of this.collectReturns(node.body)) {
       if (ret.value) {
-        this.reportTypeError(
-          ret.node,
-          "LL0223",
-          "a ':gen' function stops with a valueless '(return)'; it cannot '(return x)'. Produce values with '(yield x)'."
-        );
+        this.report(TD.GenReturnsValue, ret.node);
       }
     }
 
@@ -2586,22 +2530,17 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         const vt = this.inferValueWithExpected(y.value, elementType);
         if (TypeChecker.isUnknown(vt)) continue;
         if (!TypeChecker.isAssignable(vt, elementType, this.symbolTable)) {
-          this.reportTypeError(
-            y.node,
-            "LL0225",
-            `this generator produces ${TypeChecker.formatType(elementType)}, but yields ${TypeChecker.formatType(vt)}.`
-          );
+          this.report(TD.GenYieldMismatch, y.node, {
+            produces: TypeChecker.formatType(elementType),
+            yields: TypeChecker.formatType(vt),
+          });
         }
       }
     }
 
     // An empty generator is legal but almost always a mistake.
     if (yields.length === 0) {
-      this.reportTypeWarning(
-        node,
-        "LL0226",
-        `':gen' function '${genName}' never yields -- it produces an empty sequence. Did you forget a '(yield ...)'?`
-      );
+      this.report(TD.GenNeverYields, node, { func: genName });
     }
   }
 
@@ -2632,11 +2571,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
     if (!node.async) {
       for (const a of awaits) {
-        this.reportTypeError(
-          a,
-          "LL0227",
-          "'await' is only valid inside an ':async' function. Declare the function ':async'."
-        );
+        this.report(TD.AwaitOutsideAsync, a);
       }
       return;
     }
@@ -2647,11 +2582,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       const rt = this.convertAstTypeToInferred(node.returns);
       if (!TypeChecker.isUnknown(rt) && !TypeChecker.isNil(rt) && !this.isAwaitableType(rt)) {
         const genName = node.name ? ast.symbolName(node.name) : "<anonymous>";
-        this.reportTypeError(
-          node,
-          "LL0228",
-          `an ':async' function must return Task<T> (or Awaitable<T>), but '${genName}' declares ${TypeChecker.formatType(rt)}.`
-        );
+        this.report(TD.AsyncReturnType, node, {
+          func: genName,
+          declared: TypeChecker.formatType(rt),
+        });
       }
     }
   }
@@ -2801,23 +2735,19 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       for (const param of method.params ?? []) {
         // A parameter is an INPUT, so it may not mention a covariant (`:out`) parameter.
         for (const name of offenders(param.type, "out")) {
-          this.reportTypeError(
-            param,
-            "LL0214",
-            `Covariant type parameter '${name}' cannot appear in the parameter position of '${methodName}'. ` +
-              `':out' means '${name}' is only ever produced; a parameter consumes it.`
-          );
+          this.report(TD.CovariantInParam, param, {
+            name,
+            method: methodName,
+          });
         }
       }
 
       // A return type is an OUTPUT, so it may not mention a contravariant (`:in`) parameter.
       for (const name of offenders(method.returns, "in")) {
-        this.reportTypeError(
-          method,
-          "LL0214",
-          `Contravariant type parameter '${name}' cannot appear in the return position of '${methodName}'. ` +
-            `':in' means '${name}' is only ever consumed; a return produces it.`
-        );
+        this.report(TD.ContravariantInReturn, method, {
+          name,
+          method: methodName,
+        });
       }
     }
   }
@@ -2916,14 +2846,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       if (arity <= 1) continue;
 
       const opName = fn.name ? ast.symbolName(fn.name as ast.IdentifierNode) : "<operator>";
-      this.reportTypeError(
-        fn,
-        "LL0208",
-        `The operator '${opName}' is declared inside '${typeName}' with ${arity} parameters. An ` +
-          `operator declared inside a type takes ONE parameter -- 'this' is the left operand -- or ` +
-          `NONE for a unary operator. For a two-operand form, declare it at top level: ` +
-          `(fn :operator ${opName} [a <- ${typeName} b <- ${typeName}] ...).`
-      );
+      this.report(TD.OperatorArity, fn, {
+        operator: opName,
+        type: typeName,
+        arity,
+      });
     }
   }
 
@@ -2958,13 +2885,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       if (!isOperator) continue;
 
       if (fn.body?.some((b) => this.assignsToThis(b))) {
-        this.reportTypeError(
-          fn,
-          "LL0207",
-          `An operator on the value type '${structName}' may not mutate 'this'. A struct is passed ` +
-            `BY VALUE, so the mutation would escape to the caller's struct. Build a new ` +
-            `'${structName}' and return it instead.`
-        );
+        this.report(TD.OperatorMutatesThis, fn, { type: structName });
       }
     }
   }
@@ -3063,11 +2984,9 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // can call wrong. (This check only started firing once visitList stopped skipping non-
     // declarations -- it had never run before, so it had never needed the guard.)
     if (!TypeChecker.isUnknown(condType) && condType.name !== "Boolean") {
-      this.reportTypeError(
-        node,
-        "LL0201",
-        `'if' condition must be Boolean, got ${TypeChecker.formatType(condType)}.`
-      );
+      this.report(TD.IfConditionNotBoolean, node, {
+        got: TypeChecker.formatType(condType),
+      });
     }
 
     // `(if (!= h nil) (h.length))` -- inside the branch the guard proves, `h` is not optional (D9g).
@@ -3107,11 +3026,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
     if (node.operator === ":=") {
       if (!TypeChecker.isAssignable(valueType, targetType, this.symbolTable)) {
-        this.reportTypeError(
-          node,
-          "LL0202",
-          `Type mismatch in assignment: cannot assign ${TypeChecker.formatType(valueType)} to ${TypeChecker.formatType(targetType)}.`
-        );
+        this.report(TD.AssignmentMismatch, node, {
+          value: TypeChecker.formatType(valueType),
+          target: TypeChecker.formatType(targetType),
+        });
       }
       return node;
     }
@@ -3124,21 +3042,21 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     if (!resultType) {
       // Same rule as inferOperatorType: only judge operands we actually model.
       if (this.canJudgeOperator(targetType, valueType)) {
-        this.reportTypeError(
-          node,
-          "LL0204",
-          `Operator '${node.operator}' is not defined for ${TypeChecker.formatType(targetType)} and ${TypeChecker.formatType(valueType)}.`
-        );
+        this.report(TD.OperatorNotDefinedBinary, node, {
+          operator: node.operator,
+          left: TypeChecker.formatType(targetType),
+          right: TypeChecker.formatType(valueType),
+        });
       }
       return node;
     }
 
     if (!TypeChecker.isAssignable(resultType, targetType, this.symbolTable)) {
-      this.reportTypeError(
-        node,
-        "LL0202",
-        `'${node.operator}' produces ${TypeChecker.formatType(resultType)}, which cannot be assigned back to ${TypeChecker.formatType(targetType)}.`
-      );
+      this.report(TD.AssignBackMismatch, node, {
+        operator: node.operator,
+        produces: TypeChecker.formatType(resultType),
+        target: TypeChecker.formatType(targetType),
+      });
     }
 
     return node;
@@ -3155,11 +3073,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     }
 
     if (!TypeChecker.isAssignable(valueType, targetType, this.symbolTable)) {
-      this.reportTypeError(
-        node,
-        "LL0202",
-        `Type mismatch in assignment: cannot assign ${TypeChecker.formatType(valueType)} to ${TypeChecker.formatType(targetType)}.`
-      );
+      this.report(TD.AssignmentMismatch, node, {
+        value: TypeChecker.formatType(valueType),
+        target: TypeChecker.formatType(targetType),
+      });
     }
   }
 
@@ -3769,11 +3686,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       return;
     }
 
-    this.reportTypeError(
-      node,
-      "LL0210",
-      `'${head}' is not defined.`
-    );
+    this.report(TD.NotDefined, node, { name: head });
   }
 
   /**
@@ -3882,13 +3795,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     if (!headType || headType.kind !== "function") return;
 
     this.reportedComputedCallee.add(node);
-    this.reportTypeError(
-      node,
-      "LL0220",
-      `This is a BLOCK, not a call: its value is the last form, and the function on the left is ` +
-        `discarded. A callee that is not a name must be applied with \`call\` -- ` +
-        `write \`(call <fn> <args>)\`. (D25)`
-    );
+    this.report(TD.BlockNotCall, node);
   }
 
   private checkForwardReference(node: ast.ASTNode, name: string, entry: SymbolEntry): void {
@@ -3907,12 +3814,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     if (!decl?.start || !use?.start || decl.source !== use.source) return; // another module: not an order
 
     if (decl.start.offset > use.start.offset) {
-      this.reportTypeError(
-        node,
-        "LL0219",
-        `'${name}' is used before it is declared. A value must be declared before it is evaluated. ` +
-          `(A function may be referenced ahead of its declaration; a value may not.)`
-      );
+      this.report(TD.UsedBeforeDeclared, node, { name });
     }
   }
 
@@ -3939,11 +3841,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       declaredIn &&
       path.resolve(askingFile) !== path.resolve(declaredIn)
     ) {
-      this.reportTypeError(
-        node,
-        "LL0206",
-        `'${name}' is private to '${where}' and cannot be accessed from here.`
-      );
+      this.report(TD.PrivateAccess, node, {
+        name,
+        owner: where,
+      });
       return;
     }
 
@@ -3955,11 +3856,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
     // The EXPORT side (Sb): does that module offer this name?
     if (!SymbolTable.isVisibleFrom(entry, askingFile)) {
-      this.reportTypeError(
-        node,
-        "LL0215",
-        `'${name}' is defined in '${where}' but is not exported. Add it to that module's (export ...) list to make it public.`
-      );
+      this.report(TD.NotExported, node, {
+        name,
+        where,
+      });
       return;
     }
 
@@ -3974,11 +3874,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       declaredIn !== askingFile &&
       !this.context.importBinds(askingFile, declaredIn, name)
     ) {
-      this.reportTypeError(
-        node,
-        "LL0216",
-        `'${name}' is exported by '${where}', but this file's import does not bind it. Add it to the import list: (import { ${name} } from ...).`
-      );
+      this.report(TD.NotBound, node, {
+        name,
+        where,
+      });
     }
   }
 
@@ -4261,11 +4160,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
     if (tooFew || tooMany) {
       const expected = funcType.isVariadic ? `at least ${required}` : `${declared}`;
-      this.reportTypeError(
-        reportNode,
-        "LL0211",
-        `'${funcName}' expects ${expected} argument${required === 1 && !funcType.isVariadic ? "" : "s"}, got ${args.length}.`
-      );
+      this.report(TD.Arity, reportNode, {
+        func: funcName,
+        expected,
+        plural: !(required === 1 && !funcType.isVariadic),
+        got: args.length,
+      });
     }
 
     argTypes.forEach((argType, i) => {
@@ -4275,11 +4175,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       // tells us nothing. Reporting either way is noise.
       if (TypeChecker.isUnknown(expectedType) || TypeChecker.isUnknown(argType)) return;
       if (!TypeChecker.isAssignable(argType, expectedType, this.symbolTable)) {
-        this.reportTypeError(
-          args[i] ?? reportNode,
-          "LL0203",
-          `Argument ${i + 1} of '${funcName}': expected ${TypeChecker.formatType(expectedType)}, got ${TypeChecker.formatType(argType)}.`
-        );
+        this.report(TD.ArgumentMismatch, args[i] ?? reportNode, {
+          index: i + 1,
+          func: funcName,
+          expected: TypeChecker.formatType(expectedType),
+          got: TypeChecker.formatType(argType),
+        });
       }
     });
   }
@@ -4308,11 +4209,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       }
 
       if (!resultType) {
-        this.reportTypeError(
-          args[0],
-          "LL0204",
-          `Operator '${op}' is not defined for ${TypeChecker.formatType(operandType)}.`
-        );
+        this.report(TD.OperatorNotDefinedUnary, args[0], {
+          operator: op,
+          operand: TypeChecker.formatType(operandType),
+        });
         return TypeEnvironment.unknown();
       }
       
@@ -4355,11 +4255,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       }
 
       if (!resultType) {
-        this.reportTypeError(
-          args[0],
-          "LL0204",
-          `Operator '${op}' is not defined for ${TypeChecker.formatType(leftType)} and ${TypeChecker.formatType(rightType)}.`
-        );
+        this.report(TD.OperatorNotDefinedBinary, args[0], {
+          operator: op,
+          left: TypeChecker.formatType(leftType),
+          right: TypeChecker.formatType(rightType),
+        });
         return TypeEnvironment.unknown();
       }
       

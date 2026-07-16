@@ -178,6 +178,37 @@ const PROBES: Probe[] = [
       "(let f (Foo 1))\n" +
       "(let s <- String (f.as-int))",
   },
+  { name: "LL0204 operator not defined (unary)", source: '(let s "x")\n(console.log (- s))' },
+  {
+    name: "LL0206 private member access",
+    source: "(defclass C (let :private v <- Int 0))\n(let c (C))\n(console.log c.v)",
+  },
+  {
+    name: "LL0208 in-type operator arity",
+    source:
+      "(defstruct M (let :ctor a <- Int 0)\n" +
+      "  (fn :operator + [x <- M y <- M] -> M (return x)))",
+  },
+  { name: "LL0212 duplicate declaration", source: "(let d 1)\n(let d 2)" },
+  { name: "LL0221 for-each over non-iterable", source: "(for :each x :from 5 :then (console.log x))" },
+  { name: "LL0222 yield outside :gen", source: "(fn f [] -> Int (yield 1))" },
+  {
+    name: "LL0223 :gen returns a value",
+    source: "(fn :gen g [] -> Iterator<Int> (yield 1) (return 5))",
+  },
+  { name: "LL0224 :gen wrong return type", source: "(fn :gen g [] -> Int (yield 1))" },
+  {
+    name: "LL0225 :gen yield type mismatch",
+    source: '(fn :gen g [] -> Iterator<Int> (yield "s"))',
+  },
+  { name: "LL0226 :gen never yields", source: "(fn :gen g [] -> Iterator<Int> (return))" },
+  { name: "LL0227 await outside :async", source: "(fn f [] -> Int (await 1))" },
+  { name: "LL0228 :async wrong return type", source: "(fn :async f [] -> Int 1)" },
+  { name: "LL0229 :extension without receiver", source: "(fn :extension foo [] -> Int 1)" },
+  {
+    name: "LL0230 lazy op on a bare array",
+    source: '(import "std/linq")\n(let xs [1 2 3])\n(console.log (xs.take 2))',
+  },
 
   // --- guards: these are correct programs; the type stage must stay silent on them ---
   { name: "silent: annotated arithmetic", source: "(let a <- Int 1)\n(let b <- Int 2)\n(console.log (+ a b))" },

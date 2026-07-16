@@ -44,16 +44,18 @@ export function def<P = void>(
  * A free function so the two non-visitor reporters (`Context`, `JSClassBuilder`) can use it directly;
  * visitors get the thinner `this.report(def, node, params)` from `BaseAstVisitor`.
  */
+export function report(context: Context, d: DiagnosticDef<void>, node: ast.ASTNode): void;
+export function report<P>(context: Context, d: DiagnosticDef<P>, node: ast.ASTNode, params: P): void;
 export function report<P>(
   context: Context,
   d: DiagnosticDef<P>,
   node: ast.ASTNode,
-  params: P
+  params?: P
 ): void {
   const rule: Rule<ast.ASTNode> = {
     code: d.code,
     severity: d.severity,
-    message: d.message(params),
+    message: d.message(params as P),
     test: () => true,
   };
   context.results.add(node, rule, context);
