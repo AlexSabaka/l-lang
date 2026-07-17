@@ -3428,6 +3428,81 @@ catch b ((console.log "two")))`,
       "LAMBDA, which is exactly right; a walk that does not stop at a function boundary would refuse " +
       "the most ordinary code in the language.",
   },
+
+  // ===============================================================================================
+  // Yb -- a trailing `cond` / `when` returned `undefined` against a DECLARED return type.
+  //
+  //     (fn f [x <- Int] -> String (cond ((> x 0) "pos") (true "neg")))   ->  undefined
+  //     (fn f [x <- Int] -> String (when (> x 0) :then ("pos")))          ->  undefined
+  //
+  // Silent, and it defeats the checker exactly as AF-043 did: the function is certified `-> String`
+  // and hands back undefined.
+  //
+  // The desugarer turns a function's tail expression into an explicit `(return e)`. `wrapIfValue`
+  // special-cases a trailing `if` -- the return goes on each BRANCH -- and `isValueTail` lets a
+  // trailing `match` through, so both yield their value. `cond` and `when` are in `isValueTail`'s
+  // exclusion set and get neither treatment.
+  //
+  // Four trailing forms, two answers:  if OK · match OK · cond undefined · when undefined.
+  //
+  // NOT A RULING, and that is the point. `isValueTail`'s comment says "whether a trailing `if` should
+  // be an expression is a RULING, not a detail to slip into a refactor" -- and the ruling has already
+  // shipped, twice: `if` yields its branch and `match` yields its arm. `cond` is `if`'s own shape (a
+  // dispatch chain) and `when` is `if` without an else. They are not a deliberate exclusion; they are
+  // the two that nobody came back for. This makes the language answer once.
+  //
+  // Partiality is unchanged and is already the rule for `if`: `(if c 1)` with no else yields undefined
+  // when c is false, and so does a `cond` with no matching clause. That is D9's problem, not this one.
+  // ===============================================================================================
+  {
+    name: "Yb: a trailing `cond` yields its clause's value",
+    source: `(fn grade [x <- Int] -> String (cond ((> x 0) "pos") (true "neg")))
+(console.log (grade 1))
+(console.log (grade (- 0 1)))`,
+    expect: ["pos", "neg"],
+    wasBroken:
+      "`undefined`, from a fn the checker had certified `-> String`. `cond` sits in `isValueTail`'s " +
+      "exclusion set while `if` -- the same shape -- is special-cased above it and works.",
+  },
+  {
+    name: "Yb: a trailing `when` yields its body's value",
+    source: `(fn f [x <- Int] -> String (when (> x 0) :then ("pos")))
+(console.log (f 1))`,
+    expect: ["pos"],
+    wasBroken: "`undefined`. `when` is `if` without an else, and was excluded where `if` is not.",
+  },
+  {
+    // THE GUARD THAT MUST NOT MOVE. D25/Xb pins `(cond ((>= score 90) (return "A")) ...)` under "The
+    // three that must NOT move" -- an explicit `return` in a clause returns from the FUNCTION, and the
+    // clause emits an else-if CHAIN, not an IIFE. Wrapping a body that is ALREADY a return would
+    // produce `return (return "A")`; `isValueTail` refuses that, and this proves it still does.
+    name: "Yb: an explicit `return` in a cond clause is not double-wrapped",
+    source: `(fn grade [score <- Int] -> String (
+  (cond
+    ((>= score 90) (return "A"))
+    ((>= score 80) (return "B"))
+    (true          (return "F")))
+))
+(console.log (grade 95))
+(console.log (grade 50))`,
+    expect: ["A", "F"],
+    wasBroken:
+      "NOT broken -- THE GUARD, and the one a careless fix breaks. D25/Xb already pins this shape; " +
+      "the wrap must decline a body that is already a `(return e)`.",
+  },
+  {
+    // The other half of the family, pinned so the four forms stay in agreement rather than drifting
+    // apart again the moment someone edits one of them.
+    name: "Yb: trailing if / match still yield their value",
+    source: `(fn viaIf [x <- Int] -> String (if (> x 0) "pos" "neg"))
+(fn viaMatch [x <- Int] -> String (match x { 1 => "one" _ => "other" }))
+(console.log (viaIf 1))
+(console.log (viaMatch 1))`,
+    expect: ["pos", "one"],
+    wasBroken:
+      "NOT broken -- a GUARD. These two are why cond/when are a BUG and not a ruling: the language " +
+      "already decided a trailing control form yields its value.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

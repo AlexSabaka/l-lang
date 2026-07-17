@@ -428,6 +428,40 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       } as ast.IfNode;
     }
 
+    // A trailing `cond`: the return goes on each CLAUSE BODY. Same shape as the `if` above -- a cond
+    // IS a dispatch chain of ifs, and codegen emits it as one.
+    //
+    // It was excluded (via `isValueTail`) while `if` was special-cased here, so
+    // `(fn f [x <- Int] -> String (cond ((> x 0) "pos") (true "neg")))` handed back UNDEFINED against
+    // a declared `-> String`, silently. Not a ruling: `if` and `match` already yield their value, so
+    // the language had decided; cond and when were the two nobody came back for.
+    //
+    // A clause whose body is ALREADY `(return e)` is left alone -- `isValueTail` refuses it, which is
+    // what keeps D25/Xb's `(cond ((>= score 90) (return "A")))` from becoming `return (return "A")`.
+    if (node._type === "cond") {
+      const condNode = node as ast.CondNode;
+      return {
+        ...condNode,
+        cases: condNode.cases.map((c) => ({
+          ...c,
+          body: this.wrapIfValue(c.body),
+        })),
+      } as ast.CondNode;
+    }
+
+    // A trailing `when`: the return goes on the LAST statement of the body, which is what `wrapTail`
+    // does for a function body -- a `when`'s `:then` is a statement LIST, not a single node.
+    //
+    // `when` is `if` without an else, so it is partial in exactly the way `(if c 1)` already is: no
+    // match, no value. That is D9's business, not this fix's.
+    if (node._type === "when") {
+      const whenNode = node as ast.WhenNode;
+      return {
+        ...whenNode,
+        then: this.wrapTail(whenNode.then),
+      } as ast.WhenNode;
+    }
+
     return this.isValueTail(node) ? this.wrapInReturn(node) : node;
   }
 
@@ -437,14 +471,22 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
    *
    * The exclusions mirror codegen's `isControlStatement` + its `x._type !== "variable"` guard.
    *
-   * `if` / `when` / `cond` are EXCLUDED, and that is deliberate. Codegen emits them as statements in
-   * a function tail, so a function whose tail is an `if` yields `undefined` today -- its own comment
-   * says so ("nothing to convert. Leave it; the block's value is undefined"). The version of this
-   * method that shipped in the unwired desugarer wrapped BOTH BRANCHES of a trailing `if` in returns,
-   * which would silently start returning a value where nothing was returned before. Whether a
-   * trailing `if` should be an expression is a RULING, not a detail to slip into a refactor.
+   * `if` / `when` / `cond` are listed below, and NONE of them reaches this method any more -- all
+   * three are handled by `wrapIfValue` above, which puts the return on each branch / clause / body.
+   * The entries are kept as the fallback for a tail this method is asked about out of that context.
    *
-   * `match` is NOT excluded: codegen emits it as an IIFE -- an expression -- and returns it.
+   * THE COMMENT THAT USED TO BE HERE said all three were "EXCLUDED, and that is deliberate", because
+   * "whether a trailing `if` should be an expression is a RULING, not a detail to slip into a
+   * refactor". The ruling was made -- `if` was special-cased in `wrapIfValue`, and `match` was never
+   * excluded -- and this comment was not updated. So it described a language with one rule while the
+   * code implemented two, and `cond`/`when` sat in the gap: a function declared `-> String` whose tail
+   * was a `cond` returned UNDEFINED, silently, for as long as that took to notice (Yb).
+   *
+   * The rule, stated once: a trailing control form YIELDS ITS VALUE. `if` yields its branch, `cond`
+   * its clause, `when` its body, `match` its arm. All four are partial in the same way and for the
+   * same reason -- no branch taken, no value -- which is D9's problem, not this method's.
+   *
+   * `match` is not excluded and never was: codegen emits it as an IIFE -- an expression -- and returns it.
    */
   private isValueTail(node: ast.ASTNode): boolean {
     const notAValue: Set<ast.NodeType> = new Set([
