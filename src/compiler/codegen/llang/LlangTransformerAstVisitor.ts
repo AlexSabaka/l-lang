@@ -114,7 +114,9 @@ export class LlangTransformerAstVisitor extends BaseAstVisitor {
   }
 
   visitFunctionType(node: ast.FunctionTypeNode): any {
-    return `fn [${this.mapVisitJoinNodes(node.params)}] -> ${this.visit(node.ret[0])}`;
+    // `ret` is a single node, not an array (same bug the checker had) -- `.ret[0]` was `undefined`,
+    // so a round-tripped function type printed `-> undefined`.
+    return `fn [${this.mapVisitJoinNodes(node.params)}] -> ${node.ret ? this.visit(node.ret) : "Void"}`;
   }
 
   visitSimpleType(node: ast.SimpleTypeNode): any {

@@ -278,8 +278,13 @@ function convertAstTypeCore(
   if (typeNode._type === "function-type") {
     const funcTypeNode = typeNode as unknown as ast.FunctionTypeNode;
     const params = funcTypeNode.params.map(recur);
-    const returns =
-      funcTypeNode.ret.length > 0 ? recur(funcTypeNode.ret[0]) : TypeEnvironment.primitive("Void");
+    // `ret` is a SINGLE node -- the builder stores `types[types.length-1]` (AstBuilder `functionType`).
+    // It was read as an array (`.ret.length`, `.ret[0]`), so `.length` on a node object was undefined,
+    // the ternary always took the else, and EVERY function type collapsed to `() -> Void`. The
+    // interface said `TypeNode[]`, which is what let the array-access typecheck; corrected below.
+    const returns = funcTypeNode.ret
+      ? recur(funcTypeNode.ret as unknown as ast.TypeNode)
+      : TypeEnvironment.primitive("Void");
     return TypeEnvironment.function(params, returns);
   }
 

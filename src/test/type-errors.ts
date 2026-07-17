@@ -1607,6 +1607,17 @@ ${PRODUCER}
       "-- silent because Unknown swallowed the type, not because the type was right.",
   },
   {
+    name: "Zl: a function-typed param carries its declared RETURN type",
+    source: `(fn use [f <- (fn [] -> Int)] -> Void (
+  (let x <- Int (f))
+  (console.log x)))`,
+    silent: true,
+    why:
+      "Zl/function-type-void: `f` returns Int, so `(let x <- Int (f))` is fine. Was: the AST's " +
+      "function-type `ret` was READ as an array (`.ret[0]`) though the builder stores a single node, " +
+      "so it always collapsed to Void -> a spurious LL0200 'cannot assign Void to Int'.",
+  },
+  {
     name: "Zk: a generic type parameter is not an unknown type (GUARD)",
     source: `(definterface Container<T> (fn get [] -> T))
 (defclass Box<T> :implements Container<T>

@@ -261,7 +261,8 @@ export interface IntersectionTypeNode extends ASTNode<"intersection-type"> {
 
 export interface FunctionTypeNode extends ASTNode<"function-type"> {
   params: TypeNode[];
-  ret: TypeNode[];
+  /** The return type -- a SINGLE node (AstBuilder stores `types[types.length-1]`), or null for none. */
+  ret: TypeNode | null;
 }
 
 export interface SimpleTypeNode extends ASTNode<"simple-type"> {
