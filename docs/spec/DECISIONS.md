@@ -189,6 +189,20 @@ Today every `for` slot is optional and positional — omitting `:then` silently 
 reordering slots compiles clean into something else entirely. `for-each` is currently *implemented
 by* this misparse, not despite it.
 
+**`:else` was ruled here and never built (fixed in Ye).** For over a year `(cond ... (:else e))` was a
+parse error — `ElseModKw` existed and was consumed by the `if`/`when` and `for` rules, and `condCase`
+had simply never referenced it. The corpus routed around the gap in silence, writing
+`(true (return "F"))` with a `;; Default case` comment beside it: the comment existed *because* the
+code could not say what it meant. A ruling nobody implemented and nobody noticed was unimplemented,
+because the workaround reads almost as well.
+
+`:else` is **sugar for a `true` condition**, which is what `(true …)` already was — an ordinary clause
+whose condition happens to be the literal true. The AST builder gives the `:else` clause a `true`
+condition, so codegen, the checker and every golden see one shape: re-authoring
+`13_flow_cond.lisp` to `:else` moved **no golden**, which is the proof. `(true …)` therefore keeps
+working, and must: this ruling names the default's SPELLING, it does not forbid writing the condition
+out.
+
 ## D13 — Map keys
 
 **Ruling:** Map keys are strings, never mangled. `{ :my-key 1 }` emits `{ "my-key": 1 }` verbatim.

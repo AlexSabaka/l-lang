@@ -1187,14 +1187,35 @@ class LLangParser extends CstParser {
 
     this.condCase = this.RULE("condCase", () => {
       this.CONSUME(t.LParen);
-      this.OPTION(() => {
-        this.OPTION2(() => this.CONSUME(t.CondModKw));
-        this.SUBRULE(this.expression);
-      });
-      this.OPTION3(() => {
-        this.OPTION4(() => this.CONSUME(t.ThenModKw));
-        this.SUBRULE2(this.expression);
-      });
+      this.OR([
+        {
+          // `(:else body)` -- THE DEFAULT CLAUSE (D12: "`cond`'s default clause is spelled `:else`").
+          //
+          // It has no condition, which is the only thing that makes it a separate alternative: every
+          // other clause is `(<condition> <body>)`. The AST builder gives it a `true` condition, so
+          // downstream this IS an ordinary clause -- see `condCase` there.
+          //
+          // ElseModKw has existed all along and is consumed by the `if`/`when` and `for` rules; this
+          // rule had simply never referenced it, so a ruling made in D12 was never implemented and
+          // the corpus wrote `(true ...)` instead, with a comment explaining that it meant default.
+          ALT: () => {
+            this.CONSUME(t.ElseModKw);
+            this.SUBRULE3(this.expression);
+          },
+        },
+        {
+          ALT: () => {
+            this.OPTION(() => {
+              this.OPTION2(() => this.CONSUME(t.CondModKw));
+              this.SUBRULE(this.expression);
+            });
+            this.OPTION3(() => {
+              this.OPTION4(() => this.CONSUME(t.ThenModKw));
+              this.SUBRULE2(this.expression);
+            });
+          },
+        },
+      ]);
       this.CONSUME(t.RParen);
     });
 

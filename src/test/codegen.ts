@@ -3592,6 +3592,65 @@ catch b ((console.log "two")))`,
       "`'n' is not defined` -- the PATTERN's OWN binding, reported the instant anything type-checked " +
       "the arm. `bindingIdentifiers` had no `type-pattern` case, so `:of` registered no name at all.",
   },
+
+  // ===============================================================================================
+  // Ye / D12 -- `cond`'s default clause is spelled `:else`, and it did not parse.
+  //
+  //     (cond ((> x 0) "pos") (:else "neg"))
+  //       ->  Expecting token of type --> RParen <-- but found --> ':else' <--
+  //
+  // D12's ruling, verbatim: "`cond`'s default clause is spelled `:else`." `ElseModKw` exists and is
+  // consumed by the `if`/`when` and `for` rules; `condCase` has never referenced it. A ruling that
+  // was never implemented -- and the corpus routed around it in silence, writing
+  // `(true (return "F"))` with a `;; Default case` comment next to it.
+  //
+  // `:else` is SUGAR for a `true` condition, which is what `(true ...)` already was: a clause whose
+  // condition happens to be the literal true. Same AST, so codegen, the checker and every golden are
+  // untouched -- the spelling is the whole change. `(true ...)` keeps working precisely because it
+  // was never special: it is an ordinary clause, and D12 names the DEFAULT's spelling, not a
+  // prohibition on writing `true`.
+  // ===============================================================================================
+  {
+    name: "Ye/D12: `cond`'s default clause is spelled `:else`",
+    source: `(fn grade [x <- Int] -> String (
+  (cond
+    ((>= x 90) (return "A"))
+    ((>= x 80) (return "B"))
+    (:else     (return "F")))
+))
+(console.log (grade 95))
+(console.log (grade 85))
+(console.log (grade 10))`,
+    expect: ["A", "B", "F"],
+    wasBroken:
+      "`Expecting token of type --> RParen <-- but found --> ':else' <--`. D12 ruled this spelling " +
+      "and `condCase` never referenced ElseModKw. The corpus wrote `(true ...)` instead, with a " +
+      "comment explaining that it was the default.",
+  },
+  {
+    // `:else` desugars to a `true` condition, so the two spellings must be indistinguishable -- that
+    // is what makes this a one-line grammar change and not a codegen one.
+    name: "Ye/D12: `:else` and `(true ...)` are the same clause",
+    source: `(fn a [x <- Int] -> String ((cond ((> x 0) (return "pos")) (:else (return "neg")))))
+(fn b [x <- Int] -> String ((cond ((> x 0) (return "pos")) (true  (return "neg")))))
+(console.log (a 1) (a (- 0 1)))
+(console.log (b 1) (b (- 0 1)))`,
+    expect: ["pos neg", "pos neg"],
+    wasBroken:
+      "NOT broken for `(true ...)` -- a GUARD. `true` was never a special case, just a clause whose " +
+      "condition is the literal true, so it must keep working exactly as it did.",
+  },
+  {
+    // Yb's rule meets D12's: a trailing `cond` yields its clause's value, and `:else` is a clause.
+    name: "Ye/D12: an `:else` clause yields its value in a trailing cond",
+    source: `(fn pick [x <- Int] -> String (cond ((> x 0) "pos") (:else "neg")))
+(console.log (pick 1))
+(console.log (pick (- 0 1)))`,
+    expect: ["pos", "neg"],
+    wasBroken:
+      "unparseable, and then (before Yb) undefined. The two fixes compose: `:else` is a clause, and a " +
+      "trailing cond returns its clause's value.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

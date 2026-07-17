@@ -4,7 +4,7 @@
             ((>= score 90) (return "A"))
             ((>= score 80) (return "B"))
             ((>= score 70) (return "C"))
-            (true          (return "F")) ;; Default case
+            (:else         (return "F"))
         )
     )
 

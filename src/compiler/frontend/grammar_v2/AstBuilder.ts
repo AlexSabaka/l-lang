@@ -1036,6 +1036,22 @@ export class LLangAstBuilder extends BaseCstVisitor {
 
   condCase(ctx: any): ast.CondCaseNode {
     const expressions = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
+
+    // `(:else body)` -- the DEFAULT clause (D12). It parses with no condition and exactly one
+    // expression, and is given the condition `true`.
+    //
+    // SUGAR, deliberately: `(true body)` was never a special case, just a clause whose condition
+    // happens to be the literal true. Building `:else` as the same node means codegen, the checker
+    // and every golden see one shape and cannot disagree about it -- the spelling is the whole
+    // change, which is why this needed no emitter work and moved no golden. It also means `(true ...)`
+    // keeps working: D12 names the default's SPELLING, it does not forbid writing the condition out.
+    if (ctx.ElseModKw) {
+      return this.makeNode("cond-case", ctx, {
+        condition: this.makeNode("boolean", ctx, { value: true }),
+        body: expressions.length > 0 ? expressions[0] : null,
+      });
+    }
+
     const condition = expressions.length > 0 ? expressions[0] : null;
     const body = expressions.length > 1 ? expressions[1] : null;
     return this.makeNode("cond-case", ctx, { condition, body });
