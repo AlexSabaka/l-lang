@@ -3456,6 +3456,18 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       // If expression
       case "if": {
         const ifNode = node as ast.IfNode;
+        // THE CONDITION, which this never inferred.
+        //
+        // `visitIf` -- the STATEMENT path -- infers the condition and checks it is a Boolean. This is
+        // the EXPRESSION path (`(console.log (if c 1 2))`, `(let x (if c 1 2))`), and it went straight
+        // to the branches. So an `if` used as a VALUE never type-checked its own condition, and
+        // nothing in the condition reached the type channel: `(if (x :of Int) ...)` inside a call left
+        // `x` untyped for codegen, which is how D43's static fold first came back empty.
+        //
+        // The type is not used here -- an `if`'s value is its branches'. Inferring is the point:
+        // it populates the channel and lets the condition's own checks fire.
+        this.inferExpressionType(ifNode.condition);
+
         const thenType = this.inferExpressionType(ifNode.then);
         const elseType = ifNode.else
           ? this.inferExpressionType(ifNode.else)

@@ -2499,7 +2499,69 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return withOptional(isTypeCall(name), n.optional === true);
   }
 
+  /**
+   * `Int` and `Real` are the same value at run time, so `:of` decides them from the STATIC type (D43).
+   *
+   * JavaScript has one number and `5.0 === 5`. A primitive cannot carry a tag, BigInt breaks
+   * arithmetic/JSON/Math, and boxing unboxes at the first operator -- so there is nothing to buy. The
+   * CHECKER, though, knows perfectly well that `(let x <- Real 5.0)` is a Real. D34/Phase E already
+   * rules this shape: when the static type is known, lower at compile time.
+   *
+   * Returns `true`/`false` to fold, or undefined to mean "not my case -- carry on".
+   *
+   *     x : Int          ->  true          x : Int | String ->  undefined (typeof is exact here)
+   *     x : Real         ->  false         x : Int | Real   ->  undefined, and refused by the caller
+   *     x : Unknown      ->  undefined (gradual: never report on an Unknown)
+   */
+  private foldNumericGuard(node: ast.TypeGuardNode): boolean | undefined {
+    const target = this.getTypeName(node.type);
+    if (target !== "Int" && target !== "Real") return undefined;
+
+    const known: any = this.context.nodeTypes?.get(node.value);
+    // An EMPTY channel says nothing, and must not read as "false" -- the same asymmetry
+    // `needsValueCopy` documents. Gradual typing means this is often empty, and a value we could not
+    // type is not a value we can call wrong.
+    if (!known || known.kind !== "primitive") return undefined;
+    if (known.name !== "Int" && known.name !== "Real") return undefined;
+
+    return known.name === target;
+  }
+
+  /** Does this type mention BOTH Int and Real? Then no test and no static answer exists (D43). */
+  private isNumericallyAmbiguous(node: ast.TypeGuardNode): boolean {
+    const target = this.getTypeName(node.type);
+    if (target !== "Int" && target !== "Real") return false;
+
+    const names = new Set<string>();
+    const walk = (t: any): void => {
+      if (!t || typeof t !== "object") return;
+      if (t.kind === "primitive" && typeof t.name === "string") names.add(t.name);
+      for (const sub of t.types ?? t.alternatives ?? []) walk(sub);
+    };
+    walk(this.context.nodeTypes?.get(node.value));
+    return names.has("Int") && names.has("Real");
+  }
+
   visitTypeGuard(node: ast.TypeGuardNode): ESTree.Expression {
+    // D43: Int-vs-Real is a STATIC question. Decided here, never handed to __ll_is_type -- where the
+    // two are the identical `typeof === 'number'` and always will be.
+    const folded = this.foldNumericGuard(node);
+    if (folded !== undefined) {
+      // The value is still EMITTED, for its side effects: `((bump) :of Int)` must still bump.
+      const v = this.visitExpr(node.value);
+      const lit = ESTreeBuilder.literal(node, folded) as ESTree.Expression;
+      return (v as any).type === "Identifier"
+        ? lit
+        : (ESTreeBuilder.sequenceExpression(node, [v, lit]) as ESTree.Expression);
+    }
+    if (this.isNumericallyAmbiguous(node)) {
+      this.report(CD.UntestableType, node, {
+        type: `'${this.getTypeName(node.type)}' against a value that may be either Int or Real`,
+        position: "in a `:of` type guard",
+      });
+      return ESTreeBuilder.literal(node, false) as ESTree.Expression;
+    }
+
     const value = this.visitExpr(node.value);
 
     // A compound test names the value once per member, so a value with side effects must be bound

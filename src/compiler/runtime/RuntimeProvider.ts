@@ -223,11 +223,34 @@ function __ll_is_type(val, type) {
   const t = type.toLowerCase();
   switch (t) {
     case 'number': return typeof val === 'number';
+    // 'int' and 'real' ARE THE SAME TEST, and cannot be otherwise: JavaScript has one number type
+    // and \`5.0 === 5\`. A primitive cannot carry a tag (property assign, defineProperty, WeakMap and
+    // Symbol all throw), BigInt breaks arithmetic/JSON/Math, and boxing unboxes at the first operator.
+    // There is no runtime answer to buy here.
+    //
+    // So \`:of Int\` / \`:of Real\` DO NOT COME HERE. D43 decides them from the static type
+    // (\`context.nodeTypes\`), and refuses the one case that is undecidable even in principle -- an
+    // \`Int | Real\` union. See \`visitTypeGuard\`.
+    //
+    // These arms remain for OPERATOR DISPATCH, which is runtime by definition:
+    // \`__ll_op_registry.lookup\` resolves an overload by testing each argument, and it has no static
+    // type to consult. So dispatch cannot tell an \`[a <- Int]\` overload from an \`[a <- Real]\` one and
+    // takes the first registered. That collapse is pre-existing, inherent, and now the ONLY place it
+    // survives -- \`case 'float'\` used to sit here too, and was pure dead code: \`Float\` is not an
+    // l-lang type (the six are Int/Real/String/Char/Boolean/Void).
     case 'int': return typeof val === 'number';
-    case 'float': return typeof val === 'number';
+    case 'real': return typeof val === 'number';
     case 'string': return typeof val === 'string';
+    // A Char IS a one-character string -- there is no separate representation, and unlike Int-vs-Real
+    // that makes it genuinely TESTABLE rather than merely indistinguishable. It was absent, so
+    // \`("c" :of Char)\` was FALSE: the arm was silently unreachable and no test covered it.
+    case 'char': return typeof val === 'string' && val.length === 1;
     case 'boolean': return typeof val === 'boolean';
     case 'bool': return typeof val === 'boolean';
+    // D9: ONE bottom value, two representations at the JS boundary. \`Void\` is the type of "no value",
+    // and \`== null\` is exactly "is it either bottom" -- the same loose equality, for the same reason,
+    // as \`__ll_deep_eq\` above.
+    case 'void': return val == null;
     case 'function': return typeof val === 'function';
     case 'array': return Array.isArray(val);
     case 'object': return typeof val === 'object' && val !== null && !Array.isArray(val);

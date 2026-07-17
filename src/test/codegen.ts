@@ -4015,6 +4015,93 @@ catch b ((console.log "two")))`,
       "one has none either. Testing just the Int arm would answer a DIFFERENT question than the one " +
       "written.",
   },
+
+  // ===============================================================================================
+  // Ze / D43 -- Int vs Real is decided STATICALLY, because the runtime cannot.
+  //
+  //     (5.5 :of Real)  ->  FALSE     'real' is absent from __ll_is_type's switch
+  //     ("c" :of Char)  ->  FALSE     'char' is absent too
+  //
+  // And the obvious fix -- adding `case 'real': typeof val === 'number'` -- IS the collapse: `case
+  // 'int'` is the identical test, so both would answer true for both. JS has ONE number; `5.0 === 5`.
+  // Probed: a primitive cannot be tagged (property assign, defineProperty, WeakMap and Symbol all
+  // throw); BigInt breaks arithmetic, JSON and Math; boxing unboxes at the first operator and prints
+  // `[Number: 5]`. There is no runtime answer to buy.
+  //
+  // THE CHECKER ALREADY KNOWS. `(let x <- Real 5.0)` is a Real; only the RUNTIME cannot see it. So
+  // `:of Int`/`:of Real` never reach `__ll_is_type` -- they are decided from the type channel
+  // (`context.nodeTypes`), which is what D34/Phase E already rules: when the static type is known,
+  // lower at compile time and do not build runtime machinery.
+  //
+  //     x : Int          ->  fold true
+  //     x : Real         ->  fold false
+  //     x : Int | String ->  typeof === number     exact: no Real in the union
+  //     x : Int | Real   ->  LL0104                genuinely undecidable
+  //     x : Unknown      ->  typeof === number     gradual -- see below
+  //
+  // THE UNKNOWN ARM IS A CONCESSION, and a deliberate one. "Static-first" needs a static type, and
+  // gradual typing means the channel is often empty. Refusing on an Unknown would contradict the rule
+  // this compiler states everywhere -- "a condition we could not type is not a condition we can call
+  // wrong". So the collapse survives EXACTLY where the checker does not know, which is where every
+  // other gradual concession already lives. The only refusal is the case that is undecidable even in
+  // principle.
+  //
+  // `Char` is different and is simply FIXED: a Char IS a one-character string, and that is testable.
+  // ===============================================================================================
+  {
+    name: "Ze/D43: `:of Real` and `:of Char` answer at all",
+    source: `(console.log (if (5.5 :of Real) "real" "no"))
+(console.log (if ("c" :of Char) "char" "no"))
+(console.log (if ("ab" :of Char) "wrong" "not-a-char"))`,
+    expect: ["real", "char", "not-a-char"],
+    wasBroken:
+      "`(5.5 :of Real)` and `(\"c\" :of Char)` were both FALSE -- 'real' and 'char' were absent from " +
+      "__ll_is_type's switch, so the arms were silently unreachable. Zero corpus tests covered either.",
+  },
+  {
+    // The static half: the checker knows, so the runtime is never asked. `5.5` is a Real and `5` an
+    // Int -- measured via LL0200's own message.
+    name: "Ze/D43: Int vs Real is decided statically, not by typeof",
+    source: `(let i 5)
+(let r 5.5)
+(console.log (if (i :of Int) "i-is-int" "no"))
+(console.log (if (r :of Int) "wrong" "r-is-not-int"))
+(console.log (if (i :of Real) "wrong" "i-is-not-real"))
+(console.log (if (r :of Real) "r-is-real" "no"))`,
+    expect: ["i-is-int", "r-is-not-int", "i-is-not-real", "r-is-real"],
+    // The whole point: no runtime test is emitted for a decision the checker already made.
+    emitted: { mustNot: [/__ll_is_type\([^)]*"Int"\)/, /__ll_is_type\([^)]*"Real"\)/] },
+    wasBroken:
+      "`(r :of Int)` would be TRUE under any typeof-based test -- JS has one number and 5.0 === 5. " +
+      "The distinction is real STATICALLY and only statically.",
+  },
+  {
+    // A union WITHOUT Real is exact: typeof discriminates Int from String perfectly.
+    name: "Ze/D43: `:of Int` on a Real-free union still tests at run time",
+    source: `(fn what [x <- Int | String] -> String (
+  (if (x :of Int) (return "int"))
+  (return "string")
+))
+(console.log (what 5))
+(console.log (what "s"))`,
+    expect: ["int", "string"],
+    wasBroken:
+      "NOT broken -- a GUARD. The ambiguity is Int-vs-Real ONLY. A union with no Real in it is " +
+      "perfectly discriminable, and refusing it would be over-correction.",
+  },
+  {
+    // The one refusal: both arms are numbers, so no test and no static answer exists.
+    name: "Ze/D43: `:of Int` on an `Int | Real` union is REFUSED",
+    source: `(fn what [x <- Int | Real] -> String (
+  (if (x :of Int) (return "int"))
+  (return "real")
+))
+(console.log (what 5))`,
+    expectDiagnostic: /LL0104/,
+    wasBroken:
+      "answered by `typeof === number`, which is TRUE for both arms -- so the guard was a coin flip " +
+      "that always said yes. Undecidable in principle: JS has one number type.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------
