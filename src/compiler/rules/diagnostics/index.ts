@@ -37,17 +37,20 @@ export const DIAGNOSTIC_CATEGORIES: Record<
 };
 
 /**
- * Codes owned by diagnostics that live OUTSIDE this registry, so the allocator's "taken" set is
- * complete and "next free" never collides with them.
+ * `EXTERNAL_CODES` USED TO LIVE HERE, and is DELETED (Vc).
  *
- * These are the LIVE declarative structural rules (`NodeValidationRules`). They keep their
- * `test`-predicate form and are NOT migrated -- they are a different mechanism (self-checking, not
- * call-site-decided). Five of them originally sat on LL0015-LL0019 and were REASSIGNED to LL0024-LL0028
- * (D38) to resolve the overlap with the imperative modifier diagnostics of the same numbers -- the
- * imperative codes, which the docs and a live test reference by name, kept LL0015-LL0019.
+ * It was a hand-written array of the codes owned by the declarative structural rules
+ * (`NodeValidationRules`), kept so the allocator's "taken" set was complete. Those rules are a
+ * different mechanism -- self-checking `test` predicates, not call-site-decided -- and are still not
+ * migrated; only the LIST is gone.
+ *
+ * It drifted within one phase of its own creation. Qe added a declarative rule wearing LL0029 and did
+ * not update the array, so the allocator went on offering LL0029 as "next free" and the next rule
+ * would have collided with it -- which is the exact failure D38 built this registry to prevent
+ * (LL0015-LL0019, five codes overloaded because two mechanisms numbered themselves independently).
+ *
+ * A hand-maintained list of codes, sitting inside a registry whose entire purpose is that codes are
+ * not hand-maintained, is that bug wearing a different hat. `test/diagnostics.ts` now DERIVES the set
+ * from `Rules` itself, so a declarative rule is counted because it exists rather than because someone
+ * remembered it.
  */
-export const EXTERNAL_CODES: readonly string[] = [
-  "LL0001", "LL0002", "LL0003", "LL0005", "LL0006", "LL0007", "LL0008",
-  "LL0009", "LL0010", "LL0011", "LL0012", "LL0013", "LL0014", "LL0020",
-  "LL0021", "LL0022", "LL0024", "LL0025", "LL0026", "LL0027", "LL0028",
-];

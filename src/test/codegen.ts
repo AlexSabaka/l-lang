@@ -3125,6 +3125,74 @@ const CASES: Case[] = [
       "defined` from the guard written to prevent exactly that. An EXPORTED stdlib function that " +
       "could not be called at all -- Phase S ticked ✅ with nothing exercising it.",
   },
+
+  // ===============================================================================================
+  // Vc / AF-007 -- a filterless `catch e` CRASHED THE BACKEND, and took LL0008 with it.
+  //
+  //     (try (...) catch e ((console.log e.message)))
+  //       ->  TypeError: Cannot read properties of null (reading 'name')   at c.filter.type.name
+  //
+  // Not a diagnostic -- a raw Node stack trace out of the code generator, on ordinary valid code.
+  //
+  // ONE ENCODING MISTAKE, TWO VICTIMS. `catchFilter` returns `{name, type}` and sets `type: null`
+  // when there is no `:of T`. So for `catch e`, `filter` is an OBJECT, not null. Everything that
+  // asks "is this the default catch?" asks `!x.filter`, and gets FALSE:
+  //
+  //   - visitTryCatch treats it as a TYPED catch and reads `c.filter.type.name` -> null.name -> TypeError.
+  //   - LL0008 ("Only one default catch block is allowed") tests
+  //     `node.catch.filter((x) => !x.filter).length > 1`, which can never exceed 0. The rule was
+  //     UNREACHABLE ON EVERY INPUT -- it has never once fired, and looked identical to a passing rule.
+  //
+  // "Filterless" means no TYPE, not no filter object: the filter still carries the NAME to bind. The
+  // old default path proves nobody had run it -- it used `.body` and never bound the name at all, so
+  // even a `catch e` that reached it would have left `e` undefined.
+  // ===============================================================================================
+  {
+    name: "Vc/AF-007: a filterless `catch e` compiles, and binds e",
+    source: `(try (
+  (throw (Error "boom"))
+)
+catch e (
+  (console.log "caught:" e.message)
+))`,
+    expect: ["caught: boom"],
+    wasBroken:
+      "`TypeError: Cannot read properties of null (reading 'name')` -- a RAW BACKEND CRASH, from " +
+      "`c.filter.type.name`, on valid code. AF-007.",
+  },
+  {
+    // The typed arm must still win, and the filterless one must be the fallback rather than a
+    // competitor -- it is the chain's `else`, so ORDER of the two in the source must not matter.
+    name: "Vc/AF-007: a typed catch still matches before the filterless fallback",
+    source: `(fn go [x <- Int] -> String (
+  (return (try (
+    (if (== x 1) (throw (TypeError "typed")) (throw (Error "plain")))
+    "unreachable"
+  )
+  catch e :of TypeError ("saw-TypeError")
+  catch e ("saw-default")))
+))
+(console.log (go 1))
+(console.log (go 2))`,
+    expect: ["saw-TypeError", "saw-default"],
+    wasBroken:
+      "crashed before it could be asked. Once it compiles, this pins that the filterless arm is the " +
+      "chain's `else` and does not swallow the typed one.",
+  },
+  {
+    // LL0008 has never fired on any input. Its own predicate could not be true.
+    name: "Vc/AF-007: LL0008 fires on two default catches",
+    source: `(try (
+  (throw (Error "boom"))
+)
+catch a ((console.log "one"))
+catch b ((console.log "two")))`,
+    expectDiagnostic: /LL0008/,
+    wasBroken:
+      "no diagnostic -- LL0008 tested `!x.filter`, which is never true, so 'Only one default catch " +
+      "block is allowed' was unreachable on EVERY input. A dead rule is indistinguishable from a " +
+      "passing one until something makes it fire.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

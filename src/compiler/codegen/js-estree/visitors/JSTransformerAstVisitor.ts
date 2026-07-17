@@ -2126,7 +2126,19 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     if (node.catch && node.catch.length > 0) {
       
       // --- STEP A: Determine the "Bottom" of the chain (The final 'else') ---
-      const defaultCatch = node.catch.find((x) => !x.filter);
+      //
+      // A DEFAULT catch is one with no TYPE, not one with no filter OBJECT. `catchFilter` builds
+      // `{name, type}` and sets `type: null` when there is no `:of T`, so `catch e` still has a
+      // filter -- it carries the NAME to bind. Asking `!x.filter` therefore answered FALSE for every
+      // filterless catch in the language, which sent `catch e` down the TYPED path and into
+      // `c.filter.type.name` -> null.name -> a raw backend TypeError (AF-007).
+      //
+      // `isDefaultCatch` is the single answer to that question, shared with the filtered partition
+      // below so the two cannot disagree -- the way they did when one read `!x.filter` and the other
+      // `!!x.filter` and both were wrong in the same direction. LL0008 asks it too.
+      const isDefaultCatch = (x: ast.TryCatchFilter) => !x.filter || !x.filter.type;
+
+      const defaultCatch = node.catch.find(isDefaultCatch);
       let chainTail: ESTree.Statement;
 
       if (defaultCatch) {
@@ -2136,9 +2148,33 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           this.visit(defaultCatch.body),
           defaultCatch.body
         );
-        chainTail = visitedBody.type === "BlockStatement" 
-          ? visitedBody 
-          : ESTreeBuilder.blockStatement(defaultCatch.body, [visitedBody]);
+        const defaultBody: ESTree.Statement[] =
+          visitedBody.type === "BlockStatement"
+            ? ((visitedBody as ESTree.BlockStatement).body as ESTree.Statement[])
+            : [visitedBody];
+
+        // BIND THE NAME. `catch e` names the error, and this path never bound it -- it emitted the
+        // body alone, so `e` was a free variable. That nothing ever noticed is the tell that this
+        // branch had never run: it was unreachable behind the `!x.filter` test above.
+        const defaultName = defaultCatch.filter?.name;
+        chainTail = ESTreeBuilder.blockStatement(defaultCatch.body, [
+          ...(defaultName
+            ? [
+                {
+                  type: "VariableDeclaration",
+                  kind: "const",
+                  declarations: [
+                    {
+                      type: "VariableDeclarator",
+                      id: this.visit(defaultName) as ESTree.Identifier,
+                      init: catchVarId,
+                    },
+                  ],
+                } as unknown as ESTree.Statement,
+              ]
+            : []),
+          ...defaultBody,
+        ]);
       } else {
         // If no generic catch, we MUST re-throw the error if no types matched
         chainTail = {
@@ -2148,7 +2184,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       }
 
       // --- STEP B: Build the chain upwards (Reverse Loop) ---
-      const filteredCatches = node.catch.filter((x) => !!x.filter);
+      // The exact complement of `isDefaultCatch`, so a catch is in one partition or the other and
+      // never in both. This used to read `!!x.filter`, which put every `catch e` in BOTH.
+      const filteredCatches = node.catch.filter((x) => !isDefaultCatch(x));
 
       for (let i = filteredCatches.length - 1; i >= 0; i--) {
         const c = filteredCatches[i];

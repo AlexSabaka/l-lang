@@ -29,10 +29,27 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
 import { RuleSeverity } from "../compiler/rules/RuleBuilder";
-import {
-  DIAGNOSTIC_CATEGORIES,
-  EXTERNAL_CODES,
-} from "../compiler/rules/diagnostics";
+import { DIAGNOSTIC_CATEGORIES } from "../compiler/rules/diagnostics";
+import { Rules } from "../compiler/rules";
+
+/**
+ * The DECLARATIVE rules' codes, read from the rules themselves.
+ *
+ * This used to be `EXTERNAL_CODES` -- a hand-written array in the registry index -- and it drifted
+ * within one phase of its own creation: Qe added a declarative rule wearing LL0029 and did not update
+ * the list, so this allocator carried on offering LL0029 as "next free". The next rule would have
+ * collided with it, which is the exact failure D38 built the registry to prevent (LL0015-LL0019).
+ *
+ * A hand-maintained list of codes, sitting beside a registry whose entire purpose is that codes are
+ * not hand-maintained, is the same bug wearing a different hat. Derived from `Rules`, it cannot drift:
+ * a declarative rule is counted because it EXISTS, not because someone remembered it.
+ *
+ * Deduped: a code names one diagnostic IDENTITY and may legitimately back several rules (LL0026 is
+ * the condition check for both `if` and `when`), so `Rules` has more entries than codes.
+ */
+const DECLARATIVE_CODES: readonly string[] = [
+  ...new Set(Object.values(Rules).map((r: any) => r.code)),
+];
 
 const UPDATE = process.argv.includes("--update");
 const LIST = process.argv.includes("--list");
@@ -77,7 +94,7 @@ function checkRegistry(): { failures: string[] } {
 
   // The allocator view. Every code the registry knows about, plus the external (declarative-rule)
   // codes, so "next free" does not collide with a code that lives elsewhere.
-  const taken = new Set<string>([...owners.keys(), ...EXTERNAL_CODES]);
+  const taken = new Set<string>([...owners.keys(), ...DECLARATIVE_CODES]);
   const bands = new Map<string, string[]>(); // "LL02" -> sorted taken codes
   for (const code of taken) {
     const band = code.slice(0, 4); // LL0x
@@ -88,7 +105,7 @@ function checkRegistry(): { failures: string[] } {
   console.log(
     `  registered: ${[...owners.keys()].length} codes across ` +
       `${Object.keys(DIAGNOSTIC_CATEGORIES).length} categories` +
-      (EXTERNAL_CODES.length ? ` (+${EXTERNAL_CODES.length} external)` : "")
+      (DECLARATIVE_CODES.length ? ` (+${DECLARATIVE_CODES.length} external)` : "")
   );
   if (bands.size === 0) {
     console.log("  (registry empty -- categories are migrated in from Eb)");
@@ -106,10 +123,10 @@ function checkRegistry(): { failures: string[] } {
     }
   }
 
-  // Surface any overlap: a registry code that ALSO appears in EXTERNAL_CODES is a migrated diagnostic
+  // Surface any overlap: a registry code that ALSO appears in DECLARATIVE_CODES is a migrated diagnostic
   // sharing its number with a declarative rule. Currently empty -- the one such case (LL0015-LL0019) was
   // resolved in D38 by moving the declarative colliders to LL0024-LL0028. Kept as a guard against a new one.
-  const external = new Set(EXTERNAL_CODES);
+  const external = new Set(DECLARATIVE_CODES);
   const overlap = [...owners.keys()].filter((c) => external.has(c)).sort();
   if (overlap.length) {
     console.log(
@@ -257,6 +274,12 @@ const PROBES: Probe[] = [
   {
     name: "LL0029 mid-list rest is not trailing",
     source: "(match [1 2 3] { [a ...mid z] => (console.log a) _ => (console.log 0) })",
+  },
+  {
+    // Vc/AF-007: this code was UNREACHABLE until the `!x.filter` test was corrected -- LL0008 had
+    // never fired on any input. Pinned so it cannot quietly die again.
+    name: "LL0008 two default catch blocks",
+    source: "(try ((throw (Error \"x\"))) catch a ((console.log 1)) catch b ((console.log 2)))",
   },
 
   // --- codegen band (LL0100-LL0102): the backend must actually run, so stage "codegen" ---

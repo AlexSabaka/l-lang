@@ -369,6 +369,16 @@
     ]
   },
   {
+    "probe": "LL0008 two default catch blocks",
+    "diagnostics": [
+      {
+        "code": "LL0008",
+        "severity": "error",
+        "text": "Only one default catch block is allowed"
+      }
+    ]
+  },
+  {
     "probe": "LL0102 non-name in binding position",
     "diagnostics": [
       {

@@ -78,13 +78,25 @@ const TryCatchHasEitherCatchOrFinally = createRule<ast.TryCatchNode>()
   .addTest((node) => !node.finally)
   .build();
 
+/**
+ * A DEFAULT catch has no TYPE -- not no filter OBJECT.
+ *
+ * `catchFilter` builds `{name, type}` and sets `type: null` when there is no `:of T`, so `catch e`
+ * still HAS a filter: it carries the name to bind. This rule used to test `!x.filter`, which is
+ * false for every catch that names its error -- so the count could never exceed 0 and LL0008 was
+ * UNREACHABLE ON EVERY INPUT. It had never fired once, and a dead rule is indistinguishable from a
+ * passing one until something makes it fire (AF-007; the same encoding mistake crashed the backend
+ * on `c.filter.type.name`).
+ */
 const OnlyOneDefaultCatchBlockAllowed = createRule<ast.TryCatchNode>()
   .addTypeFilter("try-catch")
   .addSeverity(RuleSeverity.Error)
   .addCode("LL0008")
   .addMessage("Only one default catch block is allowed")
   .addTest((node) => node.catch.length > 0)
-  .addTest((node) => node.catch.filter((x) => !x.filter).length > 1)
+  .addTest(
+    (node) => node.catch.filter((x) => !x.filter || !x.filter.type).length > 1
+  )
   .build();
 
 const InvalidInterfaceMembers = createRule<ast.ASTNode>()
