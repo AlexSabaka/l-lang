@@ -20,7 +20,8 @@
     (let active false)         ;; inferred as Boolean
 
     ;; 3. Union types (value can be one of several types)
-    (let status <- Int | String "loading")
+    ;; `mut`, not `let`: D10 makes a `let` binding immutable, and these lines REASSIGN.
+    (mut status <- Int | String "loading")
     (status := 200)            ;; Valid - Int is in union
     (status := "done")         ;; Valid - String is in union
 
@@ -28,14 +29,10 @@
     (let numbers <- Int[] [1 2 3 4 5])
     (let strings <- String[] ["a" "b" "c"])
 
-    ;; 5. Type guards with 'is'
-    (if (status is String)
-        (console.log "Status is a string:" status))
-
-    ;; 6. Type casting with 'as'
-    (if (status is String)
-        (let s (status as String))
-        (console.log "String is:" s))
+    ;; 5. Type guards with ":of"
+    (if (status :of String)
+        ; Compiler asserts that status is a String here, so we can use it directly
+        (console.log "String is:" status))
 
     (console.log "Type annotations and inference working!")
 )

@@ -3651,6 +3651,76 @@ catch b ((console.log "two")))`,
       "unparseable, and then (before Yb) undefined. The two fixes compose: `:else` is a clause, and a " +
       "trailing cond returns its clause's value.",
   },
+
+
+  // ===============================================================================================
+  // Za / D41 -- `(x :of T)` is a TYPE GUARD in expression position, and it NARROWS.
+  //
+  // The corpus asked for `(status is String)` -- infix, C#/TypeScript-shaped, and `ELL0210 'is' is not
+  // defined`. It was aspirational syntax, the same family as `(Fn [] Int)` in 20_scope: a file
+  // describing a language nobody built.
+  //
+  // `:of` is the ruled spelling (D27) and it already means exactly this in a match arm:
+  // `(match x { n :of Int => ... })`. This is the same question asked in expression position, and it
+  // emits the SAME runtime test -- `__ll_is_type(v, "T")` -- so the two positions cannot drift apart.
+  //
+  // AND IT NARROWS, which is the whole point. D9g's comment makes the argument: "LL0205 without an
+  // escape hatch does not make `T?` unsafe, it makes it UNUSABLE: the nil-check you just wrote would
+  // not be believed." A type guard that does not narrow makes UNIONS unusable the same way -- and
+  // that is exactly when a language grows an `as`, to lie its way past a check it just performed.
+  // Narrowing is why l-lang does not need one.
+  // ===============================================================================================
+  {
+    name: "Za/D41: `(x :of T)` is a Bool, and discriminates",
+    source: `(fn describe [x <- Int | String] -> String (
+  (if (x :of String) (return "string"))
+  (return "int")
+))
+(console.log (describe "hi"))
+(console.log (describe 5))`,
+    expect: ["string", "int"],
+    // The SAME runtime test a match arm uses. If these ever diverge, `(x :of T)` and
+    // `(match x { _ :of T => ... })` would answer differently for one value, which is the bug class
+    // this whole session has been about.
+    emitted: { must: [/__ll_is_type\(/] },
+    wasBroken:
+      "`(x is String)` was `ELL0210 'is' is not defined`, and `(x :of String)` was a parse error " +
+      "(`Expecting RParen but found ':of'`). There was no way to ask a value's type in expression " +
+      "position at all.",
+  },
+  {
+    // THE POINT. Without narrowing this is LL0200 -- measured: `(mut s <- Int | String 5)` then
+    // `(let t <- String s)` reports "cannot assign Int | String to String". The guard must make the
+    // checker believe what it just proved.
+    name: "Za/D41: a `:of` guard NARROWS the union in the then-branch",
+    source: `(fn shout [x <- Int | String] -> String (
+  (if (x :of String)
+    (return (x.toUpperCase)))
+  (return "not-a-string")
+))
+(console.log (shout "hi"))
+(console.log (shout 5))`,
+    expect: ["HI", "not-a-string"],
+    wasBroken:
+      "n/a -- `:of` did not exist. Without narrowing `x` stays `Int | String` inside the guard, so " +
+      "`x.toUpperCase` is a member of a union that may be an Int. The guard would have proved " +
+      "something the checker then refused to believe -- which is how a language ends up with `as`.",
+  },
+  {
+    // The guard must not narrow where it did not prove anything. `x` is still the union AFTER the if.
+    name: "Za/D41: narrowing does not leak past the guard",
+    source: `(fn f [x <- Int | String] -> String (
+  (if (x :of String) (console.log "in-guard"))
+  (let t <- Int | String x)
+  (return "done")
+))
+(console.log (f 5))`,
+    expect: ["done"],
+    wasBroken:
+      "NOT broken -- a GUARD on the scope. `withNarrowed` binds in a FRESH SCOPE and exits it, so the " +
+      "narrowed type must not survive the branch. If it leaked, `x` would be String after the if and " +
+      "the union assignment below would report.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

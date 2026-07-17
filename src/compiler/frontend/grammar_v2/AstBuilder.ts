@@ -517,8 +517,23 @@ export class LLangAstBuilder extends BaseCstVisitor {
   // ========================================================================
   // DATA STRUCTURES
   // ========================================================================
-  list(ctx: any): ast.ListNode {
+  list(ctx: any): ast.ListNode | ast.TypeGuardNode {
     const nodes = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
+
+    // `(x :of String)` -- a TYPE GUARD (D41), not a list. The grammar lets `:of` in anywhere a list
+    // can appear because no fixed lookahead can see past an arbitrary guarded expression; the SHAPE is
+    // enforced here: exactly one expression, then `:of`, then a type.
+    //
+    // A malformed `(a b :of T)` keeps its list shape and its `:of` is dropped, which the type stage
+    // then reports as an ordinary arity/type error on `(a b)` rather than a parse error nobody can
+    // read. Deliberate: `:of` is not a call.
+    if (ctx.OfModKw && ctx.type && nodes.length === 1) {
+      return this.makeNode("type-guard", ctx, {
+        value: nodes[0],
+        type: this.visit(ctx.type[0]),
+      });
+    }
+
     return this.makeNode("list", ctx, { nodes });
   }
 

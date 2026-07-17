@@ -1520,6 +1520,57 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   }
 
   /**
+   * `(x :of String)` -- the TYPE-guard sibling of `nilGuard` (D41).
+   *
+   * Same shape, same reason to exist. D9g's note above makes the whole argument: LL0205 without an
+   * escape hatch does not make `T?` unsafe, it makes it UNUSABLE -- "the nil-check you just wrote
+   * would not be believed". A union is the same story: a guard the checker ignores is precisely what
+   * makes a language grow an `as`, so that you can lie your way past a check you just performed.
+   * Narrowing here is why l-lang does not need one.
+   *
+   * Deliberately syntactic and small, exactly as `nilGuard` is -- there is still no flow analysis in
+   * this compiler, and D5 owns narrowing proper. Only a bare NAME narrows: `((get xs i) :of Dog)` is
+   * a perfectly good Bool, there is just nothing to bind the proof to.
+   *
+   * Returns the name proved to BE `type` when the condition is true.
+   */
+  private typeGuard(
+    cond: ast.ASTNode
+  ): { name: string; type: InferredType } | undefined {
+    if (!cond || cond._type !== "type-guard") return undefined;
+    const g = cond as ast.TypeGuardNode;
+    if (g.value?._type !== "simple-identifier") return undefined;
+
+    const type = this.convertAstTypeToInferred(g.type);
+    if (!type) return undefined;
+
+    return { name: (g.value as ast.IdentifierNode).id, type };
+  }
+
+  /**
+   * Visit `body` with `name` bound to the type a `:of` guard PROVED.
+   *
+   * The same one-scope trick `withNarrowed` uses, and for the same reason its comment gives:
+   * `resolveIdentifier` consults the type environment's scope stack before the symbol table, so a
+   * binding pushed into a fresh scope simply shadows the declaration. The scope is exited on the way
+   * out, so the proof does not leak past the branch that established it.
+   */
+  private withNarrowedTo(
+    name: string,
+    type: InferredType,
+    at: ast.ASTNode,
+    body: () => void
+  ): void {
+    this.typeEnv.enterScope(at);
+    this.typeEnv.bindInScope(name, type);
+    try {
+      body();
+    } finally {
+      this.typeEnv.exitScope();
+    }
+  }
+
+  /**
    * Visit `body` with `name` narrowed to its non-optional type.
    *
    * The mechanism already existed: `resolveIdentifier` consults the type environment's scope stack
@@ -2991,10 +3042,17 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
     // `(if (!= h nil) (h.length))` -- inside the branch the guard proves, `h` is not optional (D9g).
     const guard = this.nilGuard(node.condition);
+    // `(if (x :of String) (x.toUpperCase))` -- inside the THEN branch, `x` IS a String (D41). Only
+    // the then-branch: `:of` failing proves the value is not a T, which says nothing about what it
+    // IS -- an `Int | String | Real` minus String is still two types, and subtracting from a union
+    // is flow analysis this compiler does not have.
+    const tguard = this.typeGuard(node.condition);
 
     const visitBranch = (branch: ast.ASTNode | undefined, proven: boolean) => {
       if (!branch) return;
-      if (guard && guard.nonNilWhen === proven) {
+      if (tguard && proven) {
+        this.withNarrowedTo(tguard.name, tguard.type, branch, () => this.visit(branch));
+      } else if (guard && guard.nonNilWhen === proven) {
         this.withNarrowed(guard.name, branch, () => this.visit(branch));
       } else {
         this.visit(branch);
@@ -3404,6 +3462,13 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           : TypeEnvironment.primitive("Void");
 
         inferredType = TypeChecker.findCommonType([thenType, elseType]) ?? TypeEnvironment.unknown();
+        break;
+      }
+
+      // `(x :of T)` is a Boolean (D41). It asks a question; the answer is yes or no.
+      case "type-guard": {
+        this.inferExpressionType((node as ast.TypeGuardNode).value);
+        inferredType = TypeEnvironment.primitive("Boolean");
         break;
       }
 

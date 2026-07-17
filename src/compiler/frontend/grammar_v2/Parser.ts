@@ -434,6 +434,18 @@ class LLangParser extends CstParser {
       this.MANY(() => {
         this.SUBRULE(this.expression);
       });
+      // `(x :of String)` -- a TYPE GUARD in expression position (D41). `:of` is the ruled spelling for
+      // "is this value a T" (D27), and this is the same question a match arm asks, asked where a value
+      // is wanted.
+      //
+      // An OPTION on the list rather than its own gated alternative, because the guarded expression is
+      // arbitrary -- `((get xs i) :of Dog)` -- and no fixed lookahead can see past it to the `:of`.
+      // The builder enforces the shape (exactly one expression before `:of`); the grammar only has to
+      // let the token in.
+      this.OPTION(() => {
+        this.CONSUME(t.OfModKw);
+        this.SUBRULE(this.type);
+      });
       this.CONSUME(t.RParen);
     });
 

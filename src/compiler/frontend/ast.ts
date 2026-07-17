@@ -113,6 +113,7 @@ export type NodeType =
   | "any-pattern"
   | "functional-pattern"
   | "type-pattern"
+  | "type-guard"
   | "list-pattern"
   | "vector-pattern"
   | "map-pattern"
@@ -730,6 +731,19 @@ export interface FunctionalPatternNode extends ASTNode<"functional-pattern"> {
 
 export interface TypePatternNode extends ASTNode<"type-pattern"> {
   id: IdentifierNode;
+  type: TypeNode;
+}
+
+/**
+ * `(x :of String)` -- a TYPE GUARD in expression position. Yields a Boolean (D41).
+ *
+ * The same question a `type-pattern` asks in a match arm, asked where a value is wanted, and it emits
+ * the SAME runtime test (`__ll_is_type`). Separate node because the positions are separate: a pattern
+ * BINDS and gates an arm; a guard is a Bool an `if` can read -- and, unlike the pattern, it narrows
+ * the name it tests.
+ */
+export interface TypeGuardNode extends ASTNode<"type-guard"> {
+  value: ASTNode;
   type: TypeNode;
 }
 

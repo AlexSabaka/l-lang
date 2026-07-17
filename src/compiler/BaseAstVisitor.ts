@@ -110,6 +110,7 @@ export class BaseAstVisitor {
         "any-pattern": this.visitAnyPattern.bind(this),
         "functional-pattern": this.visitFunctionalPattern.bind(this),
         "type-pattern": this.visitTypePattern.bind(this),
+        "type-guard": this.visitTypeGuard.bind(this),
         "list-pattern": this.visitListPattern.bind(this),
         "vector-pattern": this.visitVectorPattern.bind(this),
         "map-pattern": this.visitMapPattern.bind(this),
@@ -433,6 +434,10 @@ export class BaseAstVisitor {
 
   visitTypePattern(node: ast.TypePatternNode): any {
     return this.onUnhandled(node, "visitTypePattern");
+  }
+
+  visitTypeGuard(node: ast.TypeGuardNode): any {
+    return this.onUnhandled(node, "visitTypeGuard");
   }
 
   visitListPattern(node: ast.ListPatternNode): any {

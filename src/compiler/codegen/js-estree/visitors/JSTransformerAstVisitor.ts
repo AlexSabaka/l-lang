@@ -2351,6 +2351,21 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // Pattern Matching
   // =========================================================================
 
+  /**
+   * `(x :of String)` -> `__ll_is_type(x, "String")` (D41).
+   *
+   * THE SAME CALL the `type-pattern` arm makes, deliberately: `(x :of T)` and
+   * `(match x { _ :of T => ... })` ask one question and must not be able to answer it differently.
+   * `getTypeName` is the same helper too.
+   */
+  visitTypeGuard(node: ast.TypeGuardNode): ESTree.Expression {
+    return ESTreeBuilder.callExpression(
+      node,
+      ESTreeBuilder.identifier(node, "__ll_is_type"),
+      [this.visitExpr(node.value), ESTreeBuilder.literal(node, this.getTypeName(node.type))]
+    ) as ESTree.Expression;
+  }
+
   visitMatch(node: ast.MatchNode): ESTree.CallExpression {
     // `match` is ALWAYS an IIFE -- its return type says so -- so a `return` in an arm always returns
     // from the arrow, even when the match itself sits in statement position. That makes it the one
