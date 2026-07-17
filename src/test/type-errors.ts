@@ -968,8 +968,8 @@ ${PRODUCER}
   {
     name: "Na: a sub-interface value satisfies its super-interface (one hop)",
     source:
-      "(definterface Shape (fn area [] -> Float))\n" +
-      "(definterface Circle :implements Shape (fn radius [] -> Float))\n" +
+      "(definterface Shape (fn area [] -> Real))\n" +
+      "(definterface Circle :implements Shape (fn radius [] -> Real))\n" +
       "(fn describe [s <- Shape] -> String \"a shape\")\n" +
       "(fn use-circle [c <- Circle] -> String (describe c))",
     silent: true,
@@ -1417,7 +1417,8 @@ ${PRODUCER}
   },
   {
     name: "Gb: a CORRECT generator is silent",
-    source: `(fn :gen count-up [n <- Int] -> Iterator<Int> (
+    source: `(import "std/iter")
+(fn :gen count-up [n <- Int] -> Iterator<Int> (
   (mut i 0)
   (while (< i n) (
     (yield i)
@@ -1432,7 +1433,8 @@ ${PRODUCER}
   // -----------------------------------------------------------------------------------------------
   {
     name: "Ab: an :async returning its payload under -> Task<T> is SILENT",
-    source: `(fn :async f [] -> Task<Int> (
+    source: `(import "std/async")
+(fn :async f [] -> Task<Int> (
   (return 5)
 ))`,
     silent: true,
@@ -1481,7 +1483,8 @@ ${PRODUCER}
   },
   {
     name: "Ab: a correct async function is silent",
-    source: `(fn :async fetch [id <- Int] -> Task<Int> (
+    source: `(import "std/async")
+(fn :async fetch [id <- Int] -> Task<Int> (
   (return (+ id 100))))`,
     silent: true,
     why: "GUARD. A well-formed async: awaitable return type, payload return, no stray await.",
@@ -1553,6 +1556,67 @@ ${PRODUCER}
 (let n <- Int s.length)`,
     silent: true,
     why: "GUARD. `String.length` is `Int`, assignable to `<- Int`. A user shadow of a native member would win.",
+  },
+
+  // Zk -- an annotation must NAME A TYPE THAT EXISTS (LL0231). `convertAstTypeCore` fell through to
+  // `Unknown` for any name it could not resolve -- and left a comment saying this diagnostic was owed
+  // but blocked on import resolution. That blocker is gone.
+  //
+  // The cost is not cosmetic: `Unknown` is assignable to and from everything, so a bad annotation does
+  // not lose information, it turns CHECKING OFF for the declaration while looking checked. A typo buys
+  // less safety than writing nothing.
+  {
+    name: "Zk: an annotation naming a non-existent type is refused",
+    source: `(fn f [x <- Widget] -> Int (return 1))`,
+    expect: /LL0231/,
+    why: "Zk: `Widget` is declared nowhere. Was Unknown -> the param was unchecked and silent.",
+  },
+  {
+    name: "Zk: a bad RETURN-type annotation is refused",
+    source: `(fn f [x <- Int] -> Widget (return x))`,
+    expect: /LL0231/,
+    why: "Zk: the return type must resolve too -- and here it hides that `(return x)` is unchecked.",
+  },
+  {
+    name: "Zk: the lowercase literal `nil` is not a type",
+    source: `(fn f [] -> nil (return))`,
+    expect: /LL0231/,
+    why:
+      "Zk: `nil` is the bottom VALUE, `Void` is its type. `-> nil` reads as a return type of the " +
+      "literal, which does not exist. Measured 4x in the corpus (02_classes).",
+  },
+  {
+    name: "Zk: a declared type is silent (GUARD)",
+    source: `(defclass Widget (fn tick [] -> Int (return 1)))
+(fn f [x <- Widget] -> Int (return 1))`,
+    silent: true,
+    why: "GUARD. Once `Widget` exists, its annotation resolves and the check is quiet.",
+  },
+  {
+    name: "Zk: an imported type is silent (GUARD)",
+    source: `(import "std/iter")
+(fn :gen g [n <- Int] -> Iterator<Int> (
+  (mut i 0)
+  (while (< i n) (
+    (yield i)
+    (i := (+ i 1))))))`,
+    silent: true,
+    why:
+      "GUARD, and the one that proves the P6 blocker is really gone: `Iterator` lives in std/iter and " +
+      "resolves through the import. This is the shape that exposed 3 async/gen tests passing VACUOUSLY " +
+      "-- silent because Unknown swallowed the type, not because the type was right.",
+  },
+  {
+    name: "Zk: a generic type parameter is not an unknown type (GUARD)",
+    source: `(definterface Container<T> (fn get [] -> T))
+(defclass Box<T> :implements Container<T>
+  (mut :ctor value <- T)
+  (fn get [] -> T (return this.value)))`,
+    silent: true,
+    why:
+      "GUARD against the false positive I nearly shipped: an `:implements Container<T>` clause is " +
+      "checked BEFORE the class's own scope binds `T`, so `T` read as an unknown type. The check reads " +
+      "the declaration's generics directly rather than reordering the pass.",
   },
 ];
 

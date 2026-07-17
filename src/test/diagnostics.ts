@@ -246,14 +246,14 @@ const PROBES: Probe[] = [
   { name: "LL0222 yield outside :gen", source: "(fn f [] -> Int (yield 1))" },
   {
     name: "LL0223 :gen returns a value",
-    source: "(fn :gen g [] -> Iterator<Int> (yield 1) (return 5))",
+    source: "(import \"std/iter\")\n(fn :gen g [] -> Iterator<Int> (yield 1) (return 5))",
   },
   { name: "LL0224 :gen wrong return type", source: "(fn :gen g [] -> Int (yield 1))" },
   {
     name: "LL0225 :gen yield type mismatch",
-    source: '(fn :gen g [] -> Iterator<Int> (yield "s"))',
+    source: '(import "std/iter")\n(fn :gen g [] -> Iterator<Int> (yield "s"))',
   },
-  { name: "LL0226 :gen never yields", source: "(fn :gen g [] -> Iterator<Int> (return))" },
+  { name: "LL0226 :gen never yields", source: "(import \"std/iter\")\n(fn :gen g [] -> Iterator<Int> (return))" },
   { name: "LL0227 await outside :async", source: "(fn f [] -> Int (await 1))" },
   { name: "LL0228 :async wrong return type", source: "(fn :async f [] -> Int 1)" },
   { name: "LL0229 :extension without receiver", source: "(fn :extension foo [] -> Int 1)" },

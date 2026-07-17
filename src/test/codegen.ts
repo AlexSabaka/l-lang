@@ -2770,7 +2770,7 @@ const CASES: Case[] = [
   // ===============================================================================================
   {
     name: "Qc/AF-003: `||` short-circuits -- a true left operand skips the right",
-    source: `(fn loud [] -> Bool (
+    source: `(fn loud [] -> Boolean (
   (console.log "EVALUATED")
   (return true)
 ))
@@ -2784,7 +2784,7 @@ const CASES: Case[] = [
   },
   {
     name: "Qc/AF-003: `&&` short-circuits -- a false left operand skips the right",
-    source: `(fn loud [] -> Bool (
+    source: `(fn loud [] -> Boolean (
   (console.log "EVALUATED")
   (return true)
 ))
@@ -2804,7 +2804,7 @@ const CASES: Case[] = [
     // same problem" OVERSTATES it: with a typed receiver that guard is unwritable. The exposure is
     // real only where the receiver is untyped and LL0205 never fires. Measured, not inherited.
     name: "Qc/AF-003: a short-circuited operand does not RUN, not merely go unread",
-    source: `(fn boom [] -> Bool (
+    source: `(fn boom [] -> Boolean (
   (throw (Error "the right operand must not run"))
   (return true)
 ))
@@ -2862,7 +2862,7 @@ const CASES: Case[] = [
     // The alias must inherit the SEMANTICS, not just the name -- otherwise `or` would be a
     // second-class `||` that evaluates both sides, which is the bug Qc just removed.
     name: "Qd: an aliased `or`/`and` short-circuits exactly like `||`/`&&`",
-    source: `(fn boom [] -> Bool (
+    source: `(fn boom [] -> Boolean (
   (throw (Error "the right operand must not run"))
   (return true)
 ))
@@ -3378,7 +3378,7 @@ catch b ((console.log "two")))`,
   },
   {
     name: "Ya/D40: `return` inside an if in VALUE position is REFUSED",
-    source: `(fn f [c <- Bool] -> String (
+    source: `(fn f [c <- Boolean] -> String (
   (let r (if c (return "if-early") "no"))
   (return "fell-through")
 ))

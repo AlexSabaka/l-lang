@@ -2423,12 +2423,59 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    * Primitives (`Int`) and generic parameters (`T`) pass through it harmlessly: they resolve to no
    * symbol, and `checkNameVisible` fires only on a POSITIVE identification.
    */
-  private checkAnnotationVisible(typeNode: ast.ASTNode | undefined): void {
+  /**
+   * An annotation must NAME A TYPE THAT EXISTS (Zk, LL0231).
+   *
+   * `convertAstTypeCore` falls through to `TypeEnvironment.unknown()` for a name it cannot resolve, and
+   * said so in a comment: *"Unknown TYPE names deserve their own diagnostic, the type-level analogue of
+   * the unresolved IDENTIFIER check -- and it is blocked on the same thing: scope-and-import resolution
+   * (P6)."* That blocker is gone; this is the diagnostic it deferred.
+   *
+   * What the silence cost is not cosmetic. `Unknown` is assignable to and from everything, so an
+   * annotation naming a type that does not exist does not merely lose information -- it TURNS CHECKING
+   * OFF for that declaration, while looking exactly like a declaration that is checked. A typo buys
+   * you less safety than writing nothing, and says nothing about it.
+   *
+   * MIRRORS `convertAstTypeCore`'s resolution chain exactly -- generic parameter, then symbol table,
+   * then `Any`, then primitive. Two copies of "does this name resolve" that could disagree would put
+   * the diagnostic and the conversion out of step, and the failure mode is the worst kind: a report
+   * about a type that did convert, or silence about one that did not.
+   */
+  private checkTypeNameResolves(
+    node: ast.ASTNode,
+    name: string,
+    ownGenerics?: { name: string }[]
+  ): void {
+    if (TypeEnvironment.isKnownPrimitive(name) || name === "Any") return;
+    if (this.typeEnv.resolveIdentifier(name)?.kind === "generic") return;
+
+    // The declaration's OWN type parameters, which may not be in scope yet.
+    //
+    // `(defclass Container<T> :implements GenericContainer<T>)` -- the `:implements` clause is checked
+    // BEFORE `visitClass` enters the class's scope and binds `T`, so the scope lookup above cannot see
+    // it and `T` reported as an unknown type. A false positive on correct code, on two live corpus
+    // files. Read from the node rather than reordering the pass: the D20 visibility check, the D42
+    // conformance check and D24's forward-reference check all sit between here and the scope, and
+    // moving a scope across three checks to fix a lookup is how the next bug gets written.
+    if (ownGenerics?.some((g) => g.name === name)) return;
+
+    const symbols = this.context.symbolTable ?? this.symbolTable;
+    const entry = symbols.resolveSymbol(name, node);
+    if (entry && (entry.inferredType || declaresAType(entry))) return;
+
+    this.report(TD.UnknownTypeName, node, { name });
+  }
+
+  private checkAnnotationVisible(
+    typeNode: ast.ASTNode | undefined,
+    ownGenerics?: { name: string }[]
+  ): void {
     if (!typeNode) return;
     const walk = (n: any): void => {
       if (!n || typeof n !== "object") return;
       if (n._type === "type-name" && typeof n.name === "string") {
         this.checkNameVisible(n, n.name);
+        this.checkTypeNameResolves(n, n.name, ownGenerics);
         return;
       }
       for (const key of Object.keys(n)) {
@@ -2829,8 +2876,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     this.checkOperatorMethodArity(className, node.body);
 
     // D20: you cannot extend, or claim to implement, something another module keeps to itself.
-    node.extends?.forEach(e => this.checkAnnotationVisible(e as unknown as ast.ASTNode));
-    node.implements?.forEach(i => this.checkAnnotationVisible(i as unknown as ast.ASTNode));
+    //
+    // `node.generics` is passed because these two clauses are checked BEFORE the class's scope is
+    // entered below, so its own `T` is not bound yet -- see `checkTypeNameResolves`.
+    node.extends?.forEach(e => this.checkAnnotationVisible(e as unknown as ast.ASTNode, node.generics));
+    node.implements?.forEach(i => this.checkAnnotationVisible(i as unknown as ast.ASTNode, node.generics));
 
     // D42/Zf: ...and you cannot merely CLAIM to implement one. Checked HERE, in the check pass, and
     // not in CollectTypesPass's visitClass: an interface may be declared after the class that

@@ -282,6 +282,17 @@ export const TypeDiagnostics = {
       `'(type-by-name "${p.name}")'.`
   ),
 
+  // LL0231
+  UnknownTypeName: def<{ name: string }>(
+    "LL0231",
+    Error,
+    (p) =>
+      `'${p.name}' is not a type. An annotation naming a type that does not exist does not just lose ` +
+      `information -- it turns CHECKING OFF for the declaration, because an unknown type is ` +
+      `assignable to and from everything. Declare it, import it, or use one of the six primitives ` +
+      `(Int, Real, String, Char, Boolean, Void).`
+  ),
+
   // LL0230
   ArrayLazyMember: def<{ member: string }>(
     "LL0230",

@@ -1,14 +1,14 @@
 (
     ;; 1. Union Types with various spacing (testing your new fix)
-    (deftype StringOrInt  String|Number)      ;; Tight
-    (deftype BoolOrNil    Boolean | Nil)      ;; Wide
-    (deftype ComplexUnion String | Number | Boolean) ;; Multiple
+    (deftype StringOrInt  String|Real)      ;; Tight
+    (deftype BoolOrVoid    Boolean | Void)      ;; Wide
+    (deftype ComplexUnion String | Real | Boolean) ;; Multiple
 
     ;; 2. Function with complex typed params
     (fn messy-signature [
-        x <- String | Number,
-        y <- Boolean|Nil
-    ] -> Array<String | Number> (
+        x <- String | Real,
+        y <- Boolean|Void
+    ] -> Array<String | Real | Boolean | Void> (
         (return [x y])
     ))
 

@@ -1,6 +1,6 @@
 (
     (defclass BankAccount
-        (let :ctor balance <- Number)
+        (let :ctor balance <- Real)
         (let :ctor history <- Any)
 
         (fn apply [event] -> BankAccount (

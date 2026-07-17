@@ -1,7 +1,7 @@
 (
     (definterface Shape
-        (fn area [] -> Number)
-        (fn perimeter [] -> Number)
+        (fn area [] -> Real)
+        (fn perimeter [] -> Real)
     )
 
     ;; Rectangle Struct implementing Shape

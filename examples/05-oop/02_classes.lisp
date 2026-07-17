@@ -55,7 +55,7 @@
             (return (* 2 (+ this.width this.height)))
         ))
         
-        (fn resize [new-width <- Int new-height <- Int] -> nil (
+        (fn resize [new-width <- Int new-height <- Int] -> Void (
             (this.width := new-width)
             (this.height := new-height)
         ))
@@ -78,13 +78,13 @@
         (let :ctor account-number <- String)
         (let :ctor balance <- Real)
 
-        (fn deposit [amount <- Real] -> nil (
+        (fn deposit [amount <- Real] -> Void (
             (if (> amount 0)
                 (this.balance := (+ this.balance amount))
                 (console.log "Invalid amount"))
         ))
         
-        (fn withdraw [amount <- Real] -> Bool (
+        (fn withdraw [amount <- Real] -> Boolean (
             (if (&& (> amount 0) (>= this.balance amount)) (
                 (this.balance := (- this.balance amount))
                 (return true)
@@ -115,12 +115,12 @@
         (let :ctor value <- Int)
         (let :ctor max-value <- Int)
                 
-        (fn increment [] -> nil (
+        (fn increment [] -> Void (
             (if (< this.value this.max-value)
                 (this.value := (+ this.value 1)))
         ))
         
-        (fn reset [] -> nil (
+        (fn reset [] -> Void (
             (this.value := 0)
         ))
         

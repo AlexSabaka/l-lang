@@ -1,8 +1,8 @@
 (definterface Shape
-  (fn area [] -> Number))
+  (fn area [] -> Real))
 
 (defclass Circle :implements Shape
-  (mut :ctor radius <- Number)
+  (mut :ctor radius <- Real)
   
   (fn area [] (return (* 3.14159 (* this.radius this.radius)))))
 
