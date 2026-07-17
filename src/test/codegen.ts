@@ -3049,6 +3049,82 @@ const CASES: Case[] = [
       "unparseable. D13 rules a key is a STRING, never mangled -- so `:from` must reach JSON as " +
       "`from`, not as a for-clause and not as an encoded name.",
   },
+
+  // ===============================================================================================
+  // Vb / AF-006 -- `typeof` and friends emitted calls to functions that cannot exist.
+  //
+  //     (typeof x)        ->   console.log(_typeof(x));       ReferenceError
+  //     (instanceof d D)  ->   console.log(_instanceof(d, D));  ReferenceError
+  //
+  // Compiles clean, exit 0, dies on the first line that runs.
+  //
+  // `SPECIAL_FORMS` (analysis/listForm.ts) already lists all four of typeof / instanceof / in /
+  // delete -- the TYPE CHECKER knows they are not calls, because routing them through call inference
+  // would type `(typeof x)` as a call to an unknown function named `typeof`. Codegen never got the
+  // same list: visitList special-cases `return`, `yield` and `new`, and everything else falls through
+  // the call path.
+  //
+  // The leading underscore is the tell, and it is the same encoder Va ran into: `encodeIdentifier`
+  // prefixes JS RESERVED WORDS, so `typeof` -> `_typeof`. The emitted name could never have resolved
+  // to anything, because `typeof` is not a legal JS identifier in the first place. The compiler
+  // emitted a call to a function whose name it had just finished proving cannot exist.
+  //
+  // AF-006 UNDERSTATES IT: it names typeof and instanceof. `in` and `delete` are in the same
+  // SPECIAL_FORMS line and fail identically -- `_in("a", o)`, `_delete(o.a)`. All four are fixed.
+  // ===============================================================================================
+  {
+    name: "Vb/AF-006: `typeof` is the JS operator, not a call",
+    source: `(let x 5)
+(let s "hi")
+(console.log (typeof x))
+(console.log (typeof s))`,
+    expect: ["number", "string"],
+    emitted: { mustNot: [/_typeof\(/] },
+    wasBroken:
+      "`console.log(_typeof(x))` -> ReferenceError: _typeof is not defined. Compiled clean. AF-006.",
+  },
+  {
+    name: "Vb/AF-006: `instanceof` is the JS operator, not a call",
+    source: `(let d (new Date))
+(console.log (instanceof d Date))`,
+    expect: ["true"],
+    emitted: { mustNot: [/_instanceof\(/] },
+    wasBroken: "`_instanceof(d, Date)` -> ReferenceError. AF-006.",
+  },
+  {
+    // Not named by AF-006, same defect, same line of SPECIAL_FORMS. Found by reading the list rather
+    // than the finding.
+    name: "Vb/AF-006: `in` and `delete` are operators too",
+    source: `(let o {:a 1 :b 2})
+(console.log (in "a" o))
+(console.log (delete o.a))
+(console.log (in "a" o))
+(console.log (JSON.stringify o))`,
+    expect: ["true", "true", "false", `{"b":2}`],
+    emitted: { mustNot: [/_in\(/, /_delete\(/] },
+    wasBroken:
+      "`_in(\"a\", o)` and `_delete(o.a)` -> ReferenceError. AF-006 names only typeof/instanceof; " +
+      "these two sit on the same SPECIAL_FORMS line and were broken identically.",
+  },
+  {
+    // AF-006's motivating case, and it needed TWO fixes -- one compiler, one library.
+    //
+    // With `_typeof` gone, `alert` still died. Its guard read `(&& (typeof window) (!= window nil))`:
+    // `typeof window` yields the STRING "undefined", which is truthy, so the `&&` always proceeded --
+    // and `(!= window nil)` then TOUCHES an undeclared `window`, which is a ReferenceError, not a
+    // false. Short-circuiting (Qc) does not save it; the left operand was never falsy.
+    //
+    // `typeof` is the only operator that may name a binding that does not exist, which is the whole
+    // reason to reach for it in a browser check. The guard now compares against the string.
+    name: "Vb/AF-006: std/io's exported `alert` is callable",
+    source: `(import "std/io")
+(alert "hello")`,
+    expect: ["ALERT: hello"],
+    wasBroken:
+      "ReferenceError, twice over: `_typeof is not defined`, and once that was fixed, `window is not " +
+      "defined` from the guard written to prevent exactly that. An EXPORTED stdlib function that " +
+      "could not be called at all -- Phase S ticked ✅ with nothing exercising it.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

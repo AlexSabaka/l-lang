@@ -2929,6 +2929,42 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         } as ESTree.NewExpression;
       }
 
+      // `typeof` / `instanceof` / `in` / `delete` are JS OPERATORS, not functions.
+      //
+      // `SPECIAL_FORMS` (analysis/listForm.ts) already names all four, so the TYPE CHECKER knows they
+      // are not calls -- routing them through call inference would type `(typeof x)` as a call to an
+      // unknown function named `typeof`. Codegen never got the same list, so they fell through to the
+      // call path below and emitted `_typeof(x)`, `_instanceof(d, Date)`, `_in("a", o)`,
+      // `_delete(o.a)` -- compile clean, ReferenceError on the first line that runs (AF-006).
+      //
+      // The leading underscore is the tell: it is `encodeIdentifier` escaping a JS RESERVED WORD. The
+      // emitted name could never have resolved to anything, because `typeof` is not a legal JS
+      // identifier -- the compiler emitted a call to a function whose name it had itself just proven
+      // cannot exist.
+      //
+      // Arity-gated: a malformed `(typeof)` falls through to the call path and its existing
+      // diagnostic rather than emitting `typeof undefined`.
+      if (head._type === "simple-identifier") {
+        if ((headId === "typeof" || headId === "delete") && rest.length === 1) {
+          return {
+            type: "UnaryExpression",
+            operator: headId,
+            argument: this.visitExpr(rest[0]),
+            prefix: true,
+            loc: ESTreeBuilder.loc(node),
+          } as unknown as ESTree.Expression;
+        }
+        if ((headId === "instanceof" || headId === "in") && rest.length === 2) {
+          return {
+            type: "BinaryExpression",
+            operator: headId,
+            left: this.visitExpr(rest[0]),
+            right: this.visitExpr(rest[1]),
+            loc: ESTreeBuilder.loc(node),
+          } as unknown as ESTree.Expression;
+        }
+      }
+
       // `||` and `&&` are SHORT-CIRCUITING, and that is not an optimisation -- it is their meaning.
       //
       // Every other operator routes through a runtime shim so an `:operator` overload can be found:
