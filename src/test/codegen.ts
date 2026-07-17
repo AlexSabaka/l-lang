@@ -3256,6 +3256,55 @@ catch b ((console.log "two")))`,
       "NOT broken -- a GUARD on the narrowing. `(obj.m)` is what `this.functions` was still being " +
       "consulted for, and it is the one case that must not change.",
   },
+
+  // ===============================================================================================
+  // Ve / AF-046 -- `:comptime` could not see ANY imported symbol.
+  //
+  //     (import "std/math")
+  //     (let :comptime x (* PI 2))
+  //       ->  Comptime evaluation error: __ll_inlined_PI_1 is not defined
+  //
+  // The sandbox is handed a program that references a name nothing in it declares.
+  //
+  // `evaluateExpression` builds a JSTransformerAstVisitor and calls `visit(expr)` directly. Visiting
+  // an imported symbol RENAMES it -- `PI` -> `__ll_inlined_PI_1`, so two modules' `PI` cannot collide
+  // -- and records the definition to emit later. The definitions are then drained by `compile()` /
+  // `visitProgram`, which this deliberately does not call. So the rename happened and the definition
+  // never arrived: the evaluator resolved a post-inlining name against an environment that never had
+  // it.
+  //
+  // The REPL hit exactly this and already solves it, at ReplSession.ts:589, with the comment that
+  // names the trap: "`visitProgram`/`compile` -- which we deliberately do not call -- are what
+  // normally drain these." Two external drivers of the same visitor; one knew.
+  // ===============================================================================================
+  {
+    name: "Ve/AF-046: `:comptime` can see an imported symbol",
+    source: `(import "std/math")
+(let :comptime x (* PI 2))
+(console.log x)`,
+    expect: ["6.283185307179586"],
+    // FOLDED, not merely computed. A `:comptime` that produced the right number by RUNNING at run
+    // time would print the same thing -- the only proof it folded is that the import is gone from the
+    // emitted JS and a literal stands where the expression was.
+    emitted: { must: [/6\.283185307179586/], mustNot: [/__ll_inlined_PI/] },
+    wasBroken:
+      "`Comptime evaluation error: __ll_inlined_PI_1 is not defined`. Every imported symbol was " +
+      "invisible to comptime -- so `:comptime` and `import`, two shipped features, could not be used " +
+      "in the same expression. AF-046.",
+  },
+  {
+    // A GUARD: the local case must keep working. It always did -- a local `(let :comptime ...)` needs
+    // no inlining -- and the fix must not disturb it.
+    name: "Ve/AF-046: a comptime fold with no imports still folds",
+    source: `(fn :comptime double [n <- Int] -> Int (* n 2))
+(let :comptime d (double 21))
+(console.log d)`,
+    expect: ["42"],
+    emitted: { must: [/42/], mustNot: [/function double/] },
+    wasBroken:
+      "NOT broken -- a GUARD. The local fold worked; this pins that draining the inlined definitions " +
+      "did not change it, and that the folded function is still gone from the output.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

@@ -229,6 +229,29 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
       const esNode = transformer.visit(expr);
       const code = generate(esNode);
 
+      // DRAIN THE INLINED DEFINITIONS. Visiting an imported symbol RENAMES it -- `PI` ->
+      // `__ll_inlined_PI_1`, so two modules' `PI` cannot collide -- and records its definition to be
+      // emitted later. `compile()` / `visitProgram` are what normally drain that, and this evaluator
+      // deliberately calls neither: it visits one expression, not a program.
+      //
+      // So the rename happened and the definition never arrived, and the sandbox was handed code
+      // referencing a name nothing in it declared: "__ll_inlined_PI_1 is not defined". `:comptime`
+      // could not see ANY imported symbol -- two shipped features that could not appear in one
+      // expression (AF-046).
+      //
+      // The REPL is the other external driver of this visitor and already does exactly this
+      // (ReplSession, "`visitProgram`/`compile` -- which we deliberately do not call -- are what
+      // normally drain these"). The operator registrations go with them: `(* PI 2)` emits `_2a(PI, 2)`,
+      // and an imported `:operator` overload has to be registered before that shim can find it.
+      const inlinedCode = transformer
+        .getInlinedDefinitions()
+        .map((s) => generate(s))
+        .join("\n");
+      const operatorCode = transformer
+        .getOperatorRegistrations()
+        .map((s) => generate(s))
+        .join("\n");
+
       const sandbox = {
         console: {
           log: (...args: any[]) => this.context.log(LogLevel.Info, "[comptime] " + args.join(" ")),
@@ -237,7 +260,11 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
       };
       vm.createContext(sandbox);
 
+      // Order is load-bearing: the runtime shims, then the inlined imports and their operator
+      // registrations, then the local comptime deps, and only then the expression that uses them.
       fullCode = this.runtimeCode + "\n";
+      fullCode += inlinedCode + "\n";
+      fullCode += operatorCode + "\n";
       const deps = this.collectComptimeDependencies(expr);
       fullCode += deps + "\n";
       fullCode += code;
