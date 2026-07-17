@@ -4511,6 +4511,26 @@ catch b ((console.log "two")))`,
       "swallowed the `b`-clause and the `:else` into the wrong branch. tetris's spacebar bug exactly.",
   },
 
+  // CF3 (games) -- a `match` arm whose body is a bare `if` silently no-ops and the match falls
+  // through. `visitMatch`'s LOCAL `ensureReturns` injected a trailing `return` for an ExpressionStatement
+  // or BlockStatement tail but fell through on an `IfStatement`, so the arm's `if` ran as a
+  // side-effect-free no-op. The shared `withTrailingReturn` already recurses into an `IfStatement`'s
+  // arms -- the two diverged. Rendered wrong glyphs in minesweeper.
+  // ===============================================================================================
+  {
+    name: "CF3: a `match` arm whose body is a bare `if` fires",
+    source: `(fn pick [n <- Int flag <- Boolean] -> String (
+  (match n {
+    1 => (if flag "yes" "no")
+    2 => "two"
+  })))
+(console.log (pick 1 false))`,
+    expect: ["no"],
+    wasBroken:
+      "printed nothing (nil): the arm-1 `if` produced no `return`, so the arm no-op'd and the match " +
+      "fell through past `2` to the final nil. minesweeper's wrong-glyph bug.",
+  },
+
   // Zl/interface-contextual-typing -- an UNANNOTATED class method inherits its interface's declared
   // RETURN type (D42). `Circle.area` had no `-> ...`, so it typed as `Any` even though the class
   // `:implements Shape` and Shape declares `(fn area [] -> Real)` -- the same method reflecting `Any`

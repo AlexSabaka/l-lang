@@ -2732,27 +2732,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       const funcBody: ESTree.Statement[] = [];
       if (declarations) funcBody.push(declarations);
 
-      const ensureReturns = (stmt: ESTree.Node): ESTree.Statement[] => {
-        if (this.isExpression(stmt)) {
-          return [ESTreeBuilder.returnStatement(node, stmt as ESTree.Expression)];
-        }
-        if (stmt.type === "ExpressionStatement") {
-          return [
-            ESTreeBuilder.returnStatement(
-              node,
-              (stmt as ESTree.ExpressionStatement).expression
-            ),
-          ];
-        }
-        if (stmt.type === "BlockStatement") {
-          const b = stmt as ESTree.BlockStatement;
-          if (b.body.length === 0) return [b];
-          const last = b.body[b.body.length - 1];
-          const rest = b.body.slice(0, -1);
-          return [...rest, ...ensureReturns(last)];
-        }
-        return [stmt as ESTree.Statement];
-      };
+      // A match arm's value is its body's tail (CF3). Delegate to `withTrailingReturn`, the shared
+      // helper -- it recurses into an `IfStatement`'s arms (and a `TryStatement`'s), which this used to
+      // do with a LOCAL copy that fell through on both, so `(1 => (if flag "yes" "no"))` injected no
+      // `return` and the arm silently no-op'd. A bare expression (not yet a statement) still returns
+      // directly; everything else is a statement `withTrailingReturn` already understands.
+      const ensureReturns = (stmt: ESTree.Node): ESTree.Statement[] =>
+        this.isExpression(stmt)
+          ? [ESTreeBuilder.returnStatement(node, stmt as ESTree.Expression)]
+          : this.withTrailingReturn([stmt as ESTree.Statement], node);
 
       for (const c of node.cases) {
         const patternCond = this.generateCondition(c.pattern, matchVar);
