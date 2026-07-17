@@ -4760,6 +4760,12 @@ export class InferTypesAstVisitor extends BaseAstTreeWalker {
     collectPass.visit(ast);
     this.typeEnv = collectPass.getTypeEnvironment();
 
+    // Between the passes: propagate interface return types into unannotated methods (D42/Zl). It must
+    // be HERE, not in collection -- an interface may be collected AFTER the class that implements it
+    // (D42 makes declaration order irrelevant), so its members do not exist yet while the class is
+    // collected. By now every type is collected and no inference has run.
+    this.propagateInterfaceReturns();
+
     this.context.log(LogLevel.Info, "=== Pass 2: Inferring and checking types ===");
     
     // Pass 2: Infer and validate
@@ -4767,5 +4773,41 @@ export class InferTypesAstVisitor extends BaseAstTreeWalker {
     inferPass.visit(ast);
 
     this.context.log(LogLevel.Info, "=== Type inference complete ===");
+  }
+
+  /**
+   * An unannotated method of a class that `:implements` an interface inherits the interface's declared
+   * RETURN type (D42/Zl). Return-type only, directly-declared `:implements` only.
+   *
+   * This is annotation PROPAGATION, not inference: the author DID write `-> Real`, just on the
+   * interface, and the interface-typed path already honours it -- so `(x.area)` answered `Real` when
+   * `x : Shape` but `Any` when `x : Circle`, the same method giving two answers by receiver type. Now
+   * `Circle.area` carries the `Real` the interface declares.
+   *
+   * `methodSignatures` is shared by reference with the class's `codegenMetadata`, so filling a return
+   * here also corrects what `(type c)` reflects -- one write, both surfaces. Only an unannotated
+   * (`Any`) return is filled; a real annotation is never overridden, and an unresolvable interface
+   * return (`Unknown`, e.g. Zk's `-> Number` without the import) is not propagated.
+   */
+  private propagateInterfaceReturns(): void {
+    const symbols = this.symbolTable;
+    for (const [, entry] of symbols.getAllSymbols()) {
+      const t: any = entry.inferredType;
+      if (!t || (t.kind !== "class" && t.kind !== "struct")) continue;
+      const methods: Map<string, any> | undefined = t.methodSignatures;
+      if (!methods || !t.implementedInterfaces?.length) continue;
+
+      for (const impl of t.implementedInterfaces) {
+        const required = TypeChecker.requiredInterfaceMembers(impl.interfaceName, symbols);
+        for (const req of required) {
+          const method = methods.get(req.name);
+          if (!method || !TypeChecker.isUnknown(method.returnType)) continue;
+          const ifaceReturn = (req.type as any)?.returns;
+          if (ifaceReturn && !TypeChecker.isUnknown(ifaceReturn)) {
+            method.returnType = ifaceReturn;
+          }
+        }
+      }
+    }
   }
 }

@@ -4479,6 +4479,50 @@ catch b ((console.log "two")))`,
       "__ll_index and still throws KeyError on an absent map key (D9f). Only `.member` goes unchecked.",
   },
 
+  // Zl/interface-contextual-typing -- an UNANNOTATED class method inherits its interface's declared
+  // RETURN type (D42). `Circle.area` had no `-> ...`, so it typed as `Any` even though the class
+  // `:implements Shape` and Shape declares `(fn area [] -> Real)` -- the same method reflecting `Any`
+  // on the concrete class but `Real` through the interface. Now propagated: return-type only,
+  // directly-declared `:implements` only. Reflection (and the class's declared shape) honour it.
+  // ===============================================================================================
+  {
+    name: "Zl: an unannotated method inherits its interface's return type",
+    source: `(definterface Shape
+  (fn area [] -> Real))
+(defclass Circle :implements Shape
+  (mut :ctor radius <- Real)
+  (fn area [] (return (* 3.14 (* this.radius this.radius)))))
+(let c (Circle 2.0))
+(let t (type c))
+(let ms t["methods"])
+(let m0 ms[0])
+(console.log m0["returns"])`,
+    expect: ["Real"],
+    wasBroken:
+      "`Any` -- an unannotated method dropped to Any, ignoring the `-> Real` the author DID write, on " +
+      "the interface. Propagation is annotation-carrying, not inference: only an unannotated return " +
+      "is filled, a real annotation is never overridden.",
+  },
+  {
+    // The guard: a method the class annotates ITSELF keeps its own return; the interface does not
+    // override it. (And a class with no interface is unaffected.)
+    name: "Zl: a method's OWN return annotation is not overridden by the interface",
+    source: `(definterface Shape
+  (fn area [] -> Real))
+(defclass Sq :implements Shape
+  (fn area [] -> Int (return 4)))
+(let s (Sq))
+(let t (type s))
+(let ms t["methods"])
+(let m0 ms[0])
+(console.log m0["returns"])`,
+    expect: ["Int"],
+    wasBroken:
+      "NOT broken -- the GUARD. `Sq.area` declares `-> Int`; propagation fills only an UNANNOTATED " +
+      "return, so the class's own annotation wins (whether or not it matches the interface -- that " +
+      "is D42/Zf's conformance question, checked separately).",
+  },
+
   // Zja -- INTERFACES were not in `__ll_type_metadata` at all, blocked by two independent gates:
   // `visitInterface` built no `codegenMetadata`, AND the getter filtered `kind in {class,struct}`.
   //

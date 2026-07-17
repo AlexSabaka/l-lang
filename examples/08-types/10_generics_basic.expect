@@ -12,8 +12,8 @@
     }
   ],
   methods: [
-    { name: 'get', params: [], returns: 'Any' },
-    { name: 'set', params: [Array], returns: 'Any' }
+    { name: 'get', params: [], returns: 'T' },
+    { name: 'set', params: [Array], returns: 'Void' }
   ],
   constructor: { params: [ [Object] ], requiredCount: 1 },
   generics: [ 'T' ],

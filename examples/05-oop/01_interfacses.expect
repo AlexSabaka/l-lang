@@ -22,8 +22,8 @@ Shape Perim: 31.4159
     }
   ],
   methods: [
-    { name: 'area', params: [], returns: 'Any' },
-    { name: 'perimeter', params: [], returns: 'Any' }
+    { name: 'area', params: [], returns: 'Real' },
+    { name: 'perimeter', params: [], returns: 'Real' }
   ],
   constructor: { params: [], requiredCount: 0 },
   implements: [ 'Shape' ],
