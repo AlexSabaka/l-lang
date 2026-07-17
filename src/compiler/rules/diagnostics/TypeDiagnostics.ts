@@ -297,6 +297,17 @@ export const TypeDiagnostics = {
       `stays allowed; this is about the binding itself.`
   ),
 
+  // LL0234
+  ExtensionNeedsNominalImplements: def<{ type: string; iface: string; member: string }>(
+    "LL0234",
+    Error,
+    (p) =>
+      `'${p.type}' satisfies '${p.iface}' structurally but does not declare ':implements ${p.iface}', ` +
+      `so the ':extension ${p.member}' cannot be dispatched -- extension dispatch is nominal (D34), ` +
+      `and codegen would emit a call to a method that was never installed. Add ':implements ${p.iface}' ` +
+      `to '${p.type}'. (Passing a '${p.type}' where a '${p.iface}' is expected still works structurally.)`
+  ),
+
   // LL0231
   UnknownTypeName: def<{ name: string }>(
     "LL0231",

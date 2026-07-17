@@ -1620,6 +1620,31 @@ ${PRODUCER}
       "assigning it to Int was a spurious mismatch. Also fixes nested-index READS (map-of-maps).",
   },
   {
+    name: "TY8: an :extension on a STRUCTURAL-only conformer is refused, not a runtime crash",
+    source: `(definterface Entity (fn describe [] -> String))
+(fn :extension threat [self <- Entity] -> Int (return 5))
+(defclass Chest (fn describe [] -> String (return "chest")))
+(let c (Chest))
+(console.log (c.threat))`,
+    expect: /LL0234/,
+    why:
+      "TY8 (games/D42+D34): Chest satisfies Entity STRUCTURALLY (has `describe`) so it type-checks as " +
+      "an Entity, but `:extension` dispatch is NOMINAL (D34) -- codegen finds no registration and " +
+      "emits `c.threat()`, a runtime TypeError. Refuse at compile time, naming `:implements`.",
+  },
+  {
+    name: "TY8: a DECLARED :implements makes the :extension dispatch (GUARD)",
+    source: `(definterface Entity (fn describe [] -> String))
+(fn :extension threat [self <- Entity] -> Int (return 5))
+(defclass Box :implements Entity (fn describe [] -> String (return "box")))
+(let b (Box))
+(console.log (b.threat))`,
+    silent: true,
+    why:
+      "GUARD. Declaring `:implements Entity` makes conformance nominal, so the extension resolves and " +
+      "dispatches. Structural typing to PASS a value still works; you just declare to DISPATCH.",
+  },
+  {
     name: "TY1: nil is assignable to a user type's `T?` (return position)",
     source: `(defclass Cell (mut :ctor v <- Int))
 (fn maybe-cell [] -> Cell? (return nil))`,

@@ -1860,6 +1860,28 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // keep native `.map`/`.filter`; `conformsNominally` is the same nominal test codegen's dispatch runs,
     // so `(arr.map f)` types as native/Unknown here and the two passes agree.
     if (!TypeChecker.conformsNominally(receiverType, recvParam.name, this.symbolTable)) {
+      // TY8/D42+D34: the receiver conforms to the extension's interface STRUCTURALLY but not
+      // nominally. The checker used to fall through to gradual Unknown here, and codegen -- also
+      // nominal -- emitted a native `c.threat()` to a method never installed → runtime TypeError.
+      // `:extension` dispatch is nominal by ruling (D34), so this is refused, naming `:implements`.
+      // `isAssignable` succeeds here only via structural conformance, since the nominal test already
+      // failed; a genuine non-conformer (a real "not this extension" miss) returns undefined as before.
+      // Only a CLASS or STRUCT (unwrapping the type-ref `c` resolves to). An ARRAY is also assignable
+      // to `Iterable` (isSubtype's D30 leniency) but is deliberately excluded from nominal extension
+      // dispatch and has its OWN diagnostic (LL0230 lazy-op misuse) -- firing LL0234 on `(arr.take)`
+      // too would double-report. Primitives are not assignable to an interface at all.
+      const recv = TypeChecker.unwrapType(receiverType, this.symbolTable);
+      if (
+        (recv?.kind === "class" || recv?.kind === "struct") &&
+        recv.name &&
+        TypeChecker.isAssignable(receiverType, recvParam, this.symbolTable)
+      ) {
+        this.report(TD.ExtensionNeedsNominalImplements, node, {
+          type: recv.name,
+          iface: recvParam.name,
+          member: memberName,
+        });
+      }
       return undefined;
     }
     const solved = this.instantiateSignature(funcType, [receiverType, ...argTypes]);
