@@ -2,12 +2,14 @@
   (import "std/seq")
 
   (fn print [msg <- String ...args <- Any[]] -> Void
+    ;; A `mut` local, not the parameter: a parameter is bound once (D10). Interpolate `{index}` in a copy.
+    (mut out <- String msg)
     (for :each arg :from (zip args (range 0 args.length 1)) :then (
       (match arg {
-        [value index] => (msg := (msg.replace (+ "{" index "}") (+ "" value)))
+        [value index] => (out := (out.replace (+ "{" index "}") (+ "" value)))
       })
     ))
-    (console.log msg)
+    (console.log out)
   )
 
   (fn prn [x] (console.log x))

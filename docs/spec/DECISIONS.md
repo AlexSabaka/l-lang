@@ -171,6 +171,23 @@ Today `mutable: false` is written to the AST and symbol table and never read any
 guarantee is purely an accident of the JS backend mapping it to `const`, and it evaporates entirely
 on a native backend. Maps cleanly to LLVM SSA.
 
+> **Activated in Phase Z / Zl (LL0233), and extended to parameters.** The ruling above was parked in
+> P8 with an in-code marker ("D10 is explicitly P8. Not smuggled in here"), so for the whole
+> intervening time the only enforcement was the `let`→`const` accident — a runtime `TypeError` on the
+> JS backend and *nothing at all* anywhere else. `mutability` is now read: reassigning an immutable
+> binding is a compile-time error.
+>
+> **A plain parameter is immutable too** — bound once, like a `let`, like Rust. `(fn f [p] (p := 1))`
+> is an error; a mutable copy (`(mut p2 p)`) or a `:ref`/`:out` parameter is the way to rebind. This
+> goes beyond the original ruling's `let`-only wording, and is a deliberate choice: a parameter is a
+> binding, and the language has one rule for bindings. The stdlib's own `print` reassigned its `msg`
+> parameter to interpolate `{index}` placeholders — rewritten to a `mut` local, which is exactly the
+> discipline the rule asks for.
+>
+> **The check is about the BINDING, never what it points at.** `x.field := v` and `x[i] := v` mutate
+> the object `x` refers to and stay legal on a `let`-bound value — the games' undo/snapshot code
+> depends on it. Only a bare-identifier target (`x := v`) is a rebinding.
+
 ## D11 — The class surface
 
 **Ruling:** `:extends` only (`:inherits` is not a synonym — it's a typo/doc error to be corrected).

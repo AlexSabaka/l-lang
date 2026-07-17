@@ -1618,6 +1618,42 @@ ${PRODUCER}
       "assigning it to Int was a spurious mismatch. Also fixes nested-index READS (map-of-maps).",
   },
   {
+    name: "Zl/D10: reassigning a `let` binding is refused",
+    source: `(let x <- Int 0)
+(x := 1)`,
+    expect: /LL0233/,
+    why:
+      "D10: a `let` binding is immutable. Was enforced only by the accident of `let`->`const` at the JS " +
+      "backend (a runtime TypeError), which vanishes on any other backend. Now a compile-time error.",
+  },
+  {
+    name: "Zl/D10: reassigning a plain PARAMETER is refused",
+    source: `(fn f [p <- Int] -> Int (
+  (p := (+ p 1))
+  (return p)))`,
+    expect: /LL0233/,
+    why:
+      "D10 ruled params-immutable-too (Rust stance): a plain parameter is bound once. `:mut`/`:ref`/" +
+      "`:out` params stay rebindable. Zero corpus exposure -- no corpus function reassigns a param.",
+  },
+  {
+    name: "Zl/D10: reassigning a `mut` binding is silent (GUARD)",
+    source: `(mut y <- Int 0)
+(y := 1)`,
+    silent: true,
+    why: "GUARD. `mut` is exactly the opt-in that makes rebinding legal.",
+  },
+  {
+    name: "Zl/D10: MUTATING through an immutable binding is silent (GUARD)",
+    source: `(defclass Box (mut :ctor v <- Int))
+(let b (Box 3))
+(b.v := 9)`,
+    silent: true,
+    why:
+      "GUARD. D10 is about the BINDING, not what it points at. `b.v := 9` mutates the object `b` refers " +
+      "to; `b` itself is never rebound. The games CP-cluster relies on this staying legal.",
+  },
+  {
     name: "Zl: two :extension of the same name is a duplicate, not a silent last-wins",
     source: `(defstruct Rect (mut :ctor w <- Int) (mut :ctor h <- Int))
 (defstruct Circ (mut :ctor r <- Int))

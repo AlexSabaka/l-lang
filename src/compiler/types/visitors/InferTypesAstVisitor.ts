@@ -3319,7 +3319,38 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    * Immutability -- rejecting an assignment to a non-`mut` binding -- is D10, and D10 is
    * explicitly P8. Not smuggled in here.
    */
+  /**
+   * D10 (LL0233): reassigning an immutable binding is an error.
+   *
+   * Only a PLAIN-IDENTIFIER target is a rebinding. `x.field := v` and `x[i] := v` mutate what `x`
+   * points at, not the binding, and stay legal on a `let`-bound value (games CP-cluster relies on
+   * exactly this). So the check fires only when the target is a bare name.
+   *
+   * `mutability` is already computed on every symbol and, until now, read by nothing: `let`/plain-param
+   * are `false`, `mut`/`:mut`/`:ref`/`:out`/loop-var are `true` (SymbolTable). Params-immutable-too is
+   * the ruled stance -- a plain parameter is bound once, like Rust. Resolution is gradual: a name that
+   * does not resolve (nested-scope P6 gaps) is left alone rather than guessed wrong.
+   */
+  private checkImmutableAssignment(node: ast.CompoundAssignmentNode): void {
+    const target = node.assignable;
+    if (target?._type !== "simple-identifier") return;
+
+    const name = (target as ast.IdentifierNode).id;
+    const entry = (this.context.symbolTable ?? this.symbolTable).resolveSymbol(name, target);
+    if (!entry || entry.mutability) return;
+
+    this.report(TD.ImmutableAssignment, node, {
+      name,
+      kind: entry.nodeType === "parameter" ? "parameter" : "binding",
+    });
+  }
+
   visitCompoundAssignment(node: ast.CompoundAssignmentNode) {
+    // D10: a binding is immutable unless declared `mut` (or a `:mut`/`:ref`/`:out` parameter). This
+    // was ruled and then deliberately parked (P8), enforced only by the accident of `let`->`const` at
+    // the JS backend -- so it did nothing on any other target and reported nothing. Now checked.
+    this.checkImmutableAssignment(node);
+
     const targetType = this.inferExpressionType(node.assignable);
     const valueType = this.inferExpressionType(node.value);
 

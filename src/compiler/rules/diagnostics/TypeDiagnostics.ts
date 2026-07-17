@@ -282,6 +282,21 @@ export const TypeDiagnostics = {
       `'(type-by-name "${p.name}")'.`
   ),
 
+  // LL0233
+  ImmutableAssignment: def<{ name: string; kind: "binding" | "parameter" }>(
+    "LL0233",
+    Error,
+    (p) =>
+      `'${p.name}' is immutable and cannot be reassigned. A ${
+        p.kind === "parameter" ? "parameter" : "'let' binding"
+      } is bound once (D10). ${
+        p.kind === "parameter"
+          ? `Bind a mutable copy -- '(mut ${p.name}2 ${p.name})' -- and rebind that`
+          : `Declare it '(mut ${p.name} ...)' to rebind`
+      }. Mutating what it points AT -- '${p.name}.field := ...', '${p.name}[i] := ...' -- ` +
+      `stays allowed; this is about the binding itself.`
+  ),
+
   // LL0231
   UnknownTypeName: def<{ name: string }>(
     "LL0231",

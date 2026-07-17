@@ -59,7 +59,7 @@
 
     ;; 5. Closure with mutable state
     (fn make-counter [] (
-        (let count <- Int 0)
+        (mut count <- Int 0)
         (fn increment [] (
             (count := (+ count 1))
             (return count)
