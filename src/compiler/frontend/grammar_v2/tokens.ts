@@ -60,38 +60,59 @@ export const OperatorIdent = createToken({
 // told the lexer to prefer a longer Identifier match over a keyword prefix.
 // See docs/spec/DECISIONS.md#d14.
 // ============================================================================
+// KEYWORD CATEGORIES -- so a keyword can still be DATA.
+//
+// A map key is a string, never syntax (D13: `{:my-key 1}` emits `{"my-key": 1}` verbatim). But the
+// lexer runs context-free, so `{:from "src"}` lexed `:from` as the for-clause token and the map rule
+// -- which wanted `Colon` + `Identifier` -- could not accept it. `{:step 1}` was a hard parse error:
+// a step COUNT rejected because `for` has a step CLAUSE (AF-044). The PEG accepted these and emitted
+// correct JS, so retiring it (Pb) removed the only way to write them.
+//
+// Two categories, because there are two token shapes:
+//   - `BareKeyword`  -- `mut`, `fn`, `true` ...: the colon is a SEPARATE token, so `:mut` arrives as
+//                       Colon + MutKw and only the `key` rule needs to accept it.
+//   - `ModKeyword`   -- `:step`, `:from` ...: the colon is INSIDE the token, so `keyValue` needs an
+//                       alternative that consumes the whole thing and strips the colon itself.
+//
+// `Lexer.NA` -- a category is never matched directly; it exists so `CONSUME` can name a whole family.
+// Adding a keyword to either family is all a future token needs to stay usable as a key.
+// ============================================================================
+export const BareKeyword = createToken({ name: "BareKeyword", pattern: Lexer.NA });
+export const ModKeyword = createToken({ name: "ModKeyword", pattern: Lexer.NA });
+
+// ============================================================================
 // Declaration Keywords
-export const DefInterfaceKw = createToken({ name: "DefInterfaceKw", pattern: /definterface/, longer_alt: Identifier });
-export const DefModifierKw = createToken({ name: "DefModifierKw", pattern: /defmodifier/, longer_alt: Identifier });
-export const DefStructKw = createToken({ name: "DefStructKw", pattern: /defstruct/, longer_alt: Identifier });
-export const DefClassKw = createToken({ name: "DefClassKw", pattern: /defclass/, longer_alt: Identifier });
-export const DefMacroKw = createToken({ name: "DefMacroKw", pattern: /defmacro/, longer_alt: Identifier });
-export const DefEnumKw = createToken({ name: "DefEnumKw", pattern: /defenum/, longer_alt: Identifier });
-export const DefTypeKw = createToken({ name: "DefTypeKw", pattern: /deftype/, longer_alt: Identifier });
+export const DefInterfaceKw = createToken({ name: "DefInterfaceKw", pattern: /definterface/, longer_alt: Identifier, categories: [BareKeyword] });
+export const DefModifierKw = createToken({ name: "DefModifierKw", pattern: /defmodifier/, longer_alt: Identifier, categories: [BareKeyword] });
+export const DefStructKw = createToken({ name: "DefStructKw", pattern: /defstruct/, longer_alt: Identifier, categories: [BareKeyword] });
+export const DefClassKw = createToken({ name: "DefClassKw", pattern: /defclass/, longer_alt: Identifier, categories: [BareKeyword] });
+export const DefMacroKw = createToken({ name: "DefMacroKw", pattern: /defmacro/, longer_alt: Identifier, categories: [BareKeyword] });
+export const DefEnumKw = createToken({ name: "DefEnumKw", pattern: /defenum/, longer_alt: Identifier, categories: [BareKeyword] });
+export const DefTypeKw = createToken({ name: "DefTypeKw", pattern: /deftype/, longer_alt: Identifier, categories: [BareKeyword] });
 // Control Flow Keywords
-export const FinallyKw = createToken({ name: "FinallyKw", pattern: /finally/, longer_alt: Identifier });
-export const MatchKw = createToken({ name: "MatchKw", pattern: /match/, longer_alt: Identifier });
-export const WhileKw = createToken({ name: "WhileKw", pattern: /while/, longer_alt: Identifier });
-export const CatchKw = createToken({ name: "CatchKw", pattern: /catch/, longer_alt: Identifier });
-export const AwaitKw = createToken({ name: "AwaitKw", pattern: /await/, longer_alt: Identifier });
-export const AsyncKw = createToken({ name: "AsyncKw", pattern: /async/, longer_alt: Identifier });
-export const CondKw = createToken({ name: "CondKw", pattern: /cond/, longer_alt: Identifier });
-export const WhenKw = createToken({ name: "WhenKw", pattern: /when/, longer_alt: Identifier });
-export const TryKw = createToken({ name: "TryKw", pattern: /try/, longer_alt: Identifier });
-export const ForKw = createToken({ name: "ForKw", pattern: /for/, longer_alt: Identifier });
-export const IfKw = createToken({ name: "IfKw", pattern: /if/, longer_alt: Identifier });
+export const FinallyKw = createToken({ name: "FinallyKw", pattern: /finally/, longer_alt: Identifier, categories: [BareKeyword] });
+export const MatchKw = createToken({ name: "MatchKw", pattern: /match/, longer_alt: Identifier, categories: [BareKeyword] });
+export const WhileKw = createToken({ name: "WhileKw", pattern: /while/, longer_alt: Identifier, categories: [BareKeyword] });
+export const CatchKw = createToken({ name: "CatchKw", pattern: /catch/, longer_alt: Identifier, categories: [BareKeyword] });
+export const AwaitKw = createToken({ name: "AwaitKw", pattern: /await/, longer_alt: Identifier, categories: [BareKeyword] });
+export const AsyncKw = createToken({ name: "AsyncKw", pattern: /async/, longer_alt: Identifier, categories: [BareKeyword] });
+export const CondKw = createToken({ name: "CondKw", pattern: /cond/, longer_alt: Identifier, categories: [BareKeyword] });
+export const WhenKw = createToken({ name: "WhenKw", pattern: /when/, longer_alt: Identifier, categories: [BareKeyword] });
+export const TryKw = createToken({ name: "TryKw", pattern: /try/, longer_alt: Identifier, categories: [BareKeyword] });
+export const ForKw = createToken({ name: "ForKw", pattern: /for/, longer_alt: Identifier, categories: [BareKeyword] });
+export const IfKw = createToken({ name: "IfKw", pattern: /if/, longer_alt: Identifier, categories: [BareKeyword] });
 // Module Keywords
-export const ExportKw = createToken({ name: "ExportKw", pattern: /export/, longer_alt: Identifier });
-export const ImportKw = createToken({ name: "ImportKw", pattern: /import/, longer_alt: Identifier });
-export const FromKw = createToken({ name: "FromKw", pattern: /from/, longer_alt: Identifier });
+export const ExportKw = createToken({ name: "ExportKw", pattern: /export/, longer_alt: Identifier, categories: [BareKeyword] });
+export const ImportKw = createToken({ name: "ImportKw", pattern: /import/, longer_alt: Identifier, categories: [BareKeyword] });
+export const FromKw = createToken({ name: "FromKw", pattern: /from/, longer_alt: Identifier, categories: [BareKeyword] });
 // Other Keywords
-export const KeyOfKw = createToken({ name: "KeyOfKw", pattern: /keyof/, longer_alt: Identifier });
-export const MutKw = createToken({ name: "MutKw", pattern: /mut/, longer_alt: Identifier });
-export const LetKw = createToken({ name: "LetKw", pattern: /let/, longer_alt: Identifier });
-export const FnKw = createToken({ name: "FnKw", pattern: /fn/, longer_alt: Identifier });
+export const KeyOfKw = createToken({ name: "KeyOfKw", pattern: /keyof/, longer_alt: Identifier, categories: [BareKeyword] });
+export const MutKw = createToken({ name: "MutKw", pattern: /mut/, longer_alt: Identifier, categories: [BareKeyword] });
+export const LetKw = createToken({ name: "LetKw", pattern: /let/, longer_alt: Identifier, categories: [BareKeyword] });
+export const FnKw = createToken({ name: "FnKw", pattern: /fn/, longer_alt: Identifier, categories: [BareKeyword] });
 // Boolean Literals (before Identifier)
-export const TrueKw = createToken({ name: "TrueKw", pattern: /true|#t/, longer_alt: Identifier });
-export const FalseKw = createToken({ name: "FalseKw", pattern: /false|#f/, longer_alt: Identifier });
+export const TrueKw = createToken({ name: "TrueKw", pattern: /true|#t/, longer_alt: Identifier, categories: [BareKeyword] });
+export const FalseKw = createToken({ name: "FalseKw", pattern: /false|#f/, longer_alt: Identifier, categories: [BareKeyword] });
 // Nil. ONE bottom value (D9).
 //
 // `none` / `void` / `undefined` are DELETED as spellings. They lex as plain Identifiers now, and
@@ -106,6 +127,7 @@ export const NilKw = createToken({
   name: "NilKw",
   pattern: /nil|null/,
   longer_alt: Identifier,
+  categories: [BareKeyword],
 });
 
 // ============================================================================
@@ -125,20 +147,20 @@ export const NilKw = createToken({
 // Case-sensitive, consistent with the plain keywords above.
 // ============================================================================
 const modKwTail = "(?![a-zA-Z0-9_-])";
-export const ImplementsModKw = createToken({ name: "ImplementsModKw", pattern: new RegExp(`:implements${modKwTail}`) });
-export const ExtendsModKw = createToken({ name: "ExtendsModKw", pattern: new RegExp(`:extends${modKwTail}`) });
-export const WhereModKw = createToken({ name: "WhereModKw", pattern: new RegExp(`:where${modKwTail}`) });
-export const CondModKw = createToken({ name: "CondModKw", pattern: new RegExp(`:cond${modKwTail}`) });
-export const ThenModKw = createToken({ name: "ThenModKw", pattern: new RegExp(`:then${modKwTail}`) });
-export const ElseModKw = createToken({ name: "ElseModKw", pattern: new RegExp(`:else${modKwTail}`) });
-export const InitModKw = createToken({ name: "InitModKw", pattern: new RegExp(`:init${modKwTail}`) });
-export const StepModKw = createToken({ name: "StepModKw", pattern: new RegExp(`:step${modKwTail}`) });
-export const EachModKw = createToken({ name: "EachModKw", pattern: new RegExp(`:each${modKwTail}`) });
-export const FromModKw = createToken({ name: "FromModKw", pattern: new RegExp(`:from${modKwTail}`) });
-export const AsModKw = createToken({ name: "AsModKw", pattern: new RegExp(`:as${modKwTail}`) });
-export const OfModKw = createToken({ name: "OfModKw", pattern: new RegExp(`:of${modKwTail}`) });
-export const IsModKw = createToken({ name: "IsModKw", pattern: new RegExp(`:is${modKwTail}`) });
-export const WhenModKw = createToken({ name: "WhenModKw", pattern: new RegExp(`:when${modKwTail}`) });
+export const ImplementsModKw = createToken({ name: "ImplementsModKw", pattern: new RegExp(`:implements${modKwTail}`), categories: [ModKeyword] });
+export const ExtendsModKw = createToken({ name: "ExtendsModKw", pattern: new RegExp(`:extends${modKwTail}`), categories: [ModKeyword] });
+export const WhereModKw = createToken({ name: "WhereModKw", pattern: new RegExp(`:where${modKwTail}`), categories: [ModKeyword] });
+export const CondModKw = createToken({ name: "CondModKw", pattern: new RegExp(`:cond${modKwTail}`), categories: [ModKeyword] });
+export const ThenModKw = createToken({ name: "ThenModKw", pattern: new RegExp(`:then${modKwTail}`), categories: [ModKeyword] });
+export const ElseModKw = createToken({ name: "ElseModKw", pattern: new RegExp(`:else${modKwTail}`), categories: [ModKeyword] });
+export const InitModKw = createToken({ name: "InitModKw", pattern: new RegExp(`:init${modKwTail}`), categories: [ModKeyword] });
+export const StepModKw = createToken({ name: "StepModKw", pattern: new RegExp(`:step${modKwTail}`), categories: [ModKeyword] });
+export const EachModKw = createToken({ name: "EachModKw", pattern: new RegExp(`:each${modKwTail}`), categories: [ModKeyword] });
+export const FromModKw = createToken({ name: "FromModKw", pattern: new RegExp(`:from${modKwTail}`), categories: [ModKeyword] });
+export const AsModKw = createToken({ name: "AsModKw", pattern: new RegExp(`:as${modKwTail}`), categories: [ModKeyword] });
+export const OfModKw = createToken({ name: "OfModKw", pattern: new RegExp(`:of${modKwTail}`), categories: [ModKeyword] });
+export const IsModKw = createToken({ name: "IsModKw", pattern: new RegExp(`:is${modKwTail}`), categories: [ModKeyword] });
+export const WhenModKw = createToken({ name: "WhenModKw", pattern: new RegExp(`:when${modKwTail}`), categories: [ModKeyword] });
 
 // ============================================================================
 // OPERATORS (Multi-char before single-char!)
@@ -403,6 +425,15 @@ export const LLangLexer = new Lexer(
 
 // Export all tokens as an array for the parser
 export const allTokens: TokenType[] = [
+  // The CATEGORY tokens go in the PARSER's vocabulary, and in no lexer mode.
+  //
+  // `Lexer.NA` means they are never matched directly, so they must stay out of the modes above --
+  // but Chevrotain computes category membership only for the token types it is actually handed, and
+  // the parser is handed exactly this array. Without them here, `CONSUME(ModKeyword)` fails with
+  // "Expecting token of type --> ModKeyword <-- but found --> ':step'": the token IS a ModKeyword,
+  // the parser had simply never been told the category exists.
+  BareKeyword,
+  ModKeyword,
   ...defaultModeTokens,
   ...formattedStringModeTokens.filter((t) => !defaultModeTokens.includes(t)),
   ...formatExprModeTokens.filter(

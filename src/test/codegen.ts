@@ -2971,6 +2971,84 @@ const CASES: Case[] = [
       "NOT broken -- a GUARD. Only a CUSTOM (defmodifier-declared) modifier may wrap; a builtin is a " +
       "fact for the compiler, and no modifier at all must leave the declaration exactly as it was.",
   },
+
+  // ===============================================================================================
+  // Va / AF-044 -- a map key that collides with a modifier keyword was a hard PARSE ERROR.
+  //
+  //     (let m {:step 1})   ->   Expecting token of type --> RBrace <-- but found --> ':step' <--
+  //
+  // A modifier keyword lexes as ONE token INCLUDING its colon (`:step` -> StepModKw, pattern
+  // `/:step(?![a-zA-Z0-9_-])/`). The map's `keyValue` rule wanted a separate `Colon` followed by an
+  // Identifier -- which is why `{:name "x"}` parses (Colon + Identifier) and `{:step 1}` cannot.
+  // Chevrotain lexes context-free, so the lexer cannot know it is inside a map; the parser has to
+  // accept the token.
+  //
+  // D13 rules map keys are STRINGS, never mangled -- `{:my-key 1}` emits `{"my-key": 1}` verbatim.
+  // A key is data. `{:step 1}` is a step count, not a for-loop clause, and nothing about the grammar
+  // of `for` should reach into an object literal.
+  //
+  // ESCALATED BY Pb. The PEG accepted these and emitted correct JS, so it was the workaround; with
+  // the PEG retired there is no way to write the key at all. That is why this leads Phase V.
+  //
+  // THE AUDIT'S LIST IS WRONG, and the real rule is cleaner. AF-044 says
+  // ":step :each :from :then :of :when :as :while :mut :let". Measured: `:while`, `:mut` and `:let`
+  // parse FINE (they are `mut`/`let`/`while` keywords with no colon in the token, so they arrive as
+  // Colon + Kw). And it MISSES seven: `:cond :else :init :is :where :extends :implements`. The set is
+  // exactly the 14 MODIFIER keywords -- no more, no less.
+  // ===============================================================================================
+  {
+    // All 14, so the rule is pinned as "every modifier keyword", not "the ones someone happened to
+    // list". A future modifier keyword joining the category is covered by construction.
+    //
+    // Read back through JSON rather than dot-access, because THREE of the fourteen -- `else`,
+    // `extends`, `implements` -- are JS RESERVED WORDS, and `encodeIdentifier` prefixes those with an
+    // underscore on the read side (`m.else` emits `m._else`) while the key itself stays `"else"`
+    // verbatim per D13. So the key round-trips through `m["else"]` and not through `m.else`.
+    //
+    // That is NOT this fix's bug and is deliberately not fixed here: it is D13's own accepted cost --
+    // "dot-access (`m.my-key`) can't reach these keys -- use `m[\"my-key\"]` instead" -- and the same
+    // shape the audit already filed as AF-005 (a hyphenated dot-access silently reads undefined).
+    // Va's business is that the key PARSES at all.
+    name: "Va/AF-044: every modifier keyword is usable as a map key",
+    source: `(let m {:step 1 :each 2 :from 3 :then 4 :of 5 :when 6 :as 7
+        :cond 8 :else 9 :init 10 :is 11 :where 12 :extends 13 :implements 14})
+(console.log (JSON.stringify m))
+(console.log m.step m.each m.from m.then m.of m.when m.as)
+(console.log m.cond m.init m.is m.where)
+(console.log m["else"] m["extends"] m["implements"])`,
+    expect: [
+      `{"step":1,"each":2,"from":3,"then":4,"of":5,"when":6,"as":7,"cond":8,"else":9,"init":10,"is":11,"where":12,"extends":13,"implements":14}`,
+      "1 2 3 4 5 6 7",
+      "8 10 11 12",
+      "9 13 14",
+    ],
+    wasBroken:
+      "`Expecting token of type --> RBrace <-- but found --> ':step' <--`. A hard parse error on a " +
+      "map key. The PEG accepted it and emitted correct JS, so retiring the PEG (Pb) removed the " +
+      "only way to write it. AF-044.",
+  },
+  {
+    // The GUARD the audit's own (wrong) list points at: these were never broken and must not become
+    // so. They are Colon + keyword, not a single colon-bearing token.
+    name: "Va/AF-044: `:while` / `:mut` / `:let` keys keep working",
+    source: `(let m {:while 1 :mut 2 :let 3 :name "n"})
+(console.log m.while m.mut m.let m.name)`,
+    expect: ["1 2 3 n"],
+    wasBroken:
+      "NOT broken -- a GUARD, and a correction. AF-044 lists all three as rejected; measurement says " +
+      "they parse fine, because `mut`/`let`/`while` are keywords WITHOUT a colon in the token.",
+  },
+  {
+    // D13's own example, and the reason a key is data rather than syntax: the key must survive to
+    // the emitted object VERBATIM, whatever it collides with.
+    name: "Va/AF-044: a modifier-keyword key is a plain string in the emitted object",
+    source: `(let m {:from "src" :to "dst"})
+(console.log (JSON.stringify m))`,
+    expect: [`{"from":"src","to":"dst"}`],
+    wasBroken:
+      "unparseable. D13 rules a key is a STRING, never mangled -- so `:from` must reach JSON as " +
+      "`from`, not as a for-clause and not as an encoded name.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

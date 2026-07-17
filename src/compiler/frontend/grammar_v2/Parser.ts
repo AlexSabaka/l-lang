@@ -280,7 +280,12 @@ class LLangParser extends CstParser {
      */
     this.memberSuffix = this.RULE("memberSuffix", () => {
       this.CONSUME(t.Dot);
-      this.CONSUME(t.Identifier);
+      // Same rule as compositeIdentifier's tail: after a dot, a name is data. `xs[0].from` must read
+      // the field, not report that `from` is a clause.
+      this.OR([
+        { ALT: () => this.CONSUME(t.Identifier) },
+        { ALT: () => this.CONSUME(t.BareKeyword) },
+      ]);
     });
 
     this.indexerSuffix = this.RULE("indexerSuffix", () => {
@@ -408,7 +413,16 @@ class LLangParser extends CstParser {
       });
       this.AT_LEAST_ONE(() => {
         this.CONSUME(t.Dot);
-        this.CONSUME2(t.Identifier);
+        // AFTER A DOT, A NAME IS DATA. `m.from` is a field read, not a `from` clause -- the member
+        // half of AF-044. Writing `{:from "src"}` is worthless if `m.from` cannot read it back, so
+        // the key fix and this one are one change.
+        //
+        // Only the TAIL accepts a keyword; the HEAD above stays an Identifier, because a head is a
+        // binding and `from` is not a legal variable name.
+        this.OR([
+          { ALT: () => this.CONSUME2(t.Identifier) },
+          { ALT: () => this.CONSUME(t.BareKeyword) },
+        ]);
       });
     });
 
@@ -493,9 +507,23 @@ class LLangParser extends CstParser {
           },
         },
         {
+          // A MODIFIER keyword key -- `{:step 1}`, `{:from "src"}`.
+          //
+          // These lex as ONE token with the colon INSIDE it (`:step` -> StepModKw), so the branch
+          // above cannot see a `Colon` to consume and the whole map failed to parse (AF-044). A map
+          // key is data (D13), and `{:step 1}` is a step COUNT -- the grammar of `for` has no
+          // business reaching into an object literal.
+          ALT: () => {
+            this.CONSUME(t.ModKeyword);
+            this.OPTION2(() => {
+              this.SUBRULE2(this.expression);
+            });
+          },
+        },
+        {
           ALT: () => {
             this.SUBRULE(this.string);
-            this.SUBRULE2(this.expression);
+            this.SUBRULE3(this.expression);
           },
         },
       ]);
@@ -505,6 +533,13 @@ class LLangParser extends CstParser {
       this.OR([
         { ALT: () => this.CONSUME(t.Identifier) },
         { ALT: () => this.CONSUME(t.StringLiteral) },
+        // A BARE keyword key -- `{:mut 1}`, `{:fn 2}`, `{:true 3}`.
+        //
+        // The colon is a separate token for these, so the Colon branch above already matched; it is
+        // only the NAME that the lexer had claimed as a keyword. `{:name 1}` worked and `{:fn 1}`
+        // did not, purely because `fn` happens to be a token and `name` does not -- which is a fact
+        // about the lexer leaking into what a user may call a field.
+        { ALT: () => this.CONSUME(t.BareKeyword) },
       ]);
     });
 

@@ -212,7 +212,11 @@ export class LLangAstBuilder extends BaseCstVisitor {
 
   /** `.name` -- emitted as the STRING key of a computed access. See primaryExpr. */
   memberSuffix(ctx: any): ast.StringNode {
-    return this.makeNode("string", ctx, { value: ctx.Identifier[0].image });
+    // Either token shape -- a keyword-named member (`xs[0].from`) arrives as BareKeyword. Only one
+    // of the two can be present, so there is no ordering question here as there is in
+    // compositeIdentifier.
+    const token = (ctx.Identifier ?? ctx.BareKeyword)[0];
+    return this.makeNode("string", ctx, { value: token.image });
   }
 
   // ========================================================================
@@ -481,9 +485,16 @@ export class LLangAstBuilder extends BaseCstVisitor {
   compositeIdentifier(ctx: any): ast.CompositeIdentifierNode {
     // Chevrotain keys CST children by TOKEN NAME, not occurrence index, so the head (CONSUME)
     // and the tail (CONSUME2) both land in ctx.Identifier, in source order.
-    const images: string[] = ctx.Identifier
-      ? ctx.Identifier.map((token: any) => token.image)
-      : [];
+    //
+    // A keyword-named member (`m.from`) arrives as a BareKeyword instead, in its OWN array -- so the
+    // two arrays each stay in source order but say nothing about each other, and `m.from.x` would
+    // rebuild as "m.x.from". Merging by startOffset restores the one order that matters: the source's.
+    const images: string[] = [
+      ...(ctx.Identifier ?? []),
+      ...(ctx.BareKeyword ?? []),
+    ]
+      .sort((a: any, b: any) => a.startOffset - b.startOffset)
+      .map((token: any) => token.image);
 
     // Headless means `.foo` -- one dot per identifier, with no head before the first dot.
     const headless = images.length === (ctx.Dot?.length ?? 0);
@@ -536,8 +547,19 @@ export class LLangAstBuilder extends BaseCstVisitor {
   }
 
   keyValue(ctx: any): ast.KeyValueNode {
-    // Two forms: `:key value` (ctx.key) and `"key" value` (ctx.string -- a bare string key).
-    const key = ctx.key ? this.visit(ctx.key[0]) : this.visit(ctx.string[0]);
+    // Three forms: `:key value` (ctx.key), `"key" value` (ctx.string -- a bare string key), and
+    // `:step value` (ctx.ModKeyword -- a MODIFIER keyword, whose colon is part of the token).
+    //
+    // The ModKeyword image carries its own leading colon (":step"), so the name is `.slice(1)`.
+    // `modKwTail` (`(?![a-zA-Z0-9_-])`) guarantees the token is the whole word, so nothing else can
+    // be hiding in the image.
+    const key = ctx.ModKeyword
+      ? this.makeNode("simple-identifier", ctx, {
+          id: ctx.ModKeyword[0].image.slice(1),
+        })
+      : ctx.key
+      ? this.visit(ctx.key[0])
+      : this.visit(ctx.string[0]);
     const value = ctx.expression ? this.visit(ctx.expression[0]) : null;
     return this.makeNode("key-value", ctx, { key, value });
   }
@@ -546,6 +568,14 @@ export class LLangAstBuilder extends BaseCstVisitor {
     if (ctx.Identifier) {
       return this.makeNode("simple-identifier", ctx, {
         id: ctx.Identifier[0].image,
+      });
+    }
+    // A BARE keyword used as a key -- `{:mut 1}`. The token is the name itself (no colon; that was
+    // consumed separately), so its image IS the key. It becomes an ordinary identifier node: by D13
+    // a key is a string, and `mut` is only a keyword where the grammar asked for one.
+    if (ctx.BareKeyword) {
+      return this.makeNode("simple-identifier", ctx, {
+        id: ctx.BareKeyword[0].image,
       });
     }
     const value = ctx.StringLiteral[0].image.slice(1, -1);
