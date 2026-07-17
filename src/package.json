@@ -12,6 +12,7 @@
     "test": "ts-node test/runner.ts",
     "test:verbose": "ts-node test/runner.ts --verbose",
     "test:grammar-v2-smoke": "ts-node test/smoke-grammar-v2.ts",
+    "test:ast-invariants": "ts-node test/ast-invariants.ts",
     "test:type-errors": "ts-node test/type-errors.ts",
     "test:diagnostics": "ts-node test/diagnostics.ts",
     "test:imports": "ts-node test/imports.ts",
