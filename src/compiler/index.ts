@@ -17,7 +17,6 @@ export * from "./analysis/visitors/SyntaxRulesAstVisitor";
 export * from "./transformation/visitors/DesugarAstVisitor";
 export * from "./transformation/visitors/ComptimeEvaluationAstVisitor";
 export * from "./transformation/visitors/InlineImportsAstVisitor";
-export * from "./transformation/visitors/TreeShakeAstVisitor";
 
 export * from "./types/visitors/InferTypesAstVisitor";
 

@@ -11,7 +11,6 @@ import {
   DesugarAstVisitor,
   InlineImportsAstVisitor,
   SyntaxRulesAstVisitor,
-  TreeShakeAstVisitor,
   InferTypesAstVisitor,
 } from "./index";
 
@@ -481,9 +480,6 @@ export class Context {
 
     // DESUGAR STAGE
     this.performanceMetrics.startTimer("desugar");
-    const treeShakerVisitor = new TreeShakeAstVisitor(this);
-    ast = treeShakerVisitor.visit(ast) as ASTNode;
-
     const comptimeVisitor = new ComptimeEvaluationAstVisitor(this);
     ast = comptimeVisitor.visit(ast) as ASTNode;
 
@@ -501,8 +497,7 @@ export class Context {
     ast = desugarVisitor.visit(ast) as ASTNode;
 
     const desugaredNodeCount = this.countNodes(ast);
-    const desugarVisitCount = ((treeShakerVisitor as any).getVisitCount?.() || 0) + 
-                             ((comptimeVisitor as any).getVisitCount?.() || 0);
+    const desugarVisitCount = (comptimeVisitor as any).getVisitCount?.() || 0;
     this.performanceMetrics.endTimer("desugar", desugaredNodeCount, desugarVisitCount, {
       nodesRemoved: nodeCount - desugaredNodeCount
     });

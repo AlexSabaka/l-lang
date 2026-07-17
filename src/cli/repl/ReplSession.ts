@@ -787,9 +787,8 @@ function bindingNames(n: any): string[] {
 /**
  * Top-level names a cell binds. Drives `.delete`.
  *
- * Each cell arrives as a `list` WRAPPING its declaration -- and note that the wrapper also carries
- * the child's fields smeared onto it (TreeShakeAstVisitor spreads the child into the parent but
- * forces `_type` back to "list"), so the wrapper is not safe to read directly. Go through `nodes`.
+ * Each cell arrives as a `list` WRAPPING its declaration, so the wrapper's own `_type` is "list",
+ * not the declaration's kind -- it is not safe to read directly. Go through `nodes`.
  */
 function declaredNames(nodes: ast.ASTNode[]): string[] {
   const names: string[] = [];
