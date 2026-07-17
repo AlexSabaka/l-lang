@@ -4,14 +4,14 @@ is-null 42 (should be false): false
 Type of is-null: {
   name: 'is-null',
   kind: 'function',
-  paramsList: [ { name: 'x', type: 'Any' } ],
+  params: [ { name: 'x', type: 'Any' } ],
   returns: 'Boolean',
   nullable: false
 }
 Type of n-th: {
   name: 'n-th',
   kind: 'function',
-  paramsList: [ { name: 'a', type: 'Int[]' }, { name: 'n', type: 'Int' } ],
+  params: [ { name: 'a', type: 'Int[]' }, { name: 'n', type: 'Int' } ],
   returns: 'Real',
   nullable: false
 }

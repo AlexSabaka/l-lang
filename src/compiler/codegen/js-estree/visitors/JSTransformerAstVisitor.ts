@@ -391,7 +391,33 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     this.context.log(LogLevel.Debug, `Loaded ${Object.keys(this.typesMetadata).length} pre-computed type entries`);
   }
   
+  /**
+   * How a type is written in `__ll_type_metadata` -- the ONE renderer, for every kind (Zjc).
+   *
+   * There were two. The class/struct path read `.name || 'Any'`; the function path called
+   * `formatType`. An array type's `.name` is the bare string "Array" -- it drops the element type --
+   * so a class method returning `Int[]` reported "Array" while the identical free function reported
+   * "Int[]". One type, two renderings, chosen by which KIND of thing you happened to ask about.
+   *
+   * `formatType` is the survivor because it is the one that was right, but it is a DIAGNOSTIC
+   * formatter and this is not a diagnostic. It renders a struct as `struct vec2` -- which reads well
+   * in "cannot assign X to struct vec2" and is not a NAME: feed it back to `type-by-name` and it finds
+   * nothing. Here a type must round-trip. Annotations reach us as `type-ref`, which formatType already
+   * renders as the bare `refName`, so the struct arm fires only on an INFERRED type -- measured:
+   * 09_operators' `Complex` params, a defstruct, already render "Complex" through the function path.
+   * The unwrap below makes that structural rather than lucky.
+   */
+  private static renderMetadataType(t: any): string {
+    if (!t) return 'Any';
+    if ((t.kind === 'struct' || t.kind === 'class' || t.kind === 'interface') && t.name) {
+      return t.optional ? `${t.name}?` : t.name;
+    }
+    return TypeChecker.formatType(t);
+  }
+
   private convertCodegenMetadataToRuntimeFormat(metadata: any): Record<string, any> {
+    const renderType = (t: any) => JSTransformerAstVisitor.renderMetadataType(t);
+
     const result: any = {
       name: metadata.typeName,
       kind: metadata.kind,
@@ -403,26 +429,26 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     if (metadata.kind === 'class' || metadata.kind === 'struct' || metadata.kind === 'interface') {
       result.properties = metadata.detailedMembers?.filter((m: any) => !m.isOperator).map((m: any) => ({
         name: m.name,
-        type: m.type.name || 'Any',
+        type: renderType(m.type),
         isPublic: m.visibility === 'public',
         isPrivate: m.visibility === 'private',
         isStatic: m.isStatic || false
       })) || [];
-      
+
       result.methods = Array.from(metadata.methodSignatures?.values() || []).map((method: any) => ({
         name: method.name,
         params: method.parameters.map((p: any) => ({
           name: p.name,
-          type: p.type.name || 'Any'
+          type: renderType(p.type)
         })),
-        returns: method.returnType.name || 'Any'
+        returns: renderType(method.returnType)
       }));
-      
+
       if (metadata.constructorSignature) {
         result.constructor = {
           params: metadata.constructorSignature.parameters.map((p: any) => ({
             name: p.name,
-            type: p.type.name || 'Any',
+            type: renderType(p.type),
             hasDefault: p.hasDefault
           })),
           requiredCount: metadata.constructorSignature.requiredCount
@@ -448,17 +474,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     if (metadata.kind === 'function') {
       const methodSig = Array.from(metadata.methodSignatures?.values() || [])[0] as any;
       if (methodSig && methodSig.parameters && methodSig.returnType) {
-        // formatType, not `.name`. An array type's `name` is the bare string "Array" -- it drops
-        // the element type entirely -- whereas formatType already renders it as `Int[]`. (Until
-        // the type converter was fixed, `Int[]` degraded to `Int` before it ever got here, so this
-        // reported a scalar and the golden recorded it.)
-        result.paramsList = methodSig.parameters.map((p: any) => ({
+        result.params = methodSig.parameters.map((p: any) => ({
           name: p.name,
-          type: p.type ? TypeChecker.formatType(p.type) : 'Any'
+          type: renderType(p.type)
         }));
-        result.returns = methodSig.returnType
-          ? TypeChecker.formatType(methodSig.returnType)
-          : 'Any';
+        result.returns = renderType(methodSig.returnType);
       }
     }
     

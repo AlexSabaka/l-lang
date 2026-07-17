@@ -4517,6 +4517,64 @@ catch b ((console.log "two")))`,
     expect: ["my-fn function Int"],
     wasBroken: "NOT broken -- the GUARD against the extern filter eating user code.",
   },
+
+  // Zjc -- TWO RENDERERS, TWO ANSWERS. A class method returning `Int[]` rendered "Array"; a top-level
+  // function returning `Int[]` rendered "Int[]". The class path read `.name || 'Any'` -- and an array
+  // type's `.name` is the bare string "Array", which drops the element type -- while the function path
+  // already used `TypeChecker.formatType`, which renders it properly.
+  //
+  // Same question, two answers, decided by which KIND of thing you asked about. That is the shape this
+  // audit exists to kill, and the table is where it was hiding in plain sight.
+  // ===============================================================================================
+  {
+    name: "Zjc: a class method returning `Int[]` says so",
+    source: `(defclass Bag
+  (fn items [] -> Int[] (return [1 2 3])))
+(let t (type-by-name "Bag"))
+(let ms t["methods"])
+(let m0 ms[0])
+(console.log m0["returns"])`,
+    expect: ["Int[]"],
+    wasBroken:
+      "`Array` -- the element type dropped. The same method written as a top-level function reported " +
+      "`Int[]` correctly, because the two paths never shared a renderer.",
+  },
+  {
+    // The two paths, asked the same question side by side. This is the assertion the split could not
+    // survive: it compares them directly rather than trusting either alone.
+    name: "Zjc: a class method and a free function AGREE about `Int[]`",
+    source: `(defclass Bag
+  (fn items [] -> Int[] (return [1 2 3])))
+(fn free-items [] -> Int[] (return [1 2 3]))
+(let bag (type-by-name "Bag"))
+(let ms bag["methods"])
+(let m0 ms[0])
+(let free (type-by-name "free-items"))
+(console.log (== m0["returns"] free["returns"]))`,
+    expect: ["true"],
+    wasBroken: "`false`: the class said `Array`, the function said `Int[]`. One type, two renderings.",
+  },
+  {
+    // One key. The class path said `params`, the function path said `paramsList` -- for the same
+    // concept, in the same table, read by the same consumer.
+    name: "Zjc: both paths spell the parameter list `params`",
+    source: `(defclass Bag
+  (fn put [x <- Int] -> Int (return x)))
+(fn free-put [x <- Int] -> Int (return x))
+(let bag (type-by-name "Bag"))
+(let ms bag["methods"])
+(let m0 ms[0])
+(let mp m0["params"])
+(let p0 mp[0])
+(let free (type-by-name "free-put"))
+(let fp free["params"])
+(let f0 fp[0])
+(console.log p0["name"] f0["name"])`,
+    expect: ["x x"],
+    wasBroken:
+      "A free function's parameters were under `paramsList`; a class method's under `params`. Reading " +
+      "the table meant knowing which kind you had first.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------
