@@ -2697,6 +2697,96 @@ const CASES: Case[] = [
       "NOT broken -- a GUARD on the fix. `finally` is the one block whose trailing expression must " +
       "stay unconverted, because JS lets a `return` there override the real answer.",
   },
+
+  // ===============================================================================================
+  // Qc / AF-003 (the short-circuit half) -- `||` and `&&` evaluated BOTH operands.
+  //
+  // Every operator routes through a runtime shim so an `:operator` overload can be found:
+  //
+  //     const _7c7c = (...args) => args.reduce((a, b) => a || b);
+  //     (|| a b)  ->  _7c7c(a, b)
+  //
+  // The VALUES are right -- it folds with JS's own `||`. But a shim is a CALL, and a call evaluates
+  // its arguments before it runs. So `||` and `&&` were not short-circuiting, which is not an
+  // optimisation detail: it is their semantics. `(|| true (expensive))` ran `expensive`, and every
+  // `(|| (== x nil) (x.method))` nil-guard dereferenced the very nil it was guarding against.
+  //
+  // These two cannot be overloaded for exactly the reason they must short-circuit: an overload is a
+  // function, and a function cannot decline to evaluate its argument. Nothing in lib/ or examples/
+  // overloads them. So they are emitted as native LogicalExpressions.
+  //
+  // Value-identical by construction: the shim folds LEFT with `||`/`&&`, and `a || b || c` is the
+  // same fold. Only the evaluation ORDER changes -- which is the entire fix.
+  //
+  // NOT fixed here: AF-003's other half, a `(return x)` used AS an operand. That one is a RULING
+  // (the repo already has one for `cond` -- see "D25/Xb: a `return` inside a `cond` returns from the
+  // FUNCTION" under "The three that must NOT move" -- and ||/&& disagree with it). Filed, not guessed.
+  // ===============================================================================================
+  {
+    name: "Qc/AF-003: `||` short-circuits -- a true left operand skips the right",
+    source: `(fn loud [] -> Bool (
+  (console.log "EVALUATED")
+  (return true)
+))
+(let a (|| true (loud)))
+(console.log a)`,
+    expect: ["true"],
+    emitted: { mustNot: [/_7c7c\(/] },
+    wasBroken:
+      "printed EVALUATED first -- `_7c7c(true, loud())` is a CALL, so `loud()` ran before the " +
+      "operator could decide `true` already won.",
+  },
+  {
+    name: "Qc/AF-003: `&&` short-circuits -- a false left operand skips the right",
+    source: `(fn loud [] -> Bool (
+  (console.log "EVALUATED")
+  (return true)
+))
+(let b (&& false (loud)))
+(console.log b)`,
+    expect: ["false"],
+    emitted: { mustNot: [/_2626\(/] },
+    wasBroken: "printed EVALUATED -- same shim-is-a-call defect as `||`.",
+  },
+  {
+    // The strongest form of the claim: the right operand is not merely unobserved, it does not RUN.
+    // A `loud` that prints proves order; a `boom` that throws proves execution.
+    //
+    // This replaced a nil-guard case -- `(|| (== s nil) (== s.length 0))` -- which turned out not to
+    // compile at all: the checker refuses `s.length` on a `String?` with LL0205 regardless of the
+    // guard. So the finding's "every `(|| (== x nil) (x.method))` nil-guard in the corpus has the
+    // same problem" OVERSTATES it: with a typed receiver that guard is unwritable. The exposure is
+    // real only where the receiver is untyped and LL0205 never fires. Measured, not inherited.
+    name: "Qc/AF-003: a short-circuited operand does not RUN, not merely go unread",
+    source: `(fn boom [] -> Bool (
+  (throw (Error "the right operand must not run"))
+  (return true)
+))
+(console.log (|| true (boom)))
+(console.log (&& false (boom)))`,
+    expect: ["true", "false"],
+    wasBroken:
+      "both THREW. `_7c7c(true, boom())` is a call, so `boom()` ran to completion -- or in this case " +
+      "failed to -- before `||` ever saw an operand.",
+  },
+  {
+    // Values must not drift while evaluation order is fixed.
+    //
+    // Note the operands are Booleans, and that is not incidental: `||`/`&&` are BOOLEAN-typed here.
+    // `(|| false 5)` is LL0204 ("Operator '||' is not defined for Boolean and Int"), so JS's
+    // yield-the-operand semantics is not reachable in well-typed code at all. That makes the switch
+    // to a native LogicalExpression strictly safer than the shim it replaces -- there is no operand
+    // -vs- boolean discrepancy for it to expose.
+    name: "Qc/AF-003: `||`/`&&` values survive, and still fold n-ary",
+    source: `(console.log (|| false true))
+(console.log (&& true false))
+(console.log (|| false false true))
+(console.log (&& true true false))`,
+    expect: ["true", "false", "true", "false"],
+    wasBroken:
+      "NOT broken -- a GUARD. The shim folded LEFT with JS's own `||`/`&&`, and native `a || b || c` " +
+      "is the identical fold, so every value here must survive the switch untouched.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

@@ -2855,6 +2855,46 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         } as ESTree.NewExpression;
       }
 
+      // `||` and `&&` are SHORT-CIRCUITING, and that is not an optimisation -- it is their meaning.
+      //
+      // Every other operator routes through a runtime shim so an `:operator` overload can be found:
+      // `(+ a b)` -> `_2b(a, b)`, which dispatches registry -> `_1` method -> raw JS. The shims fold
+      // with JS's own operator, so the VALUES were always right. But a shim is a CALL, and a call
+      // evaluates its arguments before it runs -- so `(|| true (expensive))` ran `expensive`, and
+      // every `(|| (== x nil) (x.method))` nil-guard dereferenced the nil it was guarding against.
+      //
+      // These two are the operators that CANNOT be overloaded, for exactly the reason they must
+      // short-circuit: an overload is a function, and a function cannot decline to evaluate its
+      // argument. So there is nothing for a shim to dispatch to, and no reason to pay for the call.
+      //
+      // The head is deliberately NOT visited: visiting it is what registers the shim for emission,
+      // and a program whose only `||` is in call position should not carry `_7c7c` at all. Using the
+      // operator AS a value (`(map || xs)`) still goes through visitIdentifier and still gets it.
+      //
+      // Value-identical by construction: `(...args) => args.reduce((a, b) => a || b)` is a LEFT fold,
+      // and so is `a || b || c`. Only the evaluation order changes.
+      if (
+        head._type === "simple-identifier" &&
+        (headId === "||" || headId === "&&") &&
+        rest.length >= 1
+      ) {
+        const operator = headId as "||" | "&&";
+        // A single operand folds to itself -- `(|| a)` is `a`, which is what the shim's reduce did
+        // too. Zero operands fall through to the shim path, preserving whatever it already does.
+        return rest
+          .map((x) => this.visitExpr(x))
+          .reduce(
+            (left, right) =>
+              ({
+                type: "LogicalExpression",
+                operator,
+                left,
+                right,
+                loc: ESTreeBuilder.loc(node),
+              } as ESTree.LogicalExpression as unknown as ESTree.Expression)
+          );
+      }
+
       const callee = this.visitExpr(head);
       const args = rest.map((x) => this.visitExpr(x));
       const calleeStr = this.expressionToString(callee);
