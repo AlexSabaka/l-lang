@@ -48,6 +48,15 @@ interface Case {
    */
   expectDiagnostic?: RegExp;
   /**
+   * The case must compile and run as usual, and must NOT report this diagnostic.
+   *
+   * The counterpart `expectDiagnostic` could not express, and the gap was silent. A WARNING does not
+   * block emission, so a case that merely asserts `expect` passes whether or not the warning fired --
+   * "it does not warn here" was, by construction, an untestable claim written in a comment. Any hint
+   * precise enough to be worth shipping needs its FALSE-POSITIVE guard to be a real assertion.
+   */
+  mustNotDiagnose?: RegExp;
+  /**
    * The case must COMPILE, RUN, and then THROW -- with this error reaching stderr.
    *
    * D9 rules that `c[k]` is PARTIAL: an out-of-bounds index and an absent map key are *bugs*, not
@@ -4290,6 +4299,157 @@ catch b ((console.log "two")))`,
       "NOT broken -- proves the empty-interface refusal above did not break marker interfaces, only " +
       "made them explicit.",
   },
+
+  // Zia -- `type` is ONE NAME DOING TWO JOBS, dispatching on the JS runtime tag of its argument: a
+  // string does a by-name registry lookup, anything else reflects the value. So "what is the type of
+  // this String VALUE?" is structurally unaskable, and `(type s)` where `s` holds "Money" answers with
+  // MONEY's metadata.
+  //
+  // Not hypothetical: it already produced a silently wrong example pinned by a golden (15_recursion's
+  // `Tree sum: 0`, which is 21 -- see Zic). The author's own code expected `type` to reflect.
+  //
+  // `type` reflects a VALUE. `type-by-name` does the lookup. By-name has to survive because the
+  // metadata graph's `extends`/`implements` edges are STRINGS -- drop it and the graph is unwalkable.
+  // ===============================================================================================
+  {
+    name: "Zia: `(type s)` on a String VARIABLE reflects the STRING",
+    source: `(defclass Money
+  (fn amount [] -> Int (return 5)))
+(let s "Money")
+(let t (type s))
+(console.log t["name"])`,
+    expect: ["String"],
+    wasBroken:
+      "Answered `Money` -- the CLASS's metadata, because the value happened to spell a type's name. " +
+      "The overload made a String value's own type unaskable.",
+  },
+  {
+    name: "Zia: `type-by-name` does the lookup `type` used to guess at",
+    source: `(defclass Money
+  (fn amount [] -> Int (return 5)))
+(let t (type-by-name "Money"))
+(console.log t["name"] t["kind"])`,
+    expect: ["Money class"],
+    wasBroken: "Did not exist. The lookup was only reachable by passing a string to `type`.",
+  },
+  {
+    // The author's invariant, asked for during planning. Expected GREEN already -- `type`'s function
+    // branch reads `__ll_name` then looks the name up, so a class VALUE and its NAME already agree.
+    // Pinned so the Zia split cannot quietly break it.
+    name: "Zia: `(type Money)` equals `(type-by-name \"Money\")`",
+    source: `(defclass Money
+  (fn amount [] -> Int (return 5)))
+(let a (type Money))
+(let b (type-by-name "Money"))
+(console.log (== a["name"] b["name"]) (== a["kind"] b["kind"]))`,
+    expect: ["true true"],
+    wasBroken:
+      "NOT broken -- the INVARIANT. A class is reachable by value or by name and the two must not " +
+      "diverge.",
+  },
+  {
+    // Why there is no hard guard on a string literal: this is a legitimate idiom under reflect
+    // semantics. "" names no type, so the LL0218 hint must stay silent here.
+    name: "Zia: `(type \"\")` is String, and does NOT warn",
+    source: `(let t (type ""))
+(console.log t["name"])`,
+    expect: ["String"],
+    mustNotDiagnose: /LL0218/,
+    wasBroken:
+      "Answered `{name: '', kind: 'unknown'}` -- it looked \"\" up as a type name and found nothing.",
+  },
+  {
+    // The migration hint. Fires ONLY when the literal names something real, which is what keeps it off
+    // `(type "")` and `(type "hello")`.
+    name: "Zia: `(type \"Money\")` HINTS at type-by-name",
+    source: `(defclass Money
+  (fn amount [] -> Int (return 5)))
+(console.log ((type "Money")["name"]))`,
+    expectDiagnostic: /LL0218/,
+    wasBroken:
+      "SILENT, and it silently CHANGED MEANING in this phase: `(type \"Money\")` was Money's metadata " +
+      "and is now String's. A literal that names a known type is the one case where the old meaning " +
+      "was probably intended.",
+  },
+  {
+    name: "Zia: `(type \"hello\")` does not warn -- it names nothing",
+    source: `(defclass Money
+  (fn amount [] -> Int (return 5)))
+(let t (type "hello"))
+(console.log t["name"])`,
+    expect: ["String"],
+    mustNotDiagnose: /LL0218/,
+    wasBroken: "NOT broken -- the GUARD that keeps the hint from firing on ordinary strings.",
+  },
+
+  // Zib / D43 -- reflection on a primitive is a STATIC question, and the six primitives are real types.
+  //
+  // The table was `getAllClassMetadata()` + `getAllFunctionMetadata()` and nothing else, so the six
+  // most common types in the language were not in it. `(type 5)` fell through every arm of the runtime
+  // -- there is no number arm -- and answered `{kind:'unknown'}`.
+  //
+  // It cannot be fixed at run time. Int/Real are one JS number (`5.0 === 5`); Char/String are one JS
+  // string (`"c"` is both). `typeof` says "number", never WHICH. The checker knows, so the answer comes
+  // from the checker or not at all.
+  // ===============================================================================================
+  {
+    name: "Zib/D43: `(type x)` on an Int answers Int",
+    source: `(let x 5)
+(let t (type x))
+(console.log t["name"] t["kind"])`,
+    expect: ["Int primitive"],
+    wasBroken: "`{kind:'unknown'}` -- and `t[\"name\"]` threw a D9 KeyError, because that arm had no name.",
+  },
+  {
+    // The case JS cannot answer AT ALL. `5.5` and `5` are one runtime type; only the annotation
+    // separates them, which is exactly why this must be decided statically (D43).
+    name: "Zib/D43: `(type r)` on a Real answers Real, not Int",
+    source: `(let r <- Real 5.5)
+(let t (type r))
+(console.log t["name"])`,
+    expect: ["Real"],
+    wasBroken: "`{kind:'unknown'}`. A runtime answer here is impossible: `typeof 5.5` is 'number'.",
+  },
+  {
+    // The three paths to one type must agree, or the API has re-grown the seam Zia removed.
+    name: "Zib/D43: `(type \"\")`, `(type String)` and `(type-by-name \"String\")` agree",
+    source: `(let a (type ""))
+(let b (type String))
+(let c (type-by-name "String"))
+(console.log (== a["name"] b["name"]) (== b["name"] c["name"]) c["kind"])`,
+    expect: ["true true primitive"],
+    wasBroken:
+      "Three different answers. `(type \"\")` looked \"\" up as a type NAME and found nothing; " +
+      "`(type String)` reflected the JS global and reported kind 'class'; `type-by-name` did not exist.",
+  },
+  {
+    // The gradual concession, asserted so it is DOCUMENTED behaviour rather than an accident. Ze took
+    // the same one: "a condition we could not type is not a condition we can call wrong."
+    name: "Zib/D43: an un-inferred primitive answers Unknown -- it does not GUESS",
+    source: `(fn f [x] -> Void (
+  (let t (type x))
+  (console.log t["name"])))
+(f 5)`,
+    expect: ["Unknown"],
+    wasBroken:
+      "NOT broken -- the CONCESSION. `x` is un-annotated, so the channel is empty and the runtime " +
+      "cannot finish the job. `Number.isInteger` would answer 'Int' for 5.0 -- a guess that " +
+      "CONTRADICTS the static type. Two answers to one question is the bug class this audit kills.",
+  },
+  {
+    // The fold replaces a CALL with a lookup, so the operand stops being evaluated unless we keep it.
+    name: "Zib/D43: the folded operand is still evaluated",
+    source: `(mut count <- Int 0)
+(fn bump [] -> Int (
+  (count := (+ count 1))
+  (return count)))
+(let t (type (bump)))
+(console.log t["name"] count)`,
+    expect: ["Int 1"],
+    wasBroken:
+      "NOT broken -- the GUARD. `(type (bump))` folds to a metadata lookup; without the sequence the " +
+      "call vanishes and `bump` never runs. Ze's `visitTypeGuard` carries the same sequence.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------
@@ -4346,6 +4506,13 @@ function run(c: Case, tmp: string): Outcome {
               diagnostics.length ? diagnostics.map((d) => d.slice(0, 70)).join(" | ") : "NO diagnostic (it compiled silently)"
             }`,
           };
+    }
+
+    if (c.mustNotDiagnose) {
+      const hit = diagnostics.find((d) => c.mustNotDiagnose!.test(d));
+      if (hit) {
+        return { ok: false, detail: `must NOT report ${c.mustNotDiagnose}, but got: ${hit.slice(0, 88)}` };
+      }
     }
 
     // A reported error blocks emission -- report it as the failure, with its code, so an LL0100 or

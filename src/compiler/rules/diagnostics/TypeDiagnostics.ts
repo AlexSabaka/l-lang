@@ -272,6 +272,16 @@ export const TypeDiagnostics = {
       "an ':extension' function needs a receiver parameter -- the value it extends. With none it extends nothing and can never be reached as '(x.m ...)'."
   ),
 
+  // LL0218
+  TypeOfStringLiteral: def<{ name: string; kind: string }>(
+    "LL0218",
+    Warning,
+    (p) =>
+      `'type' reflects a VALUE, and a string literal's type is always String -- so this reports ` +
+      `String, not the ${p.kind} '${p.name}'. If you meant to look the ${p.kind} up by name, that is ` +
+      `'(type-by-name "${p.name}")'.`
+  ),
+
   // LL0230
   ArrayLazyMember: def<{ member: string }>(
     "LL0230",

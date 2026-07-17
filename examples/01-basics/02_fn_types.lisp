@@ -14,5 +14,7 @@
     (let array [1 2 3 4 5])
     (console.log "2nd element is (should be 3):" (n-th array 2))
 )
-(console.log "Type of is-null:" (type "is-null"))
-(console.log "Type of n-th:" (type "n-th"))
+;; `type-by-name` looks a type up by NAME; `type` reflects a VALUE. `(type "is-null")` would report
+;; String -- because that is what a string literal is.
+(console.log "Type of is-null:" (type-by-name "is-null"))
+(console.log "Type of n-th:" (type-by-name "n-th"))

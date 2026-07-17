@@ -24,7 +24,9 @@
 
     ;; 5. Type Introspection
     (let my-pet-type (type my-pet))
-    (let my-pet-parent-type (type my-pet-type["extends"]))
+    ;; `extends` is a NAME, so walking up the hierarchy is a name lookup -- which is why `type-by-name`
+    ;; has to exist at all: the metadata graph's edges are strings.
+    (let my-pet-parent-type (type-by-name my-pet-type["extends"]))
     (console.log
         "My pet is a"
         my-pet-type["name"]

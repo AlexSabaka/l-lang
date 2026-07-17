@@ -366,10 +366,24 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * driver (the REPL) has to call it itself. Public for that reason -- see the external-driver seam.
    */
   public populateTypesMetadata(): void {
+    // The six primitives, which the table has never contained (Zi).
+    //
+    // It is `getAllClassMetadata()` + `getAllFunctionMetadata()` and nothing else, both gated on
+    // `inferredType.kind`, and no pass mints a symbol or a `codegenMetadata` for a primitive. So
+    // `(type 5)` fell through every arm of the runtime and answered `{kind:'unknown'}` -- there was no
+    // number arm at all -- and `(type-by-name "Int")` found nothing. A reflection API in which the six
+    // most common types in the language do not exist.
+    //
+    // Registered FIRST, so a user type of the same name wins the key rather than being shadowed by us.
+    // Minimal on purpose: `String.length` and friends are a members question (Ja), not a name question.
+    for (const p of ["Int", "Real", "String", "Char", "Boolean", "Void"]) {
+      this.typesMetadata[p] = { name: p, kind: "primitive", nullable: false };
+    }
+
     // Populate types metadata from pre-computed symbol table metadata
     const classMetadata = this.context.symbolTable.getAllClassMetadata();
     const functionMetadata = this.context.symbolTable.getAllFunctionMetadata();
-    
+
     for (const [name, metadata] of classMetadata.entries()) {
       this.typesMetadata[name] = this.convertCodegenMetadataToRuntimeFormat(metadata);
     }
@@ -3315,6 +3329,14 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       return ESTreeBuilder.callExpression(node, callee, args);
     }
 
+    // Zi/D43: `(type x)` on a PRIMITIVE, decided at compile time. HERE and not only on the core
+    // `CallNode`, because `(type x)` as the user writes it is a LIST -- `classifyList` calls it a
+    // `call`, but it never becomes a `CallNode`, so a fold hung off `visitCall` alone never fires.
+    {
+      const folded = this.foldPrimitiveType(node, head, rest);
+      if (folded) return folded;
+    }
+
     {
       const headId = (head as any).id;
 
@@ -3797,11 +3819,65 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       const ext = this.computedExtensionCall(node);
       if (ext) return ext;
     }
+
+    // Zi/D43: `(type x)` on a PRIMITIVE is decided here, at compile time. Reached from the core
+    // `CallNode` and from `visitList`'s named-head path both -- `(type x)` written in source is a
+    // LIST, so this arm alone would never fire.
+    const folded = this.foldPrimitiveType(node, node.callee, node.arguments);
+    if (folded) return folded;
+
     return ESTreeBuilder.callExpression(
       node,
       this.visitExpr(node.callee),
       node.arguments.map((a) => this.visitExpr(a))
     );
+  }
+
+  /**
+   * `(type x)` where `x`'s STATIC type is a primitive -- lowered to the metadata lookup directly.
+   *
+   * D43's consequence, and it is not an optimisation: the runtime CANNOT answer this. `Int` and `Real`
+   * are one JS number (`5.0 === 5`), and `Char` and `String` are one JS string -- `"c"` is both. A
+   * `typeof` can say "number"; it can never say which of the two l-lang types that is. The checker
+   * already knows, so the answer is taken from the checker or it is not taken at all.
+   *
+   * The shape is D34/Phase E's, and `computedExtensionCall` directly above is the same move: ask the
+   * per-node channel, lower when it answers, fall through when it does not. Ze's `foldNumericGuard`
+   * does the primitive-kind test identically.
+   *
+   * Falling through is a CONCESSION, matching Ze exactly: gradual typing means the channel is often
+   * empty, and the runtime then answers `{kind:'unknown'}` rather than guess. `Number.isInteger` would
+   * be a guess that CONTRADICTS the static type -- two answers to one question, which is the bug class
+   * this whole audit exists to kill.
+   */
+  private foldPrimitiveType(
+    node: ast.ASTNode,
+    head: ast.ASTNode,
+    args: ast.ASTNode[]
+  ): ESTree.Expression | undefined {
+    if (head._type !== "simple-identifier") return undefined;
+    if ((head as ast.IdentifierNode).id !== "type") return undefined;
+    if (args.length !== 1) return undefined;
+
+    // A user-defined `type` shadows the builtin, and then this is not our call to fold.
+    if (this.context.symbolTable?.resolveSymbol?.("type", node as any)) return undefined;
+
+    const known: any = this.context.nodeTypes?.get(args[0]);
+    if (!known || known.kind !== "primitive" || typeof known.name !== "string") return undefined;
+
+    const lookup = ESTreeBuilder.memberExpression(
+      node,
+      ESTreeBuilder.identifier(node, RuntimeProvider.TYPES_METADATA_VAR),
+      ESTreeBuilder.literal(node, known.name) as ESTree.Expression,
+      true
+    ) as ESTree.Expression;
+
+    // The operand is still EMITTED, for its side effects: `(type (bump))` must still bump. Ze's
+    // `visitTypeGuard` carries the same sequence, for the same reason.
+    const v = this.visitExpr(args[0]);
+    return (v as any).type === "Identifier" || (v as any).type === "Literal"
+      ? lookup
+      : (ESTreeBuilder.sequenceExpression(node, [v, lookup]) as ESTree.Expression);
   }
 
   /** The extension call for a `CallNode` whose callee is a computed `MemberNode`, or undefined. */

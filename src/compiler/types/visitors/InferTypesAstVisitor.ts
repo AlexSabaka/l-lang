@@ -2753,6 +2753,31 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     }
   }
 
+  /**
+   * `(type "Money")` almost certainly meant `(type-by-name "Money")` (Zia, LL0218).
+   *
+   * A HINT, not a refusal, and it fires on a narrow case for a reason. `type` reflects a value, so a
+   * string literal's answer is always String -- which makes `(type "")` a legitimate shorthand for
+   * `(type String)` and NOT something to refuse. What separates the two is whether the literal NAMES
+   * something: `(type "Money")` where a `Money` exists is the one shape where the old by-name meaning
+   * was probably intended, and it is exactly the shape that changed meaning under Zia. So the hint
+   * keys on resolution, not on literal-ness -- silent on `(type "")` and `(type "hello")`, loud on the
+   * migration sites and nowhere else.
+   *
+   * A Warning: the new reading is well-defined, so the code is not wrong, only likely surprised.
+   */
+  private hintTypeOfStringLiteral(args: ast.ASTNode[], at: ast.ASTNode): void {
+    if (args.length !== 1) return;
+    const arg: any = args[0];
+    if (arg?._type !== "string" || typeof arg.value !== "string") return;
+
+    const symbols = this.context.symbolTable ?? this.symbolTable;
+    const kind: string | undefined = symbols.resolveSymbol(arg.value, at)?.inferredType?.kind;
+    if (kind !== "class" && kind !== "struct" && kind !== "function" && kind !== "interface") return;
+
+    this.report(TD.TypeOfStringLiteral, at, { name: arg.value, kind });
+  }
+
   visitClass(node: ast.ClassNode) {
     const className = typeof node.name === 'string' ? node.name : ((node.name as any).id || (node.name as any).name);
     this.checkOperatorMethodArity(className, node.body);
@@ -3360,6 +3385,8 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         const calleeIsName =
           callee._type === "simple-identifier" || callee._type === "composite-identifier";
         const funcName = calleeIsName ? (callee as ast.IdentifierNode).id : undefined;
+
+        if (funcName === "type") this.hintTypeOfStringLiteral(callNode.arguments, callNode);
         const funcType = funcName
           ? this.typeEnv.resolveIdentifier(funcName, callee)
           : this.inferExpressionType(callee);
@@ -3448,6 +3475,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           // it was allowed to be seen at all. Visibility is a question about a name that RESOLVED --
           // which is exactly the question nothing in this compiler was asking (D20).
           this.checkNameVisible(firstNode, funcName);
+
+          // Zia/LL0218. Here as well as on the core `call` node: `(type "Money")` as the user writes it
+          // is a LIST, and only the desugared core form is a `CallNode` -- so the call arm alone never
+          // sees the shape this hint is about.
+          if (funcName === "type") this.hintTypeOfStringLiteral(listNode.nodes.slice(1), listNode);
 
           // The TOTAL container accessors are the ONLY things in the language that PRODUCE a `T?`.
           const totalAccessor = this.inferTotalAccessorType(funcName, listNode.nodes.slice(1));

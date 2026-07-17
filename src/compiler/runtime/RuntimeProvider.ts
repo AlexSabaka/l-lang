@@ -437,11 +437,28 @@ function __ll_is_type(val, type) {
     // Call wrapper
     "call": `const call = (f, args) => !!args && Array.isArray(args) ? f(...args) : f();`,
     "eval": ``,
+    // The type-metadata lookup, BY NAME -- the half of the old `type` that took a string (Zia).
+    //
+    // NOTE THE TWO NAMES. The KEY is the SOURCE name: \`isRuntimeReference\` tests \`node.id in
+    // SYMBOL_MAP\` against what the user wrote, and that is also what buys the LL0210 exemption. The
+    // DEFINED name is \`encodeIdentifier("type-by-name")\` -- a call site emits the encoded form. Every
+    // other symbol here is one word and encodes to itself, so this is the first entry where the two
+    // differ, and they must both be right or the shim defines a function nothing calls.
+    //
+    // By-name has to exist. The metadata graph's \`extends\` and \`implements\` edges are STRINGS, so
+    // walking from a type to its parent is a name lookup by construction -- \`(type-by-name
+    // my-pet-type["extends"])\`. Without it the graph is unwalkable.
+    "type-by-name": `const type2dby2dname = (typeName) => {
+  return __ll_type_metadata[typeName] || { name: typeName, kind: 'unknown', properties: [], methods: [], generics: [] };
+};`,
+    // \`type\` REFLECTS A VALUE. One question, one answer (Zia).
+    //
+    // It used to dispatch on the JS runtime tag of its argument: a string looked itself up as a type
+    // NAME, anything else reflected. So \`(type s)\` where \`s\` held "Money" answered with MONEY's
+    // metadata, and a String value's own type was structurally unaskable. \`(type "hello")\` invented a
+    // type CALLED "hello". The author's own \`(== (type tree) Number)\` expected reflection and got an
+    // object that compares equal to nothing -- silently, and pinned by a golden (15_recursion).
     "type": `const type = (typeNameOrObj) => {
-  // If it's a string, look up the type metadata
-  if (typeof typeNameOrObj === 'string') {
-    return __ll_type_metadata[typeNameOrObj] || { name: typeNameOrObj, kind: 'unknown', properties: [], methods: [], generics: [] };
-  }
   // If it's an object (instance), try to get its type.
   //
   // __ll_name FIRST, constructor.name only as a fallback -- the same order __ll_is_type uses, and for
@@ -459,7 +476,18 @@ function __ll_is_type(val, type) {
     const typeName = typeNameOrObj.__ll_name || typeNameOrObj.name;
     return __ll_type_metadata[typeName] || { name: typeName, kind: 'class', properties: [], methods: [], generics: [] };
   }
-  return { kind: 'unknown', properties: [], methods: [], generics: [] };
+  // A PRIMITIVE whose static type the checker did not know (Zi/D43).
+  //
+  // \`(type x)\` on a primitive is folded at COMPILE time -- see \`foldPrimitiveType\`. Reaching here
+  // means the channel was empty, and the runtime genuinely cannot finish the job: \`typeof\` says
+  // "number" but never Int-vs-Real, "string" but never String-vs-Char. So it does not guess. Guessing
+  // (\`Number.isInteger\`) would contradict the static type, and two answers to one question is the bug
+  // class this audit exists to kill.
+  //
+  // \`name\` is present and says so. It used to be ABSENT here, and \`(type 5)["name"]\` therefore threw
+  // a D9 KeyError rather than answering -- every OTHER arm returns a named object, so the one arm
+  // meaning "I do not know" was also the one arm shaped differently.
+  return { name: 'Unknown', kind: 'unknown', properties: [], methods: [], generics: [] };
 };`,
   };
 
