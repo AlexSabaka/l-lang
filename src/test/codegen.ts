@@ -4102,6 +4102,105 @@ catch b ((console.log "two")))`,
       "answered by `typeof === number`, which is TRUE for both arms -- so the guard was a coin flip " +
       "that always said yes. Undecidable in principle: JS has one number type.",
   },
+
+  // ===============================================================================================
+  // Zf / D42 -- interfaces get a SHAPE, and `:implements` stops being an unchecked claim.
+  //
+  // `visitInterface` never read `node.body`. Every interface in the language was
+  // `{kind, name, generics}` and nothing else -- `(definterface Iterable<T> (fn iterator [] ->
+  // Iterator<T>))` dropped its methods on the floor.
+  //
+  // The consequence is the one that matters: there was NO diagnostic for a class that declares an
+  // interface it does not satisfy (`methodMappings: new Map() // TODO`). A class could claim
+  // `:implements Iterable`, implement nothing, and dispatch would still lower `(x.total)` to
+  // `total(x)`. NOMINAL WITHOUT VERIFICATION is the worst cell of the matrix -- the tag costs you the
+  // flexibility of structural typing and buys none of its safety, because nothing checks it.
+  //
+  // D42 (the Go model): types are nominal, interfaces are structural. This is the half that makes the
+  // nominal tag MEAN something. Implicit conformance -- a class satisfying an interface it never
+  // declared -- is Zg.
+  // ===============================================================================================
+  {
+    name: "Zf/D42: declaring an interface you do not satisfy is refused",
+    source: `(definterface Greeter
+  (fn greet [] -> String))
+(defclass Rude :implements Greeter
+  (fn shout [] -> String (return "OI")))
+(console.log "declared")`,
+    expectDiagnostic: /LL0209/,
+    wasBroken:
+      "SILENT. `:implements` was an unchecked claim -- the interface had no members to check against, " +
+      "so nothing could disagree with it. A class could claim any interface and implement none of it.",
+  },
+  {
+    // The guard, and the thing that proves the check is real rather than always-firing.
+    name: "Zf/D42: declaring an interface you DO satisfy is fine",
+    source: `(definterface Greeter
+  (fn greet [] -> String))
+(defclass Polite :implements Greeter
+  (fn greet [] -> String (return "hello")))
+(let p (Polite))
+(console.log (p.greet))`,
+    expect: ["hello"],
+    wasBroken:
+      "NOT broken -- the GUARD. An interface with members is only useful if a class that HAS them " +
+      "passes; a check that fires on everything is the vacuous-conformance failure in reverse.",
+  },
+  {
+    // An interface whose method is inherited from a SUPER-interface. `isSubtype` already walks
+    // `implementedInterfaces` by name, so conformance walks the same chain rather than pre-flattening
+    // members -- which would need the super processed first and reintroduce a declaration-order
+    // dependency the symbol table exists to remove.
+    name: "Zf/D42: conformance walks the interface's own :implements chain",
+    source: `(definterface Named
+  (fn name [] -> String))
+(definterface Greeter :implements Named
+  (fn greet [] -> String))
+(defclass Person :implements Greeter
+  (fn greet [] -> String (return "hi"))
+  (fn name [] -> String (return "sam")))
+(let p (Person))
+(console.log (p.greet) (p.name))`,
+    expect: ["hi sam"],
+    wasBroken:
+      "NOT broken -- a GUARD. A sub-interface's members are its own PLUS its super's, and a class must " +
+      "satisfy both. Walking the chain (rather than flattening at declaration time) is what keeps this " +
+      "order-independent.",
+  },
+  {
+    // The one above passes whether or not the chain is walked -- `Person` has BOTH members, so a
+    // conformance check that only ever looked at `Greeter`'s own body would still let it through. This
+    // is the case that can only pass if the chain is really walked: `Half` satisfies Greeter's OWN
+    // member and is missing the one Greeter inherits from Named.
+    name: "Zf/D42: a member inherited from a super-interface is still required",
+    source: `(definterface Named
+  (fn name [] -> String))
+(definterface Greeter :implements Named
+  (fn greet [] -> String))
+(defclass Half :implements Greeter
+  (fn greet [] -> String (return "hi")))
+(console.log "declared")`,
+    expectDiagnostic: /LL0209/,
+    wasBroken:
+      "SILENT, like every other unchecked `:implements`.",
+  },
+  {
+    // The other direction of the same question: a member the class inherits from its SUPERCLASS
+    // satisfies the interface just as well as one it declares itself. A conformance check that reads
+    // only a class's OWN members would fire on every subclass that does not redeclare what it already
+    // inherits -- a false positive on correct code, which is worse than the silence it replaced.
+    name: "Zf/D42: a member inherited from a SUPERCLASS satisfies the interface",
+    source: `(definterface Greeter
+  (fn greet [] -> String))
+(defclass Base
+  (fn greet [] -> String (return "hi")))
+(defclass Sub :extends Base :implements Greeter)
+(let s (Sub))
+(console.log (s.greet))`,
+    expect: ["hi"],
+    wasBroken:
+      "NOT broken -- the GUARD against LL0209 over-firing.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

@@ -847,6 +847,51 @@ class CollectTypesPass extends BaseAstTreeWalker {
         });
       }
     }
+    // THE INTERFACE'S OWN MEMBERS -- which this never read (D42/Zf).
+    //
+    // `node.body` was dropped on the floor: every interface in the language was `{kind, name,
+    // generics}` and nothing else, so `(definterface Iterable<T> (fn iterator [] -> Iterator<T>))`
+    // declared a method the type system never saw. The consequence is not "less type safety" but a
+    // hole: `:implements` was an UNCHECKED CLAIM, because there was nothing to check it against. A
+    // class could claim any interface and implement none of it.
+    //
+    // Mirrors `visitClass`'s body walk exactly -- including the list-unwrap, since a body item may
+    // arrive wrapped in a grouping -- and reuses `StructMember`, the shared shape records already
+    // borrow. Built INSIDE the type-parameter scope, so a generic signature (`-> Iterator<T>`)
+    // resolves the interface's own `T`.
+    const members: any[] = [];
+    for (const item of node.body ?? []) {
+      let target: any = item;
+      if (ast.isListNode(item) && item.nodes.length > 0) target = item.nodes[0];
+      if (!target) continue;
+
+      if (target._type === "function") {
+        const funcNode = target as ast.FunctionNode;
+        const paramTypes = funcNode.params.map((p) =>
+          p.type ? this.convertAstTypeToInferred(p.type) : TypeEnvironment.any()
+        );
+        const returnType = funcNode.returns
+          ? this.convertAstTypeToInferred(funcNode.returns)
+          : TypeEnvironment.any();
+        members.push({
+          name: (funcNode.name as any)?.id ?? (funcNode.name as any)?.name ?? String(funcNode.name),
+          type: TypeEnvironment.function(paramTypes, returnType, isVariadicParams(funcNode.params)),
+          isCtor: false,
+          isPublic: true,
+          isPrivate: false,
+        });
+      } else if (target._type === "variable") {
+        const varNode = target as ast.VariableNode;
+        members.push({
+          name: (varNode.name as any)?.id ?? (varNode.name as any)?.name ?? String(varNode.name),
+          type: varNode.type ? this.convertAstTypeToInferred(varNode.type) : TypeEnvironment.any(),
+          isCtor: false,
+          isPublic: true,
+          isPrivate: false,
+        });
+      }
+    }
+
     this.typeEnv.exitScope();
 
     const interfaceType: InferredType = {
@@ -857,6 +902,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
         name: g.name,
         variance: g.variance,
       })),
+      ...(members.length ? { members } : {}),
       ...(implementedInterfaces.length ? { implementedInterfaces } : {}),
     };
 
@@ -2656,6 +2702,114 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     return found;
   }
 
+  /**
+   * Every member an interface requires -- its own, plus its super-interfaces' (D42/Zf).
+   *
+   * WALKS the `:implements` chain rather than pre-flattening at declaration time. `isSubtype` already
+   * walks the same chain by name, and flattening would need each super processed before its sub --
+   * reintroducing a declaration-order dependency the symbol table exists to remove. `seen` guards a
+   * cycle: interfaces can be mutually recursive, and `isSubtype` carries the same guard for the same
+   * reason.
+   */
+  private requiredInterfaceMembers(
+    interfaceName: string,
+    at: ast.ASTNode,
+    seen: Set<string> = new Set()
+  ): { name: string; type: InferredType }[] {
+    if (seen.has(interfaceName)) return [];
+    seen.add(interfaceName);
+
+    const symbols = this.context.symbolTable ?? this.symbolTable;
+    const entry: any = symbols.resolveSymbol(interfaceName, at);
+    const t: any = entry?.inferredType;
+    if (!t || t.kind !== "interface") return [];
+
+    const out: { name: string; type: InferredType }[] = [...(t.members ?? [])];
+    for (const impl of t.implementedInterfaces ?? []) {
+      out.push(...this.requiredInterfaceMembers(impl.interfaceName, at, seen));
+    }
+    return out;
+  }
+
+  /**
+   * Every member a class can answer to -- its own, plus everything it inherits (D42/Zf).
+   *
+   * A member inherited from a superclass satisfies an interface exactly as well as one the class
+   * declares itself; `(s.greet)` dispatches the same either way. Reading only a class's OWN members
+   * would fire LL0209 on every subclass that does not redeclare what it already has -- a false
+   * positive on correct code, which is worse than the silence it replaced. Measured, not assumed: the
+   * corpus has no `:extends` + `:implements` class, so this hole cost 0 corpus diagnostics and would
+   * have shipped green.
+   */
+  private availableClassMembers(
+    typeName: string,
+    at: ast.ASTNode,
+    seen: Set<string> = new Set()
+  ): any[] {
+    if (seen.has(typeName)) return [];
+    seen.add(typeName);
+
+    const symbols = this.context.symbolTable ?? this.symbolTable;
+    const t: any = symbols.resolveSymbol(typeName, at)?.inferredType;
+    if (!t) return [];
+
+    const out: any[] = [...(t.members ?? [])];
+    if (t.parentClass) {
+      out.push(...this.availableClassMembers(t.parentClass, at, seen));
+    }
+    return out;
+  }
+
+  /**
+   * A declared `:implements` must be TRUE (D42/Zf, LL0209).
+   *
+   * It was an unchecked claim: interfaces carried no members (visitInterface never read `node.body`),
+   * so there was nothing for the claim to be wrong about. A class could declare `:implements Iterable`,
+   * implement none of it, and dispatch would still lower `(x.total)` to `total(x)`. Nominal WITHOUT
+   * verification is the worst cell of the matrix -- the tag costs the flexibility of structural typing
+   * and buys none of its safety.
+   *
+   * By NAME and ASSIGNABLE type, width-wise: the class must have every member the interface names.
+   * Extra members are fine -- that is what implementing an interface means.
+   *
+   * Gradual, deliberately: an interface that resolves to nothing, or has no members, is not a claim we
+   * can call wrong. An empty interface conforms to everything, which is Zg's problem to rule on.
+   */
+  private checkDeclaredInterfaces(
+    node: ast.ClassNode | ast.StructNode,
+    typeName: string
+  ): void {
+    const implClauses: any[] = Array.isArray((node as any).implements)
+      ? (node as any).implements
+      : (node as any).implements
+      ? [(node as any).implements]
+      : [];
+    if (implClauses.length === 0) return;
+
+    const own: any[] = this.availableClassMembers(typeName, node as ast.ASTNode);
+
+    for (const impl of implClauses) {
+      const ifaceName = impl?.type?.name;
+      if (!ifaceName) continue;
+
+      const required = this.requiredInterfaceMembers(ifaceName, node as ast.ASTNode);
+      if (required.length === 0) continue; // unresolvable, or genuinely empty -- Zg rules on that
+
+      const missing = required
+        .filter((r) => !own.some((m: any) => m.name === r.name))
+        .map((r) => r.name);
+
+      if (missing.length > 0) {
+        this.report(TD.InterfaceNotSatisfied, node as ast.ASTNode, {
+          type: typeName,
+          iface: ifaceName,
+          plural: missing.length > 1,
+          missing: missing.map((m) => `'${m}'`).join(", "),
+        });
+      }
+    }
+  }
+
   visitClass(node: ast.ClassNode) {
     const className = typeof node.name === 'string' ? node.name : ((node.name as any).id || (node.name as any).name);
     this.checkOperatorMethodArity(className, node.body);
@@ -2663,6 +2817,13 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // D20: you cannot extend, or claim to implement, something another module keeps to itself.
     node.extends?.forEach(e => this.checkAnnotationVisible(e as unknown as ast.ASTNode));
     node.implements?.forEach(i => this.checkAnnotationVisible(i as unknown as ast.ASTNode));
+
+    // D42/Zf: ...and you cannot merely CLAIM to implement one. Checked HERE, in the check pass, and
+    // not in CollectTypesPass's visitClass: an interface may be declared after the class that
+    // implements it, so its members do not exist yet while the class is being collected. `:implements`
+    // is erased at run time (see D24's note directly below), which is exactly why declaration order
+    // must not matter to it.
+    this.checkDeclaredInterfaces(node, className);
 
     // D24: `:extends` is the one TYPE-SHAPED thing that is a VALUE reference.
     //

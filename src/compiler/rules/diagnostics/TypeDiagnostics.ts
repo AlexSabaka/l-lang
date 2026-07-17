@@ -104,6 +104,22 @@ export const TypeDiagnostics = {
       `(fn :operator ${p.operator} [a <- ${p.type} b <- ${p.type}] ...).`
   ),
 
+  // LL0209
+  InterfaceNotSatisfied: def<{
+    type: string;
+    iface: string;
+    plural: boolean;
+    missing: string;
+  }>(
+    "LL0209",
+    Error,
+    (p) =>
+      `'${p.type}' declares ':implements ${p.iface}' but does not ${
+        p.plural ? "define the members" : "define the member"
+      } ${p.missing}. Declaring an interface is a PROMISE that callers rely on -- ` +
+      `${p.plural ? "define them" : "define it"}, or drop the ':implements ${p.iface}'.`
+  ),
+
   // LL0210
   NotDefined: def<{ name: string }>(
     "LL0210",
