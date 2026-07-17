@@ -3563,6 +3563,39 @@ Nothing in `examples/` or `lib/` hits it: zero sites, measured. The diagnostic c
 
 ---
 
+## D41 — `:of` is a type guard in expression position, and it narrows (Phase Z / Za)
+
+**Ruling:** `(x :of T)` is a **Boolean-valued type guard**. It asks "is `x` a `T`?", the answer is yes
+or no, and inside the branch that answer is TRUE it **narrows** `x` to `T`. The narrowing does not
+leak past the branch. The spelling is deliberately the **same `:of`** that `match` already uses for a
+type pattern — one operator for "is this a `T`", whether it appears in a `match` arm or a bare
+expression.
+
+`:of` is the **only** way to test a value's type, and there is no cast. C#'s `x as T` yields `T?` and
+then l-lang (like TS) forces you to guard the `nil` — so `as` is two steps to reach what `:of` gives
+in one, and it *creates* the awkwardness it was meant to relieve. `(cast<T> x)` is worse still
+(D9-optional you are then forbidden to unwrap), and was refused with it.
+
+### What it replaces
+
+`(x :of T)` is the type-guard sibling of the `nil`-guard (D9). Before Za it existed only as a `match`
+pattern; the expression-position form is what lets a plain `(if (x :of String) (x.toUpperCase))`
+narrow `x` inside the `then`. The grammar admits `:of` anywhere a list can appear, so the AST builder,
+not the grammar, is where a `type-guard` node is distinguished from a call.
+
+### The soundness bugs this shipped a path to — and how they were closed
+
+Expression-position `:of` reached `getTypeName`, which **failed open**: a type it could not name (a
+union, a tuple, a map) returned `"Any"`, and `__ll_is_type(v, "Any")` matched *every* value —
+`(d :of Int | String)` was TRUE for a `Dog`. Za's narrowing then *believed* the lie and bound a `Dog`
+as `Int | String`. Fixed in Zc: `getTypeName` returns `undefined` and the caller **refuses** (LL0104)
+rather than inventing a name — the `functional-pattern` precedent (*"where the runtime carries no
+evidence, leave it dead and say so"*). A union `:of` that IS decidable — `(x :of Int | String)` — is
+expanded at the emitter into `__ll_is_type(x,"Int") || __ll_is_type(x,"String")` (Zd), restoring what
+Zc refuses, correctly.
+
+---
+
 ## D42 — types are nominal, interfaces are structural (the Go model; sub-phases Zf–Zg)
 
 **Ruling:** A class or struct keeps its **identity**: `Dog` is not a `Cat`, however identical their
@@ -3629,3 +3662,71 @@ Class↔class and struct↔struct assignability (`typesEqual`) is untouched. `00
 `SpecificError` discrimination, `Dog`/`Cat`, and `Point`/`Vec` are byte-identical in shape and stay
 distinct — the goldens pin it, and a moved golden here would mean the Go model landed as full
 structural.
+
+---
+
+## D43 — Int vs Real is decided statically; the runtime cannot (Phase Z / Ze)
+
+**Ruling:** `Int` and `Real` are **the same value at run time** — JavaScript has one number type and
+`5.0 === 5`. So `(x :of Int)` and `(x :of Real)` are answered from the **static type**, folded at
+compile time, and **never** handed to the runtime. The one genuinely undecidable case — a value whose
+static type is `Int | Real` asked `:of Int` — is **refused** (LL0104), because no test and no static
+answer exists even in principle. `Char` and `String` collide identically (`"c"` is both); reflection
+on them is static too, though a `:of Char` *test* stays runtime-decidable (length 1).
+
+### Why not a runtime tag
+
+Every avenue was probed and every one fails:
+
+- **A primitive cannot be tagged.** Property assignment, `Object.defineProperty`, `WeakMap`, and
+  `Symbol` all throw on a number or string.
+- **BigInt** breaks arithmetic, `JSON`, and `Math`.
+- **Boxing** (`new Number(5)`) unboxes at the first operator and prints `[Number: 5]`.
+
+There is no run-time evidence to buy, so the compiler does not pretend to. The checker already knows
+the type; the answer comes from the checker or it is not taken at all. When the static type is unknown
+(gradual typing leaves the channel empty), `:of` falls back to the runtime `typeof` test and `type`
+reflection answers `Unknown` — it does **not** guess, because a guess (`Number.isInteger`) would
+*contradict* the static type, and two answers to one question is the failure this rules out.
+
+### What follows
+
+The same static-first rule governs `type` reflection (Zi): `(type 5)` folds to `Int` at compile time,
+and the six primitives are real entries in `__ll_type_metadata`. `case 'float'` in `__ll_is_type` was
+deleted as dead code — `Float` is not one of the six l-lang primitives (Int, Real, String, Char,
+Boolean, Void).
+
+---
+
+## D44 — an annotation must name a type that exists (Phase Z / Zk)
+
+**Ruling:** A type annotation naming a type that does not resolve is an **error** (LL0231), not a
+silent `Unknown`. The check is the type-level twin of LL0210's unresolved *identifier*, and an Error
+for the same reason it is.
+
+### Why it is not cosmetic
+
+`Unknown` is assignable **to and from everything**. So an annotation naming a type that does not exist
+does not merely lose information — it **turns checking off** for that declaration, while looking
+exactly like a declaration that is checked. A typo buys *less* safety than writing nothing, and says
+nothing about it. `convertAstTypeCore` had fallen through to `Unknown` here for as long as the check
+existed, with a standing comment that the diagnostic was owed but blocked on scope-and-import
+resolution (P6). That blocker is gone.
+
+### What it measured, and the rule for spelling
+
+Thirteen corpus sites across five files, every one real: `Number` (×7), the lowercase literal `nil`
+used as a return type (×4), `Bool` (×1), `Nil` (×1). All were **canonicalized to the types the corpus
+already has** — `Bool`→`Boolean`, `Number`→`Real`, `nil`/`Nil`→`Void` — rather than importing
+`std/types`, which holds only aliases (`Number = Int | Real`, `Bool = Boolean`, `Str = String`). A
+second spelling of a type that already exists earns its keep only if it says something the first does
+not; `Bool` and `Str` do not, and D21 already rejected the Scheme spellings on the same ground.
+
+### What it exposed
+
+Two latent bugs `Unknown` was masking surfaced the moment the annotations resolved — the same shape as
+Zic's dead-code type test: a genuine `Array<String | Real>` / `[String|Real, Boolean|Void]` return
+mismatch (LL0213) in a whitespace example, and **three async/generator negative tests passing
+vacuously** — `silent` because `Task<Int>` / `Iterator<Int>` resolved to `Unknown` and nothing could
+be checked, not because the type was right. A diagnostic that makes vacuous "it type-checks" tests
+impossible is doing exactly what it is for.
