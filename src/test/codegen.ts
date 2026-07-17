@@ -3193,6 +3193,69 @@ catch b ((console.log "two")))`,
       "block is allowed' was unreachable on EVERY input. A dead rule is indistinguishable from a " +
       "passing one until something makes it fire.",
   },
+
+  // ===============================================================================================
+  // Vd / AF-045 -- `'"{(x)}"` called a PARAMETER because a function shared its name.
+  //
+  //     (defclass Box (fn area [] -> Int (return 7)))
+  //     (fn show [area <- Int diag <- Int] -> String (return '"area={(area)} diag={(diag)}"))
+  //
+  //       ->  `area=${__ll_format_object(area())} diag=${__ll_format_object(diag)}`
+  //                                       ^^^^^^ a CALL
+  //
+  // Identical parameters, identical construct, one expression. The sole difference is that a method
+  // named `area` exists elsewhere in the program. `TypeError: area is not a function` -- the JS
+  // parameter shadows the outer name, so the call target is the Int.
+  //
+  // D1 already ruled this, and Phase F already fixed it: "`(x)` is a CALL iff `x` names a FUNCTION",
+  // answered by the SYMBOL TABLE, which knows `area` here is a parameter. The old answer came from
+  // `this.functions` -- a flat list of every function NAME in the program, filled as codegen visits.
+  //
+  // The list survived as an `||` fallback, kept for the DOTTED case by its own comment: "a bare
+  // member name is not a symbol this table can resolve". For a SIMPLE identifier `memberName` is just
+  // the name, so the fallback answered "yes, something somewhere is called area" and OVERRODE the
+  // scope-aware answer sitting right next to it. Two answers, and the wrong one won the `||`.
+  // ===============================================================================================
+  {
+    name: "Vd/AF-045: an interpolated `(x)` binds the parameter, not a same-named function",
+    source: `(defclass Box
+  (fn area [] -> Int (return 7)))
+(fn show [area <- Int diag <- Int] -> String
+  (return '"area={(area)} diag={(diag)}"))
+(console.log (show 3 4))`,
+    expect: ["area=3 diag=4"],
+    // The INTERPOLATION site specifically. A bare /area\(\)/ also matches the class's own method
+    // DEFINITION (`area() { return 7; }`), which is legitimate JS and must stay -- the point is that
+    // the parameter is not called, not that the string `area()` never appears.
+    emitted: { mustNot: [/__ll_format_object\(area\(\)\)/] },
+    wasBroken:
+      "`TypeError: area is not a function`. Emitted `area()` for one parameter and `diag` for the " +
+      "other, in the same interpolation, because a CLASS METHOD named `area` existed. AF-045.",
+  },
+  {
+    // The GUARD, and the reason the fallback cannot simply be deleted: a real zero-arg call must
+    // still call. D1's rule is "`(x)` is a CALL iff `x` names a FUNCTION" -- not "never".
+    name: "Vd/AF-045: an interpolated `(f)` still CALLS a real function",
+    source: `(fn seven [] -> Int (return 7))
+(console.log '"n={(seven)}")`,
+    expect: ["n=7"],
+    wasBroken:
+      "NOT broken -- a GUARD. Deleting the name-list fallback outright would make every `{(f)}` a " +
+      "reference and print a function body. The symbol table says `seven` is a function; it is called.",
+  },
+  {
+    // The dotted case the fallback was actually kept FOR. It must keep working -- the fix narrows the
+    // list to that case rather than removing it.
+    name: "Vd/AF-045: a dotted zero-arg method call still calls",
+    source: `(defclass Box
+  (fn area [] -> Int (return 7)))
+(let b (Box))
+(console.log (b.area))`,
+    expect: ["7"],
+    wasBroken:
+      "NOT broken -- a GUARD on the narrowing. `(obj.m)` is what `this.functions` was still being " +
+      "consulted for, and it is the one case that must not change.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

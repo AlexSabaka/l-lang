@@ -3084,11 +3084,22 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // D1, answered: `(x)` is a CALL iff `x` names a FUNCTION. From the symbol table, not from a
       // source-order list -- so `(f)` before `(fn f ...)` is a call, exactly as `(f)` after it is.
       //
-      // `memberName` is still consulted through the old list for the DOTTED case (`(obj.m)`), which
-      // the isMethodCall branch below handles properly; a bare member name is not a symbol this table
-      // can resolve.
+      // `memberName` is consulted through the old flat list ONLY for the DOTTED case (`(obj.m)`),
+      // which is what that fallback was kept for: a bare member name is not a symbol the table can
+      // resolve, and the isMethodCall branch below handles it properly.
+      //
+      // THE GATE MATTERS. Without it the fallback also answered for a SIMPLE identifier, where
+      // `memberName` is just the name -- and `this.functions` is a flat list of every function NAME
+      // in the program, with no scope in it at all. So `'"{(area)}"` inside `(fn show [area <- Int])`
+      // emitted `area()` purely because some class had an `area` method, and the JS parameter then
+      // shadowed the function it was trying to call: `TypeError: area is not a function` (AF-045).
+      //
+      // The scope-aware answer was already sitting on the left of the `||`. It lost, every time, to a
+      // list that cannot see scope -- which is the same disease D1/Phase F set out to cure here.
       const isKnownFunction =
-        this.isFunctionName(head) || this.functions.includes(memberName);
+        this.isFunctionName(head) ||
+        (head._type === "composite-identifier" &&
+          this.functions.includes(memberName));
 
       // D1, and Xe: `(obj.m)` is decided by the TYPE, not by a list of names.
       //
