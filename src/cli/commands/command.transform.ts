@@ -159,7 +159,10 @@ function serializeSymbolTable(scope: Scope | undefined): any {
     const entries: any = {};
     for (const [key, entry] of s.table.entries()) {
       entries[key] = {
-        name: symbolName(entry.name),
+        // MR3 (games): a synthetic/incomplete symbol entry can have a null `name` node, and
+        // `symbolName` reads `._type` of it -> the debug serializer crashed `--stage types` on any real
+        // program (minesweeper). The table is keyed BY the name, so `key` is the honest fallback.
+        name: entry.name ? symbolName(entry.name) : key,
         nodeType: entry.nodeType,
         mutability: entry.mutability,
         visibility: entry.visibility,
