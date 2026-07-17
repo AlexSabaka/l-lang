@@ -28,6 +28,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
+import { CHILD_ENV } from "./childEnv";
 import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
 
 const VERBOSE = process.argv.includes("--verbose");
@@ -3400,7 +3401,13 @@ function run(c: Case, tmp: string): Outcome {
 
   fs.writeFileSync(jsPath, code);
 
-  const proc = spawnSync("node", [jsPath], { encoding: "utf-8", timeout: RUN_TIMEOUT_MS });
+  // CHILD_ENV, not process.env -- FORCE_COLOR makes node colourise console.log through a pipe, so
+  // `expect: ["7 9"]` receives escape codes and every numeric case fails. See childEnv.ts.
+  const proc = spawnSync("node", [jsPath], {
+    encoding: "utf-8",
+    timeout: RUN_TIMEOUT_MS,
+    env: CHILD_ENV,
+  });
   if (proc.error) {
     return { ok: false, detail: `node failed: ${(proc.error as any).code}`, js: code };
   }

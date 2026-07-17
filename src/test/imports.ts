@@ -17,6 +17,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
+import { CHILD_ENV } from "./childEnv";
 import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
 import { ModuleResolver } from "../compiler/analysis/ModuleResolver";
 import { PackageRegistry } from "../compiler/analysis/PackageRegistry";
@@ -74,7 +75,7 @@ function build(entry: string): Outcome {
   const js = entry.replace(/\.lisp$/, ".js");
   fs.writeFileSync(js, result.code);
 
-  const run = spawnSync("node", [js], { encoding: "utf-8", timeout: 10_000 });
+  const run = spawnSync("node", [js], { encoding: "utf-8", timeout: 10_000, env: CHILD_ENV });
   return {
     compiled: true,
     diagnostics,
@@ -689,7 +690,7 @@ const CASES: Case[] = [
 
       const js = entry.replace(/\.lisp$/, ".js");
       fs.writeFileSync(js, result.code);
-      const run = spawnSync("node", [js], { encoding: "utf-8", timeout: 10_000 });
+      const run = spawnSync("node", [js], { encoding: "utf-8", timeout: 10_000, env: CHILD_ENV });
       const stdout = (run.stdout ?? "").trim();
       return stdout === "42"
         ? { ok: true, detail: "imported by manifest name; a path search could not have found it" }
@@ -756,7 +757,7 @@ const CASES: Case[] = [
       }
       const js = entry.replace(/\.lisp$/, ".js");
       fs.writeFileSync(js, result.code);
-      const run = spawnSync("node", [js], { encoding: "utf-8", timeout: 10_000 });
+      const run = spawnSync("node", [js], { encoding: "utf-8", timeout: 10_000, env: CHILD_ENV });
       const stdout = (run.stdout ?? "").trim();
       // from-a() = 2, from-b() = helper() = 40 -> 42
       return stdout === "42"

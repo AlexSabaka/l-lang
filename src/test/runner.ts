@@ -17,6 +17,7 @@ import chalk from 'chalk';
 import { spawnSync } from 'child_process';
 import { Context, CompilerOptions, LogLevel } from '../compiler/Context';
 import { MANIFEST, ExampleStatus } from './manifest';
+import { CHILD_ENV } from './childEnv';
 
 // Configuration
 const EXAMPLES_DIR = path.join(__dirname, '../../examples');
@@ -215,7 +216,10 @@ function runTest(lispPath: string): TestResult {
     // the whole suite forever.
     const run = spawnSync('node', [jsPath], {
       encoding: 'utf-8',
-      timeout: RUN_TIMEOUT_MS
+      timeout: RUN_TIMEOUT_MS,
+      // CHILD_ENV, not process.env: FORCE_COLOR makes node colourise its own console.log through a
+      // PIPE, so every golden with a number in it fails on a machine that sets it. See childEnv.ts.
+      env: CHILD_ENV
     });
 
     if (run.error) {
