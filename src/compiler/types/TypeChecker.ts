@@ -458,9 +458,23 @@ export class TypeChecker {
       return type;
     }
 
+    // `optional` and `isArray` ride on the WRAPPER, and unwrapping must carry them to the resolved
+    // type (TY1). `Cell?` is `{kind:"type-ref", refName:"Cell", optional:true}`; resolving `refName`
+    // to the bare `Cell` class and returning THAT dropped the `?`, so nil was rejected AND -- the
+    // unsound twin -- the forced-unwrap guard was skipped and `Cell?` flowed into `Cell` silently.
+    // `Int?` survived only because a primitive never enters this branch. `substitute` already carries
+    // `optional` this exact way; unwrapType was the one place that forgot.
+    const carry = (inner: InferredType): InferredType => {
+      const optional = type.optional || inner.optional;
+      const isArray = (type as any).isArray || (inner as any).isArray;
+      return optional || isArray
+        ? { ...inner, ...(optional ? { optional: true } : {}), ...(isArray ? { isArray: true } : {}) }
+        : inner;
+    };
+
     // If it's a type-alias, use its aliased type
     if (type.kind === "type-alias" && type.aliasedType) {
-      return this.unwrapType(type.aliasedType, symbolTable);
+      return carry(this.unwrapType(type.aliasedType, symbolTable));
     }
 
     // If it's a type-ref, look it up in the symbol table to get the actual type
@@ -468,7 +482,7 @@ export class TypeChecker {
       if (symbolTable) {
         const symbol = symbolTable.resolveSymbol(type.refName);
         if (symbol && symbol.inferredType) {
-          return this.unwrapType(symbol.inferredType, symbolTable);
+          return carry(this.unwrapType(symbol.inferredType, symbolTable));
         }
       }
       // If no symbol table provided, just return the type-ref as-is

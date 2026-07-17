@@ -1620,6 +1620,41 @@ ${PRODUCER}
       "assigning it to Int was a spurious mismatch. Also fixes nested-index READS (map-of-maps).",
   },
   {
+    name: "TY1: nil is assignable to a user type's `T?` (return position)",
+    source: `(defclass Cell (mut :ctor v <- Int))
+(fn maybe-cell [] -> Cell? (return nil))`,
+    silent: true,
+    why:
+      "TY1 (games): `unwrapType` resolved `Cell?`'s type-ref to the bare Cell class and DROPPED " +
+      "`optional`, so nil was rejected (LL0213). `Int?` worked only because a primitive never enters " +
+      "the type-ref branch. Now `optional` is carried across, like `substitute` already does.",
+  },
+  {
+    name: "TY1: nil is assignable to a user type's `T?` (mut init position)",
+    source: `(defclass Cell (mut :ctor v <- Int))
+(mut r <- Cell? nil)`,
+    silent: true,
+    why: "TY1: same drop, the assignment face -- was LL0200 'cannot assign Nil to Cell?'.",
+  },
+  {
+    name: "TY1: a user `T?` may NOT flow into `T` unguarded (the unsound twin)",
+    source: `(defclass Cell (mut :ctor v <- Int))
+(fn maybe-cell [] -> Cell? (return (Cell 5)))
+(let sure <- Cell (maybe-cell))`,
+    expect: /LL0200|LL0205/,
+    why:
+      "TY1's OTHER face: dropping `optional` also skipped the forced-unwrap guard, so a possibly-nil " +
+      "`Cell?` flowed into a non-optional `Cell` with NO error -- unsound. `Int?`->`Int` was correctly " +
+      "refused; `Cell?`->`Cell` must be too.",
+  },
+  {
+    name: "TY1: `Int?` still accepts nil (GUARD)",
+    source: `(mut i <- Int? nil)
+(fn maybe-int [] -> Int? (return nil))`,
+    silent: true,
+    why: "GUARD. The primitive path was always correct; the fix must not disturb it.",
+  },
+  {
     name: "Zl/shadowing: a destructuring pattern re-declaring a name is LL0212",
     source: `(let a <- Int 1)
 (let [a b] [2 3])`,
