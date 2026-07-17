@@ -2631,6 +2631,72 @@ const CASES: Case[] = [
       "`visitMatrix` maps the identical `asValue` over each row's elements, so a spread in a row " +
       "collapsed to its first element exactly as in a vector. Untested by the audit; confirmed here.",
   },
+
+  // ===============================================================================================
+  // Qb / AF-043 -- `try` in EXPRESSION position evaluated to `undefined`.
+  //
+  // `visitTryCatch` emits a TryStatement. In a value slot `asExpression` wraps it in an IIFE and
+  // calls `withTrailingReturn` to give the block its value -- and that helper's fallthrough said, in
+  // its own words:
+  //
+  //     // A `return`, an `if`, a loop -- nothing to convert. Leave it; the block's value is undefined.
+  //
+  // So the IIFE returned nothing:
+  //
+  //     const w = __ll_copy((() => { try { { throw(...); 1; } } catch (t) { ... 99 } })());
+  //
+  // -- no `return` anywhere, `w === undefined`. Silent, and it defeats a declared return type: a fn
+  // annotated `-> Int` happily returned undefined.
+  //
+  // The catch handler is an if/else CHAIN (`if (t instanceof E) { const e = t; ... } else <next>`,
+  // built by visitTryCatch for the `:of` filter), so converting the TryStatement alone is not enough
+  // -- the IfStatement arms carry the value. Both cases are needed, and the `if` half is required BY
+  // AF-043, not adjacent to it.
+  //
+  // The FINALIZER is deliberately NOT converted: in JavaScript a `return` inside `finally` OVERRIDES
+  // the try/catch's value, so giving it one would silently rewrite the answer. Pinned below.
+  // ===============================================================================================
+  {
+    name: "Qb/AF-043: `try` in expression position yields the try block's value",
+    source: `(let v (try (42) catch e :of Error (0)))
+(console.log v)`,
+    expect: ["42"],
+    wasBroken: "`undefined` -- the IIFE wrapped the TryStatement and returned nothing. AF-043.",
+  },
+  {
+    name: "Qb/AF-043: a caught `try` expression yields the HANDLER's value",
+    source: `(let w (try ((throw (Error "boom")) 1) catch e :of Error (99)))
+(console.log w)`,
+    expect: ["99"],
+    wasBroken:
+      "`undefined`. The handler is an if/else chain for the `:of` filter, and withTrailingReturn " +
+      "declined to convert an `if` -- so even a matched catch arm's value was dropped.",
+  },
+  {
+    name: "Qb/AF-043: a `try` expression satisfies its declared return type",
+    source: `(fn pick [] -> Int (
+  (return (try (7) catch e :of Error (0)))
+))
+(console.log (pick))`,
+    expect: ["7"],
+    wasBroken:
+      "`undefined` from a fn the checker had certified `-> Int`. The type was right and the emitter " +
+      "did not honour it -- the exact shape a gradual checker cannot catch on its own.",
+  },
+  {
+    // A GUARD, not a bug: `finally` must not become the answer.
+    //
+    // JS gives a `return` in `finally` priority over the try/catch's return, so converting the
+    // finalizer's tail would make `z` 3 instead of 1 -- silently, and only for programs that use
+    // finally. The fix converts `block` and `handler` and pointedly leaves `finalizer` alone.
+    name: "Qb/AF-043: `finally` runs but does NOT supply the value",
+    source: `(let z (try (1) catch e :of Error (2) finally ((console.log "cleanup") 3)))
+(console.log z)`,
+    expect: ["cleanup", "1"],
+    wasBroken:
+      "NOT broken -- a GUARD on the fix. `finally` is the one block whose trailing expression must " +
+      "stay unconverted, because JS lets a `return` there override the real answer.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

@@ -1538,8 +1538,75 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     if (last.type === "BlockStatement") {
       return [...rest, ...this.withTrailingReturn(last.body as ESTree.Statement[], node)];
     }
-    // A `return`, an `if`, a loop -- nothing to convert. Leave it; the block's value is undefined.
+
+    // A TRY's value is whichever block actually RAN -- the try body, or the catch handler that
+    // matched. Both get a trailing return.
+    //
+    // The FINALIZER deliberately does not, and that asymmetry is load-bearing: JavaScript gives a
+    // `return` inside `finally` priority over the try/catch's own return, so converting its tail
+    // would silently REWRITE the answer instead of supplying one. `finally` is for effects; it is
+    // never the value.
+    if (last.type === "TryStatement") {
+      const t = last as ESTree.TryStatement;
+      return [
+        ...rest,
+        {
+          ...t,
+          block: ESTreeBuilder.blockStatement(
+            node,
+            this.withTrailingReturn(t.block.body as ESTree.Statement[], node)
+          ),
+          handler: t.handler
+            ? {
+                ...t.handler,
+                body: ESTreeBuilder.blockStatement(
+                  node,
+                  this.withTrailingReturn(t.handler.body.body as ESTree.Statement[], node)
+                ),
+              }
+            : t.handler,
+        } as ESTree.TryStatement,
+      ];
+    }
+
+    // An IF's value is whichever ARM ran. `asExpression` already turns a BARE `if` into a ternary;
+    // this is the case it cannot reach -- an `if` at the TAIL of a multi-statement block. Every
+    // `:of`-filtered catch handler is one, because visitTryCatch builds the filters as an if/else
+    // chain, so a `try` expression cannot be fixed without this.
+    //
+    // An arm that throws (the chain's `else throw tmp` tail) converts to nothing and stays a throw,
+    // which is exactly right: it has no value to give.
+    if (last.type === "IfStatement") {
+      const i = last as ESTree.IfStatement;
+      return [
+        ...rest,
+        {
+          ...i,
+          consequent: this.withTrailingReturnIn(i.consequent, node),
+          alternate: i.alternate ? this.withTrailingReturnIn(i.alternate, node) : i.alternate,
+        } as ESTree.IfStatement,
+      ];
+    }
+
+    // A `return`, a loop -- nothing to convert. Leave it; the block's value is undefined.
     return statements;
+  }
+
+  /**
+   * `withTrailingReturn` for a slot that holds ONE statement (an `if` arm), not a list.
+   *
+   * The list form FLATTENS a BlockStatement into its converted body, which is right when splicing
+   * into an enclosing block and wrong here: `if (c) a; return b;` is not `if (c) { a; return b; }`.
+   * So whatever comes back is re-wrapped when it is more than a single statement.
+   */
+  private withTrailingReturnIn(
+    stmt: ESTree.Statement,
+    node: ast.ASTNode
+  ): ESTree.Statement {
+    const converted = this.withTrailingReturn([stmt], node);
+    return converted.length === 1
+      ? converted[0]
+      : ESTreeBuilder.blockStatement(node, converted);
   }
 
   /**
@@ -1967,8 +2034,13 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
   visitTryCatch(node: ast.TryCatchNode): ESTree.TryStatement {
     // 1. Build the Try Block
+    // `asStatement`, not a cast. A single-expression body -- `(try (42) ...)` -- visits to an
+    // EXPRESSION, and casting it to Statement put a bare `Literal` in the block where every consumer
+    // expects an ExpressionStatement. `withTrailingReturn` then correctly declined to convert it, so
+    // the try's value vanished (AF-043) and nothing downstream could see why. visitMatch already does
+    // this properly; this is the same call.
     const tryBlock = ESTreeBuilder.blockStatement(node.try, [
-      this.visit(node.try) as ESTree.Statement,
+      this.asStatement(this.visit(node.try), node.try),
     ]);
 
     // 2. Generate a unique temp variable for the error object
@@ -1986,7 +2058,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       if (defaultCatch) {
         // If we have a generic catch, that's our final 'else' block
         // Wrap in BlockStatement to be safe if visit returns a single expression
-        const visitedBody = this.visit(defaultCatch.body) as ESTree.Statement;
+        const visitedBody = this.asStatement(
+          this.visit(defaultCatch.body),
+          defaultCatch.body
+        );
         chainTail = visitedBody.type === "BlockStatement" 
           ? visitedBody 
           : ESTreeBuilder.blockStatement(defaultCatch.body, [visitedBody]);
@@ -2010,7 +2085,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           name: c.filter.type.name,
         } as ESTree.Identifier;
 
-        const visitedCatchBody = this.visit(c.body) as ESTree.Statement;
+        const visitedCatchBody = this.asStatement(this.visit(c.body), c.body);
         
         // Build the block that runs if this error matches:
         // { const err = tmp_id; ...user_code... }
