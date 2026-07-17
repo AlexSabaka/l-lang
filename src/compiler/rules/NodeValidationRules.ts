@@ -191,6 +191,37 @@ const WhenMustHaveThenClause = createRule<ast.WhenNode>()
   .addTest((node) => !node.then || node.then.length === 0)
   .build();
 
+/**
+ * `[a ...mid z]` -- a rest that is not the LAST element.
+ *
+ * D28 rules rest is TRAILING ONLY: "a rest in the middle (`[a ...mid z]`) is a separate, harder
+ * feature". `ast.RestPatternNode`'s own doc says "only meaningful as the final element of a vector
+ * pattern". The roadmap calls it unbuilt. Three statements of the invariant, and until Qe nothing
+ * enforced it -- so a mid-list rest parsed, compiled, and FIRED, binding the rest to `[]` and the
+ * tail to an index counted from the wrong end (AF-020).
+ *
+ * REJECTING is the fix rather than implementing, because the ruling already exists and its sibling
+ * shows what it means: anonymous `[a ...]`, named in the same D28 sentence, is genuinely rejected.
+ * "Unbuilt" means not-accepted. Building mid-rest would override a decision D28 took on purpose.
+ *
+ * Keys on POSITION, not on the presence of a rest -- D28's trailing rest is the supported case and
+ * must be untouched.
+ */
+const RestPatternMustBeTrailing = createRule<ast.VectorPatternNode>()
+  .addTypeFilter("vector-pattern")
+  .addSeverity(RuleSeverity.Error)
+  .addCode("LL0029")
+  .addMessage(
+    "A rest pattern must be the LAST element of a vector pattern. A rest in the middle " +
+      "(`[a ...mid z]`) is not supported: it would have to count the tail from the right-hand end, " +
+      "which is a separate feature (D28). Move the rest to the end, or match the tail explicitly."
+  )
+  .addTest((node) => {
+    const rest = node.elements.findIndex((e) => e._type === "rest-pattern");
+    return rest !== -1 && rest !== node.elements.length - 1;
+  })
+  .build();
+
 const MatchMustHaveCases = createRule<ast.MatchNode>()
   .addTypeFilter("match")
   .addSeverity(RuleSeverity.Error)
@@ -224,6 +255,7 @@ export const Rules = {
   IdentifierHasName,
   FractionHasZeroDenominator,
   ImportMustHaveSource,
+  RestPatternMustBeTrailing,
   VariableMustHaveName,
   ConstantVariableMustHaveInitializer,
   TryCatchHasEitherCatchOrFinally,

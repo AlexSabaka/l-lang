@@ -226,6 +226,14 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
     checkRules(node, [r.MatchMustHaveCases], this.context);
   }
 
+  // `visitVectorPattern`, spelled to match BaseAstVisitor's dispatch table ("vector-pattern" ->
+  // visitVectorPattern) and NOT invented. A rule wired to a method the table never calls is silently
+  // dead -- which is exactly what happened to `visitFunctionParameter` and its LL0014/LL0024 (see
+  // AF-008), and a dead rule looks identical to a passing one from outside.
+  visitVectorPattern(node: ast.VectorPatternNode) {
+    checkRules(node, [r.RestPatternMustBeTrailing], this.context);
+  }
+
   visitIdentifier(node: ast.IdentifierNode) {
     checkRules(node, [r.IdentifierMustHaveName], this.context);
   }

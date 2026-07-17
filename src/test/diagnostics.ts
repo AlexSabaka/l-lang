@@ -120,10 +120,32 @@ function checkRegistry(): { failures: string[] } {
   return { failures };
 }
 
+/**
+ * Codes that are RETIRED, not free.
+ *
+ * A deleted rule's number does not return to the pool. It is still named by the decision that killed
+ * it -- DECISIONS.md carries "`LL0004 ImportHasSymbols` -- deleted", and roadmap.md and STDLIB.md
+ * repeat it -- so a NEW rule wearing LL0004 would make all of that history read as documentation of
+ * the wrong diagnostic. Whoever greps the code next gets a tombstone and a live rule and no way to
+ * tell which is which.
+ *
+ * This list exists because the allocator offered LL0004 as "next free" while writing Qe. An allocator
+ * whose entire job is finding a free spot must not hand out a spot that is occupied by history.
+ */
+const RETIRED_CODES: ReadonlySet<string> = new Set([
+  "LL0004", // ImportHasSymbols -- deleted in Sc3: dead, and it encoded a false invariant.
+]);
+
 /** First unused LLxxNN in a band (e.g. band "LL02" -> LL0200..LL0299). */
 function nextFree(band: string, taken: Set<string>): string {
   for (let n = 0; n < 100; n++) {
     const code = `${band}${n.toString().padStart(2, "0")}`;
+    // LL0000 is not allocatable. A code of all zeros reads as a SENTINEL -- "no code", "unset" --
+    // rather than as a diagnostic, and it is the first thing this allocator offered for the 00xx
+    // band because it scans from zero and nothing had ever taken slot 00 there. Only THIS code is
+    // skipped, not every band's 00 slot: LL0300 is a real, allocated code.
+    if (code === "LL0000") continue;
+    if (RETIRED_CODES.has(code)) continue;
     if (!taken.has(code)) return code;
   }
   return `${band}xx (full)`;
@@ -232,6 +254,10 @@ const PROBES: Probe[] = [
   },
   { name: "LL0018 missing for clause", source: "(for :each x :then (console.log x))" },
   { name: "LL0023 defmacro is reserved", source: "(defmacro foo [] 1)" },
+  {
+    name: "LL0029 mid-list rest is not trailing",
+    source: "(match [1 2 3] { [a ...mid z] => (console.log a) _ => (console.log 0) })",
+  },
 
   // --- codegen band (LL0100-LL0102): the backend must actually run, so stage "codegen" ---
   { name: "LL0102 non-name in binding position", source: "(let [1] [5])", stage: "codegen" },

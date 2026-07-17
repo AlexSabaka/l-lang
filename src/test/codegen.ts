@@ -2827,6 +2827,64 @@ const CASES: Case[] = [
       "n/a -- `or` did not exist. A GUARD that the alias desugars to the real operator rather than " +
       "to a call, so it cannot drift back into evaluating both operands.",
   },
+
+  // ===============================================================================================
+  // Qe / AF-020 -- a MID-LIST rest `[a ...mid z]` was accepted and silently misbound.
+  //
+  // D28: "Rest is trailing only -- a rest in the middle (`[a ...mid z]`) is a separate, harder
+  // feature." roadmap: "a mid-list rest and anonymous `[a ...]` are unbuilt." ast.ts, on
+  // RestPatternNode itself: "only meaningful as the final element of a vector pattern."
+  //
+  // Documented three times, enforced nowhere. It parsed, compiled, and FIRED, emitting three
+  // distinct defects in one line -- against `[1 2 3]`, binding a=1, mid=[], z=3:
+  //
+  //     if (Array.isArray(t) && t.length === 3
+  //         && (a = t[0], true) && (mid = t.slice(3), true) && (z = t[2], true))
+  //
+  //   (1) `t.length === 3` counts the rest as ONE fixed slot and checks EXACTLY, so a mid-rest can
+  //       never match a longer array -- `[1 2 3 4]` silently fell through to `_`.
+  //   (2) `mid = t.slice(3)` slices from the element COUNT rather than the leading fixed count, so
+  //       mid was ALWAYS [].
+  //   (3) `z = t[2]` indexes from the LEFT, right only by accident when length == element count.
+  //
+  // So the one length that matched was the one length that hid defects (2) and (3).
+  //
+  // WHY REJECT RATHER THAN IMPLEMENT. The ruling already exists and says not-supported, and its
+  // sibling proves what that means: anonymous `[a ...]`, named in the very same D28 sentence, IS
+  // rejected. "Unbuilt" here means not-accepted. Implementing mid-rest would OVERRIDE a decision
+  // D28 made deliberately ("a separate, harder feature"), which is a feature phase, not a bug fix.
+  // The bug is that the compiler accepted what its own ruling forbids and then lied about the
+  // answer. Enforcing the ruling IS the fix.
+  //
+  // The rule is DECLARATIVE (NodeValidationRules), because "a rest must be last" is a pure
+  // structural predicate on the node -- exactly what D38 says belongs there rather than at a call
+  // site. Nothing in lib/ or examples/ uses a mid-list rest.
+  // ===============================================================================================
+  {
+    name: "Qe/AF-020: a mid-list rest is REJECTED, not silently misbound",
+    source: `(match [1 2 3] {
+  [a ...mid z] => (console.log "fired" a mid.length z)
+  _            => (console.log "fell-through")
+})`,
+    expectDiagnostic: /LL0029/,
+    wasBroken:
+      "printed `fired 1 0 3` -- exit 0, zero diagnostics. The arm FIRED and bound mid=[] when the " +
+      "only correct binding is mid=[2]. D28 says a mid-list rest is unbuilt; it was built, reachable " +
+      "and wrong. AF-020.",
+  },
+  {
+    // The GUARD that the rejection is narrow. A TRAILING rest is D28's supported case and must keep
+    // working exactly as it did -- the new rule keys on POSITION, not on the presence of a rest.
+    name: "Qe/AF-020: a trailing rest still binds (D28's supported case)",
+    source: `(match [1 2 3] {
+  [a ...rest] => (console.log a rest.length rest[0])
+  _           => (console.log "no")
+})`,
+    expect: ["1 2 2"],
+    wasBroken:
+      "NOT broken -- a GUARD. D28's trailing rest is the case that WORKS, and the mid-rest rejection " +
+      "must not touch it.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

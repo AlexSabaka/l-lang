@@ -359,6 +359,16 @@
     ]
   },
   {
+    "probe": "LL0029 mid-list rest is not trailing",
+    "diagnostics": [
+      {
+        "code": "LL0029",
+        "severity": "error",
+        "text": "A rest pattern must be the LAST element of a vector pattern. A rest in the middle (`[a ...mid z]`) is not supported: it would have to count the tail from the right-hand end, which is a separate feature (D28). Move the rest to the end, or match the tail explicitly."
+      }
+    ]
+  },
+  {
     "probe": "LL0102 non-name in binding position",
     "diagnostics": [
       {
