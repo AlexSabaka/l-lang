@@ -38,4 +38,14 @@ export const ModuleDiagnostics = {
       `This compiles -- an import brings in definitions, not execution -- but a cycle is ` +
       `usually a sign the modules want splitting.`
   ),
+
+  // LL0232
+  CannotExportUndefined: def<{ name: string }>(
+    "LL0232",
+    Error,
+    (p) =>
+      `Cannot export '${p.name}': nothing by that name is defined in this module. Export names a ` +
+      `symbol this module DEFINES -- re-exporting an imported name is not supported, and a consumer ` +
+      `can import it from its own module directly. Define it, or drop the export.`
+  ),
 };

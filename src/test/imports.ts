@@ -932,6 +932,35 @@ const CASES: Case[] = [
         : { ok: false, detail: `expected "Money", got ${JSON.stringify(out.stdout)}` };
     },
   },
+
+  // Zl/reexport -- exporting a name the module does not define used to CRASH the compile with a raw
+  // `throw new Error("Export error: symbol not found")` -- a JS stack trace, no source location.
+  // Now a located diagnostic (LL0232). Covers the typo case and the unsupported re-export case alike.
+  {
+    name: "Zl: exporting an undefined name is a diagnostic, not a crash",
+    why:
+      "A raw throw in ResolvePassVisitor.visitExport took down the whole compile with a Node stack " +
+      "trace. The same 'unsupported must be diagnosed, not crash' pattern the namespace-import gap " +
+      "already follows. Re-export stays unsupported -- a consumer imports from the defining module.",
+    run: () => {
+      const entry = fixture(
+        "bad-export",
+        { "main.lisp": `(\n  (fn real [] -> Int (return 1))\n  (export nonexistent-thing)\n)\n` },
+        "main.lisp"
+      );
+      const out = build(entry);
+      const reported = out.diagnostics.some((d) => /LL0232/.test(d));
+      const crashed = /Export error|symbol not found/.test(out.runtimeError ?? "");
+      return reported && !crashed
+        ? { ok: true, detail: "LL0232 reported; no crash" }
+        : {
+            ok: false,
+            detail: crashed
+              ? `still crashes: ${out.runtimeError}`
+              : `expected LL0232, got: ${out.diagnostics.join(",") || "(none)"}`,
+          };
+    },
+  },
 ];
 
 function main() {

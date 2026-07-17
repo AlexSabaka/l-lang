@@ -2,6 +2,7 @@ import * as ast from "../../frontend/ast";
 import { LogLevel } from "../../Context";
 import { ScopeType, SymbolTable, SymbolTableBuilder } from "../SymbolTable";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
+import { ModuleDiagnostics as MD } from "../../rules/diagnostics";
 
 /**
  * BuildSymbolTableAstVisitor - Two-Pass Implementation
@@ -317,8 +318,14 @@ class ResolvePassVisitor extends BaseAstTreeWalker {
     node.exports.forEach(x => {
       const symbol = this.symbolTableBuilder.resolveSymbol(x.symbol);
       if (symbol === undefined) {
-        this.context.log(LogLevel.Error, `Cannot export undefined symbol: ${ast.symbolName(x.symbol)}`);
-        throw new Error(`Export error: symbol not found`);
+        // A located diagnostic, not a raw `throw` (Zl/reexport). Exporting a name this module does not
+        // define -- a typo, or an attempt to RE-EXPORT an imported name (unsupported) -- crashed the
+        // whole compile with a JS stack trace and no source location. `report` + continue, the same
+        // shape the sibling BuildDependencyGraphAstVisitor uses for an unresolved import.
+        this.report(MD.CannotExportUndefined, (x.symbol as any) ?? node, {
+          name: ast.symbolName(x.symbol),
+        });
+        return;
       }
       symbol.exportName = x.as ?? x.symbol;
     });
