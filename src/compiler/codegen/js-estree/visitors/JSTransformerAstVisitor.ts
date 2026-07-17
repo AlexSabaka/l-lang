@@ -1973,13 +1973,31 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * from ambient scope, never from position, so `(let x (if true 1 2))` compiled and
    * `(console.log (if true 1 2))` emitted `console.log(if (true) {`. Same node. Different neighbours.
    */
+  /**
+   * The dangling-else guard (CF2, games). An else-less `IfStatement` as a consequent, WITH an
+   * `alternate` present, must be wrapped in a `BlockStatement` -- astring serializes `IfStatement`
+   * non-defensively, so `if (a) if (b) X; else Y` emits with the `else` bound to the INNER `if`. A
+   * one-armed `if`/`when` as the THEN branch of an `if`/`cond` clause is exactly this shape; it killed
+   * tetris's spacebar. Wrapping only this shape leaves every other emitted `if` untouched (measured: 0
+   * golden churn).
+   */
+  private braceIfDangling(
+    consequent: ESTree.Statement,
+    hasAlternate: boolean,
+    node: ast.ASTNode
+  ): ESTree.Statement {
+    return hasAlternate && consequent.type === "IfStatement" && !consequent.alternate
+      ? ESTreeBuilder.blockStatement(node, [consequent])
+      : consequent;
+  }
+
   visitIf(node: ast.IfNode): ESTree.IfStatement {
     return this.runInScope(ScopeType.if, () => {
       const condition = this.visitExpr(node.condition!);
       const thenBranch = this.visit(node.then!);
       const elseBranch = node.else ? this.visit(node.else) : null;
 
-      const consequent = this.isStatement(thenBranch)
+      const consequentRaw = this.isStatement(thenBranch)
         ? (thenBranch as ESTree.Statement)
         : ESTreeBuilder.blockStatement(node.then!, [
             ESTreeBuilder.expressionStatement(
@@ -1987,6 +2005,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
               thenBranch as ESTree.Expression
             ),
           ]);
+      const consequent = this.braceIfDangling(consequentRaw, elseBranch !== null, node.then!);
 
       const alternate = elseBranch
         ? this.isStatement(elseBranch)
@@ -2081,7 +2100,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       chain = {
         type: "IfStatement",
         test: this.visitExpr(c.condition),
-        consequent: body,
+        // CF2: a clause body that is a one-armed `if` must be braced, or its missing `else` captures
+        // the NEXT clause (which becomes this if's `alternate`).
+        consequent: this.braceIfDangling(body, chain !== null, c),
         alternate: chain,
         loc: ESTreeBuilder.loc(c),
       } as ESTree.IfStatement;

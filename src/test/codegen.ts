@@ -4479,6 +4479,38 @@ catch b ((console.log "two")))`,
       "__ll_index and still throws KeyError on an absent map key (D9f). Only `.member` goes unchecked.",
   },
 
+  // CF2 (games) -- a one-armed `if`/`when` as the THEN branch of an `if`/`cond` clause dangles the
+  // outer `else`. `visitIf`/`visitCond` pass an else-less inner `IfStatement` as the consequent
+  // UNWRAPPED, and astring's dangling-else then binds the outer `else` to the INNER `if`. Killed
+  // tetris's spacebar; recurred in minesweeper. Assert BEHAVIOUR (which branch ran), not emitted JS --
+  // FINDINGS.md's warning: the JS is exactly what is wrong.
+  // ===============================================================================================
+  {
+    name: "CF2: a one-armed inner `if` does not steal the outer `else`",
+    source: `(let k "a")
+(mut out <- String "none")
+(if (== k "a") (if false (out := "A")) (out := "elsebranch"))
+(console.log out)`,
+    expect: ["none"],
+    wasBroken:
+      "printed `elsebranch`: the outer `else` bound to the inner `if false` (dangling-else), so a true " +
+      "outer test with a false inner test ran the outer's else. The inner `if` has no else.",
+  },
+  {
+    name: "CF2: a `cond` clause whose body is a one-armed `if` fires correctly",
+    source: `(let k "b")
+(mut out <- String "none")
+(cond
+  ((== k "a") (if false (out := "A")))
+  ((== k "b") (out := "B"))
+  (:else (out := "default")))
+(console.log out)`,
+    expect: ["B"],
+    wasBroken:
+      "printed `default` (or `none`): the `a`-clause's one-armed `if` left a dangling `else`, which " +
+      "swallowed the `b`-clause and the `:else` into the wrong branch. tetris's spacebar bug exactly.",
+  },
+
   // Zl/interface-contextual-typing -- an UNANNOTATED class method inherits its interface's declared
   // RETURN type (D42). `Circle.area` had no `-> ...`, so it typed as `Any` even though the class
   // `:implements Shape` and Shape declares `(fn area [] -> Real)` -- the same method reflecting `Any`
