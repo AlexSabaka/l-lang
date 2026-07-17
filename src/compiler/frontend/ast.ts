@@ -667,6 +667,15 @@ export function bindingIdentifiers(target: BindingTarget | undefined): Identifie
         return;
       case "identifier-pattern":
       case "rest-pattern":
+      // `n :of Int` BINDS `n`, exactly as a bare `n` does -- the `:of` gates the arm, it does not
+      // stop the name being bound. This walker was written for destructuring (D16) and type patterns
+      // arrived later (D27), so a type-pattern fell to `default: return` and bound NOTHING. The
+      // symbol table therefore had no `n`, and `(match 5 { n :of Int => n })` referenced a name
+      // nothing had defined.
+      //
+      // It went unnoticed because nothing ever ASKED: no pass type-checked a match arm's body until
+      // Yd gave `match` an inferred type. A binding that nothing looks up cannot be missing.
+      case "type-pattern":
         walk(n.id);
         return;
       case "vector-pattern":

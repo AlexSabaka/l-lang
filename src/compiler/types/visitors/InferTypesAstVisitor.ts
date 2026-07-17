@@ -3399,11 +3399,36 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       case "if": {
         const ifNode = node as ast.IfNode;
         const thenType = this.inferExpressionType(ifNode.then);
-        const elseType = ifNode.else 
+        const elseType = ifNode.else
           ? this.inferExpressionType(ifNode.else)
           : TypeEnvironment.primitive("Void");
-        
+
         inferredType = TypeChecker.findCommonType([thenType, elseType]) ?? TypeEnvironment.unknown();
+        break;
+      }
+
+      // A `match` is its ARMS' common type -- the same rule as the `if` above, because it is the same
+      // thing: a dispatch that yields a value.
+      //
+      // There was no case for it. The checker contained ZERO references to MatchNode, so every match
+      // in the language was Unknown, and the consequence was not "less type safety" but a SILENT
+      // WRONG ANSWER: D1 rules `(x)` is a CALL iff `x` names a FUNCTION, answered from the binding's
+      // inferred type -- so `(let g (match ... { _ => (fn [] -> Int (return 7)) }))` made `(g)` a
+      // GROUPING, and it printed the function object instead of calling it. The identical lambda
+      // bound directly, or through an `if`, called correctly. Nothing reported the difference.
+      //
+      // An arm's type is its BODY's. The pattern binds and the guard gates; neither is the value.
+      // `findCommonType` over zero arms is undefined rather than Void -- an empty match has no arm to
+      // take, which LL0009 already refuses, so there is nothing to type here.
+      case "match": {
+        const matchNode = node as ast.MatchNode;
+        const armTypes = (matchNode.cases ?? []).map((c) =>
+          this.inferExpressionType(c.body)
+        );
+        inferredType =
+          armTypes.length > 0
+            ? TypeChecker.findCommonType(armTypes) ?? TypeEnvironment.unknown()
+            : TypeEnvironment.unknown();
         break;
       }
 

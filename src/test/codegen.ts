@@ -3503,6 +3503,95 @@ catch b ((console.log "two")))`,
       "NOT broken -- a GUARD. These two are why cond/when are a BUG and not a ruling: the language " +
       "already decided a trailing control form yields its value.",
   },
+
+  // ===============================================================================================
+  // Yd -- a `match` had NO TYPE, so `(x)` on a match-bound lambda did not call it.
+  //
+  //     (let direct   (fn [] -> Int (return 5)))                    (direct)   -> 5
+  //     (let viaIf    (if true (fn [] -> Int (return 3)) ...))      (viaIf)    -> 3
+  //     (let viaMatch (match 1 { 1 => (fn [] -> Int (return 7)) ... })) (viaMatch) -> [Function]
+  //
+  // Identical bindings of identical lambdas. Two call; one silently hands back the function object.
+  //
+  // D1 rules `(x)` is a CALL iff `x` names a FUNCTION, answered from the symbol table -- and the
+  // table answers from the binding's INFERRED type. `inferExpressionType` has a `case "if"` (a
+  // findCommonType over the branches) and NO case for `match` at all: the checker contains zero
+  // references to MatchNode. So a match's type was Unknown, `kind === "function"` was false, and the
+  // grouping won.
+  //
+  // The silent half is what makes it this session's shape rather than a missing feature: nothing
+  // reports that `(viaMatch)` did not call. The program runs and prints a function.
+  // ===============================================================================================
+  {
+    name: "Yd: `(x)` calls a MATCH-bound lambda",
+    source: `(let viaMatch (match 1 { 1 => (fn [] -> Int (return 7)) _ => (fn [] -> Int (return 9)) }))
+(console.log (viaMatch))`,
+    expect: ["7"],
+    wasBroken:
+      "printed `[Function (anonymous)]`. The match had no inferred type, so D1's \"a call iff it " +
+      "names a function\" answered no, and `(viaMatch)` was read as a grouping.",
+  },
+  {
+    // A match's type is its arms' common type, exactly as an `if`'s is its branches'.
+    //
+    // Asserted through a DIAGNOSTIC, deliberately. The obvious test -- bind a match to `n` and print
+    // `(+ n 1)` -- passes with or without the fix: gradual typing computes the right VALUE from an
+    // Unknown, so stdout proves nothing about the type. Only a type ERROR can tell Unknown from Int.
+    name: "Yd: a match's type is the common type of its arms, and is enforced",
+    source: `(let n (match 1 { 1 => 10 _ => 20 }))
+(let s <- String n)
+(console.log s)`,
+    expectDiagnostic: /LL0200/,
+    wasBroken:
+      "SILENT. The match was Unknown, so `n` was Unknown, so assigning it to a String was gradual and " +
+      "passed -- the checker had nothing to compare. `if` typed this correctly; `match` had no case.",
+  },
+  {
+    // ...and the value side still works, so the fix types the match without changing what it does.
+    name: "Yd: a match's value is unchanged by having a type",
+    source: `(let n (match 1 { 1 => 10 _ => 20 }))
+(console.log (+ n 1))
+(let s (match 2 { 1 => "one" _ => "many" }))
+(console.log (s.toUpperCase))`,
+    expect: ["11", "MANY"],
+    wasBroken:
+      "NOT broken -- a GUARD. These were right while the type was absent (gradual typing), and must " +
+      "stay right now that it is not.",
+  },
+  {
+    // The control that proves it was `match` specifically, and the shape the fix copies.
+    name: "Yd: an if-bound and a directly-bound lambda still call",
+    source: `(let direct (fn [] -> Int (return 5)))
+(let viaIf (if true (fn [] -> Int (return 3)) (fn [] -> Int (return 4))))
+(console.log (direct))
+(console.log (viaIf))`,
+    expect: ["5", "3"],
+    wasBroken:
+      "NOT broken -- the CONTROL. `if` has a `case` in inferExpressionType and `match` did not; these " +
+      "two working is what located the bug.",
+  },
+  {
+    // The bug UNDER the bug, found because giving `match` a type made something read an arm's body
+    // for the first time. `bindingIdentifiers` was written for destructuring (D16) and type patterns
+    // arrived later (D27), so `type-pattern` fell to its `default: return` and bound NOTHING -- the
+    // symbol table had no `n`, and `n :of Int => n` referenced a name nothing had defined.
+    //
+    // It could not be observed before: no pass type-checked a match arm's body, so nobody ever looked
+    // `n` up. A binding that nothing resolves cannot be missing. The D27 cases above passed all along
+    // because they only assert the VALUE, and codegen binds the arm itself.
+    //
+    // HONESTLY: this could not go RED before Yd, and that is the finding rather than a gap in the
+    // test. With no match inference nothing resolved `n`, so the missing binding had no observer. It
+    // went red DURING Yd -- the `case "match"` alone turned the four D27 cases red with
+    // `'n' is not defined` -- which is how it was found. This pins it so it cannot return.
+    name: "Yd: a `:of` type pattern BINDS its name, and the name is usable",
+    source: `(let ok (match 5 { n :of Int => (+ n 1) _ => 0 }))
+(console.log ok)`,
+    expect: ["6"],
+    wasBroken:
+      "`'n' is not defined` -- the PATTERN's OWN binding, reported the instant anything type-checked " +
+      "the arm. `bindingIdentifiers` had no `type-pattern` case, so `:of` registered no name at all.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------
