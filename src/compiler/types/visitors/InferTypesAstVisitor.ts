@@ -859,7 +859,15 @@ class CollectTypesPass extends BaseAstTreeWalker {
     // arrive wrapped in a grouping -- and reuses `StructMember`, the shared shape records already
     // borrow. Built INSIDE the type-parameter scope, so a generic signature (`-> Iterator<T>`)
     // resolves the interface's own `T`.
+    // `detailedMembers` and `methodSignatures` alongside (Zja) -- the shapes CODEGEN reads. `members`
+    // answers the CHECKER's question (does a class satisfy this? -- D42); the metadata table's
+    // converter reads neither of those fields, which is the second reason an interface never appeared
+    // in `__ll_type_metadata` even once it had a shape. One walk, three shapes: a second loop would be
+    // a second chance to disagree with this one.
     const members: any[] = [];
+    const detailedMembers: DetailedMember[] = [];
+    const methodSignatures = new Map<string, MethodSignature>();
+
     for (const item of node.body ?? []) {
       let target: any = item;
       if (ast.isListNode(item) && item.nodes.length > 0) target = item.nodes[0];
@@ -873,26 +881,63 @@ class CollectTypesPass extends BaseAstTreeWalker {
         const returnType = funcNode.returns
           ? this.convertAstTypeToInferred(funcNode.returns)
           : TypeEnvironment.any();
+        const memberName =
+          (funcNode.name as any)?.id ?? (funcNode.name as any)?.name ?? String(funcNode.name);
         members.push({
-          name: (funcNode.name as any)?.id ?? (funcNode.name as any)?.name ?? String(funcNode.name),
+          name: memberName,
           type: TypeEnvironment.function(paramTypes, returnType, isVariadicParams(funcNode.params)),
           isCtor: false,
           isPublic: true,
           isPrivate: false,
         });
+        // The same builder visitFunction, visitClass and visitStruct all use.
+        methodSignatures.set(memberName, this.buildMethodSignature(funcNode));
       } else if (target._type === "variable") {
         const varNode = target as ast.VariableNode;
+        const memberName =
+          (varNode.name as any)?.id ?? (varNode.name as any)?.name ?? String(varNode.name);
+        const memberType = varNode.type
+          ? this.convertAstTypeToInferred(varNode.type)
+          : TypeEnvironment.any();
         members.push({
-          name: (varNode.name as any)?.id ?? (varNode.name as any)?.name ?? String(varNode.name),
-          type: varNode.type ? this.convertAstTypeToInferred(varNode.type) : TypeEnvironment.any(),
+          name: memberName,
+          type: memberType,
           isCtor: false,
           isPublic: true,
           isPrivate: false,
+        });
+        detailedMembers.push({
+          name: memberName,
+          type: memberType,
+          visibility: "public",
+          modifiers: new Set<string>(),
+          isConstructorParam: false,
         });
       }
     }
 
     this.typeEnv.exitScope();
+
+    // Zja: an interface is a TYPE, so it belongs in the type table. Without this, `(type r)` reported
+    // `implements: ["Shape"]` and `(type-by-name "Shape")` answered `{kind:'unknown'}` -- the graph's
+    // own edge pointing at nothing. `requiresRuntimeMetadata` is false: an interface is ERASED (D24),
+    // so nothing about it exists at run time except this description of it.
+    const codegenMetadata: CodegenMetadata = {
+      typeName: interfaceName,
+      kind: "interface",
+      detailedMembers,
+      methodSignatures,
+      operatorOverloads: [],
+      implementedInterfaces,
+      typeParameters:
+        node.generics?.map((g) => ({
+          name: g.name,
+          variance: g.variance,
+          constraints: [],
+          defaultType: undefined,
+        })) ?? [],
+      requiresRuntimeMetadata: false,
+    };
 
     const interfaceType: InferredType = {
       kind: "interface",
@@ -904,6 +949,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
       })),
       ...(members.length ? { members } : {}),
       ...(implementedInterfaces.length ? { implementedInterfaces } : {}),
+      codegenMetadata,
     };
 
     this.typeEnv.bindIdentifier(interfaceName, interfaceType, node);

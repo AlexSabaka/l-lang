@@ -312,41 +312,32 @@ export class SymbolTable {
   }
 
   /**
-   * Get all class metadata for codegen
+   * Every type the METADATA TABLE should describe -- `__ll_type_metadata`'s whole contents.
+   *
+   * Keyed on "has `codegenMetadata`", not on `kind`. That was two near-identical getters
+   * (`getAllClassMetadata` filtering class/struct, `getAllFunctionMetadata` filtering function), and
+   * the kind test was always a RESTATEMENT of the metadata test: only `visitFunction`, `visitClass`
+   * and `visitStruct` ever minted a `codegenMetadata`, so the two conditions could not disagree. What
+   * the kind filter DID do was silently exclude anything new -- an interface got a shape (D42/Zf) and
+   * still could not reach the table, because `'interface'` was in neither list (Zja).
+   *
+   * `extern` is excluded (Zjb). `std/js` is the PRELUDE -- implicitly imported into every module -- so
+   * its nine `(fn :extern ...)` declarations were in EVERY program's table, all rendering
+   * `{returns:'Any'}`. An ambient global is the HOST's, and the table describes l-lang's types. The
+   * same seam and the same reasoning as `InferTypesAstVisitor`'s ordering check and codegen's
+   * inlining check, which both already read `entry.value.extern`.
    */
-  getAllClassMetadata(): Map<string, CodegenMetadata> {
-    const classMetadata = new Map<string, CodegenMetadata>();
-    const allSymbols = this.getAllSymbols();
-    
-    for (const [name, entry] of allSymbols.entries()) {
-      if (entry.inferredType?.kind === 'class' || entry.inferredType?.kind === 'struct') {
-        const metadata = entry.inferredType.codegenMetadata;
-        if (metadata) {
-          classMetadata.set(name, metadata);
-        }
-      }
-    }
-    
-    return classMetadata;
-  }
+  getAllTypeMetadata(): Map<string, CodegenMetadata> {
+    const metadata = new Map<string, CodegenMetadata>();
 
-  /**
-   * Get all function metadata for codegen
-   */
-  getAllFunctionMetadata(): Map<string, CodegenMetadata> {
-    const funcMetadata = new Map<string, CodegenMetadata>();
-    const allSymbols = this.getAllSymbols();
-    
-    for (const [name, entry] of allSymbols.entries()) {
-      if (entry.inferredType?.kind === 'function') {
-        const metadata = entry.inferredType.codegenMetadata;
-        if (metadata) {
-          funcMetadata.set(name, metadata);
-        }
-      }
+    for (const [name, entry] of this.getAllSymbols().entries()) {
+      const md = entry.inferredType?.codegenMetadata;
+      if (!md) continue;
+      if ((entry.value as any)?.extern) continue;
+      metadata.set(name, md);
     }
-    
-    return funcMetadata;
+
+    return metadata;
   }
 
   /**

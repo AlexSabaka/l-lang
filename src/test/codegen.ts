@@ -4450,6 +4450,73 @@ catch b ((console.log "two")))`,
       "NOT broken -- the GUARD. `(type (bump))` folds to a metadata lookup; without the sequence the " +
       "call vanishes and `bump` never runs. Ze's `visitTypeGuard` carries the same sequence.",
   },
+
+  // Zja -- INTERFACES were not in `__ll_type_metadata` at all, blocked by two independent gates:
+  // `visitInterface` built no `codegenMetadata`, AND the getter filtered `kind in {class,struct}`.
+  //
+  // The damage is a DANGLING POINTER in the table's own graph: `(type r)` reports
+  // `implements: ["Shape"]`, and `Shape` cannot then be looked up. Zf gave interfaces a shape, so the
+  // data exists; nothing carried it to codegen.
+  // ===============================================================================================
+  {
+    name: "Zja: an interface is IN the metadata table",
+    source: `(definterface Shape
+  (fn area [] -> Int))
+(let s (type-by-name "Shape"))
+(let ms s["methods"])
+(let m0 ms[0])
+(console.log s["name"] s["kind"] m0["name"])`,
+    expect: ["Shape interface area"],
+    wasBroken:
+      "`{kind:'unknown'}`. Every interface in the language was absent from the table -- zero hits for " +
+      "`\"kind\": \"interface\"` across every golden, including the interface examples.",
+  },
+  {
+    // The one that shows what the absence COST. The table's graph edges are names, so an edge that
+    // does not resolve is a pointer into nothing.
+    name: "Zja: the `implements` edge RESOLVES",
+    source: `(definterface Shape
+  (fn area [] -> Int))
+(defclass Rect :implements Shape
+  (fn area [] -> Int (return 6)))
+(let r (Rect))
+(let t (type r))
+(let ifaces t["implements"])
+(let n ifaces[0])
+(let s (type-by-name n))
+(console.log n s["kind"])`,
+    expect: ["Shape interface"],
+    wasBroken:
+      "`Shape unknown` -- the table pointed at a type it did not contain. Walking from a type to the " +
+      "interface it implements is the whole reason `type-by-name` exists.",
+  },
+
+  // Zjb -- the table carried NINE of the host's globals, in every program ever compiled. `std/js` is
+  // the PRELUDE, so its `(fn :extern ...)` declarations were in every table, each rendering
+  // `{returns:'Any', paramsList:[{name:'args',type:'Any'}]}`.
+  //
+  // An extern is the HOST's, not l-lang's -- the line this codebase already takes twice, via the same
+  // `entry.value.extern` seam: "an ambient global is the host's, not ours to order".
+  // ===============================================================================================
+  {
+    name: "Zjb: a host `:extern` is NOT in the table",
+    source: `(let p (type-by-name "parseInt"))
+(console.log p["kind"])`,
+    expect: ["unknown"],
+    wasBroken:
+      "`function` -- with `returns: 'Any'`. parseInt, parseFloat, isNaN, isFinite, setTimeout, " +
+      "setInterval, clearTimeout, clearInterval and fetch were in EVERY table, all nine, always.",
+  },
+  {
+    // The guard, and the one that matters: filter the host, not the user. `02_fn_types` reflects on
+    // its own functions by name and would catch this as a golden move.
+    name: "Zjb: a USER function is still in the table",
+    source: `(fn my-fn [x <- Int] -> Int (return x))
+(let f (type-by-name "my-fn"))
+(console.log f["name"] f["kind"] f["returns"])`,
+    expect: ["my-fn function Int"],
+    wasBroken: "NOT broken -- the GUARD against the extern filter eating user code.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

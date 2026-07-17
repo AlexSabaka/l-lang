@@ -380,18 +380,14 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       this.typesMetadata[p] = { name: p, kind: "primitive", nullable: false };
     }
 
-    // Populate types metadata from pre-computed symbol table metadata
-    const classMetadata = this.context.symbolTable.getAllClassMetadata();
-    const functionMetadata = this.context.symbolTable.getAllFunctionMetadata();
+    // Every type with codegen metadata, minus the host's ambient globals -- one question, one getter
+    // (Zja/Zjb). This was two calls filtering on `kind`, which is why an interface could have a shape
+    // and still never reach the table.
+    for (const [name, metadata] of this.context.symbolTable.getAllTypeMetadata().entries()) {
+      this.typesMetadata[name] = this.convertCodegenMetadataToRuntimeFormat(metadata);
+    }
 
-    for (const [name, metadata] of classMetadata.entries()) {
-      this.typesMetadata[name] = this.convertCodegenMetadataToRuntimeFormat(metadata);
-    }
-    
-    for (const [name, metadata] of functionMetadata.entries()) {
-      this.typesMetadata[name] = this.convertCodegenMetadataToRuntimeFormat(metadata);
-    }
-    
+
     this.context.log(LogLevel.Debug, `Loaded ${Object.keys(this.typesMetadata).length} pre-computed type entries`);
   }
   
@@ -401,7 +397,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       kind: metadata.kind,
     };
     
-    if (metadata.kind === 'class' || metadata.kind === 'struct') {
+    // An interface takes the same path (Zja): it has `detailedMembers` and `methodSignatures` and
+    // nothing else, and the arms it lacks -- `constructor`, `extends` -- are each already gated on the
+    // field being there. Erased at run time (D24), so there is nothing else to say about it.
+    if (metadata.kind === 'class' || metadata.kind === 'struct' || metadata.kind === 'interface') {
       result.properties = metadata.detailedMembers?.filter((m: any) => !m.isOperator).map((m: any) => ({
         name: m.name,
         type: m.type.name || 'Any',
