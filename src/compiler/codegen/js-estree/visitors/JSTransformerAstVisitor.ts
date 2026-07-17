@@ -3328,6 +3328,24 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     emitted: ESTree.Expression,
     source: ast.ASTNode | undefined | null
   ): ESTree.Expression {
+    // A SpreadElement is a SPLICE INSTRUCTION, not a value -- and, as `asExpression` documents at
+    // its own SpreadElement case, not an ESTree `Expression` either. Wrapping it copies the wrong
+    // thing, and destructively: `__ll_copy(...a)` passes a's elements as ARGUMENTS to a
+    // single-parameter helper, so it collapses to `__ll_copy(a[0])` and the spread-ness is gone with
+    // it -- the element becomes a plain call. That was AF-002: `[0 ...a]` silently yielded [0, a[0]].
+    //
+    // What lands in the new slots is the OPERAND'S ELEMENTS, so they are what D11 must copy. This is
+    // the identical argument `asValueEach` already makes for destructuring, and it is unconditional
+    // for the identical reason: `needsValueCopy` cannot help here, because the container carries no
+    // struct marker while its elements may. A plain `[...a]` pass-through would alias them instead.
+    if ((emitted as unknown as ESTree.Node)?.type === "SpreadElement") {
+      const spread = emitted as unknown as ESTree.SpreadElement;
+      return {
+        ...spread,
+        argument: this.asValueEach(spread.argument as ESTree.Expression, source),
+      } as unknown as ESTree.Expression;
+    }
+
     if (!this.needsValueCopy(source)) return emitted;
     return ESTreeBuilder.callExpression(
       (source ?? emitted) as any,

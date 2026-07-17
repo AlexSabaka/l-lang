@@ -2541,6 +2541,96 @@ const CASES: Case[] = [
       "NOT broken -- a GUARD. A single-element list whose element is not an identifier is redundant " +
       "parens. D1 leans on this: every `(x)` in a string interpolation in the corpus is this shape.",
   },
+
+  // ===============================================================================================
+  // Qa / AF-002 -- a SPREAD in a collection slot.
+  //
+  // `visitVector` maps `asValue` over every element (D11: a collection slot is a new home, so the
+  // value is copied into it). `asValue` had no SpreadElement case, so it wrapped the SPREAD instead
+  // of the spread's OPERAND:
+  //
+  //     (let b [0 ...a])   ->   const b = [0, __ll_copy(...a)];
+  //
+  // `__ll_copy` takes ONE parameter, so `__ll_copy(...a)` === `__ll_copy(a[0])` === a[0]. Every
+  // element past the first is discarded by ordinary JS argument truncation, and the SpreadElement-ness
+  // is destroyed in the same breath -- the element becomes a plain call. Exit 0, no diagnostic, both
+  // (then-)frontends. `[x ...xs]` is the most idiomatic list operation in a Lisp and it silently
+  // yielded a 2-element array.
+  //
+  // `asExpression` already had exactly this pass-through (see its SpreadElement case) -- the shape was
+  // found once and fixed in one place only. No golden pinned the broken output because NOTHING in the
+  // 91-example corpus spreads into a collection literal, which is why it survived.
+  //
+  // Fix: `asValue` copies the spread's OPERAND element-wise (`__ll_copy_each`) and re-wraps it as a
+  // SpreadElement -- the identical reasoning `asValueEach` already documents for destructuring (the
+  // container carries no struct marker; its ELEMENTS are what need copying).
+  // ===============================================================================================
+  {
+    // Asserts length + elements rather than `console.log b` -- node's array formatting is brittle to
+    // pin, as the D28 rest-pattern case above says in the same words.
+    name: "Qa/AF-002: a spread in an array literal contributes ALL its elements",
+    source: `(let a [1 2 3])
+(let b [0 ...a])
+(let c [...a])
+(console.log b.length)
+(console.log b[0] b[1] b[2] b[3])
+(console.log c.length)
+(console.log c[0] c[1] c[2])`,
+    expect: ["4", "0 1 2 3", "3", "1 2 3"],
+    // The exact broken shape. `__ll_copy(` applied to a spread is ALWAYS wrong -- the helper is
+    // single-parameter, so the spread can only ever collapse to its first element.
+    emitted: { mustNot: [/__ll_copy\(\.\.\./] },
+    wasBroken:
+      "`[0 ...a]` with a=[1 2 3] printed [0,1] and `[...a]` printed [1] -- silently, exit 0, no " +
+      "diagnostic. Emitted `[0, __ll_copy(...a)]`; __ll_copy is single-parameter, so it collapsed " +
+      "to a[0] and the spread became a plain call. AF-002, the post-audit's prize finding.",
+  },
+  {
+    // The DISCRIMINATOR between the two candidate fixes, and the reason the operand is copied rather
+    // than passed straight through.
+    //
+    // D11 says a collection slot is a NEW HOME, so `b`'s slot must hold a COPY -- mutating through
+    // `b[0]` must not be visible via `a[0]`. Note this property held even while AF-002 was live, but
+    // only BY ACCIDENT: `[__ll_copy(...a)]` copies a[0], so a ONE-element spread looked correct while
+    // dropping nothing. That coincidence is exactly why a length assertion alone cannot protect this.
+    //
+    // A fix that merely emitted `[...a]` (no copy) passes the case above and FAILS this one: b[0]
+    // would alias a[0] and print 99/99.
+    name: "Qa/AF-002: a spread copies each element into its new slot (D11)",
+    source: `(defstruct P (mut :ctor x <- Int 0))
+(let a [(P 1) (P 2)])
+(let b [...a])
+(b[0].x := 99)
+(console.log a[0].x)
+(console.log b[0].x)
+(console.log b.length)`,
+    expect: ["1", "99", "2"],
+    wasBroken:
+      "NOT broken for the aliasing half -- a GUARD pinning WHY the operand is copied. The length " +
+      "assertion is the AF-002 half: `[...a]` over two structs yielded ONE element.",
+  },
+  {
+    // `visitMatrix` is the OTHER caller of the same `asValue` map. The audit flagged it as
+    // "presumably broken the same way" and left it untested; it was, and fixing the shared helper
+    // rather than the two call sites is what covers it. Pinned here so that stays true.
+    // The row is bound before it is read, DELIBERATELY. `m[1].length` compiles to
+    // `__ll_index(__ll_index(m, 1), "length")` -- a `.member` after an index becomes an INDEX whose
+    // key is the member name, and D9 makes an absent key throw, so it dies with
+    // `IndexOutOfRange: length`. That is a separate live bug (found while writing this case, filed
+    // in the Qa commit); binding the row first routes around it so this case tests AF-002 and only
+    // AF-002.
+    name: "Qa/AF-002: a spread in a matrix row contributes all its elements",
+    source: `(let r [1 2 3])
+(let m [0,0 | ...r])
+(let row m[1])
+(console.log row.length)
+(console.log row[0] row[1] row[2])`,
+    expect: ["3", "1 2 3"],
+    emitted: { mustNot: [/__ll_copy\(\.\.\./] },
+    wasBroken:
+      "`visitMatrix` maps the identical `asValue` over each row's elements, so a spread in a row " +
+      "collapsed to its first element exactly as in a vector. Untested by the audit; confirmed here.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------
