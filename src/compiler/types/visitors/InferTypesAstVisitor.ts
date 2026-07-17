@@ -1517,6 +1517,15 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   private classStack: string[] = [];
 
   /**
+   * Names caught as a DUPLICATE declaration (LL0212). The forward-reference check (LL0219) is
+   * suppressed for them (Zl/shadowing): the symbol table keeps only the LAST declaration, so a name
+   * re-declared later resolves its EARLIER use to that later decl and looks "used before declared" --
+   * a confusing cascade on top of the real error, which is the duplicate itself. LL0212 is the message
+   * that names the actual bug; LL0219 on the same name is noise.
+   */
+  private duplicateNames = new Set<string>();
+
+  /**
    * How deep we are inside a DEFERRED body -- a function, method, lambda or class body (D24).
    *
    * Everything in there runs AFTER the module is initialised (a class's field initialisers run at
@@ -1967,23 +1976,32 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           : undefined;
       if (!decl) continue;
 
-      const declName = (decl as any).name;
-      const name =
-        typeof declName === "string"
-          ? declName
-          : declName && !ast.isBindingPattern(declName)
-            ? ast.symbolName(declName)
-            : undefined;
-
       const isOperatorDecl =
         decl._type === "function" &&
         ((decl as ast.FunctionNode).modifiers ?? []).some(
           (m) => m.modifier === "operator" || m.modifier === ":operator"
         );
+      if (isOperatorDecl) continue;
 
-      if (name && !isOperatorDecl) {
+      // A destructuring declaration binds N names -- `(let [r g b] ...)` binds r, g, b -- and each is
+      // a declaration in this scope. Reading only a simple `.name` (and skipping binding patterns)
+      // meant `(let [a b] ...)` re-declaring an existing `a` was NOT caught here, so it surfaced as a
+      // confusing LL0219 "used before declared" at the name's earlier use instead (the symbol table
+      // keeps only the LAST declaration, so an earlier use resolves to the later one).
+      const declName = (decl as any).name;
+      const names: string[] =
+        typeof declName === "string"
+          ? [declName]
+          : ast.isBindingPattern(declName)
+            ? ast.bindingIdentifiers(declName).map((n) => ast.symbolName(n))
+            : declName
+              ? [ast.symbolName(declName)]
+              : [];
+
+      for (const name of names) {
         if (declaredHere.has(name)) {
           this.report(TD.AlreadyDeclared, decl, { name });
+          this.duplicateNames.add(name);
         } else {
           declaredHere.set(name, decl);
         }
@@ -4200,6 +4218,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
   private checkForwardReference(node: ast.ASTNode, name: string, entry: SymbolEntry): void {
     if (this.deferredDepth > 0) return; // a body that runs after module init. Safe, and legal (D24).
+
+    // A name with a DUPLICATE declaration (LL0212) has an earlier declaration somewhere, so its use is
+    // not a genuine forward reference -- the symbol table just resolved it to the LAST re-declaration.
+    // Suppress the confusing LL0219 cascade; LL0212 already named the real bug (Zl/shadowing).
+    if (this.duplicateNames.has(name)) return;
 
     // Top-level only. A local is bound by its own block, and `let`-in-a-block ordering is JS's problem.
     if (entry.scope?.parent !== undefined) return;

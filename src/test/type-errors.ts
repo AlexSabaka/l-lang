@@ -170,6 +170,8 @@ interface Case {
   source: string;
   /** A diagnostic must match this. */
   expect?: RegExp;
+  /** ...and (optionally, alongside `expect`) NO diagnostic may match this. */
+  mustNotDiagnose?: RegExp;
   /** ...or there must be NO diagnostic at all. */
   silent?: boolean;
   /** Not yet implemented -- reported, not failed, so the harness tracks progress honestly. */
@@ -1618,6 +1620,37 @@ ${PRODUCER}
       "assigning it to Int was a spurious mismatch. Also fixes nested-index READS (map-of-maps).",
   },
   {
+    name: "Zl/shadowing: a destructuring pattern re-declaring a name is LL0212",
+    source: `(let a <- Int 1)
+(let [a b] [2 3])`,
+    expect: /LL0212/,
+    why:
+      "Same-scope redeclaration is illegal (LL0212). The duplicate check read only a simple `.name` " +
+      "and SKIPPED binding patterns, so `(let [a b] ...)` re-declaring `a` slipped through -- and " +
+      "surfaced as a confusing LL0219 at `a`'s earlier use instead.",
+  },
+  {
+    name: "Zl/shadowing: a duplicated name is not ALSO 'used before declared'",
+    source: `(let [r g b] [1 2 3])
+(console.log r)
+(let [q r] [4 5])`,
+    expect: /LL0212/,
+    mustNotDiagnose: /LL0219/,
+    why:
+      "`r` is declared at both `[r g b]` and `[q r]` -- a duplicate (LL0212). The symbol table keeps " +
+      "only the LAST declaration, so the use of `r` between them resolved to the later `[q r]` and " +
+      "looked 'used before declared' (LL0219). LL0212 is the real message; the LL0219 cascade is noise.",
+  },
+  {
+    name: "Zl/shadowing: a GENUINE forward reference still fires LL0219 (GUARD)",
+    source: `(let x <- Int y)
+(let y <- Int 5)`,
+    expect: /LL0219/,
+    why:
+      "GUARD. `y` is declared ONCE, after its use -- a real temporal-dead-zone reference. The cascade " +
+      "suppression must not swallow this; it keys on DUPLICATE names only.",
+  },
+  {
     name: "Zl/D10: reassigning a `let` binding is refused",
     source: `(let x <- Int 0)
 (x := 1)`,
@@ -1719,9 +1752,13 @@ function runCases(): { failed: number; pending: number } {
     fs.writeFileSync(file, `(\n${c.source}\n)\n`);
 
     const diags = diagnose(file);
+    const matches = (re: RegExp) => diags.some((d) => re.test(d.text) || (d.code != null && re.test(d.code)));
+    // A warning-severity or cascade diagnostic does not block compilation, so "it does NOT also report
+    // X" is an assertion `expect`/`silent` alone cannot make -- the case would pass vacuously.
+    const forbidden = c.mustNotDiagnose ? matches(c.mustNotDiagnose) : false;
     const ok = c.silent
       ? diags.length === 0
-      : diags.some((d) => c.expect!.test(d.text) || (d.code && c.expect!.test(d.code)));
+      : (c.expect ? matches(c.expect) : true) && !forbidden;
 
     if (ok) {
       console.log(`  PASS  ${c.name}`);
