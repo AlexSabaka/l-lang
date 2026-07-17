@@ -432,7 +432,19 @@ function __ll_is_type(val, type) {
 };`,
     // Advance a cursor. Its `next()` already speaks `T?` (nil = done), so this just forwards it. An
     // ordinary, shadowable name like `head`/`list` -- a local or import of `next` wins, as it should.
-    "next": `const next = (it) => (it != null && typeof it.next === 'function') ? it.next() : null;`,
+    // Advance a cursor, honouring D30: `next` returns `T?` (the value, or nil when done). A hand-written
+    // `:implements Iterator` already returns `T?` and passes straight through. But a `:gen` compiles to a
+    // JS `function*`, whose `.next()` returns the ITERATOR-RESULT record `{value, done}` -- forwarding
+    // THAT (TY3) made `(next gen)` an object, never nil, so the documented `(while (!= v nil) ...)`
+    // exhaustion loop never terminated. Unwrap the record (recognised by a boolean `done`): value, or
+    // nil when done.
+    "next": `const next = (it) => {
+  if (it == null || typeof it.next !== 'function') return null;
+  const r = it.next();
+  return (r != null && typeof r === 'object' && typeof r.done === 'boolean')
+    ? (r.done ? null : r.value)
+    : r;
+};`,
 
     // Opt-in DEEP copy (CP3, games). The default struct copy (`__ll_copy`) is shallow-at-reference,
     // C#-style and goldened: it recurses a struct's own fields but returns an ARRAY unchanged, so

@@ -2167,6 +2167,23 @@ const CASES: Case[] = [
       "`[0 1 4]` only because `map` and `take` do no work until `to-list` drives them element by element.",
   },
   {
+    name: "TY3: `next` on a generator returns T?, and the nil-loop terminates",
+    source: `(import "std/iter")
+(fn :gen count-to [n <- Int] -> Iterator<Int> (
+  (mut i 0)
+  (while (< i n) ((yield i) (i := (+ i 1))))))
+(let it (count-to 3))
+(mut sum 0)
+(mut v (next it))
+(while (!= v nil) ((sum := (+ sum v)) (v := (next it))))
+(console.log sum)`,
+    expect: ["3"],
+    wasBroken:
+      "HUNG (or summed an object): a `:gen` is a JS `function*`, so `(next it)` forwarded the raw " +
+      "`{value, done}` record -- never nil -- and the documented `(while (!= v nil) ...)` loop never " +
+      "ended (D30 says `next` returns T?). Now unwrapped: 0+1+2 = 3.",
+  },
+  {
     name: "LB1: `take n` pulls EXACTLY n from its cursor, not n+1",
     source: `(import "std/linq")
 (mut pulls 0)
