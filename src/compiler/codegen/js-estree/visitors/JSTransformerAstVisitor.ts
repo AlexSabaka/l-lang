@@ -810,18 +810,92 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // Classes
   // =========================================================================
 
-  visitClass(node: ast.ClassNode): ESTree.ClassDeclaration {
+  visitClass(
+    node: ast.ClassNode
+  ): ESTree.ClassDeclaration | ESTree.VariableDeclaration {
     // Store the original symbol name (before any encoding) for metadata lookup
     const originalName = node.name.name;
     this.classes.push(originalName);
 
-    return this.runInScope(ScopeType.class, () => {
+    const built = this.runInScope(ScopeType.class, () => {
       const classBuilder = new ClassBuilder(node, this.context, this);
       return classBuilder.build();
     });
+
+    return this.applyModifiersToClass(node, built);
   }
 
-  visitStruct(node: ast.StructNode): ESTree.ClassDeclaration {
+  /**
+   * `(defclass :traced Base ...)` -> `const Base = __ll_modifier_traced()(class Base { ... })`.
+   *
+   * D3b makes a `defmodifier` body a RUNTIME DECORATOR applied at the use site, and the fn path has
+   * done exactly that all along (`applyModifiersToDeclaration`). A class got nothing: the decorator
+   * was emitted and never invoked, silently, at exit 0 (AF-019).
+   *
+   * The reason that is a bug and not a gap is LL0015. Put an unknown modifier on a class and the
+   * compiler answers "Declare it with (defmodifier ...) if it is meant to be a custom modifier" --
+   * so the diagnostic's own remedy promises this works. It did not.
+   *
+   * Same builtin filter as the fn path, and for the same reason recorded there: a builtin modifier
+   * is a FACT for the compiler, not a transformer, and wrapping one emits a call to an
+   * `__ll_modifier_<name>` that does not exist.
+   *
+   * The ClassExpression keeps its `id`, so `Base.name` still reads "Base" and the class can still
+   * refer to itself from its own body.
+   */
+  private applyModifiersToClass(
+    node: ast.ClassNode,
+    declaration: ESTree.ClassDeclaration
+  ): ESTree.ClassDeclaration | ESTree.VariableDeclaration {
+    const customModifiers =
+      node.modifiers?.filter((m) => !isBuiltinModifier(m.modifier)) || [];
+
+    // An unmodified class stays a bare declaration -- no wrap, no hoisting change, no noise.
+    if (customModifiers.length === 0) return declaration;
+
+    let init: ESTree.Expression = {
+      type: "ClassExpression",
+      id: declaration.id,
+      superClass: declaration.superClass,
+      body: declaration.body,
+    } as unknown as ESTree.Expression;
+
+    for (const modifierRef of customModifiers) {
+      // `:tagged["A"]` -- the modifier's own arguments, exactly as the fn path passes them.
+      const modifierArgs = (modifierRef.args ?? []).map((a) => this.visitExpr(a));
+      init = {
+        type: "CallExpression",
+        callee: {
+          type: "CallExpression",
+          callee: {
+            type: "Identifier",
+            name: `__ll_modifier_${modifierRef.modifier}`,
+          },
+          arguments: modifierArgs,
+          optional: false,
+        },
+        arguments: [init],
+        optional: false,
+      } as unknown as ESTree.Expression;
+    }
+
+    return {
+      type: "VariableDeclaration",
+      kind: "const",
+      declarations: [
+        {
+          type: "VariableDeclarator",
+          id: declaration.id!,
+          init,
+        },
+      ],
+      loc: declaration.loc,
+    } as ESTree.VariableDeclaration;
+  }
+
+  visitStruct(
+    node: ast.StructNode
+  ): ESTree.ClassDeclaration | ESTree.VariableDeclaration {
     return this.visitClass(node as unknown as ast.ClassNode);
   }
 

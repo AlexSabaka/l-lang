@@ -2885,6 +2885,56 @@ const CASES: Case[] = [
       "NOT broken -- a GUARD. D28's trailing rest is the case that WORKS, and the mid-rest rejection " +
       "must not touch it.",
   },
+
+  // ===============================================================================================
+  // Qf / AF-019 -- a custom modifier on a `defclass` was silently dropped.
+  //
+  // D3b: a `defmodifier` body is a RUNTIME DECORATOR, applied at the use site. On a fn it is:
+  //
+  //     const add = __ll_modifier_traced()(function (a, b) { ... });
+  //
+  // On a class it was nothing at all -- `class Base { ... }`, undecorated. The SAME modifier, on two
+  // declarations, one honoured and one dropped, exit 0, no diagnostic.
+  //
+  // What makes this worse than an omission: LL0015's own remedy text sends users here. Put an unknown
+  // modifier on a class and the compiler says "Unknown modifier ':abstract' on class. Declare it with
+  // (defmodifier abstract ...) if it is meant to be a custom modifier." Do exactly that, and the
+  // modifier is silently discarded. The diagnostic promised a feature the emitter did not have.
+  //
+  // So this is IMPLEMENTED, where Qe's mid-list rest was rejected -- and the difference is the
+  // ruling, not the effort. D28 says a mid-rest is "a separate, harder feature"; nothing says a class
+  // modifier is unsupported, and LL0015 affirmatively says it works. Enforce the ruling that exists.
+  // ===============================================================================================
+  {
+    name: "Qf/AF-019: a custom modifier on a defclass is APPLIED",
+    source: `(defmodifier traced []
+  (fn [original]
+    (console.log "[traced] APPLIED")
+    original))
+(defclass :traced Base
+  (fn speak [] -> String (return "base")))
+(let b (Base))
+(console.log (b.speak))`,
+    expect: ["[traced] APPLIED", "base"],
+    wasBroken:
+      "printed only `base` -- the decorator was emitted and never invoked for the class. The `fn` " +
+      "half of the same modifier worked, which is what proves the drop. AF-019.",
+  },
+  {
+    // The GUARD: an unmodified class must stay a bare ClassDeclaration. The wrap is what turns a
+    // class declaration into a `const X = ...(class X{})`, and paying that for every class in the
+    // corpus would be both noise and a hoisting change.
+    name: "Qf/AF-019: a class with no custom modifier is not wrapped",
+    source: `(defclass Plain
+  (fn speak [] -> String (return "plain")))
+(let p (Plain))
+(console.log (p.speak))`,
+    expect: ["plain"],
+    emitted: { mustNot: [/__ll_modifier_/], must: [/class Plain/] },
+    wasBroken:
+      "NOT broken -- a GUARD. Only a CUSTOM (defmodifier-declared) modifier may wrap; a builtin is a " +
+      "fact for the compiler, and no modifier at all must leave the declaration exactly as it was.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------
