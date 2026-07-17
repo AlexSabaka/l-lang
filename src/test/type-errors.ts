@@ -1618,6 +1618,30 @@ ${PRODUCER}
       "assigning it to Int was a spurious mismatch. Also fixes nested-index READS (map-of-maps).",
   },
   {
+    name: "Zl: two :extension of the same name is a duplicate, not a silent last-wins",
+    source: `(defstruct Rect (mut :ctor w <- Int) (mut :ctor h <- Int))
+(defstruct Circ (mut :ctor r <- Int))
+(fn :extension total [self <- Rect] -> Int (return (* self.w self.h)))
+(fn :extension total [self <- Circ] -> Int (return (* self.r self.r)))`,
+    expect: /LL0212/,
+    why:
+      "Zl/extension-overload: one-extension-per-name is the rule (LINQ names are unique; full " +
+      "overload-by-receiver is a separate feature). Two `:extension total` silently last-won and then " +
+      "crashed at run time (`rc.total is not a function`). The duplicate check ran per-BLOCK but never " +
+      "at the module top level, where free functions and extensions live.",
+  },
+  {
+    name: "Zl: an :operator overloaded at top level is NOT a duplicate (GUARD)",
+    source: `(defstruct C (mut :ctor re <- Real) (mut :ctor im <- Real))
+(fn :operator + [a <- C b <- C] -> C (return (C (+ a.re b.re) (+ a.im b.im))))
+(fn :operator - [a <- C] -> C (return (C (- 0.0 a.re) (- 0.0 a.im))))`,
+    silent: true,
+    why:
+      "GUARD. Operators OVERLOAD by arg types via __ll_op_registry -- 09_operators declares `-` twice " +
+      "on purpose (binary + unary). The top-level duplicate check must exclude them, exactly as the " +
+      "per-block check already does.",
+  },
+  {
     name: "Zl: a function-typed param carries its declared RETURN type",
     source: `(fn use [f <- (fn [] -> Int)] -> Void (
   (let x <- Int (f))

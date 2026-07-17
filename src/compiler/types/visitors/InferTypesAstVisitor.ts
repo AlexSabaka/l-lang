@@ -1937,8 +1937,58 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
   visitProgram(node: ast.ProgramNode) {
     this.typeEnv.enterScope(node);
+    // NOT a duplicate-declaration check here, deliberately (Zl/extension-overload). The per-block check
+    // (`visitList`) already catches duplicate free functions and `:extension`s in conventionally-written
+    // code -- everything inside one wrapping `( ... )` -- which is every real file. Running it at the
+    // UNWRAPPED module top level as well would close a gap no real file hits, and it breaks the REPL:
+    // each cell accumulates as a top-level form, and redefining `x` (or a class) is the REPL's whole
+    // point, governed by its own REPL0001 rebind rule, not LL0212. There is no compile-mode flag to
+    // tell the two apart, so the top level is left to the REPL's rules.
     node.program.forEach(item => this.visit(item));
     this.typeEnv.exitScope();
+  }
+
+  /**
+   * Report a name declared TWICE in the same scope (LL0212). Syntactic and per-scope, used by the
+   * block walk (`visitList`).
+   *
+   * Operators are exempt: they OVERLOAD by arity/type -- `09_operators` declares `-` twice on purpose
+   * (binary and unary), distinguished at dispatch. `:extension` functions do NOT overload by receiver
+   * (one name, one extension -- the ruled stance), so two of the same name ARE a duplicate.
+   */
+  private checkDuplicateDeclarations(items: ast.ASTNode[]): void {
+    const declaredHere = new Map<string, ast.ASTNode>();
+
+    for (const item of items) {
+      const decl = this.isDeclaration(item)
+        ? item
+        : ast.isListNode(item) && this.isDeclaration(item.nodes[0])
+          ? item.nodes[0]
+          : undefined;
+      if (!decl) continue;
+
+      const declName = (decl as any).name;
+      const name =
+        typeof declName === "string"
+          ? declName
+          : declName && !ast.isBindingPattern(declName)
+            ? ast.symbolName(declName)
+            : undefined;
+
+      const isOperatorDecl =
+        decl._type === "function" &&
+        ((decl as ast.FunctionNode).modifiers ?? []).some(
+          (m) => m.modifier === "operator" || m.modifier === ":operator"
+        );
+
+      if (name && !isOperatorDecl) {
+        if (declaredHere.has(name)) {
+          this.report(TD.AlreadyDeclared, decl, { name });
+        } else {
+          declaredHere.set(name, decl);
+        }
+      }
+    }
   }
 
   private static readonly DECLARATIONS = [
@@ -2000,42 +2050,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     // Done syntactically, per-list, rather than through the symbol table -- deliberately. Symbol
     // resolution is top-level-only and cannot see nested scopes (the audit's P6), so asking it
     // "was this name already declared HERE" would get an answer about the wrong scope.
-    const declaredHere = new Map<string, ast.ASTNode>();
-
-    for (const item of node.nodes) {
-      const decl = this.isDeclaration(item)
-        ? item
-        : ast.isListNode(item) && this.isDeclaration(item.nodes[0])
-          ? item.nodes[0]
-          : undefined;
-
-      if (decl) {
-        const declName = (decl as any).name;
-        const name =
-          typeof declName === "string"
-            ? declName
-            : declName && !ast.isBindingPattern(declName)
-              ? ast.symbolName(declName)
-              : undefined;
-
-        // Operator declarations OVERLOAD -- that is the point of them. 09_operators.lisp declares
-        // `-` twice on purpose: binary `(fn :operator - [c1 c2])` and unary `(fn :operator - [c1])`.
-        // They share a name and are distinguished by arity, so they are not duplicates.
-        const isOperatorDecl =
-          decl._type === "function" &&
-          ((decl as ast.FunctionNode).modifiers ?? []).some(
-            (m) => m.modifier === "operator" || m.modifier === ":operator"
-          );
-
-        if (name && !isOperatorDecl) {
-          if (declaredHere.has(name)) {
-            this.report(TD.AlreadyDeclared, decl, { name });
-          } else {
-            declaredHere.set(name, decl);
-          }
-        }
-      }
-    }
+    this.checkDuplicateDeclarations(node.nodes);
 
     this.visitBlock(node.nodes, (item) => this.visitStatement(item));
   }
