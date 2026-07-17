@@ -482,14 +482,19 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       }
     }
     
-    // Reflection reported `nullable: false` UNCONDITIONALLY -- for every type, including one that had
-    // just been annotated `?`. It could hardly do otherwise: until D9 nothing ever set the flag, so
-    // the constant was as true as anything else available. It reads the real thing now.
+    // A DELIBERATE CONSTANT, not a read. `nullable` describes a TYPE ENTRY -- a class, struct,
+    // interface, function, or primitive -- and a type DECLARATION has no optionality: `?` is a
+    // property of a SLOT (a param, a return, a member), and those already carry it in their rendered
+    // type string (`returns: "String?"`). So there is nothing here for `nullable` to read, and it can
+    // only ever be false.
     //
-    // The metadata KEY keeps its name. `nullable: false` is printed by a passing golden
-    // (02_fn_types.expect), the value is unchanged for every non-optional type, and renaming a
-    // public reflection field is a separate call from making it honest.
-    result.nullable = !!metadata.optional;
+    // It used to say `= !!metadata.optional` under a comment claiming "it reads the real thing now" --
+    // but `metadata` is a CodegenMetadata, which has no `optional` field (that lives on InferredType),
+    // so the read was always `undefined` and the flag always false. `metadata: any` is why nothing
+    // objected. The value is unchanged; the lie is gone. The primitives seed (above) already hardcodes
+    // this same `false`. The KEY stays -- `nullable: false` is public reflection output pinned by
+    // 02_fn_types.expect; whether to keep a permanently-false field at all is a separate call.
+    result.nullable = false;
 
     return result;
   }
