@@ -3652,7 +3652,6 @@ catch b ((console.log "two")))`,
       "trailing cond returns its clause's value.",
   },
 
-
   // ===============================================================================================
   // Za / D41 -- `(x :of T)` is a TYPE GUARD in expression position, and it NARROWS.
   //
@@ -3720,6 +3719,95 @@ catch b ((console.log "two")))`,
       "NOT broken -- a GUARD on the scope. `withNarrowed` binds in a FRESH SCOPE and exits it, so the " +
       "narrowed type must not survive the branch. If it leaked, `x` would be String after the if and " +
       "the union assignment below would report.",
+  },
+
+  // ===============================================================================================
+  // Zb -- A COMMENT INVERTED AN `if`.
+  //
+  //     (if (x :of String)
+  //         ; a note
+  //         (console.log "hi"))
+  //
+  //       ->  then = the COMMENT
+  //           else = (console.log "hi")
+  //
+  // The body fired only when the guard was FALSE. Silently, at exit 0. A comment is the one thing in
+  // a program nobody expects to change behaviour, which is exactly why it was invisible.
+  //
+  // `if`/`when`/`cond`/`while` assign their parts BY POSITION -- D12 keeps them positional and made
+  // only `for` named-clause -- and a comment parses as an ordinary expression, so it TOOK A SLOT and
+  // shifted everything after it by one.
+  //
+  // D12 names this exact bug class, about `for`: "The old builder walked a flat `expressions` array
+  // with a moving index and guessed each clause's role from its POSITION ... that positional shuffle
+  // is exactly the bug the audit meant by 'the for-each feature and the for-each bug are the same
+  // code'." D12's cure was to make `for`'s roles keyword-based. The forms it left positional kept the
+  // disease, and nobody went back for them.
+  //
+  // FOUND BY RUNNING SABAKA'S OWN EXAMPLE, not by reading it: `03-types/00_type_basics.lisp` has a
+  // comment between the `:of` guard and its body, so the guard printed nothing when it matched. The
+  // file compiled clean the whole time. AF-047 covers comments in `cond`/`match` clause LISTS, where
+  // they are a hard ERROR; this is the same class one step worse -- an `if` runs, inverted.
+  // ===============================================================================================
+  {
+    name: "Zb: a comment does not take the `then` slot of an `if`",
+    source: `(let x <- Int | String "s")
+(if (x :of String)
+    ; a comment between the condition and the body
+    (console.log "THEN fired"))
+(if (x :of Int)
+    ; and here
+    (console.log "ELSE fired -- the guard was FALSE"))`,
+    // `x` IS a String: the first must fire, the second must not. Before the fix it was exactly
+    // inverted -- the second printed and the first did not.
+    expect: ["THEN fired"],
+    wasBroken:
+      "printed `ELSE fired -- the guard was FALSE` and NOT `THEN fired`. The comment became the THEN " +
+      "branch and the body became the ELSE, so every commented `if` in the language ran backwards.",
+  },
+  {
+    name: "Zb: a comment does not shift `when` / `while` / `cond` bodies either",
+    source: `(mut n <- Int 0)
+(when (== n 0) :then (
+    ; a comment first
+    (console.log "when fired")))
+(while (< n 2) (
+    ; and here
+    (n := (+ n 1))))
+(console.log n)
+(console.log (cond
+    ((> n 5) "big")
+    (:else   "small")))`,
+    expect: ["when fired", "2", "small"],
+    wasBroken:
+      "the same positional shift: `when`'s condition, `while`'s condition and a `cond` clause's " +
+      "condition/body all come from `expressions[i]`, so a leading comment displaced each of them. " +
+      "One helper now filters comments for all four, so they cannot disagree.",
+  },
+  {
+    // THE TRADE, pinned so it is a decision and not a surprise.
+    //
+    // A comment in a BLOCK still reaches the output -- that path is untouched. A comment in a
+    // POSITIONAL SLOT is dropped from the output: it is not a value, so it has no slot to be emitted
+    // from. It used to survive only by BEING the then-branch, which is the bug.
+    //
+    // Losing it costs a comment in the emitted JS, which nobody reads; keeping it cost an inverted
+    // `if`, which everybody runs. The source still has it. If trivia ever needs to round-trip (the
+    // llang -> llang emitter is the only consumer that would care), that is attachment machinery and
+    // a phase of its own -- not a slot.
+    name: "Zb: a block comment is still emitted; a positional one is dropped",
+    source: `(fn f [] -> Int (
+  ;; a block comment
+  (return 1)
+))
+(if true
+    ; a positional comment
+    (console.log (f)))`,
+    expect: ["1"],
+    emitted: { must: [/a block comment/], mustNot: [/a positional comment/] },
+    wasBroken:
+      "NOT broken -- a GUARD on the trade. The positional comment WAS emitted before, as the `then` " +
+      "branch it had stolen.",
   },
 ];
 

@@ -1029,15 +1029,46 @@ export class LLangAstBuilder extends BaseCstVisitor {
   // ========================================================================
   // CONTROL FLOW
   // ========================================================================
+  /**
+   * The positional expressions of a form, with COMMENTS REMOVED.
+   *
+   * `if`/`when`/`cond`/`while` assign their parts BY POSITION -- D12 keeps them positional and made
+   * only `for` named-clause. A comment parses as an ordinary expression and lands in `ctx.expression`
+   * alongside everything else, so it TOOK A SLOT:
+   *
+   *     (if (x :of String)
+   *         ; a note
+   *         (console.log "hi"))
+   *
+   *     ->  then  = the comment
+   *         else  = (console.log "hi")
+   *
+   * The `if` ran INVERTED -- the body fired only when the guard was FALSE -- silently, at exit 0. A
+   * comment is the one thing in a program nobody expects to change behaviour, which is exactly why
+   * this was invisible.
+   *
+   * D12 already names this bug class, about `for`: "The old builder walked a flat `expressions` array
+   * with a moving index and guessed each clause's role from its POSITION ... that positional shuffle
+   * is exactly the bug the audit meant." D12's cure was to make `for`'s roles keyword-based; the
+   * forms it left positional kept the disease.
+   *
+   * Comments are not values and never occupy a slot. One helper, so the four cannot disagree.
+   */
+  private positionalExpressions(ctx: any): ast.ASTNode[] {
+    return (ctx.expression ?? [])
+      .map((e: any) => this.visit(e))
+      .filter((n: any) => n && n._type !== "comment");
+  }
+
   whenExpr(ctx: any): ast.WhenNode {
-    const expressions = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
+    const expressions = this.positionalExpressions(ctx);
     const condition = expressions.length > 0 ? expressions[0] : null;
     const then = expressions.slice(1);
     return this.makeNode("when", ctx, { condition, then });
   }
 
   ifExpr(ctx: any): ast.IfNode {
-    const expressions = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
+    const expressions = this.positionalExpressions(ctx);
     const condition = expressions.length > 0 ? expressions[0] : null;
     const then = expressions.length > 1 ? expressions[1] : null;
     const elseThen = expressions.length > 2 ? expressions[2] : null;
@@ -1050,7 +1081,7 @@ export class LLangAstBuilder extends BaseCstVisitor {
   }
 
   condCase(ctx: any): ast.CondCaseNode {
-    const expressions = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
+    const expressions = this.positionalExpressions(ctx);
 
     // `(:else body)` -- the DEFAULT clause (D12). It parses with no condition and exactly one
     // expression, and is given the condition `true`.
@@ -1138,7 +1169,7 @@ export class LLangAstBuilder extends BaseCstVisitor {
   }
 
   whileExpr(ctx: any): ast.WhileNode {
-    const expressions = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
+    const expressions = this.positionalExpressions(ctx);
     const condition = expressions.length > 0 ? expressions[0] : null;
     // Multiple body expressions - wrap in list or use single
     let then = null;
