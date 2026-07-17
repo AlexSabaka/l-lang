@@ -2787,6 +2787,46 @@ const CASES: Case[] = [
       "NOT broken -- a GUARD. The shim folded LEFT with JS's own `||`/`&&`, and native `a || b || c` " +
       "is the identical fold, so every value here must survive the switch untouched.",
   },
+
+  // ===============================================================================================
+  // Qd / D39 -- `and` / `or` / `not` are aliases for `&&` / `||` / `!`.
+  //
+  // They did not exist: `(and a b)` was `LL0210 'and' is not defined`. In a Lisp-syntax language
+  // that is a conspicuous omission, and plenty of modern languages carry both spellings. Ruled in
+  // as part of D39.
+  //
+  // Rewritten in the DESUGARER -- after symbols, before types -- so both halves of the compiler read
+  // one program. The checker has no rule for a function named `and`; it types `(&& a b)`. Codegen's
+  // short-circuit path keys on `&&`/`||` too. Aliasing in either place alone would require the rule
+  // to be stated twice, which is exactly how this compiler has previously ended up with two answers.
+  //
+  // Head position only: `(and a b)` is the operator, while a value named `and` is untouched.
+  // ===============================================================================================
+  {
+    name: "Qd: `and` / `or` / `not` are the operators they alias",
+    source: `(console.log (and true false))
+(console.log (or false true))
+(console.log (not true))
+(console.log (and true true false))
+(console.log (or false false true))`,
+    expect: ["false", "true", "false", "false", "true"],
+    wasBroken: "`ELL0210 'and' is not defined` -- a Lisp with no `and`. D39 ruled them in.",
+  },
+  {
+    // The alias must inherit the SEMANTICS, not just the name -- otherwise `or` would be a
+    // second-class `||` that evaluates both sides, which is the bug Qc just removed.
+    name: "Qd: an aliased `or`/`and` short-circuits exactly like `||`/`&&`",
+    source: `(fn boom [] -> Bool (
+  (throw (Error "the right operand must not run"))
+  (return true)
+))
+(console.log (or true (boom)))
+(console.log (and false (boom)))`,
+    expect: ["true", "false"],
+    wasBroken:
+      "n/a -- `or` did not exist. A GUARD that the alias desugars to the real operator rather than " +
+      "to a call, so it cannot drift back into evaluating both operands.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

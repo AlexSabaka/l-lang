@@ -38,6 +38,13 @@ import { formatWithOptions } from "util";
  * Measured: 0 lexical misses when the original parent is kept, 1056 when the chain is rebuilt.
  */
 export class DesugarAstVisitor extends BaseAstTreeWalker {
+  /** `and`/`or`/`not` -> the operators they alias (D39). See `transformLogicalAlias`. */
+  private static readonly LOGICAL_ALIASES: ReadonlyMap<string, string> = new Map([
+    ["and", "&&"],
+    ["or", "||"],
+    ["not", "!"],
+  ]);
+
   /**
    * Inject the implicit return (a function's tail expression becomes an explicit `(return e)`)?
    *
@@ -99,6 +106,9 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     // `(gs[0].hi)` is a CALL while `gs[0]` is a read. This copy predated D1 and would have destroyed
     // the call. Two implementations of one rule is how the compiler ends up with two answers -- and
     // this one was the wrong answer.
+    const aliased = this.transformLogicalAlias(node);
+    if (aliased) return aliased;
+
     if (this.isPipeline(node)) {
       const piped = this.transformPipeline(node);
       if (piped) return piped;
@@ -113,6 +123,44 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     return {
       ...node,
       nodes: node.nodes.map((n) => this.visit(n) as ast.ASTNode),
+    } as ast.ListNode;
+  }
+
+  /**
+   * `and` / `or` / `not` -> `&&` / `||` / `!` (D39).
+   *
+   * They did not exist at all: `(and a b)` was `LL0210 'and' is not defined`. Omitting them from a
+   * Lisp-syntax language was a miss, and plenty of modern languages carry both spellings.
+   *
+   * WHY HERE. The desugarer runs after symbols and before types, which is the only point where ONE
+   * rewrite is read by both halves of the compiler. The checker has no rule for a function named
+   * `and` -- it types `(&& a b)` -- and codegen's short-circuit path keys on `&&`/`||` as well.
+   * Teaching either one alone would mean stating the alias twice, and two implementations of one
+   * rule is how this compiler has previously ended up with two answers (see visitList's own note
+   * about the trivial-list unwrap, right above).
+   *
+   * HEAD POSITION ONLY. `(and a b)` is the operator; a value that happens to be named `and` is left
+   * alone. The consequence, stated rather than discovered later: the aliases are not usable AS
+   * values -- `(map not xs)` still reports `not` undefined, where `(map ! xs)` works. Aliasing a
+   * bare identifier would mean reserving the words outright, which is a bigger ruling than D39 made.
+   */
+  private transformLogicalAlias(node: ast.ListNode): ast.ASTNode | undefined {
+    const nodes = Array.isArray(node.nodes) ? node.nodes : [node.nodes];
+    const head = nodes[0];
+    if (!head || head._type !== "simple-identifier") return undefined;
+
+    const symbol = DesugarAstVisitor.LOGICAL_ALIASES.get((head as any).id);
+    if (!symbol) return undefined;
+
+    // `...head` / `...node` deliberately: the rebuilt nodes keep `_parent`, which SymbolTable.scopeOf
+    // climbs to find a node's scope. A freshly-constructed node would be invisible to the scope index
+    // (see Context's desugar-stage note -- 0 lexical misses preserved, 1056 when the chain is rebuilt).
+    return {
+      ...node,
+      nodes: [
+        { ...head, id: symbol },
+        ...nodes.slice(1).map((n) => this.visit(n) as ast.ASTNode),
+      ],
     } as ast.ListNode;
   }
 

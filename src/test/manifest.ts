@@ -199,10 +199,11 @@ export const MANIFEST: Record<string, ManifestEntry> = {
     status: "xfail",
     reason:
       "The for-OF blocker is GONE (Pa): the old reason offered 'either add a :of clause to D12 or " +
-      "rewrite the example' -- the example was rewritten, to `:each dy :from offsets :then`. Its " +
-      "`(not (and ...))` / `(or ...)` also went to `!`/`&&`/`||`: the word-forms do not exist " +
-      "language-wide (`(and a b)` is LL0210 'and' is not defined). Whether `and`/`or`/`not` SHOULD " +
-      "exist as aliases is an open ruling. " +
+      "rewrite the example' -- the example was rewritten, to `:each dy :from offsets :then`. Pa also " +
+      "had to replace its `(not (and ...))` / `(or ...)` with `!`/`&&`/`||`, because the word-forms " +
+      "did not exist (`(and a b)` was LL0210 'and' is not defined). That is RESOLVED: D39 ruled the " +
+      "aliases in and Qd built them, so the example's ORIGINAL word-forms are restored -- the " +
+      "workaround outlived its cause by four commits. " +
       "The file now COMPILES CLEAN and RUNS -- no diagnostics, exit 0 up to the throw. It fails at " +
       "RUNTIME: `RangeError: IndexOutOfRange: -1 (length 3)`, because count-neighbors reads " +
       "`grid[(+ y dy)]` with dy=-1 at y=0. The COMPILER IS CORRECT -- that is its emitted bounds " +
