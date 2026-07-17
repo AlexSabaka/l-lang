@@ -282,7 +282,14 @@ const PROBES: Probe[] = [
     source: "(try ((throw (Error \"x\"))) catch a ((console.log 1)) catch b ((console.log 2)))",
   },
 
-  // --- codegen band (LL0100-LL0102): the backend must actually run, so stage "codegen" ---
+  // --- codegen band (LL0100-LL0103): the backend must actually run, so stage "codegen" ---
+  {
+    // Ya/D40. `return` returns from the FUNCTION (the rule); the JS backend cannot express that from
+    // inside an IIFE yet, so it refuses rather than swallowing. Deleted when HIR lands.
+    name: "LL0103 return in a match arm",
+    source: "(fn f [x <- Int] -> Int ((match x { 1 => (return 5) _ => (return 9) }) (return 0)))",
+    stage: "codegen",
+  },
   { name: "LL0102 non-name in binding position", source: "(let [1] [5])", stage: "codegen" },
   {
     name: "LL0102 constructor default before required",

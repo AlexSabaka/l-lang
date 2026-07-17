@@ -379,6 +379,21 @@
     ]
   },
   {
+    "probe": "LL0103 return in a match arm",
+    "diagnostics": [
+      {
+        "code": "LL0103",
+        "severity": "error",
+        "text": "'return' cannot be used inside a `match` arm, which compiles to an expression: the 'return' would exit only that expression, not the enclosing function. This is a limitation of the JS backend, not the language -- 'return' returns from the function (D40), and a lowering path that can express it is planned. For now, restructure so the 'return' sits in statement position: a 'cond' clause, or an 'if'/'when' that is not being used as a value."
+      },
+      {
+        "code": "LL0103",
+        "severity": "error",
+        "text": "'return' cannot be used inside a `match` arm, which compiles to an expression: the 'return' would exit only that expression, not the enclosing function. This is a limitation of the JS backend, not the language -- 'return' returns from the function (D40), and a lowering path that can express it is planned. For now, restructure so the 'return' sits in statement position: a 'cond' clause, or an 'if'/'when' that is not being used as a value."
+      }
+    ]
+  },
+  {
     "probe": "LL0102 non-name in binding position",
     "diagnostics": [
       {

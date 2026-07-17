@@ -268,6 +268,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   private enumKeys: Record<string, string> = {};
   private inlineStandardSymbols: string[] = [];
   private inlinedSymbols: Record<string, string> = {};
+
+  /** `(return ...)` nodes already refused by LL0103, so nested IIFEs do not report one twice. */
+  private refusedReturns: Set<ast.ASTNode> = new Set();
   private inlinedDefinitions: Record<string, ESTree.Statement> = {};
   /**
    * The file being compiled. Set by `beginProgram()` -- which `compile()` calls, and which an external
@@ -530,6 +533,86 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    */
   private visitExpr(node: ast.ASTNode): ESTree.Expression {
     return this.asExpression(this.visit(node), node);
+  }
+
+  /**
+   * Does this subtree contain a SOURCE `(return ...)` that would end up inside an IIFE (D40/LL0103)?
+   *
+   * STOPS AT FUNCTION BOUNDARIES, and that is the whole subtlety. A nested `fn` or lambda's `return`
+   * returns from THAT function, which is correct and ordinary -- `(match x { 1 => (fn [] (return 5)) })`
+   * must not be refused. A walk that does not stop here reports the most common code in the language.
+   *
+   * Only SOURCE returns count. The desugarer injects `(return e)` of its own (a function's tail
+   * expression; both branches of a trailing `if`), but those land at STATEMENT position or wrap the
+   * whole expression -- never inside an operand -- so they are never seen from the sites that call
+   * this. Verified against `wrapIfValue`/`wrapTail` rather than assumed.
+   *
+   * Returns the offending node, so the diagnostic points at the `return` the user wrote rather than
+   * at the enclosing form they did not.
+   */
+  private findSourceReturn(node: ast.ASTNode | undefined | null): ast.ASTNode | undefined {
+    if (!node || !ast.isAstNode(node)) return undefined;
+
+    // A nested function OWNS its returns. Do not descend.
+
+    if (node._type === "function") return undefined;
+
+    // A LIST's content is `nodes`, and ONLY `nodes` -- which is what `ListNode` declares, and is not
+    // the same as "every key on the object".
+    //
+    // Some list nodes reaching codegen carry a FUNCTION's entire field set as well (`params`,
+    // `returns`, `body`, `modifiers`, ...) while still saying `_type: "list"`. `BaseAstTreeWalker.visit`
+    // builds `{...super.visit(node), _type: node._type}` -- so when a `visitList` returns a node of a
+    // DIFFERENT kind, the walker spreads that node's fields and then stamps the original `_type` back
+    // over the top. A lambda in expression position -- `(fn [] -> Int (return 5))`, a one-element list
+    // around a function -- comes out of that as a node that lies about what it is.
+    //
+    // It works by luck: codegen dispatches on `_type`, so the hybrid is visited as a list, reads
+    // `nodes[0]` (the REAL function node), and never touches the stray fields. This walk was the first
+    // code to read them -- and a generic key walk went straight into the lambda's `body` and found its
+    // `(return 5)`, which is the lambda's own business. Filed; not fixed here.
+    //
+    // Walking `nodes` only is not a workaround for that, it is the correct reading of a list.
+    if (ast.isListNode(node)) {
+      const nodes = (node as ast.ListNode).nodes ?? [];
+      const head = nodes[0];
+      if (
+        head?._type === "simple-identifier" &&
+        (head as ast.SimpleIdentifierNode).id === "return"
+      ) {
+        return node;
+      }
+      for (const child of nodes.flat(Infinity)) {
+        const found = this.findSourceReturn(child as ast.ASTNode);
+        if (found) return found;
+      }
+      return undefined;
+    }
+
+    for (const key of ast.getNodeIterableKeys(node)) {
+      const value = (node as any)[key];
+      const children = Array.isArray(value) ? value.flat(Infinity) : [value];
+      for (const child of children) {
+        const found = this.findSourceReturn(child as ast.ASTNode);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Refuse a `return` that an IIFE would capture (D40/LL0103), once.
+   *
+   * DEDUPED: IIFEs nest -- an `if` in value position inside a `match` arm would scan the same
+   * `(return ...)` twice and report it twice. The node is the identity, so the first site to see it
+   * wins and the rest stay quiet.
+   */
+  private refuseReturnInExpression(node: ast.ASTNode, form: string): void {
+    const offender = this.findSourceReturn(node);
+    if (!offender) return;
+    if (this.refusedReturns.has(offender)) return;
+    this.refusedReturns.add(offender);
+    this.report(CD.ReturnInExpressionPosition, offender, { form });
   }
 
   private runInScope<T>(scope: ScopeType, action: () => T): T {
@@ -1758,6 +1841,16 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         : ESTreeBuilder.sequenceExpression(node, exprs);
     }
 
+    // THE IIFE IS WHERE A `return` STOPS MEANING WHAT IT SAYS (D40/LL0103). Everything above this
+    // point either kept the node as an expression or turned it into a ternary/sequence, all of which
+    // preserve a `return`'s meaning because they contain none. Below, the statements are moved INTO
+    // an arrow -- so a `(return x)` among them returns from the arrow, and the function the user
+    // meant keeps running. Refuse instead of silently rewiring the control flow.
+    //
+    // This is the chokepoint for `||`/`&&` operands and for an `if` in value position (whose branches
+    // are coerced through here). `visitMatch` builds its own arrow and checks separately.
+    this.refuseReturnInExpression(node, "an expression");
+
     return {
       type: "CallExpression",
       callee: {
@@ -2259,6 +2352,17 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // =========================================================================
 
   visitMatch(node: ast.MatchNode): ESTree.CallExpression {
+    // `match` is ALWAYS an IIFE -- its return type says so -- so a `return` in an arm always returns
+    // from the arrow, even when the match itself sits in statement position. That makes it the one
+    // form where D40 is broken regardless of where you put it, and the likeliest place in a Lisp to
+    // write a `return`. It does not route through `asExpression`, so it is checked here (LL0103).
+    //
+    // The ARMS, not the scrutinee: `(match (f x) {...})` is fine, and only an arm's body ends up
+    // inside the arrow.
+    for (const c of node.cases ?? []) {
+      this.refuseReturnInExpression(c as unknown as ast.ASTNode, "a `match` arm");
+    }
+
     return this.runInScope(ScopeType.match, () => {
       const matchVar = uniqueIdentifier("tmp_match_id");
       const matchVarId = ESTreeBuilder.identifier(node, matchVar);

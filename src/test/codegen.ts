@@ -3306,6 +3306,128 @@ catch b ((console.log "two")))`,
       "NOT broken -- a GUARD. The local fold worked; this pins that draining the inlined definitions " +
       "did not change it, and that the folded function is still gone from the output.",
   },
+
+  // ===============================================================================================
+  // Ya / D40 -- `return` in EXPRESSION position is REFUSED, pending HIR.
+  //
+  // THE RULING (D40) is that `return` returns from the enclosing FUNCTION, unconditionally, from any
+  // code path. No positional caveats: a language where `return` works in a `cond` clause and silently
+  // evaporates in a `match` arm is teaching a rule that does not exist.
+  //
+  // The emitter cannot honour that yet, and cannot be made to cheaply. Six forms, two behaviours,
+  // measured:
+  //
+  //     return inside cond clause        -> returns from the function   OK
+  //     return inside if (statement)     -> returns from the function   OK
+  //     return inside when :then         -> returns from the function   OK
+  //     return inside a match ARM        -> SWALLOWED
+  //     return inside if (value position)-> SWALLOWED
+  //     return as a ||/&& operand        -> SWALLOWED
+  //
+  // The split is mechanical: forms that emit STATEMENTS let `return` be a real return; forms that
+  // emit an IIFE (match -- always; if-as-value; an operand) turn a non-local exit into a local one.
+  // The IIFE arrived with P5c's `asExpression`, D25/Xb pinned cond's behaviour, and nothing ever
+  // stated the rule -- so the two halves drifted apart in silence.
+  //
+  // Honouring A without an IR means statement hoisting -- `(let x (if c (return 1) 2))` becomes
+  // `let x; if (c) { return 1; } else { x = 2; }`, and `(f (|| a (return b)) c)` has to hoist above
+  // the call. That is ANF conversion: building an HIR badly, inline, without admitting it. It belongs
+  // in the lowering path (AST -> HIR -> ESTree), not bolted onto the emitter.
+  //
+  // So: RULE A, REFUSE what cannot honour it. The project's own pattern -- D3/LL0023 refuses
+  // `defmacro` by name as "Planned"; Qe refuses the mid-list rest D28 says is unbuilt. Ruled in, not
+  // built, refuses rather than lies. When HIR lands, the diagnostic is deleted and these cases flip
+  // from "refused" to "works" -- so they are also HIR's acceptance test, written before it starts.
+  //
+  // Nothing in examples/ or lib/ hits this. Measured: zero sites.
+  // ===============================================================================================
+  {
+    name: "Ya/D40: `return` as a `||` operand is REFUSED, not swallowed",
+    source: `(fn f [] -> String (
+  (if (|| false (return "early")) (console.log "UNREACHABLE"))
+  (return "fell-through")
+))
+(console.log (f))`,
+    expectDiagnostic: /LL0103/,
+    wasBroken:
+      "printed `UNREACHABLE` and then `fell-through` -- the return became `(() => { return \"early\"; })()`, " +
+      "so it returned from the ARROW and handed its value to `||` as an ordinary operand. Silent. AF-003.",
+  },
+  {
+    // The one that matters: a match arm is where a Lisp programmer actually reaches for `return`, and
+    // AF-003 never names it.
+    name: "Ya/D40: `return` in a match arm is REFUSED, not swallowed",
+    source: `(fn f [x <- Int] -> String (
+  (match x { 1 => (return "match-early") _ => (return "match-other") })
+  (return "fell-through")
+))
+(console.log (f 1))`,
+    expectDiagnostic: /LL0103/,
+    wasBroken:
+      "printed `fell-through` -- BOTH arms' returns returned from the match's IIFE, not from `f`. " +
+      "Unreported by the audit, and the likeliest place in the language to write a `return`.",
+  },
+  {
+    name: "Ya/D40: `return` inside an if in VALUE position is REFUSED",
+    source: `(fn f [c <- Bool] -> String (
+  (let r (if c (return "if-early") "no"))
+  (return "fell-through")
+))
+(console.log (f true))`,
+    expectDiagnostic: /LL0103/,
+    wasBroken:
+      "printed `fell-through`. A value-position `if` is a ternary, and each branch is coerced to an " +
+      "expression -- so the return was IIFE'd exactly as a `||` operand is. Also unreported.",
+  },
+  {
+    // THE GUARD THAT DEFINES THE BOUNDARY. These three are the forms that emit STATEMENTS, they work
+    // today, and D25/Xb pins the cond one under "The three that must NOT move". The diagnostic must
+    // not touch them -- if it does, it has misidentified position for form.
+    name: "Ya/D40: `return` in cond / if / when still returns from the FUNCTION",
+    source: `(fn viaCond [x <- Int] -> String (
+  (cond ((> x 0) (return "cond-early")))
+  (return "cond-fell")
+))
+(fn viaIf [x <- Int] -> String (
+  (if (> x 0) (return "if-early"))
+  (return "if-fell")
+))
+(fn viaWhen [x <- Int] -> String (
+  (when (> x 0) :then ((return "when-early")))
+  (return "when-fell")
+))
+(console.log (viaCond 1))
+(console.log (viaIf 1))
+(console.log (viaWhen 1))`,
+    expect: ["cond-early", "if-early", "when-early"],
+    wasBroken:
+      "NOT broken -- THE GUARD. These are the statement-position forms, and they are the half of the " +
+      "language that already honours D40. A diagnostic that fires here has confused FORM with POSITION.",
+  },
+  {
+    // A nested function's `return` returns from THAT function, and is none of this rule's business.
+    // The scan must stop at a function boundary or it reports the most ordinary code in the language.
+    // The lambda is deliberately NOT called here, and the reason is a separate bug found while
+    // writing this: `(g)` on a match-bound lambda does not call it. `(let direct (fn [] -> Int
+    // (return 5)))` then `(direct)` gives 5, but binding the SAME lambda through a `match` gives
+    // `[Function (anonymous)]` -- D1's rule is "`(x)` is a CALL iff `x` names a FUNCTION", and the
+    // checker infers `direct` as a function while a match's result stays un-inferred. Identical
+    // bindings, one calls, one silently hands back the function object. Filed, not this phase's.
+    //
+    // So this asserts what it is actually about: the arm holds a nested fn whose `return` is its own
+    // business, the program COMPILES (no LL0103), and it runs.
+    name: "Ya/D40: a nested fn's `return` inside a match arm is not refused",
+    source: `(fn f [x <- Int] -> Int (
+  (let g (match x { 1 => (fn [] -> Int (return 5)) _ => (fn [] -> Int (return 9)) }))
+  (return 0)
+))
+(console.log (f 1))`,
+    expect: ["0"],
+    wasBroken:
+      "NOT broken -- a GUARD on the scan's stopping rule. The lambda's `return` returns from the " +
+      "LAMBDA, which is exactly right; a walk that does not stop at a function boundary would refuse " +
+      "the most ordinary code in the language.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

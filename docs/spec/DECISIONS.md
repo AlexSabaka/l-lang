@@ -3463,3 +3463,80 @@ carry both spellings. The aliases are ruled in; implementing them is its own wor
 The falsifier for the whole phase: removing a frontend and a backend cannot change the surviving one's
 output, so **no golden may move**. None did. Every phase held goldens 91 / 16 xfail, type-errors corpus 0,
 diagnostics 42/42, codegen 173/0, imports 17/17, repl 26/0, smoke 11/11, tsc 0 errors. 12,580 lines deleted.
+
+## D40 — `return` returns from the FUNCTION (Phase Y)
+
+**Ruling:** `return` returns from the enclosing **function**, from any code path, with no positional
+caveats. It is not a value, it is not scoped to the nearest expression, and there is no form it means
+something else inside. Where the JS backend cannot express that yet, it **refuses** (LL0103) — it does
+not quietly do something else.
+
+The mental-load argument is the ruling's whole basis: a language where `return` works in a `cond` clause
+and silently evaporates in a `match` arm is teaching a rule that does not exist. There is nothing to
+learn here, and that is the point.
+
+### What was measured
+
+Six forms, two behaviours, no stated rule:
+
+| `return` inside | today |
+|---|---|
+| a `cond` clause | returns from the function ✅ |
+| an `if` in statement position | returns from the function ✅ |
+| a `when :then` | returns from the function ✅ |
+| a **`match` arm** | swallowed ❌ |
+| an `if` in **value** position | swallowed ❌ |
+| a `\|\|` / `&&` operand | swallowed ❌ |
+
+The split is mechanical, not designed. A form that emits STATEMENTS lets `return` be a real JS
+`return`. A form that emits an IIFE — `match`, always; an `if` used as a value; an operand — makes it
+return from the ARROW, so the function the user named keeps running and its declared return type is
+quietly defeated. The IIFE arrived with P5c's `asExpression`, D25/Xb pinned `cond`'s behaviour under
+"the three that must NOT move", and nobody ever wrote down the rule — so the two halves drifted apart
+in silence for a year.
+
+The audit found one sixth of this (AF-003 names `||`/`&&` only). `match` arms — the likeliest place in
+a Lisp to write a `return` — went unreported, because a swallowed `return` is indistinguishable from a
+function that fell through.
+
+### Why refuse instead of implement
+
+Honouring D40 everywhere, without an IR, means statement hoisting: `(let x (if c (return 1) 2))` has to
+become `let x; if (c) { return 1; } else { x = 2; }`, and `(f (|| a (return b)) c)` has to hoist above
+the call, at arbitrary depth. That is ANF conversion — i.e. **building an HIR badly, inline, without
+admitting that is what it is**. Every bug this session came from that exact shape: two mechanisms
+answering one question and drifting apart. It belongs in a real lowering path
+(desugared typed AST → HIR → ESTree → JS), which is now Phase 6's business.
+
+So the rule is stated in full and the backend refuses what it cannot honour — the project's own
+pattern, used twice already: D3/LL0023 refuses `defmacro` by name as "Planned"; Qe refuses the mid-list
+rest D28 says is unbuilt. Ruled in, not built, refuses rather than lies.
+
+**LL0103 is temporary by construction.** When the lowering path lands, the def and its two call sites
+are deleted and the refused cases start working — so they are also **HIR's acceptance test, written
+before it starts**. That is the concrete thing this ruling buys beyond honesty.
+
+Nothing in `examples/` or `lib/` hits it: zero sites, measured. The diagnostic costs no migration.
+
+### Found while measuring, filed not fixed
+
+- **A trailing `cond` returns `undefined`** — `(fn f [x <- Int] -> String (cond ((> x 0) "pos") (true "neg")))`
+  yields undefined against a declared `-> String`. Same class as AF-043. Fixed in Yb.
+- **`isValueTail`'s comment is two-thirds wrong.** It says "`if`/`when`/`cond` are EXCLUDED", but
+  `wrapIfValue` special-cases `if` above it, so a trailing `if` DOES return its branch value. Three
+  trailing forms, three behaviours, one comment claiming they are uniform.
+- **`BaseAstTreeWalker` mints nodes that lie about their type.** It builds
+  `{...super.visit(node), _type: node._type}` — so when a `visitX` returns a node of a different kind,
+  the walker spreads that node's fields and stamps the original `_type` back over them. A lambda in
+  expression position arrives at codegen as `_type: "list"` carrying a function's entire field set
+  (`params`, `returns`, `body`, …). It works only by luck — codegen dispatches on `_type`, reads
+  `nodes[0]` (the real function), and never touches the strays. LL0103's scan was the first code to
+  read them, and walked straight into the lambda's own `body`.
+- **`(x)` on a match-bound lambda does not call it.** `(let direct (fn [] -> Int (return 5)))` then
+  `(direct)` gives 5; binding the same lambda through a `match` gives `[Function (anonymous)]`. D1 rules
+  `(x)` is a call iff `x` names a function, and inference types `direct` but not a match's result.
+  Identical bindings, one calls, one silently hands back the function object.
+- **D12 rules `cond`'s default clause is spelled `:else`, and it does not parse.** `ElseModKw` appears
+  in the `if`/`when` and `for` rules; `cond`'s rule has no reference to it. The corpus writes
+  `(true (return "F"))` with a `;; Default case` comment. A ruling that was never implemented, routed
+  around in silence.
