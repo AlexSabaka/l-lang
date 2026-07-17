@@ -4451,6 +4451,34 @@ catch b ((console.log "two")))`,
       "call vanishes and `bump` never runs. Ze's `visitTypeGuard` carries the same sequence.",
   },
 
+  // Zl/member-index -- a dotted `.member` after an index went through `__ll_index`, the CHECKED
+  // container read, which demands an integer-in-bounds key on an array/string. So `xs[0].length` asked
+  // `__ll_index("hi", "length")` and threw RangeError. The `members` flag (ast.ts) exists to keep
+  // `.name` distinct from `["name"]` -- visitIndexer just discarded it. A `.member` suffix is an
+  // UNCHECKED member read, exactly like `obj.member` (which already lowers to `__ll_member`).
+  // ===============================================================================================
+  {
+    name: "Zl/member-index: a native member after an index reads, not throws",
+    source: `(let ws ["hi" "there"])
+(console.log ws[0].length)`,
+    expect: ["2"],
+    wasBroken:
+      "RangeError: `xs[0].length` lowered to `__ll_index(__ll_index(xs,0), \"length\")`, and the outer " +
+      "__ll_index rejects a non-integer key on a string. Every native member on an indexed element threw.",
+  },
+  {
+    // The guard for the ONE behavior change: an absent object field via `.member` returns nil (like
+    // `obj.absentField`) rather than throwing KeyError. That makes it AGREE with `obj.member`, not a
+    // guarantee lost -- while a bracket `["key"]` suffix stays on the checked __ll_index path.
+    name: "Zl/member-index: a bracket suffix stays checked (throws on absent key)",
+    source: `(let m {:a 1})
+(console.log m["b"])`,
+    expectThrow: /KeyError/,
+    wasBroken:
+      "NOT broken -- the GUARD. `[\"b\"]` is a bracket index, not a `.member`, so it stays on " +
+      "__ll_index and still throws KeyError on an absent map key (D9f). Only `.member` goes unchecked.",
+  },
+
   // Zja -- INTERFACES were not in `__ll_type_metadata` at all, blocked by two independent gates:
   // `visitInterface` built no `codegenMetadata`, AND the getter filtered `kind in {class,struct}`.
   //

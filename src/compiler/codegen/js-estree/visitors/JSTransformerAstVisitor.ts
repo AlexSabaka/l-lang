@@ -3940,13 +3940,25 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   visitIndexer(node: ast.IndexerNode): ESTree.Expression {
     let expr = this.visitExpr(node.id);
 
-    for (const indices of node.indices) {
-      for (const idx of indices) {
-        expr = ESTreeBuilder.callExpression(
-          node,
-          ESTreeBuilder.identifier(node, "__ll_index"),
-          [expr, this.visitExpr(idx)]
-        ) as ESTree.Expression;
+    // Honor the `members` flag (parallel to `indices`, one per suffix group). A bracket `[key]` suffix
+    // stays on the CHECKED `__ll_index` (D9f: an out-of-bounds index / absent key is a bug and must
+    // throw). A `.member` suffix becomes a PLAIN computed member access -- not `__ll_index`, which
+    // rejects a non-integer key on an array/string (so `xs[0].length` threw RangeError, the bug), and
+    // NOT `__ll_member`, which AUTO-CALLS a method -- and D1 rules `(gs[0].hi)` a call, so
+    // `__ll_member`'s auto-call plus the call-position wrap would double-call and crash. A plain
+    // `expr[key]` reads without calling, so bare `xs[0].hi` is the method (D1 read) and `(gs[0].hi)`
+    // wraps it into a real call. The only observable change is `xs[0].absentField` now yields nil
+    // rather than throwing -- agreeing with `obj.absentField`, not a guarantee lost.
+    for (let g = 0; g < node.indices.length; g++) {
+      const isMember = node.members?.[g] === true;
+      for (const idx of node.indices[g]) {
+        expr = isMember
+          ? (ESTreeBuilder.memberExpression(node, expr, this.visitExpr(idx), true) as ESTree.Expression)
+          : (ESTreeBuilder.callExpression(
+              node,
+              ESTreeBuilder.identifier(node, "__ll_index"),
+              [expr, this.visitExpr(idx)]
+            ) as ESTree.Expression);
       }
     }
 
