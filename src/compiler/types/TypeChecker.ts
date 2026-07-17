@@ -18,6 +18,106 @@ export class TypeChecker {
   }
 
   /**
+   * Every member an interface REQUIRES -- its own, plus its super-interfaces' (D42).
+   *
+   * WALKS the `:implements` chain rather than pre-flattening at declaration time. `isSubtype` walks the
+   * same chain by name, for the same reason: flattening would need each super collected before its sub,
+   * reintroducing a declaration-order dependency the symbol table exists to remove. `seen` guards a
+   * cycle -- interfaces can be mutually recursive.
+   *
+   * The one definition of the question, shared by the two askers: Zf's `:implements` verification
+   * (LL0209, "is this claim true?") and Zg's structural conformance ("is this claim needed?"). Two
+   * copies would drift, and the drift would be silent -- a class accepted structurally but refused when
+   * it declared the same interface.
+   */
+  static requiredInterfaceMembers(
+    interfaceName: string,
+    symbolTable: SymbolTable,
+    at?: any,
+    seen: Set<string> = new Set()
+  ): any[] {
+    if (seen.has(interfaceName)) return [];
+    seen.add(interfaceName);
+
+    const t: any = symbolTable.resolveSymbol(interfaceName, at)?.inferredType;
+    if (!t || t.kind !== "interface") return [];
+
+    const out: any[] = [...(t.members ?? [])];
+    for (const impl of t.implementedInterfaces ?? []) {
+      out.push(...this.requiredInterfaceMembers(impl.interfaceName, symbolTable, at, seen));
+    }
+    return out;
+  }
+
+  /**
+   * Every member a class can ANSWER TO -- its own, plus everything it inherits (D42).
+   *
+   * A member inherited from a superclass satisfies an interface exactly as well as one the class
+   * declares itself: `(s.greet)` dispatches the same either way. Reading only a class's own members
+   * would refuse every subclass that does not redeclare what it already has.
+   */
+  static availableClassMembers(
+    typeName: string,
+    symbolTable: SymbolTable,
+    at?: any,
+    seen: Set<string> = new Set()
+  ): any[] {
+    if (seen.has(typeName)) return [];
+    seen.add(typeName);
+
+    const t: any = symbolTable.resolveSymbol(typeName, at)?.inferredType;
+    if (!t) return [];
+
+    const out: any[] = [...(t.members ?? [])];
+    if (t.parentClass) {
+      out.push(...this.availableClassMembers(t.parentClass, symbolTable, at, seen));
+    }
+    return out;
+  }
+
+  /**
+   * Does `source` satisfy `target` INTERFACE by shape, declared or not? (D42/Zg -- the Go model.)
+   *
+   * WIDTH: the source must have every member the interface names; extras are fine -- that is what
+   * implementing an interface means. Depth is deferred, deliberately: see the `Any` note below.
+   *
+   * Only INTERFACE targets. Class-to-class and struct-to-struct stay nominal (`typesEqual`), so `Dog`
+   * is still not a `Cat` however identical their shapes -- that is the half of D42 that P7d got right
+   * and this must not undo.
+   */
+  private static conformsStructurally(
+    source: InferredType,
+    target: InferredType,
+    symbolTable?: SymbolTable
+  ): boolean {
+    if (!symbolTable || target.kind !== "interface" || !target.name || !source?.name) return false;
+    if (source.kind !== "class" && source.kind !== "struct") return false;
+
+    const required = this.requiredInterfaceMembers(target.name, symbolTable);
+
+    // An interface with NO members is satisfied by NOTHING. Structurally it would be satisfied by
+    // EVERYTHING -- `every` on an empty list is vacuously true -- which makes `[x <- Empty]` a
+    // parameter that accepts any object at all while LOOKING like a constraint. That is a worse
+    // failure than refusing: it is silent. A genuinely empty interface is a marker, and a marker must
+    // be CLAIMED (`:implements`) to mean anything -- which still works, since nominal `isSubtype` runs
+    // before this and answers declared conformance on its own.
+    if (required.length === 0) return false;
+
+    const available = this.availableClassMembers(source.name, symbolTable);
+
+    return required.every((r: any) => {
+      const m = available.find((a: any) => a.name === r.name);
+      if (!m) return false;
+      // Member types are compared only when BOTH sides carry a real one. `Any` on either side means
+      // "not inferred", not "anything goes" -- and treating an un-inferred member as a mismatch would
+      // refuse correct code for a gap in inference rather than a gap in the class. Same gradual stance
+      // isSubtype takes on the iteration protocol's element types, and for the same reason.
+      if (!m.type || !r.type || m.type.kind === "any" || r.type.kind === "any") return true;
+      return this.isAssignable(m.type, r.type, symbolTable);
+    });
+  }
+
+  /**
    * Check if 'source' can be assigned to 'target'
    * Returns true if assignment is valid
    */
@@ -171,6 +271,13 @@ export class TypeChecker {
     // checking`, which meant isAssignable(Dog, Animal) was literally FALSE. Everything that follows
     // from inheritance -- passing a subclass to a function typed on its parent -- was a type error.
     if (this.isSubtype(sourceUnwrapped, targetUnwrapped, symbolTable)) {
+      return true;
+    }
+
+    // D42/Zg: structural conformance to an INTERFACE. Last, and deliberately so -- nominal answers
+    // first, so every previously-assignable pair stays assignable by the same route it always took.
+    // This can only ever ADD assignability, which is what makes it safe to land on a live corpus.
+    if (this.conformsStructurally(sourceUnwrapped, targetUnwrapped, symbolTable)) {
       return true;
     }
 

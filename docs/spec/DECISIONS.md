@@ -106,6 +106,12 @@ README.md and language-reference.md. The enforcement scaffolding already exists 
 Real substitution, unification, constraint checking (`:where T :extends ...`), and variance
 (`<:out T>`).
 
+> **Superseded in part by [D42](#d42--types-are-nominal-interfaces-are-structural-the-go-model-sub-phases-zfzg).**
+> "Full structural typing" now holds for **interfaces only**; classes and structs are **nominal**. P7d
+> shipped nominal without ever citing or overruling this ruling, and the contradiction sat unresolved
+> for the whole of the intervening work — D42 is where the two were reconciled rather than one quietly
+> winning. The "→ Phase 8" pointer below is **dangling**: Phase 8 ≠ P8, and that phase never ran.
+
 Today no type error can fail a build, `isAssignable(Dog, Animal)` returns `false` (inheritance
 checking is a stubbed `// TODO`), and there are zero hits for `substitute`/`monomorph` anywhere in
 the codebase. This overrides the audit's own recommendation to descope generics — the "statically
@@ -3554,3 +3560,72 @@ Nothing in `examples/` or `lib/` hits it: zero sites, measured. The diagnostic c
   in the `if`/`when` and `for` rules; `cond`'s rule has no reference to it. The corpus writes
   `(true (return "F"))` with a `;; Default case` comment. A ruling that was never implemented, routed
   around in silence.
+
+---
+
+## D42 — types are nominal, interfaces are structural (the Go model; sub-phases Zf–Zg)
+
+**Ruling:** A class or struct keeps its **identity**: `Dog` is not a `Cat`, however identical their
+shapes, and no amount of matching members makes one assignable to the other. An **interface** is a
+**shape**: a class satisfies it by having its members, whether or not it declares `:implements`. A
+declared `:implements` is not a password — it is a **claim**, and a claim that is false is an error
+(LL0209).
+
+An **empty** interface is satisfied by **nothing** structurally. It is a marker, and a marker must be
+claimed.
+
+### The contradiction this settles
+
+D5 ruled "full structural typing". The code has been nominal since P7d (`TypeChecker.ts`). **P7d never
+overruled D5** — it shipped nominal as the implementation of an inheritance fix (`isAssignable(Dog,
+Animal)` returned `false`; everything downstream of inheritance was a type error), never cited D5, and
+never argued the case. D5's "→ Phase 8" pointer is dangling: Phase 8 ≠ P8, and that phase never ran.
+
+They were never answering the same question. D5 wanted **shapes to be enough**; P7d needed **identity to
+be preserved**. Go's model gives both, because the two questions live on different constructs. D5 stands
+for interfaces; P7d stands for classes.
+
+### What was measured
+
+- `visitInterface` **never read `node.body`**. Every interface in the language was `{kind, name,
+  generics}` and nothing else — `(definterface Iterable<T> (fn iterator [] -> Iterator<T>))` dropped its
+  methods on the floor. So `:implements` was an **unchecked claim**: nothing could disagree with it
+  (`methodMappings: new Map() // TODO`). A class could declare `:implements Iterable`, implement none of
+  it, and dispatch would still lower `(x.total)` to `total(x)`.
+- Nominal **without** verification is the worst cell of the matrix: the tag costs the flexibility of
+  structural typing and buys none of its safety, because nothing checks it.
+- **F# is nominal.** The ruling was first taken as "full structural" on the belief that F# — the
+  functional model being aimed at — was structural. It is not: F#'s `Person1`/`Person2` is exactly
+  `Dog`/`Cat` (MS docs). The F# property actually wanted is structural *equality*, which already ships
+  as `__ll_deep_eq` + D11. Corrected on the evidence before implementation.
+
+### What follows
+
+- Conformance is checked in the **check pass**, not at collection: an interface may be declared *after*
+  the class implementing it, and `:implements` is **erased** at run time (D24), so declaration order
+  must not matter to it.
+- Both chains are **walked**, not pre-flattened — the interface's `:implements` and the class's
+  `:extends`. Flattening at declaration time needs each super collected before its sub, reintroducing
+  the order-dependency the symbol table exists to remove. Cycle-guarded, both.
+- A member inherited from a **superclass** satisfies an interface exactly as well as one the class
+  declares itself: `(s.greet)` dispatches the same either way.
+- Structural conformance runs **last** in `isAssignable`, after nominal. It can only ever ADD
+  assignability — which is what made it safe to land on a live corpus.
+- Member types are compared only when both sides carry a real one. `Any` means "not inferred", not
+  "anything goes"; refusing on it would punish a gap in inference rather than a gap in the class. Same
+  gradual stance `isSubtype` takes on the iteration protocol's element types.
+
+### Why empty interfaces are refused
+
+Structurally, an empty interface is satisfied by **everything** — `every` over no members is vacuously
+true. `[x <- Marker]` would accept any object at all while *looking* like a constraint: silent, and
+worse than refusing. Nominal `isSubtype` runs first and answers declared conformance on its own, so
+refusing the structural case costs nothing — a marker interface stays usable, it just has to be
+explicit.
+
+### Not ruled here
+
+Class↔class and struct↔struct assignability (`typesEqual`) is untouched. `00_errors`' `CustomError` /
+`SpecificError` discrimination, `Dog`/`Cat`, and `Point`/`Vec` are byte-identical in shape and stay
+distinct — the goldens pin it, and a moved golden here would mean the Go model landed as full
+structural.

@@ -2703,64 +2703,6 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   }
 
   /**
-   * Every member an interface requires -- its own, plus its super-interfaces' (D42/Zf).
-   *
-   * WALKS the `:implements` chain rather than pre-flattening at declaration time. `isSubtype` already
-   * walks the same chain by name, and flattening would need each super processed before its sub --
-   * reintroducing a declaration-order dependency the symbol table exists to remove. `seen` guards a
-   * cycle: interfaces can be mutually recursive, and `isSubtype` carries the same guard for the same
-   * reason.
-   */
-  private requiredInterfaceMembers(
-    interfaceName: string,
-    at: ast.ASTNode,
-    seen: Set<string> = new Set()
-  ): { name: string; type: InferredType }[] {
-    if (seen.has(interfaceName)) return [];
-    seen.add(interfaceName);
-
-    const symbols = this.context.symbolTable ?? this.symbolTable;
-    const entry: any = symbols.resolveSymbol(interfaceName, at);
-    const t: any = entry?.inferredType;
-    if (!t || t.kind !== "interface") return [];
-
-    const out: { name: string; type: InferredType }[] = [...(t.members ?? [])];
-    for (const impl of t.implementedInterfaces ?? []) {
-      out.push(...this.requiredInterfaceMembers(impl.interfaceName, at, seen));
-    }
-    return out;
-  }
-
-  /**
-   * Every member a class can answer to -- its own, plus everything it inherits (D42/Zf).
-   *
-   * A member inherited from a superclass satisfies an interface exactly as well as one the class
-   * declares itself; `(s.greet)` dispatches the same either way. Reading only a class's OWN members
-   * would fire LL0209 on every subclass that does not redeclare what it already has -- a false
-   * positive on correct code, which is worse than the silence it replaced. Measured, not assumed: the
-   * corpus has no `:extends` + `:implements` class, so this hole cost 0 corpus diagnostics and would
-   * have shipped green.
-   */
-  private availableClassMembers(
-    typeName: string,
-    at: ast.ASTNode,
-    seen: Set<string> = new Set()
-  ): any[] {
-    if (seen.has(typeName)) return [];
-    seen.add(typeName);
-
-    const symbols = this.context.symbolTable ?? this.symbolTable;
-    const t: any = symbols.resolveSymbol(typeName, at)?.inferredType;
-    if (!t) return [];
-
-    const out: any[] = [...(t.members ?? [])];
-    if (t.parentClass) {
-      out.push(...this.availableClassMembers(t.parentClass, at, seen));
-    }
-    return out;
-  }
-
-  /**
    * A declared `:implements` must be TRUE (D42/Zf, LL0209).
    *
    * It was an unchecked claim: interfaces carried no members (visitInterface never read `node.body`),
@@ -2786,13 +2728,14 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       : [];
     if (implClauses.length === 0) return;
 
-    const own: any[] = this.availableClassMembers(typeName, node as ast.ASTNode);
+    const symbols = this.context.symbolTable ?? this.symbolTable;
+    const own: any[] = TypeChecker.availableClassMembers(typeName, symbols, node);
 
     for (const impl of implClauses) {
       const ifaceName = impl?.type?.name;
       if (!ifaceName) continue;
 
-      const required = this.requiredInterfaceMembers(ifaceName, node as ast.ASTNode);
+      const required = TypeChecker.requiredInterfaceMembers(ifaceName, symbols, node);
       if (required.length === 0) continue; // unresolvable, or genuinely empty -- Zg rules on that
 
       const missing = required

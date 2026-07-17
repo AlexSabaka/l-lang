@@ -4201,6 +4201,95 @@ catch b ((console.log "two")))`,
     wasBroken:
       "NOT broken -- the GUARD against LL0209 over-firing.",
   },
+
+  // Zg / D42 -- structural conformance. The other half of the Go model.
+  //
+  // Zf made a DECLARED `:implements` mean something. Zg makes the declaration optional: a class
+  // satisfies an interface by SHAPE, whether or not it says so. That is the half D5 ("full structural
+  // typing") always wanted and P7d never overruled -- they were answering different questions. Classes
+  // stay NOMINAL to each other (`Dog` is not a `Cat`, however identical); only INTERFACES are
+  // structural.
+  // ===============================================================================================
+  {
+    name: "Zg/D42: a class satisfies an interface by SHAPE, without declaring it",
+    source: `(definterface Greeter
+  (fn greet [] -> String))
+(defclass Casual
+  (fn greet [] -> String (return "yo")))
+(fn welcome [g <- Greeter] -> String (return (g.greet)))
+(let c (Casual))
+(console.log (welcome c))`,
+    expect: ["yo"],
+    wasBroken:
+      "A TYPE ERROR. `isAssignable` was nominal for interfaces too, so a class that had every member " +
+      "an interface asked for was still refused unless it declared `:implements`. The interface was a " +
+      "password, not a shape.",
+  },
+  {
+    // The falsifier that matters. If Zg lands as FULL structural, this flips and classes stop being
+    // nominal to each other -- D42's whole ruling. `00_errors.expect` pins the same thing for
+    // CustomError/SpecificError.
+    name: "Zg/D42: classes stay NOMINAL to each other (Dog is not a Cat)",
+    source: `(defclass Dog
+  (fn speak [] -> String (return "woof")))
+(defclass Cat
+  (fn speak [] -> String (return "meow")))
+(fn hear [c <- Cat] -> String (return (c.speak)))
+(let d (Dog))
+(console.log (hear d))`,
+    expectDiagnostic: /LL02\d\d/,
+    wasBroken:
+      "NOT broken -- the GUARD. `Dog` and `Cat` are shape-identical. Structural interfaces must not " +
+      "leak into class-to-class assignability.",
+  },
+  {
+    // Width, and the reason it is width and not equality: implementing an interface means having AT
+    // LEAST its members.
+    name: "Zg/D42: a class MISSING a member does not satisfy the interface",
+    source: `(definterface Greeter
+  (fn greet [] -> String))
+(defclass Mute
+  (fn think [] -> String (return "...")))
+(fn welcome [g <- Greeter] -> String (return (g.greet)))
+(let m (Mute))
+(console.log (welcome m))`,
+    expectDiagnostic: /LL02\d\d/,
+    wasBroken:
+      "NOT broken -- the GUARD against conformance going vacuous.",
+  },
+  {
+    // The vacuity trap, ruled. Structurally, an EMPTY interface is satisfied by everything -- `every`
+    // over no members is vacuously true -- which would make `[x <- Marker]` accept any object at all
+    // while LOOKING like a constraint. Silent, and worse than refusing. So: an empty interface is
+    // satisfied by nothing structurally. It is a MARKER, and a marker must be claimed.
+    name: "Zg/D42: an EMPTY interface is not satisfied structurally",
+    source: `(definterface Marker)
+(defclass Anything
+  (fn whatever [] -> String (return "x")))
+(fn mark [m <- Marker] -> String (return "marked"))
+(let a (Anything))
+(console.log (mark a))`,
+    expectDiagnostic: /LL02\d\d/,
+    wasBroken:
+      "NOT broken -- the ruling. Vacuous conformance is the failure mode structural typing is famous " +
+      "for, and an empty interface is where it starts.",
+  },
+  {
+    // ...and the other half of that ruling: DECLARING the marker still works. Nominal `isSubtype` runs
+    // before structural conformance and answers this on its own, which is exactly why refusing the
+    // structural case costs nothing -- a marker interface remains usable, it just has to be claimed.
+    name: "Zg/D42: an empty interface still works when DECLARED",
+    source: `(definterface Marker)
+(defclass Tagged :implements Marker
+  (fn whatever [] -> String (return "x")))
+(fn mark [m <- Marker] -> String (return "marked"))
+(let t (Tagged))
+(console.log (mark t))`,
+    expect: ["marked"],
+    wasBroken:
+      "NOT broken -- proves the empty-interface refusal above did not break marker interfaces, only " +
+      "made them explicit.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------
