@@ -2167,6 +2167,24 @@ const CASES: Case[] = [
       "`[0 1 4]` only because `map` and `take` do no work until `to-list` drives them element by element.",
   },
   {
+    name: "LB1: `take n` pulls EXACTLY n from its cursor, not n+1",
+    source: `(import "std/linq")
+(mut pulls 0)
+(fn :gen counter [] -> Iterator<Int> (
+  (mut i 0)
+  (while true (
+    (pulls := (+ pulls 1))
+    (yield i)
+    (i := (+ i 1))))))
+(let taken ((counter) |> (take 3) |> to-list))
+(console.log taken.length pulls)`,
+    expect: ["3 3"],
+    wasBroken:
+      "`3 4`: take pulled `(next it)` at the END of each iteration and checked `i < n` at the START, " +
+      "so it pulled the (n+1)th element before the loop stopped -- consumed but never yielded. Over a " +
+      "shared/stateful cursor (tetris's 7-bag) that silently drops one element per call.",
+  },
+  {
     name: "Lc: take-while stops at the first failure, over an unbounded source",
     source: `(import "std/linq")
 (fn :gen nats [] (

@@ -20,14 +20,20 @@
 
   ;; take -- the first `n` elements, then stop. One-element lookahead: it may pull one past the last it
   ;; yields, which for a lazy source is produced on demand and harmless.
+  ;; take -- the first `n` elements. Pulls EXACTLY `n` from the cursor (LB1): the pull is INSIDE the
+  ;; loop, gated by `i < n`, so the (n+1)th element is never consumed. The old form pulled at the END
+  ;; of each iteration and re-tested the count at the START, so it always over-pulled by one and
+  ;; silently dropped that element from a shared/stateful cursor.
   (fn :extension :gen take<T> [coll <- Iterable<T> n <- Int] -> Iterator<T>
     (let it (iter coll))
     (mut i 0)
-    (mut v (next it))
-    (while (&& (< i n) (!= v nil)) (
-      (yield v)
-      (i := (+ i 1))
-      (v := (next it)))))
+    (while (< i n) (
+      (let v (next it))
+      (if (== v nil)
+        (i := n)          ;; exhausted -- stop without pulling again
+        (
+          (yield v)
+          (i := (+ i 1)))))))
 
   ;; take-while -- the leading run where (pred x) holds, stopping at the first element that fails it.
   (fn :extension :gen take-while<T> [coll <- Iterable<T> pred] -> Iterator<T>
