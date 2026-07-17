@@ -1599,6 +1599,42 @@ const CASES: Case[] = [
     wasBroken: "both survived as two characters, backslash included.",
   },
   {
+    // Qg / AF-004. `￿` was decoded; `\xNN` was not -- the regex had a `u[0-9a-fA-F]{4}`
+    // alternative and no `x` one, so `\x1b` matched the catch-all `.`, took the "an unknown escape is
+    // the character itself" branch, and decoded to the three characters `x1b`. Silent: a length-12
+    // ANSI string arrived as length 16 and simply did not colour anything.
+    //
+    // roadmap.md called string escapes FIXED, which was true of the shape it fixed (a correct decoder
+    // being bypassed) and false of this one (the decoder itself lacking a case). Fixed and de-lied.
+    name: "escapes: \\xNN is a hex escape (AF-004)",
+    source: `(let e "\\x1b[31mR\\x1b[0m")
+(console.log e.length)
+(console.log (e.charCodeAt 0))
+(console.log "\\x41\\x42")`,
+    // ESC + "[31m"(4) + "R"(1) + ESC + "[0m"(3) = 10.
+    expect: ["10", "27", "AB"],
+    wasBroken:
+      "`\\x1b` decoded to the literal characters `x1b`, so this string was length 14, not 10, and its " +
+      "first character was `x` (120) rather than ESC (27). AF-004.",
+  },
+  {
+    // The catch-all must still catch. `\x` not followed by two hex digits is not a hex escape, and
+    // must fall back to the same "unknown escape is the character itself" rule as `\q` -- not throw,
+    // and not silently eat the following characters.
+    name: "escapes: a malformed \\x or \\u is still the character itself",
+    source: `(console.log "a\\xZZb")
+(console.log "a\\uZZZZb")
+(console.log "a\\qb")`,
+    expect: ["axZZb", "auZZZZb", "aqb"],
+    wasBroken:
+      "The `\\u` half WAS broken, and this guard is what found it. The decoder keyed on `esc[0]` " +
+      "alone, but the catch-all `.` hands back a ONE-character esc -- so a malformed `\\uZZZZ` " +
+      "arrived as plain `\"u\"`, took the unicode branch, and computed " +
+      "`String.fromCharCode(parseInt(\"\", 16))` = fromCharCode(NaN) = a NUL byte. `\"a\\uZZZZb\"` " +
+      "decoded to `a\\0ZZZZb`, silently. Adding `\\x` on the same `esc[0]` test would have " +
+      "duplicated the bug instead of exposing it; keying on LENGTH (u+4, x+2) fixes both.",
+  },
+  {
     name: "escapes: \\\\n is a BACKSLASH then an n, not a newline",
     source: `(console.log "a\\\\nb")`,
     expect: ["a\\nb"],

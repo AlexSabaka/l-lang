@@ -374,10 +374,29 @@ export class LLangAstBuilder extends BaseCstVisitor {
    * rejects is a divergence, not a feature.
    */
   private unescapeString(s: string): string {
+    // `x[0-9a-fA-F]{2}` sits alongside the `u` alternative and BEFORE the catch-all `.`, which is the
+    // whole bug: there was no `x` alternative, so `\x1b` matched `.`, took the "an unknown escape is
+    // the character itself" branch below, and decoded to the three characters `x1b`. Silently -- a
+    // length-12 ANSI string arrived as length 16 and simply failed to colour anything (AF-004).
+    //
+    // Anchored to EXACTLY two hex digits, so a malformed `\xZZ` still falls through to the catch-all
+    // and stays `xZZ` rather than throwing or eating what follows.
     return s.replace(
-      /\\(u[0-9a-fA-F]{4}|.)/g,
+      /\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.)/g,
       (_match: string, esc: string): string => {
-        if (esc[0] === "u") return String.fromCharCode(parseInt(esc.slice(1), 16));
+        // LENGTH, not just the leading character. The catch-all `.` hands back a ONE-character esc,
+        // so a malformed `\xZZ` arrives here as plain `"x"` -- and `esc[0] === "x"` would then call
+        // `parseInt("", 16)`, which is NaN, and `String.fromCharCode(NaN)` is a NUL byte. A hex
+        // escape is `x` + exactly 2 (length 3); a unicode escape is `u` + exactly 4 (length 5);
+        // anything else is the catch-all and must fall through to the switch.
+        //
+        // This was already live for `\u`: `"\uZZZZ"` decoded to NUL, silently. Adding `\x` without
+        // the length check would have duplicated the bug rather than found it -- the malformed-escape
+        // guard case is what caught it.
+        if (esc.length === 5 && esc[0] === "u")
+          return String.fromCharCode(parseInt(esc.slice(1), 16));
+        if (esc.length === 3 && esc[0] === "x")
+          return String.fromCharCode(parseInt(esc.slice(1), 16));
         switch (esc) {
           case "n": return "\n";
           case "r": return "\r";

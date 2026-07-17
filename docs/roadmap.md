@@ -533,6 +533,17 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     did `.slice(1,-1)`. Which is why an INTERPOLATED string decoded escapes and a plain one did not:
     same escape, two answers, in one language. `unescapeString` was also wrong on `"\\n"` (a chained
     `.replace()` rewrites its own output), so it is now a single pass. No golden moved.
+
+    **Amended by Qg (AF-004).** "FIXED" was true of the shape above — a correct decoder being
+    bypassed — and false of the decoder's own coverage: it had a `￿` alternative and **no `\xNN`
+    one**, so `\x1b` matched the catch-all, took the "an unknown escape is the character itself"
+    branch, and decoded to the three characters `x1b`. Silent: a length-10 ANSI string arrived as 14
+    and simply failed to colour anything. The audit read this entry as a stale claim, and it was.
+    Qg also found a live NUL bug next door: the decoder keyed on `esc[0]`, but the catch-all yields a
+    ONE-character esc, so a malformed `"\uZZZZ"` took the unicode branch and computed
+    `fromCharCode(parseInt("", 16))` = `fromCharCode(NaN)` = **NUL**. Both now key on LENGTH (`u`+4,
+    `x`+2). Fixing `\x` on the old `esc[0]` test would have duplicated that bug rather than exposed
+    it — the malformed-escape guard is what caught it.
 *   **Parse/lex gaps.** Boolean match patterns; `:is` type patterns; the `..` range operator; sized
     array types; `fn` parameter defaults; the numeric tower (octal/binary/hex/fraction/complex all lex,
     none emit). (`__bar` **now lexes** — fixed via `longer_alt`, inbox #1.)
