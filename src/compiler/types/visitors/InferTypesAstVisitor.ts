@@ -3807,8 +3807,22 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         // throws if it is not. That is what lets `xs[i]` be a plain `Int` and stay honest -- it used
         // to be a plain `Int` that handed back `undefined`, which is a hole straight through the type
         // system. The question "is it there?" is asked with the TOTAL form, `(get c k)`, below.
-        inferredType =
-          this.containerElementType(containerType) ?? TypeEnvironment.unknown();
+        //
+        // ONCE PER SUFFIX, not once total. `indices` is the whole chain -- `grid[0][1]` is a SINGLE
+        // indexer with `indices: [[0],[1]]` -- and unwrapping only the first group typed `grid[0][1]`
+        // as `Int[]`, so assigning it to `Int` was a spurious mismatch (and every deeper read stayed
+        // one level too shallow). Bail to Unknown the moment a level is not a container: a member
+        // suffix (`xs[0].field`) or a struct field is not something `containerElementType` can unwrap,
+        // and Unknown is the gradual-typing answer, not a false error.
+        let elem: InferredType | undefined = containerType;
+        for (const group of indexerNode.indices) {
+          for (let i = 0; i < group.length; i++) {
+            elem = this.containerElementType(elem);
+            if (!elem || TypeChecker.isUnknown(elem)) { elem = undefined; break; }
+          }
+          if (!elem) break;
+        }
+        inferredType = elem ?? TypeEnvironment.unknown();
         break;
       }
 

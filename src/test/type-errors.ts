@@ -1607,6 +1607,17 @@ ${PRODUCER}
       "-- silent because Unknown swallowed the type, not because the type was right.",
   },
   {
+    name: "Zl: a nested index unwraps once per level",
+    source: `(let grid [[1 2] [3 4]])
+(let cell <- Int grid[0][1])
+(console.log cell)`,
+    silent: true,
+    why:
+      "Zl/ll0202-nested-index: `grid : Int[][]`, so `grid[0][1]` is Int. The indexer case unwrapped " +
+      "`containerElementType` ONCE regardless of suffix count, so `grid[0][1]` typed as Int[] and " +
+      "assigning it to Int was a spurious mismatch. Also fixes nested-index READS (map-of-maps).",
+  },
+  {
     name: "Zl: a function-typed param carries its declared RETURN type",
     source: `(fn use [f <- (fn [] -> Int)] -> Void (
   (let x <- Int (f))
