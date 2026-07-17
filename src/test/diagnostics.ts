@@ -291,10 +291,14 @@ const PROBES: Probe[] = [
     stage: "codegen",
   },
   {
-    // Zc. `:of` on a type the runtime cannot name. It used to emit `__ll_is_type(v, "Any")` and match
+    // Zc. `:of` on a type the runtime cannot test. It used to emit `__ll_is_type(v, "Any")` and match
     // every value in the language; it refuses now.
+    //
+    // A TUPLE, not the union this probe first used: Zd gave unions a real test (an `||` of their
+    // members), so the union stopped being a diagnostic and the snapshot caught it -- which is the
+    // snapshot doing its job. What has no runtime test is what belongs here.
     name: "LL0104 :of on an untestable type",
-    source: "(let x 5) (console.log (if (x :of Int | String) 1 0))",
+    source: "(let x 5) (console.log (if (x :of [Int String]) 1 0))",
     stage: "codegen",
   },
   { name: "LL0102 non-name in binding position", source: "(let [1] [5])", stage: "codegen" },

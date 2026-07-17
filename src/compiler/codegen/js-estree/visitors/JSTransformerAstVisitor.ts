@@ -2409,22 +2409,136 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * `(match x { _ :of T => ... })` ask one question and must not be able to answer it differently.
    * `getTypeName` is the same helper too.
    */
+  /**
+   * The runtime test for `value :of typeNode` -- or UNDEFINED when the runtime cannot answer.
+   *
+   * `getTypeName` answers with a NAME, and a compound type does not have one. That is the whole
+   * reason `:of Int | String` used to be a lie: the only shape on offer was a string, so a type that
+   * is not a string became `"Any"`. A union is not a name; it is an `||`.
+   *
+   *     Int | String   ->  __ll_is_type(v,"Int") || __ll_is_type(v,"String")
+   *     A & B          ->  __ll_is_type(v,"A")   && __ll_is_type(v,"B")
+   *     String?        ->  __ll_is_type(v,"String") || v == null      (D9: T? is T-or-nil)
+   *
+   * DECIDABILITY COMPOSES: a union is testable exactly when EVERY member is. One untestable member and
+   * the whole thing refuses -- testing only the members we happen to like would answer a different
+   * question than the one written.
+   *
+   * `value` is referenced ONCE PER MEMBER, so callers must pass something free of side effects. Both
+   * do: the match position tests a temp, and `visitTypeGuard` binds one when it needs to.
+   */
+  private typeTest(
+    at: ast.ASTNode,
+    typeNode: any,
+    value: ESTree.Expression
+  ): ESTree.Expression | undefined {
+    const isTypeCall = (name: string): ESTree.Expression =>
+      ESTreeBuilder.callExpression(
+        at,
+        ESTreeBuilder.identifier(at, "__ll_is_type"),
+        [value, ESTreeBuilder.literal(at, name)]
+      ) as ESTree.Expression;
+
+    const fold = (
+      parts: ESTree.Expression[],
+      operator: "||" | "&&"
+    ): ESTree.Expression =>
+      parts.reduce((left, right) => ({
+        type: "LogicalExpression",
+        operator,
+        left,
+        right,
+        loc: ESTreeBuilder.loc(at),
+      })) as unknown as ESTree.Expression;
+
+    // `v == null` -- the ONE loose equality the runtime allows, and for D9's reason: l-lang emits only
+    // `null` for nil, but JavaScript hands back `undefined` constantly, and a program cannot ask which
+    // one it got. `== null` is exactly "is it either bottom".
+    const isNil = (): ESTree.Expression =>
+      ({
+        type: "BinaryExpression",
+        operator: "==",
+        left: value,
+        right: ESTreeBuilder.literal(at, null),
+        loc: ESTreeBuilder.loc(at),
+      } as unknown as ESTree.Expression);
+
+    const withOptional = (test: ESTree.Expression, optional: boolean) =>
+      optional ? fold([test, isNil()], "||") : test;
+
+    let n = typeNode;
+    if (!n) return undefined;
+
+    // The `type` wrapper carries `array`/`optional` for the parenthesised forms -- `(A | B)[]`,
+    // `(A | B)?` -- while a plain `String?` carries its own on the inner node. Both positions are
+    // read, exactly as convertAstType already does.
+    if (n._type === "type") {
+      if (n.array === true) return withOptional(isTypeCall("Array"), n.optional === true);
+      const inner = this.typeTest(at, n.type, value);
+      return inner === undefined ? undefined : withOptional(inner, n.optional === true);
+    }
+
+    if (n.array === true) return withOptional(isTypeCall("Array"), n.optional === true);
+
+    if (n._type === "union-type" || n._type === "intersection-type") {
+      const parts: ESTree.Expression[] = [];
+      for (const member of n.types ?? []) {
+        const p = this.typeTest(at, member, value);
+        if (p === undefined) return undefined; // decidability composes
+        parts.push(p);
+      }
+      if (parts.length === 0) return undefined;
+      return withOptional(
+        fold(parts, n._type === "union-type" ? "||" : "&&"),
+        n.optional === true
+      );
+    }
+
+    const name = this.getTypeName(n);
+    if (name === undefined) return undefined;
+    return withOptional(isTypeCall(name), n.optional === true);
+  }
+
   visitTypeGuard(node: ast.TypeGuardNode): ESTree.Expression {
-    const typeName = this.getTypeName(node.type);
-    if (typeName === undefined) {
-      // The runtime has no name to test against. Refuse rather than emit the "Any" that answered
-      // `true` to everything (LL0104).
+    const value = this.visitExpr(node.value);
+
+    // A compound test names the value once per member, so a value with side effects must be bound
+    // first: `((f x) :of Int | String)` would otherwise call `f` twice. An Identifier is free to
+    // repeat, which is the overwhelmingly common case and the only one Za's narrowing looks at.
+    const needsTemp =
+      (value as any).type !== "Identifier" && this.getTypeName(node.type) === undefined;
+    const ref: ESTree.Expression = needsTemp
+      ? (ESTreeBuilder.identifier(node, uniqueIdentifier("tmp_of_id")) as ESTree.Expression)
+      : value;
+
+    const test = this.typeTest(node, node.type, ref);
+    if (test === undefined) {
+      // The runtime has no test for this type. Refuse rather than emit the "Any" that answered `true`
+      // to everything (LL0104).
       this.report(CD.UntestableType, node, {
         type: this.describeTypeNode(node.type),
         position: "in a `:of` type guard",
       });
       return ESTreeBuilder.literal(node, false) as ESTree.Expression;
     }
-    return ESTreeBuilder.callExpression(
-      node,
-      ESTreeBuilder.identifier(node, "__ll_is_type"),
-      [this.visitExpr(node.value), ESTreeBuilder.literal(node, typeName)]
-    ) as ESTree.Expression;
+
+    if (!needsTemp) return test;
+
+    // `((t) => <test on t>)(value)` -- one evaluation, and the arrow carries no `return` for D40's
+    // LL0103 to catch, because the test IS the body.
+    return {
+      type: "CallExpression",
+      callee: {
+        type: "ArrowFunctionExpression",
+        params: [ref],
+        body: test,
+        expression: true,
+        async: false,
+      },
+      arguments: [value],
+      optional: false,
+      loc: ESTreeBuilder.loc(node),
+    } as unknown as ESTree.Expression;
   }
 
   /**
@@ -2612,22 +2726,17 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // "generateCondition calling __ll_is_type". This is that call, finally made.
       case "type-pattern": {
         const tp = pattern as ast.TypePatternNode;
-        const typeName = this.getTypeName(tp.type);
-        if (typeName === undefined) {
-          // The same refusal `visitTypeGuard` makes, in the OTHER `:of` position (LL0104). Both must
-          // refuse the same shapes, or `(x :of T)` and `(match x { _ :of T => ... })` would disagree
-          // about which types are testable -- and this arm silently matched everything via "Any".
+        // `typeTest`, not `getTypeName` -- the SAME helper `visitTypeGuard` uses, so the two `:of`
+        // positions cannot answer one question differently. `matchVarId` is already a temp, so the
+        // per-member repetition a union needs is free here.
+        const isType = this.typeTest(tp, tp.type, matchVarId);
+        if (isType === undefined) {
           this.report(CD.UntestableType, tp, {
             type: this.describeTypeNode(tp.type),
             position: "in a `:of` match pattern",
           });
           return ESTreeBuilder.literal(pattern, false);
         }
-        const isType = ESTreeBuilder.callExpression(
-          pattern,
-          ESTreeBuilder.identifier(pattern, "__ll_is_type"),
-          [matchVarId, ESTreeBuilder.literal(pattern, typeName)]
-        );
         // `(x = v, true) && __ll_is_type(v, "T")` -- bind first (findIdentifiersToDefine declared `x`),
         // then test. The bind is a side effect that always yields true, so the AND reduces to the type
         // test, and `x` holds the value in whatever runs to the right.

@@ -3842,11 +3842,18 @@ catch b ((console.log "two")))`,
   // Inventing a name for a type that HAS none is the lie.
   // ===============================================================================================
   {
-    name: "Zc: `:of` on a union is REFUSED, not matched against everything",
+    // The 'Any' hole's OWN case, kept as the regression guard for it.
+    //
+    // Zc's version of this asserted LL0104 -- because Zc's answer to "no runtime name" was to refuse.
+    // Zd gave unions a real test, so the refusal is superseded and the assertion is now the STRONGER
+    // one it was always standing in for: a Dog is not an `Int | String`. If the hole ever reopens,
+    // this fails.
+    name: "Zc: the 'Any' hole stays shut -- a Dog is not an `Int | String`",
     source: `(defclass Dog (fn bark [] -> String (return "woof")))
 (let d (Dog))
-(console.log (if (d :of Int | String) "matched" "no"))`,
-    expectDiagnostic: /LL0104/,
+(console.log (if (d :of Int | String) "matched" "correctly-false"))`,
+    expect: ["correctly-false"],
+    emitted: { mustNot: [/__ll_is_type\([^)]*"Any"\)/] },
     wasBroken:
       "printed `matched` -- for a DOG. getTypeName fell through to 'Any' and __ll_is_type's " +
       "`case 'any': return true` matched every value in the language.",
@@ -3875,16 +3882,18 @@ catch b ((console.log "two")))`,
     // The OTHER `:of` position must refuse the same shapes. Za's own header says it: "`(x :of T)` and
     // `(match x { _ :of T => ... })` ask one question and must not be able to answer it differently."
     // A refusal is an answer.
+    // A TUPLE, not a union -- unions became testable in Zd, so the shape that still has no runtime
+    // test is what proves the two positions agree about refusing.
     name: "Zc: a match `:of` refuses the same types the expression `:of` does",
-    source: `(defclass Dog (fn bark [] -> String (return "woof")))
-(console.log (match (Dog) {
-  d :of Int | String => "matched"
+    source: `(let x 5)
+(console.log (match x {
+  v :of [Int String] => "matched"
   _                  => "no"
 }))`,
     expectDiagnostic: /LL0104/,
     wasBroken:
-      "printed `matched` for a Dog -- the match arm went through the same 'Any' hole. Both positions " +
-      "share getTypeName, so both shared the lie.",
+      "matched -- the match arm went through the same 'Any' hole via the same helper. Both positions " +
+      "share `typeTest` now, so a type is testable in both or neither.",
   },
   {
     // The third caller, and the least obvious: an operator's params are registered BY NAME for
@@ -3914,6 +3923,97 @@ catch b ((console.log "two")))`,
     wasBroken:
       "NOT broken -- THE GUARD. These are the cases the runtime genuinely answers, and failing closed " +
       "must not touch them.",
+  },
+
+  // ===============================================================================================
+  // Zd -- `:of` on a union / intersection / optional, SOUNDLY.
+  //
+  // Zc refuses these because they have no runtime NAME. But they are perfectly DECIDABLE -- they just
+  // are not a name. A union is an `||` of its members' tests, an intersection an `&&`, and `T?` is
+  // `T | nil` (D9), so it is a union with a nil check. What was missing is that `getTypeName` returns
+  // a STRING, and a compound type cannot be one; the test has to be built as a SHAPE.
+  //
+  // `typeTest` is that: one helper, both `:of` positions -- the same discipline Vc used for
+  // `isDefaultCatch` and D38 for the diagnostics registry. Za's header states the invariant: the two
+  // positions "ask one question and must not be able to answer it differently."
+  //
+  // A member the runtime still cannot test keeps refusing (LL0104). Decidability composes: a union is
+  // testable exactly when every member is.
+  // ===============================================================================================
+  {
+    name: "Zd: `:of` on a union discriminates",
+    source: `(defclass Dog (fn bark [] -> String (return "woof")))
+(fn what [x <- Int | String | Dog] -> String (
+  (if (x :of Int | String) (return "int-or-string"))
+  (return "other")
+))
+(console.log (what 5))
+(console.log (what "s"))
+(console.log (what (Dog)))`,
+    expect: ["int-or-string", "int-or-string", "other"],
+    emitted: { must: [/__ll_is_type\([^)]*"Int"\)\s*\|\|/] },
+    wasBroken:
+      "before Zc: TRUE for the Dog too -- the 'Any' hole. After Zc: refused. Now it answers, by " +
+      "testing each member.",
+  },
+  {
+    // `T?` is `T | nil` (D9). Testing it as `T` drops the nil arm, so the one value that is
+    // unambiguously a `String?` answered FALSE.
+    name: "Zd: `:of T?` includes nil",
+    source: `(mut s <- String? nil)
+(console.log (if (s :of String?) "nil-is-optional" "no"))
+(s := "hi")
+(console.log (if (s :of String?) "str-is-optional" "no"))
+(console.log (if (5 :of String?) "wrong" "int-is-not"))`,
+    expect: ["nil-is-optional", "str-is-optional", "int-is-not"],
+    wasBroken:
+      "`(nil :of String?)` was FALSE. `String?` tested as `String`, so nil -- the one value that is " +
+      "certainly a String? -- was rejected by its own type.",
+  },
+  {
+    // THE SIDE-EFFECT GUARD. A union references the value once PER MEMBER, so a naive expansion
+    // evaluates it N times. `(f x)` must run once.
+    name: "Zd: the guarded expression is evaluated ONCE",
+    source: `(mut calls <- Int 0)
+(fn bump [] -> Int (
+  (calls := (+ calls 1))
+  (return 5)
+))
+(console.log (if ((bump) :of Int | String) "matched" "no"))
+(console.log calls)`,
+    expect: ["matched", "1"],
+    wasBroken:
+      "n/a -- a GUARD on the expansion. `A(v) || B(v)` names `v` twice; if `v` is a call, it runs " +
+      "twice. The match position is safe (it tests a temp), the expression position is not.",
+  },
+  {
+    // Both positions, one helper. A match arm must answer identically.
+    name: "Zd: a match `:of` on a union discriminates too",
+    source: `(defclass Dog (fn bark [] -> String (return "woof")))
+(fn what [x <- Int | String | Dog] -> String (
+  (return (match x {
+    v :of Int | String => "int-or-string"
+    _                  => "other"
+  }))
+))
+(console.log (what 5))
+(console.log (what (Dog)))`,
+    expect: ["int-or-string", "other"],
+    wasBroken:
+      "the same 'Any' hole via the same helper, then the same refusal. Both positions share " +
+      "`typeTest` now, so they cannot drift.",
+  },
+  {
+    // Decidability COMPOSES: a union is testable exactly when every member is. One untestable member
+    // and the whole thing refuses -- it must not silently test the members it happens to like.
+    name: "Zd: a union with an untestable member still refuses",
+    source: `(let x 5)
+(console.log (if (x :of Int | [Int String]) "yes" "no"))`,
+    expectDiagnostic: /LL0104/,
+    wasBroken:
+      "NOT broken -- a GUARD on the composition. A tuple has no runtime test, so a union containing " +
+      "one has none either. Testing just the Int arm would answer a DIFFERENT question than the one " +
+      "written.",
   },
 ];
 
