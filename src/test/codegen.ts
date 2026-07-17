@@ -3809,6 +3809,112 @@ catch b ((console.log "two")))`,
       "NOT broken -- a GUARD on the trade. The positional comment WAS emitted before, as the `then` " +
       "branch it had stolen.",
   },
+
+  // ===============================================================================================
+  // Zc -- `:of` FAILED OPEN. `getTypeName` invented a name it could not honour.
+  //
+  //     (d :of Int | String)   -> TRUE   for a Dog. Matched EVERYTHING.
+  //     (5 :of Int[])          -> TRUE   inverted
+  //     ([1 2 3] :of Int[])    -> FALSE  inverted
+  //
+  // TWO defects in one helper:
+  //
+  // 1. THE 'Any' HOLE. `getTypeName` handles 5 of 11 TypeNode kinds and falls through to
+  //    `return 'Any'`; `__ll_is_type` has `case 'any': return true`. So a union/tuple/map/intersection
+  //    at a `:of` site emitted `__ll_is_type(v, "Any")` and matched every value -- including null and
+  //    undefined, which the nominal branch explicitly rejects. Reachable from BOTH `:of` positions and
+  //    from operator registration, where `[a <- Int | String]` registers the param as "Any" and the
+  //    overload then matches every argument.
+  //
+  // 2. THE DROPPED ARRAY FLAG. `Int[]` carries `array: true` on the type node; getTypeName recursed
+  //    past it into the element name. So `Int[]` tested as "Int" -- exactly inverted.
+  //
+  // Za's narrowing made (1) worse: the checker BELIEVED it and bound a Dog as `Int | String`.
+  //
+  // FAIL CLOSED. A name the runtime cannot honour is not a name: `getTypeName` returns undefined and
+  // the callers REFUSE (LL0104). The precedent is in-tree and explicit -- `functional-pattern`
+  // (DECISIONS.md:2867-2870): "a closure does not carry its parameter types at run time, so there is
+  // nothing to test against." Where the runtime carries no evidence, refuse and say so. Same shape as
+  // D40/LL0103.
+  //
+  // ERASURE OF ARGUMENTS IS NOT THE LIE, and stays: `:of Iterable<Int>` erases to "Iterable" on
+  // purpose (Ea's extension dispatch depends on it), and `Int[]` now tests ARRAY-NESS the same way.
+  // Inventing a name for a type that HAS none is the lie.
+  // ===============================================================================================
+  {
+    name: "Zc: `:of` on a union is REFUSED, not matched against everything",
+    source: `(defclass Dog (fn bark [] -> String (return "woof")))
+(let d (Dog))
+(console.log (if (d :of Int | String) "matched" "no"))`,
+    expectDiagnostic: /LL0104/,
+    wasBroken:
+      "printed `matched` -- for a DOG. getTypeName fell through to 'Any' and __ll_is_type's " +
+      "`case 'any': return true` matched every value in the language.",
+  },
+  {
+    // NOT refused -- FIXED. Array-ness is answerable; the element type is erased exactly as a
+    // generic's arguments are.
+    name: "Zc: `:of T[]` tests ARRAY-NESS, and is no longer inverted",
+    source: `(let xs [1 2 3])
+(console.log (if (xs :of Int[]) "array" "not-array"))
+(console.log (if (5 :of Int[]) "array" "not-array"))`,
+    expect: ["array", "not-array"],
+    wasBroken:
+      "EXACTLY INVERTED: `([1 2 3] :of Int[])` was FALSE and `(5 :of Int[])` was TRUE. The `array` " +
+      "flag rides on the type node and getTypeName recursed straight past it, so `Int[]` tested as " +
+      "`Int`.",
+  },
+  {
+    name: "Zc: `:of` on a tuple / map type is REFUSED",
+    source: `(let x 5)
+(console.log (if (x :of [Int String]) "yes" "no"))`,
+    expectDiagnostic: /LL0104/,
+    wasBroken: "`Any` -> matched. A tuple type has no runtime name and nothing tested its shape.",
+  },
+  {
+    // The OTHER `:of` position must refuse the same shapes. Za's own header says it: "`(x :of T)` and
+    // `(match x { _ :of T => ... })` ask one question and must not be able to answer it differently."
+    // A refusal is an answer.
+    name: "Zc: a match `:of` refuses the same types the expression `:of` does",
+    source: `(defclass Dog (fn bark [] -> String (return "woof")))
+(console.log (match (Dog) {
+  d :of Int | String => "matched"
+  _                  => "no"
+}))`,
+    expectDiagnostic: /LL0104/,
+    wasBroken:
+      "printed `matched` for a Dog -- the match arm went through the same 'Any' hole. Both positions " +
+      "share getTypeName, so both shared the lie.",
+  },
+  {
+    // The third caller, and the least obvious: an operator's params are registered BY NAME for
+    // overload dispatch, so a union param registered as "Any" and the overload matched every
+    // argument -- a silent wrong dispatch, not a failed test.
+    name: "Zc: an operator param the runtime cannot test is REFUSED",
+    source: `(defstruct P (mut :ctor v <- Int 0))
+(fn :operator + [a <- Int | String b <- P] -> P (return b))
+(console.log "declared")`,
+    expectDiagnostic: /LL0104/,
+    wasBroken:
+      "registered the param as `Any`, so `__ll_op_registry.lookup` matched this overload for ANY " +
+      "first argument. Unsound dispatch, and invisible.",
+  },
+  {
+    // THE GUARD. Everything the runtime CAN answer must keep answering -- including the deliberate
+    // generic-argument erasure Ea's dispatch depends on.
+    name: "Zc: bare names, classes and generics still test",
+    source: `(defclass Dog (fn bark [] -> String (return "woof")))
+(let d (Dog))
+(console.log (if (d :of Dog) "dog" "no"))
+(console.log (if (5 :of Int) "int" "no"))
+(console.log (if ("s" :of String) "str" "no"))
+(console.log (if (true :of Boolean) "bool" "no"))
+(console.log (if (5 :of String) "wrong" "correctly-false"))`,
+    expect: ["dog", "int", "str", "bool", "correctly-false"],
+    wasBroken:
+      "NOT broken -- THE GUARD. These are the cases the runtime genuinely answers, and failing closed " +
+      "must not touch them.",
+  },
 ];
 
 // -------------------------------------------------------------------------------------------------

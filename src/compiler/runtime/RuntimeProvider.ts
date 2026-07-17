@@ -233,7 +233,16 @@ function __ll_is_type(val, type) {
     case 'object': return typeof val === 'object' && val !== null && !Array.isArray(val);
     case 'null': return val === null;
     case 'undefined': return val === undefined;
-    case 'any': return true;
+    // \`case 'any': return true\` USED TO BE HERE, and it existed only to answer a lie.
+    //
+    // \`getTypeName\` could not name a union/tuple/map/intersection, so it returned 'Any' rather than
+    // admit it -- and this arm then answered TRUE for every value in the language, including the
+    // \`null\` and \`undefined\` the nominal branch below explicitly rejects. \`(d :of Int | String)\`
+    // matched a Dog. It is gone with the lie: getTypeName returns undefined now, and the callers
+    // refuse (LL0104).
+    //
+    // \`Any\` as a DECLARED type is not affected -- nothing ever tests \`:of Any\`, and if it did, the
+    // honest answer is that a test which cannot fail is not a test.
     default:
       if (val === null || val === undefined) return false;
       let current = val;

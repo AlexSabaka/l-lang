@@ -394,6 +394,16 @@
     ]
   },
   {
+    "probe": "LL0104 :of on an untestable type",
+    "diagnostics": [
+      {
+        "code": "LL0104",
+        "severity": "error",
+        "text": "'the union Int | String' cannot be tested at run time, so it cannot be used in a `:of` type guard. The compiled program has no representation of this type to check a value against. Use a type with a runtime identity -- a primitive, a class, a struct, or a generic base like 'Iterable<T>' (whose arguments are erased)."
+      }
+    ]
+  },
+  {
     "probe": "LL0102 non-name in binding position",
     "diagnostics": [
       {

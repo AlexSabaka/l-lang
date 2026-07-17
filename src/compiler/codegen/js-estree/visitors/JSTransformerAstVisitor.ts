@@ -461,37 +461,68 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return result;
   }
   
-  private getTypeName(t: any): string {
-     if (!t) return 'Any';
-     
+  /**
+   * The name `__ll_is_type` should be asked for this type -- or UNDEFINED, when the runtime cannot
+   * answer the question at all.
+   *
+   * IT USED TO RETURN 'Any' RATHER THAN ADMIT DEFEAT, and `__ll_is_type` had `case 'any': return
+   * true`. So a type this helper could not name -- a union, a tuple, a map, an intersection -- emitted
+   * `__ll_is_type(v, "Any")` and matched EVERY value in the language, including the `null` and
+   * `undefined` its nominal branch explicitly rejects:
+   *
+   *     (d :of Int | String)  ->  TRUE, for a Dog
+   *
+   * It failed OPEN, in three positions: both `:of` sites and operator registration, where
+   * `[a <- Int | String]` registered the param as "Any" and the overload matched every argument.
+   * Za's narrowing then believed it and bound a Dog as `Int | String`.
+   *
+   * Undefined means REFUSE (LL0104). The precedent is in-tree and explicit -- `functional-pattern`
+   * (DECISIONS.md): "a closure does not carry its parameter types at run time, so there is nothing to
+   * test against." Where the runtime carries no evidence, leave it dead and SAY SO.
+   *
+   * ERASING ARGUMENTS IS NOT THE LIE. `Iterable<Int>` -> "Iterable" is deliberate and load-bearing
+   * (Ea's `:extension` dispatch on a generic protocol needs it), and `Int[]` -> "Array" is the same
+   * bargain: array-ness is answerable, the element type is not. Inventing a name for a type that HAS
+   * none is what this stops doing.
+   */
+  private getTypeName(t: any): string | undefined {
+     if (!t) return undefined;
+
+     // `Int[]`. The ARRAY flag rides on the type node (AstBuilder's `type` and `basicType` both set
+     // it), and recursing past it into the ELEMENT name is what inverted the test: `Int[]` asked
+     // `__ll_is_type(v, "Int")`, so `(5 :of Int[])` was TRUE and `([1 2 3] :of Int[])` was FALSE.
+     // Checked before the wrappers below, because either level can carry it.
+     if (t.array === true) return 'Array';
+
      // Recursive handling of wrapper nodes
      if (t._type === 'type') {
-         return t.type ? this.getTypeName(t.type) : 'Any';
+         return t.type ? this.getTypeName(t.type) : undefined;
      }
-     
+
      if (t._type === 'simple-type') {
-         return t.name ? this.getTypeName(t.name) : 'Any';
+         return t.name ? this.getTypeName(t.name) : undefined;
      }
 
      // Base cases
      if (t._type === 'type-name') {
-         return typeof t.name === 'string' ? t.name : 'Any';
+         return typeof t.name === 'string' ? t.name : undefined;
      }
 
      // A generic type -- `Iterable<Int>` -- keeps its base under `.name` (a nested type-name); the
      // generic ARGUMENTS are erased for a name lookup. Without this the base read as `Any`, and an
      // `:extension` whose receiver was a generic protocol never matched (Ea).
      if (t._type === 'generic-type') {
-         return t.name ? this.getTypeName(t.name) : 'Any';
+         return t.name ? this.getTypeName(t.name) : undefined;
      }
 
      if (t._type === 'function-type') return 'Function';
-     
+
      // Fallback for direct string or object with name
      if (typeof t.name === 'string') return t.name;
      if (t.type && typeof t.type.name === 'string') return t.type.name;
-     
-     return 'Any';
+
+     // union-type, intersection-type, tuple-type, map-type: no runtime name, nothing to test.
+     return undefined;
   }
 
 
@@ -1154,9 +1185,29 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         // through the registry.
         if (this.currentScope() !== ScopeType.method) {
           const overloadName = `__ll_overload_${name.name}_${this.overloadCounter++}`;
-          const paramTypes = node.params.map(p => this.getTypeName(p.type));
+          // An overload is registered BY PARAM NAME and `__ll_op_registry.lookup` resolves it with
+          // `__ll_is_type`. So a param the runtime cannot test cannot be dispatched on -- and it used
+          // to register as "Any", which `__ll_is_type` answered `true` to, making the overload match
+          // EVERY argument. A silent wrong dispatch rather than a failed test (LL0104).
+          const paramTypes: string[] = [];
+          let dispatchable = true;
+          for (const p of node.params) {
+            const pt = this.getTypeName(p.type);
+            if (pt === undefined) {
+              this.report(CD.UntestableType, p, {
+                type: this.describeTypeNode(p.type),
+                position: `as the type of operator parameter '${(p.name as any)?.id ?? "?"}'`,
+              });
+              dispatchable = false;
+              break;
+            }
+            paramTypes.push(pt);
+          }
 
-          this.operatorRegistrations.push({
+          // The overload is still EMITTED -- only its registration is skipped. The diagnostic is an
+          // error, so nothing runs; emitting the function anyway keeps this path free of a second
+          // control-flow shape for the error case.
+          if (dispatchable) this.operatorRegistrations.push({
             type: 'ExpressionStatement',
             expression: {
               type: 'CallExpression',
@@ -2359,11 +2410,57 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * `getTypeName` is the same helper too.
    */
   visitTypeGuard(node: ast.TypeGuardNode): ESTree.Expression {
+    const typeName = this.getTypeName(node.type);
+    if (typeName === undefined) {
+      // The runtime has no name to test against. Refuse rather than emit the "Any" that answered
+      // `true` to everything (LL0104).
+      this.report(CD.UntestableType, node, {
+        type: this.describeTypeNode(node.type),
+        position: "in a `:of` type guard",
+      });
+      return ESTreeBuilder.literal(node, false) as ESTree.Expression;
+    }
     return ESTreeBuilder.callExpression(
       node,
       ESTreeBuilder.identifier(node, "__ll_is_type"),
-      [this.visitExpr(node.value), ESTreeBuilder.literal(node, this.getTypeName(node.type))]
+      [this.visitExpr(node.value), ESTreeBuilder.literal(node, typeName)]
     ) as ESTree.Expression;
+  }
+
+  /**
+   * A human name for a type node, for LL0104's message.
+   *
+   * `getTypeName` answers the RUNTIME's question ("what do I hand __ll_is_type?"); this answers the
+   * reader's ("what did I write that it cannot test?"). LL0104 is exactly the case where the first
+   * has no answer and the second does -- so a diagnostic that could only say "undefined" would be
+   * useless precisely where it is needed.
+   *
+   * Unwraps the `type` wrapper first: the compound node sits under it, so a bare `_type` read finds
+   * "type" every time.
+   */
+  private describeTypeNode(t: any): string {
+    let n = t;
+    while (n && n._type === "type" && n.type) n = n.type;
+    if (!n) return "this type";
+
+    if (n.array === true) return "an array type";
+
+    switch (n._type) {
+      case "union-type": {
+        const parts = (n.types ?? []).map((x: any) => this.getTypeName(x) ?? "?");
+        return parts.length ? `the union ${parts.join(" | ")}` : "a union type";
+      }
+      case "intersection-type": {
+        const parts = (n.types ?? []).map((x: any) => this.getTypeName(x) ?? "?");
+        return parts.length ? `the intersection ${parts.join(" & ")}` : "an intersection type";
+      }
+      case "tuple-type":
+        return "a tuple type";
+      case "map-type":
+        return "a map/record type";
+      default:
+        return "this type";
+    }
   }
 
   visitMatch(node: ast.MatchNode): ESTree.CallExpression {
@@ -2516,6 +2613,16 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       case "type-pattern": {
         const tp = pattern as ast.TypePatternNode;
         const typeName = this.getTypeName(tp.type);
+        if (typeName === undefined) {
+          // The same refusal `visitTypeGuard` makes, in the OTHER `:of` position (LL0104). Both must
+          // refuse the same shapes, or `(x :of T)` and `(match x { _ :of T => ... })` would disagree
+          // about which types are testable -- and this arm silently matched everything via "Any".
+          this.report(CD.UntestableType, tp, {
+            type: this.describeTypeNode(tp.type),
+            position: "in a `:of` match pattern",
+          });
+          return ESTreeBuilder.literal(pattern, false);
+        }
         const isType = ESTreeBuilder.callExpression(
           pattern,
           ESTreeBuilder.identifier(pattern, "__ll_is_type"),
@@ -4097,8 +4204,13 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         if (entry.nodeType !== "function" || !entry.modifiers?.has("extension")) continue;
         const receiver = (entry.value as ast.FunctionNode)?.params?.[0]?.type;
         if (!receiver) continue; // an extension with no receiver dispatches on nothing (Eb diagnoses it)
+        // ...and neither does one whose receiver the runtime cannot name (a union, a tuple). It used
+        // to enter the table as "Any" and then match EVERY receiver. Skipped, exactly as the
+        // no-receiver case is; the `:of`/operator sites report LL0104 where a user wrote one.
+        const receiverType = this.getTypeName(receiver);
+        if (receiverType === undefined) continue;
         const list = table.get(name) ?? [];
-        list.push({ fnName: name, receiverType: this.getTypeName(receiver) });
+        list.push({ fnName: name, receiverType });
         table.set(name, list);
       }
     }

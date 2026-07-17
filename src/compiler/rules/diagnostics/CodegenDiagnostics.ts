@@ -70,6 +70,30 @@ export const CodegenDiagnostics = {
   // lowering path (AST -> HIR -> ESTree), not bolted onto an emitter that has no notion of a block.
   // When that lands, this def and its call sites are DELETED and the refused cases start working;
   // they are HIR's acceptance test.
+  // LL0104 -- a type the RUNTIME cannot test, asked to be tested.
+  //
+  // `:of` and `:operator` dispatch both compile to `__ll_is_type(v, "<name>")`, so a type with no
+  // runtime name has no test. This used to emit `"Any"`, and `__ll_is_type` answered `true` to it --
+  // so `(d :of Int | String)` matched a Dog, and an `[a <- Int | String]` operator param matched every
+  // argument. It failed OPEN, which is the bug class this compiler spent a year removing.
+  //
+  // The governing precedent is `functional-pattern`: "a closure does not carry its parameter types at
+  // run time, so there is nothing to test against. Left dead." Where the runtime carries no evidence,
+  // refuse and say so.
+  //
+  // Not permanent for every kind: a UNION is decidable (test each member) and is restored in Zd.
+  // Tuple/map/record need shape tests. This def marks the boundary of what the runtime can honour
+  // TODAY, and shrinks as that grows.
+  UntestableType: def<{ type: string; position: string }>(
+    "LL0104",
+    Error,
+    (p) =>
+      `'${p.type}' cannot be tested at run time, so it cannot be used ${p.position}. The compiled ` +
+      `program has no representation of this type to check a value against. Use a type with a ` +
+      `runtime identity -- a primitive, a class, a struct, or a generic base like 'Iterable<T>' ` +
+      `(whose arguments are erased).`
+  ),
+
   ReturnInExpressionPosition: def<{ form: string }>(
     "LL0103",
     Error,

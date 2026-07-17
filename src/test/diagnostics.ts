@@ -290,6 +290,13 @@ const PROBES: Probe[] = [
     source: "(fn f [x <- Int] -> Int ((match x { 1 => (return 5) _ => (return 9) }) (return 0)))",
     stage: "codegen",
   },
+  {
+    // Zc. `:of` on a type the runtime cannot name. It used to emit `__ll_is_type(v, "Any")` and match
+    // every value in the language; it refuses now.
+    name: "LL0104 :of on an untestable type",
+    source: "(let x 5) (console.log (if (x :of Int | String) 1 0))",
+    stage: "codegen",
+  },
   { name: "LL0102 non-name in binding position", source: "(let [1] [5])", stage: "codegen" },
   {
     name: "LL0102 constructor default before required",
