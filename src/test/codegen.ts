@@ -4497,6 +4497,36 @@ catch b ((console.log "two")))`,
       "__ll_index and still throws KeyError on an absent map key (D9f). Only `.member` goes unchecked.",
   },
 
+  // CP3 (games) -- `deep-copy`, an OPT-IN deep copy. The default struct copy is shallow-at-reference
+  // (C#-style, goldened): a struct's array field stays SHARED, so `(let snap world)` gives a
+  // half-working undo. `deep-copy` recurses arrays and nested structs.
+  // ===============================================================================================
+  {
+    name: "CP3: `deep-copy` snapshots a struct's arrays independently",
+    source: `(defstruct World (mut :ctor boxes <- Int[]))
+(let w (World [1 2 3]))
+(let snap (deep-copy w))
+(w.boxes[0] := 99)
+(console.log snap.boxes[0] w.boxes[0])`,
+    expect: ["1 99"],
+    wasBroken:
+      "the shallow default shares the array -- `(let snap w)` then mutating `w.boxes[0]` changed " +
+      "`snap.boxes[0]` too. `deep-copy`'s snapshot is independent (1), the original still mutates (99).",
+  },
+  {
+    // Contrast guard: the DEFAULT copy is deliberately shallow-at-reference and stays that way.
+    name: "CP3: the default `(let snap w)` still shares the array (GUARD)",
+    source: `(defstruct World (mut :ctor boxes <- Int[]))
+(let w (World [1 2 3]))
+(let snap w)
+(w.boxes[0] := 99)
+(console.log snap.boxes[0])`,
+    expect: ["99"],
+    wasBroken:
+      "NOT broken -- the ruled default. Shallow-at-reference is goldened (C# value-type semantics); " +
+      "`deep-copy` is the opt-in, it does not change the default.",
+  },
+
   // CF2 (games) -- a one-armed `if`/`when` as the THEN branch of an `if`/`cond` clause dangles the
   // outer `else`. `visitIf`/`visitCond` pass an else-less inner `IfStatement` as the consequent
   // UNWRAPPED, and astring's dangling-else then binds the outer `else` to the INNER `if`. Killed

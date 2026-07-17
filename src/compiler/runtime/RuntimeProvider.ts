@@ -434,6 +434,24 @@ function __ll_is_type(val, type) {
     // ordinary, shadowable name like `head`/`list` -- a local or import of `next` wins, as it should.
     "next": `const next = (it) => (it != null && typeof it.next === 'function') ? it.next() : null;`,
 
+    // Opt-in DEEP copy (CP3, games). The default struct copy (`__ll_copy`) is shallow-at-reference,
+    // C#-style and goldened: it recurses a struct's own fields but returns an ARRAY unchanged, so
+    // `(let snap world)` copies the player but SHARES the boxes -- a half-working undo. `deep-copy`
+    // recurses through arrays AND nested structs, so an undo snapshot is truly independent. CLASS
+    // instances (reference types) and plain values are returned as-is, deliberately: deep-copy honours
+    // the value/reference split, it does not erase it. The DEFINED name is `encodeIdentifier` of the
+    // source name; the KEY stays the source name (the LL0210 exemption).
+    "deep-copy": `const deep2dcopy = (v) => {
+  if (v === null || typeof v !== 'object') return v;
+  if (Array.isArray(v)) return v.map(deep2dcopy);
+  if (v.constructor && v.constructor.__ll_struct === true) {
+    const out = Object.create(Object.getPrototypeOf(v), Object.getOwnPropertyDescriptors(v));
+    for (const k of Object.keys(out)) out[k] = deep2dcopy(out[k]);
+    return out;
+  }
+  return v;
+};`,
+
     // Call wrapper
     "call": `const call = (f, args) => !!args && Array.isArray(args) ? f(...args) : f();`,
     "eval": ``,
