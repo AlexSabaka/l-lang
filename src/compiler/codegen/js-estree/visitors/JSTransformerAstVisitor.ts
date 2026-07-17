@@ -3496,7 +3496,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       }
 
       const callee = this.visitExpr(head);
-      const args = rest.map((x) => this.visitExpr(x));
+      let args = rest.map((x) => this.visitExpr(x));
       const calleeStr = this.expressionToString(callee);
 
       // `(Dog "rex")` constructs. Asked of the symbol table, so a class declared LATER in the file
@@ -3531,6 +3531,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         // The receiver name is encoded too: `final-account` -> `final2daccount`, which the symbol table
         // (keyed on source names) cannot resolve, so `receiverType` failed even before the member lookup.
         if (sourceParts.length >= 2) sourceObject = sourceParts[0];
+      }
+
+      // CP2/D11: a native STORING mutator puts its argument INTO the array, so a struct argument must be
+      // COPIED first -- a struct is a value type, and every other store site (a function frame, a `[s]`
+      // literal) already copies; the native `.push`/`.unshift` did not, so a pushed struct kept aliasing
+      // the original. `asValue` copies only a struct; a non-struct arg passes through unchanged. After
+      // the constructor branch above (which returns), so a construction's args are never touched.
+      if (sourceMember === "push" || sourceMember === "unshift") {
+        args = args.map((emitted, i) => this.asValue(emitted, rest[i]));
       }
 
       // D1, answered: `(x)` is a CALL iff `x` names a FUNCTION. From the symbol table, not from a

@@ -4542,6 +4542,35 @@ catch b ((console.log "two")))`,
       "forExpr) consumed only clauses, so a documenting comment before a clause was an unexpected token.",
   },
 
+  // CP2 (games) -- `(arr.push s)` ALIASED a struct value. A struct is a value type (D11): storing it
+  // copies. A function frame copies (`p = __ll_copy(p)`), a literal `[s]` copies -- but the native
+  // `.push`/`.unshift` had NO copy, so a struct pushed into an array kept aliasing the original. RULED:
+  // copy-insert -- wrap a struct arg to a storing native mutator in `__ll_copy`.
+  // ===============================================================================================
+  {
+    name: "CP2: pushing a struct into an array copies it (D11)",
+    source: `(defstruct P (mut :ctor v <- Int))
+(let s (P 1))
+(mut arr [])
+(arr.push s)
+(s.v := 99)
+(console.log arr[0].v)`,
+    expect: ["1"],
+    wasBroken:
+      "`99`: `(arr.push s)` stored the struct by reference, so mutating `s` after the push changed the " +
+      "pushed element too. Every other store site copied; the native mutator did not.",
+  },
+  {
+    // Guard: a non-struct arg is not needlessly copied, and push still works.
+    name: "CP2: pushing a non-struct is unchanged (GUARD)",
+    source: `(mut xs [])
+(xs.push 1)
+(xs.push 2)
+(console.log xs[0] xs[1])`,
+    expect: ["1 2"],
+    wasBroken: "NOT broken -- the GUARD. `asValue` copies only structs, so an Int push is untouched.",
+  },
+
   // CP3 (games) -- `deep-copy`, an OPT-IN deep copy. The default struct copy is shallow-at-reference
   // (C#-style, goldened): a struct's array field stays SHARED, so `(let snap world)` gives a
   // half-working undo. `deep-copy` recurses arrays and nested structs.
