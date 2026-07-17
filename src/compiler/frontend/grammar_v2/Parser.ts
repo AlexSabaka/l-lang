@@ -1193,6 +1193,10 @@ class LLangParser extends CstParser {
     this.condExpr = this.RULE("condExpr", () => {
       this.CONSUME(t.CondKw);
       this.AT_LEAST_ONE(() => {
+        // Leading comments BETWEEN clauses (PR1). Comments are real tokens (l-lang keeps them as AST
+        // nodes), so a `;; note` before a `(:else ...)` clause was an unexpected token and threw a raw
+        // parse error. Consumed here so a clause may be documented.
+        this.MANY(() => this.SUBRULE(this.comment));
         this.SUBRULE(this.condCase);
       });
     });
@@ -1253,7 +1257,10 @@ class LLangParser extends CstParser {
      */
     this.forExpr = this.RULE("forExpr", () => {
       this.CONSUME(t.ForKw);
-      this.AT_LEAST_ONE(() => this.SUBRULE(this.forClause));
+      this.AT_LEAST_ONE(() => {
+        this.MANY(() => this.SUBRULE(this.comment)); // PR1: a comment between `:keyword` clauses
+        this.SUBRULE(this.forClause);
+      });
     });
 
     this.forClause = this.RULE("forClause", () => {
@@ -1342,6 +1349,7 @@ class LLangParser extends CstParser {
       this.SUBRULE(this.expression);
       this.CONSUME(t.LBrace);
       this.AT_LEAST_ONE(() => {
+        this.MANY(() => this.SUBRULE(this.comment)); // PR1: a comment between arms
         this.SUBRULE(this.matchCase);
       });
       this.CONSUME(t.RBrace);

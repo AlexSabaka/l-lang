@@ -4514,6 +4514,34 @@ catch b ((console.log "two")))`,
       "__ll_index and still throws KeyError on an absent map key (D9f). Only `.member` goes unchecked.",
   },
 
+  // PR1 (games) -- a comment placed before a clause (a `cond` case, a `match` arm, a `for` clause)
+  // threw a RAW parse error. Comments are real tokens (l-lang keeps them as AST nodes), so a clause
+  // loop that consumed only clauses met the comment as an unexpected token. Now each clause loop
+  // consumes leading comments, so a clause may be documented.
+  // ===============================================================================================
+  {
+    name: "PR1: comments between cond/match/for clauses parse",
+    source: `(fn classify [n <- Int] -> String (
+  (cond
+    ((> n 0) (return "pos"))
+    ;; the default
+    (:else (return "neg")))))
+(fn name-of [n <- Int] -> String (
+  (match n {
+    1 => "one"
+    ;; fallback arm
+    _ => "many"})))
+(mut sum 0)
+(for :each x
+  ;; iterate
+  :from [1 2 3] :then (sum := (+ sum x)))
+(console.log (classify 5) (name-of 1) sum)`,
+    expect: ["pos one 6"],
+    wasBroken:
+      "each threw `Expecting RParen/RBrace but found ';; ...'`: the clause loops (condExpr, matchExpr, " +
+      "forExpr) consumed only clauses, so a documenting comment before a clause was an unexpected token.",
+  },
+
   // CP3 (games) -- `deep-copy`, an OPT-IN deep copy. The default struct copy is shallow-at-reference
   // (C#-style, goldened): a struct's array field stays SHARED, so `(let snap world)` gives a
   // half-working undo. `deep-copy` recurses arrays and nested structs.
