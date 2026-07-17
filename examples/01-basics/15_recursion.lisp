@@ -40,10 +40,10 @@
 
     ;; 4. Tree structure recursion
     (fn tree-sum [tree] -> Int (
-        (if (== (type tree) Number)
+        (if (tree :of Int)
             (return tree)
-            (if (== (type tree) Array) (
-                (let total <- Int 0)
+            (if (tree :of Int[]) (
+                (mut total <- Int 0)
                 (for :each node :from tree :then (
                     (total := (+ total (tree-sum node)))
                 ))
