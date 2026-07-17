@@ -886,6 +886,52 @@ const CASES: Case[] = [
           };
     },
   },
+
+  // Zh -- `type` never got the `__ll_name` fix that `__ll_is_type` got.
+  // ===============================================================================================
+  {
+    name: "Zh: `(type x)` on an IMPORTED class reports the SOURCE name",
+    why:
+      "An import is INLINED under a mangled JS name (`__ll_inlined_Money_1`), so `constructor.name` " +
+      "is the mangler's name, not the type's. `__ll_is_type` was fixed to read `static __ll_name` " +
+      "FIRST and DECISIONS.md records the rename as FIXED -- but the fix landed in ONE of the two " +
+      "consumers. `type` still reads `constructor.name`, so it reports a name that appears nowhere " +
+      "in the user's source and that no other part of the language answers to.",
+    run: () => {
+      const entry = fixture(
+        "type-inlined-name",
+        {
+          "money.lisp": `(\n  (defclass Money\n    (fn amount [] -> Int (return 5)))\n  (export Money)\n)\n`,
+          "main.lisp":
+            `(\n` +
+            `  (import "money.lisp")\n` +
+            `  (let m (Money))\n` +
+            `  (let t (type m))\n` +
+            `  (console.log t["name"])\n` +
+            `)\n`,
+        },
+        "main.lisp"
+      );
+      const out = build(entry);
+
+      if (!out.compiled || out.runtimeError) {
+        return {
+          ok: false,
+          detail: out.runtimeError ? `runtime: ${out.runtimeError}` : "did not compile",
+        };
+      }
+
+      // Guard the premise: if the import is NOT inlined under a mangled name, this test proves
+      // nothing and must say so rather than pass green.
+      if (!/__ll_inlined_\w*Money/.test(out.code ?? "")) {
+        return { ok: false, detail: "premise gone: `Money` is no longer inlined under a mangled name" };
+      }
+
+      return out.stdout === "Money"
+        ? { ok: true, detail: "reports `Money`, the name in the source" }
+        : { ok: false, detail: `expected "Money", got ${JSON.stringify(out.stdout)}` };
+    },
+  },
 ];
 
 function main() {

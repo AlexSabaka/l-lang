@@ -442,14 +442,21 @@ function __ll_is_type(val, type) {
   if (typeof typeNameOrObj === 'string') {
     return __ll_type_metadata[typeNameOrObj] || { name: typeNameOrObj, kind: 'unknown', properties: [], methods: [], generics: [] };
   }
-  // If it's an object (instance), try to get its type
+  // If it's an object (instance), try to get its type.
+  //
+  // __ll_name FIRST, constructor.name only as a fallback -- the same order __ll_is_type uses, and for
+  // the same reason (Zh). An import is INLINED under a mangled JS name, so \`constructor.name\` is the
+  // MANGLER's name: \`(type m)\` on an imported Money reported \`__ll_inlined_Money_1\`, a name that
+  // appears nowhere in the user's source. It also missed the metadata lookup -- which is keyed on the
+  // SOURCE name -- so it silently fell through to the reflected fallback, losing every method and
+  // generic. \`__ll_name\` is the source of truth; the JS binding's name is not.
   if (typeof typeNameOrObj === 'object' && typeNameOrObj !== null) {
-    const typeName = typeNameOrObj.constructor?.name || 'Object';
+    const typeName = typeNameOrObj.constructor?.__ll_name || typeNameOrObj.constructor?.name || 'Object';
     return __ll_type_metadata[typeName] || { name: typeName, kind: 'object', properties: Object.keys(typeNameOrObj), methods: [], generics: [] };
   }
-  // If it's a function (class), get its type
+  // If it's a function (class), get its type -- same rename, same reason.
   if (typeof typeNameOrObj === 'function') {
-    const typeName = typeNameOrObj.name;
+    const typeName = typeNameOrObj.__ll_name || typeNameOrObj.name;
     return __ll_type_metadata[typeName] || { name: typeName, kind: 'class', properties: [], methods: [], generics: [] };
   }
   return { kind: 'unknown', properties: [], methods: [], generics: [] };
