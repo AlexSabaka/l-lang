@@ -282,14 +282,6 @@ export class LowerAstToHirVisitor {
   // -- operand hoisting (S4): unnest + lazy logical --------------------------------------------------
 
   /**
-   * A call/apply whose arguments may contain value-position control flow or a diverging `return`. Lower
-   * each argument; if any needs statements (or diverges), emit them as a prelude and rebuild the call
-   * with the hoisted arguments substituted -- then hand the rebuilt call to the legacy emitter (its
-   * dispatch/copy stay legacy; that is R2-R4). The callee is left untouched (hoisting it would break
-   * constructor/method detection). The UNNEST rule preserves evaluation order: an earlier non-immovable
-   * argument that precedes a hoisting one is bound to a temp so its effects run first.
-   */
-  /**
    * Lower a node whose STRUCTURE stays legacy (a call and its dispatch, a `new`, an await, a formatted
    * string) but whose value-position CHILDREN must go through the HIR. Each child is lowered; any that
    * is hoisting, diverging, or COMPOUND (a ternary / inverted collection -- not a temp or opaque leaf)
@@ -304,46 +296,97 @@ export class LowerAstToHirVisitor {
     dest: Dest
   ): Lowered {
     if (children.length === 0) return this.leaf(node, dest);
-    const lowered = children.map((c) => this.lowerNode(c, VALUE));
-    let last = -1;
-    for (let i = 0; i < lowered.length; i++) {
-      if (lowered[i].stmts.length > 0 || lowered[i].value === null) last = i;
-    }
-    const anyCompound = lowered.some((l) => l.value !== null && !this.isSubstitutable(l.value));
-    if (last === -1 && !anyCompound) return this.leaf(node, dest); // all children plain leaves -> unchanged
-
-    const prelude: HStmt[] = [];
-    const finalChildren: ast.ASTNode[] = [];
-    for (let i = 0; i < lowered.length; i++) {
-      const l = lowered[i];
-      prelude.push(...l.stmts);
-      if (l.value === null) return { stmts: prelude, value: null }; // a child diverged (return in operand)
-      const mustBind = !this.isSubstitutable(l.value) || (i < last && !this.isImmovable(l.value));
-      const atom = mustBind
-        ? (this.temps.fresh() as string)
-        : null;
-      if (atom !== null) {
-        prelude.push(this.declTempInit(atom, l.value, children[i]));
-        finalChildren.push(this.hexprToAst(this.temp(atom, children[i]), children[i]));
-      } else {
-        finalChildren.push(this.hexprToAst(l.value, children[i]));
-      }
-    }
-    const rebuilt = rebuild(finalChildren);
+    const ops = this.lowerOperands(children);
+    if (ops.diverged) return { stmts: ops.prelude, value: null }; // a child diverged (return in operand)
+    if (ops.prelude.length === 0) return this.leaf(node, dest); // all children plain leaves -> unchanged
+    const rebuilt = rebuild(ops.children);
     const t = this.context.nodeTypes.get(node);
     if (t) this.context.recordSynthesizedNodeType(rebuilt, t);
     const inner = this.leaf(rebuilt, dest);
-    return { stmts: [...prelude, ...inner.stmts], value: inner.value };
+    return { stmts: [...ops.prelude, ...inner.stmts], value: inner.value };
+  }
+
+  /**
+   * Lower a list of value-position operands, hoisting the ones that need statements into a shared
+   * prelude and rebinding earlier impure siblings so left-to-right evaluation order survives. Returns
+   * the prelude and the AST operands (temps substituted for the hoisted ones) for the legacy emitter.
+   *
+   * The UNNEST rule: an operand that emits a PRELUDE STATEMENT is an evaluation-ordering point, so every
+   * earlier non-immovable operand is bound to a temp ahead of it. An operand emits a prelude statement
+   * when it lowered to statements, diverged, OR is a COMPOUND HExpr (a ternary / inverted collection) --
+   * the compound is force-bound to a temp below, and omitting it from `last` let an earlier impure
+   * operand run after a later compound's prelude.
+   */
+  private lowerOperands(children: ast.ASTNode[]): { prelude: HStmt[]; children: ast.ASTNode[]; diverged: boolean } {
+    const lowered = children.map((c) => this.lowerNode(c, VALUE));
+    let last = -1;
+    for (let i = 0; i < lowered.length; i++) {
+      const l = lowered[i];
+      if (l.value === null || l.stmts.length > 0 || !this.isSubstitutable(l.value)) last = i;
+    }
+    const prelude: HStmt[] = [];
+    const out: ast.ASTNode[] = [];
+    for (let i = 0; i < lowered.length; i++) {
+      const l = lowered[i];
+      prelude.push(...l.stmts);
+      if (l.value === null) return { prelude, children: out, diverged: true };
+      const mustBind = !this.isSubstitutable(l.value) || (i < last && !this.isImmovable(l.value));
+      if (mustBind) {
+        const atom = this.temps.fresh() as string;
+        prelude.push(this.declTempInit(atom, l.value, children[i]));
+        out.push(this.hexprToAst(this.temp(atom, children[i]), children[i]));
+      } else {
+        out.push(this.hexprToAst(l.value, children[i]));
+      }
+    }
+    return { prelude, children: out, diverged: false };
   }
 
   private lowerCallLike(node: ast.ListNode, dest: Dest): Lowered {
-    // Callee (nodes[0]) is left untouched -- hoisting it would break constructor/method detection.
-    return this.lowerViaLegacy(
-      node,
-      node.nodes.slice(1),
-      (args) => ({ ...node, nodes: [node.nodes[0], ...args] } as ast.ListNode),
-      dest
-    );
+    const ops = this.lowerOperands(node.nodes.slice(1));
+    if (ops.diverged) return { stmts: ops.prelude, value: null };
+    // Nothing hoisted -> the callee stays inline exactly as written; no reorder is possible.
+    if (ops.prelude.length === 0) return this.leaf(node, dest);
+    // An argument hoisted ahead of the call. The callee (nodes[0]) is rebuilt verbatim and emitted
+    // INLINE, so a side-effecting sub-expression inside it would run after the argument prelude. Bind
+    // that sub-expression to a temp ahead of the prelude, preserving the callee's syntactic shape so
+    // constructor/method/index dispatch detection is unaffected. (blocker 8)
+    const callee = this.hoistCalleeImpurities(node.nodes[0]);
+    const rebuilt = { ...node, nodes: [callee.node, ...ops.children] } as ast.ListNode;
+    const t = this.context.nodeTypes.get(node);
+    if (t) this.context.recordSynthesizedNodeType(rebuilt, t);
+    const inner = this.leaf(rebuilt, dest);
+    return { stmts: [...callee.prelude, ...ops.prelude, ...inner.stmts], value: inner.value };
+  }
+
+  /**
+   * Bind a callee's effectful sub-expressions to temps, returning them as a prelude plus a callee node
+   * of the SAME shape (temps substituted). Only a dotted-indexer callee can hold an effect: its base
+   * `id` is an identifier and dotted-member steps are bare names, so the effect can live only in an
+   * `[expr]` index. Every other callee -- a plain name, a member of names, a `new`/special keyword, an
+   * applied lambda literal -- is pure and returned untouched.
+   */
+  private hoistCalleeImpurities(callee: ast.ASTNode): { prelude: HStmt[]; node: ast.ASTNode } {
+    if (callee._type !== "indexer") return { prelude: [], node: callee };
+    const idx = callee as ast.IndexerNode;
+    const prelude: HStmt[] = [];
+    const indices = idx.indices.map((group, g) => {
+      if (idx.members?.[g]) return group; // a `.name` step is a bare name -- nothing to evaluate
+      return group.map((ix) => {
+        const l = this.lowerNode(ix, VALUE);
+        if (l.value === null) return ix; // a diverging index is malformed; leave it to the legacy emitter
+        prelude.push(...l.stmts);
+        if (this.isImmovable(l.value)) return this.hexprToAst(l.value, ix);
+        const t = this.temps.fresh() as string;
+        prelude.push(this.declTempInit(t, l.value, ix));
+        return this.hexprToAst(this.temp(t, ix), ix);
+      });
+    });
+    if (prelude.length === 0) return { prelude: [], node: callee };
+    const rebuilt = { ...idx, indices } as ast.IndexerNode;
+    const t = this.context.nodeTypes.get(callee);
+    if (t) this.context.recordSynthesizedNodeType(rebuilt, t);
+    return { prelude, node: rebuilt };
   }
 
   private isSubstitutable(h: HExpr): boolean {

@@ -2870,6 +2870,58 @@ const CASES: Case[] = [
   },
 
   // ===============================================================================================
+  // Qc-unnest / blocker 8 -- the HIR full-inversion's operand unnest reordered side effects.
+  //
+  // Lowering hoists an operand that needs statements into a prelude, and binds the earlier operands
+  // that precede it so their effects still run first (left-to-right). Two positions leaked:
+  //
+  //  1. A COMPOUND-but-statementless operand -- a peepholed ternary, or an inverted vector/map/member
+  //     -- is ALSO force-bound to a temp prelude, yet the `last` boundary counted only operands that
+  //     lowered to STATEMENTS. So an earlier impure operand stayed inline and ran after the compound.
+  //  2. `lowerCallLike` excluded the whole callee `nodes[0]` from the unnest. A dotted-indexer callee
+  //     hides its effect in an `[expr]` index (`gs[(f)].m`), which then emitted inline -- after the
+  //     argument prelude that hoisted ahead of it.
+  //
+  // Both are silent WRONG-ORDER, the exact class the HIR migration exists to kill, and both are
+  // corpus-invisible (nothing exercises an impure operand before a compound one, or a method whose
+  // receiver is computed by a side-effecting index). Unexercised is not the same as correct. (D45)
+  // ===============================================================================================
+  {
+    name: "unnest eval order: an impure operand before a COMPOUND operand still runs first",
+    source: `(fn note [label <- String x <- Int] -> Int (
+  (console.log label)
+  (return x)
+))
+(fn consume [a <- Int bs <- Int[]] -> Int (return a))
+(consume (note "a" 1) [(note "b" 2)])`,
+    expect: ["a", "b"],
+    wasBroken:
+      "the vector `[(note \"b\" 2)]` is compound, so the unnest force-bound it to a temp -- but `last` " +
+      "counted only operands that lowered to statements, missed the compound bind, and left the earlier " +
+      "impure `(note \"a\" 1)` inline: it emitted `const t = [note(\"b\",2)]; consume(note(\"a\",1), t)` " +
+      "and printed \"b\" then \"a\".",
+  },
+  {
+    name: "unnest eval order: a method callee's impure index runs before a hoisting argument",
+    source: `(defclass Box (fn hit [n <- Int] -> Int (return n)))
+(fn idx [i <- Int] -> Int (
+  (console.log "recv")
+  (return i)
+))
+(fn mk [x <- Int] -> Int (
+  (console.log "arg")
+  (return x)
+))
+(let gs [(new Box)])
+(gs[(idx 0)].hit (if true (mk 5) (mk 6)))`,
+    expect: ["recv", "arg"],
+    wasBroken:
+      "`lowerCallLike` excluded the callee `gs[(idx 0)].hit` from the unnest, so its impure index " +
+      "`(idx 0)` emitted inline AFTER the `if`-argument's hoisted ternary prelude: it printed \"arg\" " +
+      "then \"recv\", but source order is receiver-index then argument.",
+  },
+
+  // ===============================================================================================
   // Qd / D39 -- `and` / `or` / `not` are aliases for `&&` / `||` / `!`.
   //
   // They did not exist: `(and a b)` was `LL0210 'and' is not defined`. In a Lisp-syntax language
