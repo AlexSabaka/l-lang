@@ -17,7 +17,7 @@ import { nativeMemberKind } from "../../../types/nativeMembers";
 import { isBuiltinModifier, hasModifier } from "../../../helpers/modifiers";
 import * as acorn from "acorn";
 import { ClassBuilder } from "../JSClassBuilder";
-import { EmitHirToEstree, LegacyLeafEmitter } from "../../../hir";
+import { EmitHirToEstree, LegacyLeafEmitter, LowerAstToHirVisitor } from "../../../hir";
 import type { HBlock } from "../../../hir";
 import { SourceMapGenerator } from "source-map";
 import path from "path";
@@ -1306,7 +1306,14 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // The BlockStatement splice below stays. It is not the implicit return: it flattens a body
       // written as ONE parenthesized block into the function body, so the two spellings emit the same
       // JavaScript. The desugarer puts the `(return e)` INSIDE that block; this is what unwraps it.
-      const hirBody = this.context.hir?.bodyFor(node);
+      let hirBody = this.context.hir?.bodyFor(node);
+      if (!hirBody && this.context.options.hir) {
+        // An IMPORTED/INLINED function (or a modifier-internal one) whose body the root-module lowering
+        // never walked. Lower it on demand -- a whole body is self-contained (its own statement sink),
+        // so this is safe (unlike per-node control-flow delegation). Distinct temp prefix, no collision.
+        if (!this.onDemandLower) this.onDemandLower = new LowerAstToHirVisitor(this.context, "__ll_hir_i");
+        hirBody = this.onDemandLower.lowerBody(node.body ?? []);
+      }
       if (hirBody) {
         // HIR PATH. The lowering already resolved implicit-return, value-position control flow, and the
         // dangling-else guard; emit is mechanical (hir-brief.md R6). parameterCopyPrologue above still
@@ -1649,29 +1656,42 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   visitVariable(node: ast.VariableNode): ESTree.VariableDeclaration | ESTree.EmptyStatement {
+    if (node.extern) {
+      return { type: "EmptyStatement", loc: ESTreeBuilder.loc(node) } as ESTree.EmptyStatement;
+    }
+    const initES = node.value
+      ? this.runInScope(ScopeType.variable, () => this.visitExpr(node.value))
+      : null;
+    return this.emitVarDecl(node, initES);
+  }
+
+  /**
+   * The `let`/`mut` DECLARATION over an ALREADY-EMITTED initializer -- shared by legacy visitVariable
+   * and the HIR emitter (which supplies the init via emitExpr, so a value-position `if` init is a real
+   * ternary/temp, not a legacy asExpression ternary). Applies the D11 copy (asValue / asValueEach).
+   */
+  public emitVarDecl(
+    node: ast.VariableNode,
+    initES: ESTree.Expression | null
+  ): ESTree.VariableDeclaration | ESTree.EmptyStatement {
     // `:extern` -- an ambient VALUE. `(let :extern mouseX <- Int)` declares that the host provides
-    // `mouseX`; emitting `const mouseX = undefined` would shadow it with the bottom value. See
-    // visitFunction.
+    // `mouseX`; emitting `const mouseX = undefined` would shadow it with the bottom value.
     if (node.extern) {
       return { type: "EmptyStatement", loc: ESTreeBuilder.loc(node) } as ESTree.EmptyStatement;
     }
 
-    this.pushScope(ScopeType.variable);
     const destructuring = ast.isBindingPattern(node.name);
     const id: ESTree.Pattern = destructuring
       ? this.bindingPatternToESTree(node.name as ast.ASTNode)
       : (this.visit(node.name) as ESTree.Identifier);
-    // `(mut b a)` COPIES the struct (D11). This is the binding that made value semantics a lie.
-    //
-    // A DESTRUCTURING binding needs the other helper. `asValue` wraps the initializer -- which here is
-    // the CONTAINER, and a container carries no struct marker, so `__ll_copy` would hand it straight
-    // back and the bound names would alias its elements. `__ll_copy_each` opens it first.
-    const value = node.value
-      ? destructuring
-        ? this.asValueEach(this.visitExpr(node.value), node.value)
-        : this.asValue(this.visitExpr(node.value), node.value)
-      : null;
-    this.popScope();
+    // `(mut b a)` COPIES the struct (D11). A DESTRUCTURING binding needs `__ll_copy_each`: `asValue`
+    // wraps the CONTAINER, which carries no struct marker, so the bound names would alias its elements.
+    const value =
+      initES !== null
+        ? destructuring
+          ? this.asValueEach(initES, node.value)
+          : this.asValue(initES, node.value)
+        : null;
 
     if (destructuring) {
       // A destructuring binding introduces N names, not one.
@@ -1993,6 +2013,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   private hirEmitter?: EmitHirToEstree;
+  private onDemandLower?: LowerAstToHirVisitor;
 
   /**
    * Emit a lowered HIR body (see hir/). The HIR resolved position/tail/value-conditionals already, so
@@ -2010,6 +2031,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         patternVars: (match) => findIdentifiersToDefine(match),
         emitForEach: (node, collection, bodyStmt, elseFor) =>
           this.assembleForEach(node as ast.ForEachNode, collection, bodyStmt, elseFor),
+        emitVarDecl: (node, initES) => this.emitVarDecl(node as ast.VariableNode, initES),
+        emitAssign: (node, rhsES) => this.emitAssign(node as ast.SimpleAssignmentNode, rhsES),
       };
       this.hirEmitter = new EmitHirToEstree(legacy);
     }
@@ -3787,12 +3810,25 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   visitSimpleAssignment(
     node: ast.SimpleAssignmentNode
   ): ESTree.AssignmentExpression {
+    return this.emitAssign(node, this.visitExpr(node.value));
+  }
+
+  /**
+   * A simple assignment `target = <rhs>` over an ALREADY-EMITTED rhs -- shared by legacy
+   * visitSimpleAssignment / the `:=` branch of visitCompoundAssignment and the HIR emitter (which
+   * supplies the rhs via emitExpr). Applies the D11 copy; the WRITE target routes through
+   * visitAssignmentTarget.
+   */
+  public emitAssign(
+    node: ast.SimpleAssignmentNode | ast.CompoundAssignmentNode,
+    rhsES: ESTree.Expression
+  ): ESTree.AssignmentExpression {
     return {
       type: "AssignmentExpression",
       operator: "=",
       left: this.visitAssignmentTarget(node.assignable),
       // `(b := a)` COPIES a struct, exactly as `(mut b a)` does.
-      right: this.asValue(this.visitExpr(node.value), node.value),
+      right: this.asValue(rhsES, node.value),
       loc: ESTreeBuilder.loc(node),
     };
   }
@@ -3824,13 +3860,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   ): ESTree.AssignmentExpression {
     // `:=` is a plain assignment and must NOT be desugared through an operator.
     if (node.operator === ":=") {
-      return {
-        type: "AssignmentExpression",
-        operator: "=",
-        left: this.visitAssignmentTarget(node.assignable),
-        right: this.asValue(this.visitExpr(node.value), node.value),
-        loc: ESTreeBuilder.loc(node),
-      };
+      return this.emitAssign(node, this.visitExpr(node.value));
     }
 
     const op = node.operator.replace(/=$/, "");

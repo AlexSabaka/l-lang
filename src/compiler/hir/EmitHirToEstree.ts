@@ -32,6 +32,10 @@ export interface LegacyLeafEmitter {
   /** Assemble a for-each (D11 per-iteration copy, D16 destructuring, `__ll_map_copy_each`) over the
    *  HIR-emitted collection / body / else (JSTransformer.assembleForEach). */
   emitForEach(node: ast.ASTNode, collection: ESTree.Expression, bodyStmt: ESTree.Statement, elseFor: ESTree.Statement | null): ESTree.Statement;
+  /** The let/mut declaration (destructuring / const-vs-let / D11 copy) over the HIR-emitted init. */
+  emitVarDecl(node: ast.ASTNode, initES: ESTree.Expression | null): ESTree.Statement;
+  /** A simple `target = <rhs>` (write target + D11 copy) over the HIR-emitted rhs. */
+  emitAssign(node: ast.ASTNode, rhsES: ESTree.Expression): ESTree.Expression;
 }
 
 /** Mirrors ESTreeBuilder.loc: a located source range, or null when the node has no location. */
@@ -61,6 +65,16 @@ export class EmitHirToEstree {
     switch (h.kind) {
       case "opaque-stmt":
         return this.legacy.leafStmt(h.src);
+
+      case "var-decl":
+        return this.legacy.emitVarDecl(h.src, h.init ? this.emitExpr(h.init) : null);
+
+      case "user-assign":
+        return {
+          type: "ExpressionStatement",
+          expression: this.legacy.emitAssign(h.src, this.emitExpr(h.rhs)),
+          loc: loc(h.src),
+        } as ESTree.ExpressionStatement;
 
       case "expr-stmt":
         return {

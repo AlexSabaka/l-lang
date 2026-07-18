@@ -157,6 +157,8 @@ export type HStmt =
   | HWhile
   | HFor
   | HForEach
+  | HVarDecl
+  | HUserAssign
   | HOpaqueStmt;
 
 /** An expression evaluated for effect; its value is discarded. */
@@ -262,6 +264,23 @@ export interface HForEach extends HBase {
   collection: HExpr;
   body: HBlock;
   elseBlock: HBlock | null;
+}
+
+/**
+ * A `let`/`mut` declaration whose initializer is an HExpr the HIR emits inline -- so a value-position
+ * `if`/collection init is a real ternary/temp/array, never a legacy asExpression ternary. The
+ * declaration structure (name / destructuring / const-vs-let / the D11 copy) stays a legacy emit hook.
+ */
+export interface HVarDecl extends HBase {
+  kind: "var-decl";
+  init: HExpr | null;
+}
+
+/** A simple assignment `(x := rhs)` whose RHS is an HExpr the HIR emits inline; the target + D11 copy
+ *  stay a legacy emit hook. (A compound `x += rhs` keeps the legacy substitution path.) */
+export interface HUserAssign extends HBase {
+  kind: "user-assign";
+  rhs: HExpr;
 }
 
 /** A leaf statement: emit by coercing the legacy `visit(src)` to a statement. */

@@ -67,9 +67,18 @@ const LITERAL_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 export class LowerAstToHirVisitor {
-  private readonly temps = new TempAllocator();
+  private readonly temps: TempAllocator;
 
-  constructor(private readonly context: Context) {}
+  // `tempPrefix` lets the on-demand instance (used by the emitter for an imported/inlined function body
+  // not pre-lowered here) name its temps `__ll_hir_i_*`, distinct from the pre-lowering's `__ll_hir_*`.
+  constructor(private readonly context: Context, tempPrefix: string = "__ll_hir") {
+    this.temps = new TempAllocator(tempPrefix);
+  }
+
+  /** Lower one function/program body (a statement sequence, effect dest) -- the on-demand entry point. */
+  lowerBody(body: ast.ASTNode[]): HBlock {
+    return { stmts: this.lowerSeq(body ?? [], EFFECT).stmts };
+  }
 
   /**
    * Lower the program top level and every function/method body into a HirModule side-table, keyed by
@@ -803,34 +812,33 @@ export class LowerAstToHirVisitor {
   // -- variable / assignment (a value-position conditional hides in the RHS) -------------------------
 
   private lowerVariable(node: ast.VariableNode, dest: Dest): Lowered {
-    // A bodyless declaration -- an `:extern` `let` (an ambient global, Sd) -- has no initializer.
-    // Nothing to lower; emit it unchanged.
+    // A bodyless declaration -- an `:extern` `let` (an ambient global, Sd) -- has no initializer;
+    // legacy emitVarDecl turns it into an EmptyStatement.
     if (!node.value) return this.leaf(node, dest);
     const init = this.lowerNode(node.value, VALUE);
     if (init.value === null) return { stmts: init.stmts, value: null }; // RHS diverged -> the binding is dead
-    if (init.stmts.length === 0) {
-      // Pure init -> emit the variable unchanged. Legacy visitVariable owns destructuring / D11 copy /
-      // const-vs-let, and the pure case stays byte-identical.
-      return this.leaf(node, dest);
-    }
-    // The init needed statements (a value-position conditional, or a hoisted collection element). Emit
-    // the prelude, then a REBUILT variable whose init is a substitutable atom; legacy visitVariable
-    // still owns the declaration (destructuring / D11 copy / const-vs-let) over that atom.
-    const prelude: HStmt[] = [...init.stmts];
-    const valueAst = this.atomizeForSubstitution(init.value, prelude, node.value);
-    const rebuilt: ast.VariableNode = { ...node, value: valueAst };
-    const tail: HStmt = { ...this.base(rebuilt), kind: "opaque-stmt" };
-    return { stmts: [...prelude, tail], value: dest.kind === "value" ? this.nil(node) : null };
+    // The init is emitted INLINE by the HIR (a ternary / temp / array), so no value-position init ever
+    // reaches legacy asExpression. The declaration structure stays a legacy emit hook (emitVarDecl).
+    const hvar: HStmt = { ...this.base(node), kind: "var-decl", init: init.value };
+    return { stmts: [...init.stmts, hvar], value: dest.kind === "value" ? this.nil(node) : null };
   }
 
   private lowerAssignment(node: ast.SimpleAssignmentNode | ast.CompoundAssignmentNode, dest: Dest): Lowered {
     const rhs = this.lowerNode(node.value, VALUE);
     if (rhs.value === null) return { stmts: rhs.stmts, value: null }; // RHS diverged -> the assignment is dead
-    if (rhs.stmts.length === 0) return this.leaf(node, dest);
+    const isSimpleForm =
+      node._type === "simple-assignment" || (node as ast.CompoundAssignmentNode).operator === ":=";
+    if (isSimpleForm) {
+      // `x := rhs`: emit the RHS INLINE via the HIR (no value-position init reaches legacy asExpression).
+      const ha: HStmt = { ...this.base(node), kind: "user-assign", rhs: rhs.value };
+      return { stmts: [...rhs.stmts, ha], value: dest.kind === "value" ? this.nil(node) : null };
+    }
+    // Compound `x += rhs`: the RHS sits inside `op(read, rhs)` (legacy). Route a COMPOUND rhs through a
+    // temp so it doesn't reach asExpression; a plain-leaf rhs stays inline (unchanged).
+    if (rhs.stmts.length === 0 && this.isSubstitutable(rhs.value)) return this.leaf(node, dest);
     const prelude: HStmt[] = [...rhs.stmts];
     const valueAst = this.atomizeForSubstitution(rhs.value, prelude, node.value);
-    const rebuilt: any = { ...node, value: valueAst };
-    const tail: HStmt = { ...this.base(rebuilt), kind: "opaque-stmt" };
+    const tail: HStmt = { ...this.base({ ...node, value: valueAst } as any), kind: "opaque-stmt" };
     return { stmts: [...prelude, tail], value: dest.kind === "value" ? this.nil(node) : null };
   }
 
