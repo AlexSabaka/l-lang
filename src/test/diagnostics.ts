@@ -282,7 +282,7 @@ const PROBES: Probe[] = [
     source: "(try ((throw (Error \"x\"))) catch a ((console.log 1)) catch b ((console.log 2)))",
   },
 
-  // --- codegen band (LL0100-LL0103): the backend must actually run, so stage "codegen" ---
+  // --- codegen band (LL0100-LL0104; LL0103 retired with the HIR cut, D45): the backend must actually run, so stage "codegen" ---
   {
     // Zc. `:of` on a type the runtime cannot test. It used to emit `__ll_is_type(v, "Any")` and match
     // every value in the language; it refuses now.

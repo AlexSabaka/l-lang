@@ -418,13 +418,13 @@ proven by a characterization snapshot (`test:diagnostics`, 42 probes, byte-for-b
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."
 
-*   [x] **HIR:** a *typed, desugared* tree — **prototype landed** (D45). Two-sorted (statement/
-        expression) node family in `src/compiler/hir/`, typed from the per-node channel.
-*   [x] **Lowering:** AST → HIR — destination-driven (`lower(node, dest)`), prototype scope: the
-        conditional cluster (if/when/cond/match) + operand hoisting. R2–R4 (uniform operands, explicit
-        stores, dispatch-at-HIR) are the remaining expansion.
-*   [x] **IR Codegen:** HIR → ESTree, mechanical. HIR is the **default** path as of D45/S5; the direct
-        emit survives as the `--no-hir` fallback until the R2 cut.
+*   [x] **HIR:** a *typed, desugared* tree — **landed, then fully inverted** (D45). Two-sorted
+        (statement/expression) node family in `src/compiler/hir/`, typed from the per-node channel.
+*   [x] **Lowering:** AST → HIR — destination-driven (`lower(node, dest)`). Started at the conditional
+        cluster (if/when/cond/match) + operand hoisting, then inverted **every** value-bearing node.
+        Remaining: R3 (explicit stores/copy-insertion) and R4 (dispatch-at-HIR).
+*   [x] **IR Codegen:** HIR → ESTree, mechanical, and now the **only** value-lowering path. The flag
+        (`--no-hir`/`LL_HIR`) and the legacy IIFE/LL0103/`visitIf`-`visitMatch` machinery were cut.
 
 ## 🚀 Phase 7: The Speed of Light (v1.0.0)
 **Theme:** "The Sloth becomes a Cheetah."

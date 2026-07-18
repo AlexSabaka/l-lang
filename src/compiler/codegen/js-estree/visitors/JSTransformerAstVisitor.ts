@@ -855,7 +855,11 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     if (hirBody) {
       // HIR PATH. Top-level value-position control flow is lowered like any body; the surrounding
       // operator-registration dance is unchanged (opaque items still `visit` in order, so their
-      // registrations accumulate the same way). Only reached when the flag is on.
+      // registrations accumulate the same way). Taken whenever the lowering stage ran for this module
+      // -- the normal JS pipeline always lowers the program node, so this is the live path. The `else`
+      // is a fallback for a driver that built a transformer WITHOUT the lowering stage (context.hir
+      // unset); visitFunction lowers such bodies on demand, but a BARE top-level control-flow form here
+      // would fall to the base visitor. No corpus/REPL/comptime path exercises that today.
       statements.push(...this.emitHir(hirBody));
     } else {
       for (const n of node.program) {
@@ -1774,19 +1778,16 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   /**
-   * Force an emitted node into EXPRESSION position.
+   * The LEAF COERCER. Under the HIR (D45) every value-position control-flow construct is lowered
+   * before it reaches codegen, so the only nodes handed here are already expressions (or a
+   * `SpreadElement`, legal in the argument/element slots an expression fills). This just returns
+   * them.
    *
-   * A body of more than one statement emits a `BlockStatement`, and a BlockStatement cannot stand
-   * where JavaScript wants an expression -- `cond ? { a(); b(); } : undefined` is not valid JS at
-   * all. `visitIf` and `visitWhen` both simply CAST to Expression and hoped; astring serialised the
-   * result happily, and only the acorn re-parse (LL0101) noticed.
-   *
-   * Wrap it in an IIFE whose tail is returned, so the block's value is its last expression:
-   *
-   *     (() => { a(); return b(); })()
-   *
-   * This is precisely what visitMatch already does for a multi-statement match arm. Nothing new is
-   * invented here; the pattern is simply shared.
+   * It used to also FORCE a statement into expression position -- a multi-statement body emits a
+   * `BlockStatement`, which cannot stand where JavaScript wants an expression (`cond ? { a(); b(); }
+   * : undefined` does not parse), so it wrapped the block in an IIFE whose tail is returned. That
+   * branch, and the LL0103 refusal it raised, are gone: control flow is always HIR-lowered, so a
+   * statement arriving here is now an internal invariant violation, and the method throws.
    */
   private asExpression(emitted: ESTree.Node, node: ast.ASTNode): ESTree.Expression {
     if (this.isExpression(emitted)) {
@@ -2372,8 +2373,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     if (!needsTemp) return test;
 
-    // `((t) => <test on t>)(value)` -- one evaluation, and the arrow carries no `return` for D40's
-    // LL0103 to catch, because the test IS the body.
+    // `((t) => <test on t>)(value)` -- one evaluation, and the arrow carries no `return`, because the
+    // test IS the body (so nothing needs to be hoisted out of it).
     return {
       type: "CallExpression",
       callee: {

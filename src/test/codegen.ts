@@ -206,7 +206,7 @@ const CASES: Case[] = [
 )))
 (console.log v)`,
     expect: ["side effect", "value"],
-    wasBroken: "the value of a multi-statement body needs an IIFE, as visitMatch already does",
+    wasBroken: "a multi-statement body used to lose its value; the old emitter needed an IIFE (as the legacy visitMatch did) to carry it -- the HIR assigns a temp instead",
   },
 
   // ---------------------------------------------------------------------------------------------
@@ -3436,10 +3436,11 @@ catch b ((console.log "two")))`,
   },
 
   // ===============================================================================================
-  // HIR acceptance cases (S2 -- the conditional cluster's R1 lowering). `hir: true` forces the HIR
-  // path so these are meaningful BEFORE the default flips at S5. They assert the POSITIVE of what the
-  // legacy `expectDiagnostic: /LL0103/` cases above refuse, plus the retirement of CF2 (dangling-else)
-  // and the preservation of D11 copies through the temp substitution.
+  // HIR acceptance cases (D45). These assert the POSITIVE of what the legacy direct emit used to
+  // refuse (LL0103, now retired with the cut): a `return` in a value-position `if`/`match`/`||` is a
+  // real return, not an IIFE'd one. They also cover the retirement of CF2 (dangling-else) and the
+  // preservation of D11 copies through the temp substitution. (Before the cut these were `hir: true`
+  // to force the HIR path; the HIR is now the only path, so the pin is gone.)
   // ===============================================================================================
   {
     name: "HIR A1: a value-position `if` with a STATEMENT arm is a temp, not an IIFE",
@@ -3465,7 +3466,7 @@ catch b ((console.log "two")))`,
 (console.log (f true))
 (console.log (f false))`,
     expect: ["if-early", "fell-through"],
-    // The positive of the pinned `expectDiagnostic: /LL0103/` case above: HIR retires the refusal.
+    // The positive of what LL0103 used to refuse: HIR retires the refusal.
     emitted: { mustNot: [/\(\(\) =>/] },
     wasBroken:
       "the direct emit REFUSED this (LL0103) because a value-position `if` coerced each branch to an " +
@@ -3548,7 +3549,7 @@ catch b ((console.log "two")))`,
     expect: ["match-early", "match-other"],
     emitted: { mustNot: [/\(\(\) =>/] },
     wasBroken:
-      "the positive of the pinned match-arm LL0103 case: legacy wrapped `match` in an arrow, so both " +
+      "the positive of the match-arm LL0103 refusal: legacy wrapped `match` in an arrow, so both " +
       "arms' `return`s returned from the ARROW and `f` printed `fell-through`. HIR emits a real " +
       "if/else chain, so `return` returns from `f`.",
   },
@@ -4786,9 +4787,10 @@ catch b ((console.log "two")))`,
   },
 
   // CF2 (games) -- a one-armed `if`/`when` as the THEN branch of an `if`/`cond` clause dangles the
-  // outer `else`. `visitIf`/`visitCond` pass an else-less inner `IfStatement` as the consequent
-  // UNWRAPPED, and astring's dangling-else then binds the outer `else` to the INNER `if`. Killed
-  // tetris's spacebar; recurred in minesweeper. Assert BEHAVIOUR (which branch ran), not emitted JS --
+  // outer `else`. The legacy `visitIf`/`visitCond` USED TO pass an else-less inner `IfStatement` as the
+  // consequent UNWRAPPED, and astring's dangling-else then bound the outer `else` to the INNER `if`.
+  // Killed tetris's spacebar; recurred in minesweeper. The HIR now braces every `if` arm (D45), so the
+  // shape cannot occur; this asserts BEHAVIOUR (which branch ran), not emitted JS --
   // FINDINGS.md's warning: the JS is exactly what is wrong.
   // ===============================================================================================
   {

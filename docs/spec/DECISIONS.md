@@ -3505,8 +3505,9 @@ diagnostics 42/42, codegen 173/0, imports 17/17, repl 26/0, smoke 11/11, tsc 0 e
 
 **Ruling:** `return` returns from the enclosing **function**, from any code path, with no positional
 caveats. It is not a value, it is not scoped to the nearest expression, and there is no form it means
-something else inside. Where the JS backend cannot express that yet, it **refuses** (LL0103) — it does
-not quietly do something else.
+something else inside. Where the JS backend could not express that yet, it **refused** (LL0103) — it did
+not quietly do something else. (The HIR lowering later expressed all of them, and LL0103 was retired
+with the cut — see D45.)
 
 The mental-load argument is the ruling's whole basis: a language where `return` works in a `cond` clause
 and silently evaporates in a `match` arm is teaching a rule that does not exist. There is nothing to
@@ -3748,13 +3749,14 @@ vacuously** — `silent` because `Task<Int>` / `Iterator<Int>` resolved to `Unkn
 be checked, not because the type was right. A diagnostic that makes vacuous "it type-checks" tests
 impossible is doing exactly what it is for.
 
-## D45 — the HIR prototype: a typed post-typecheck IR, destination-driven (Phase 6, prototype)
+## D45 — the HIR: a typed post-typecheck IR, destination-driven (Phase 6)
 
 D40 named the fix and deferred it: "a real HIR / ANF lowering pass ... explicitly deferred to a future
-phase." This is that phase, done prototype-first. There is now a typed intermediate representation
-(`src/compiler/hir/`) between the typed AST and ESTree, and the conditional cluster plus operand
-hoisting lower through it. As of S5 the HIR is the **default** codegen path; the direct AST→ESTree
-emit survives as the `--no-hir` fallback.
+phase." This is that phase. There is now a typed intermediate representation (`src/compiler/hir/`)
+between the typed AST and ESTree, and **the JS backend has no other value-lowering path** — every
+value-bearing construct lowers through it. It landed prototype-first (the conditional cluster, S1–S6),
+then went to full inversion and the legacy machinery was cut. The sections below trace that arc; "The
+cut" at the end records the end state.
 
 ### The shape, and the two designs that lost
 
@@ -3784,11 +3786,15 @@ The lowering is a Context stage (after the type channel is published, before cod
 **consumed at the `visitFunction` body seam**, not by replacing the whole emitter. Unmodelled
 constructs are opaque leaves handed back to the *same* legacy visitor instance, so no node is visited
 twice and all its accumulator state (inlined symbols, operator registrations) is filled exactly once.
-The **program top level is deliberately not lowered**: codegen's function-form choice keys off scope
-*depth* (`this.scope[1] === program` decides declaration-vs-arrow), and a lowered top-level construct
-would drop an intermediate scope level; a function body always keeps its own function scope on the
-stack, so the invariant holds there and only there. Promoting the pass to own the whole tree is R2's
-job, once the opaque set has shrunk to nothing.
+The **program top level is lowered too** (the prototype deferred it; full inversion took it on). The
+one subtlety is codegen's function-form choice, which keys off scope *depth* (`this.scope[1] ===
+program` decides declaration-vs-arrow). A lowered top-level statement sequence emits its statements
+directly without opening an intermediate scope, so `scope[1] === program` still holds for a real
+top-level function and it stays a declaration. That scope test was kept deliberately over a node-based
+`_parent` climb: an INLINED imported function is emitted as `const __ll_inlined_x = <arrow>` at a deep
+scope for dependency ordering, and the depth test correctly gives it the arrow where a parent-climb
+would wrongly hoist it as a declaration. (This is the "scope-depth coupling" the retirement plan
+flagged — resolved by making top-level lowering preserve the invariant, not by replacing the test.)
 
 Patterns are **reused, not re-modelled**: a `match` arm's condition is still built by the legacy
 `generateCondition`, and the pattern-variable list by `findIdentifiersToDefine`, reached through two
@@ -3803,10 +3809,9 @@ narrow emitter hooks. Re-modelling patterns as HIR operand shapes is R2.
   to a scrutinee temp + a hoisted block scope + an if/**else** chain (the else-chain is load-bearing:
   a pattern test binds as a side effect, so a later arm's test must not run once one matched).
 - **The LL0103 refusal**, for a `return` in a value-position `if`, a `||`/`&&` operand, or a `match`
-  arm — the return now lowers to a real return from the function (D40 honoured). The diagnostic and its
-  refusal are still reachable via `--no-hir`, and the three `expectDiagnostic: /LL0103/` cases plus the
-  diagnostics probe are pinned to that path so they characterize the fallback; the positive is asserted
-  by the `hir: true` acceptance cases (codegen A2/A3/A4).
+  arm — the return now lowers to a real return from the function (D40 honoured). The diagnostic def, its
+  two call sites, the three `expectDiagnostic: /LL0103/` codegen cases, and the diagnostics probe were
+  all deleted with the cut; the positive is asserted by the acceptance cases (codegen A2/A3/A4).
 - **Dangling-else (CF2).** Every HIR `if` arm is emitted braced, so `braceIfDangling` has nothing left
   to guard on the HIR path.
 - **New capability:** `yield` inside a `match` arm (impossible under the legacy arrow — `yield` in an
@@ -3820,31 +3825,52 @@ match its own arrow scope; de-IIFE-ing removes that shield, which is *why* the H
 per-pass `TempAllocator` rather than reusing it. The bug is still live for the legacy path (match
 scrutinees, catch temps, the inliner); logged here, not fixed in this phase (scope discipline).
 
-### Retirement map, and the parallel-run policy
+### The cut (full inversion)
 
-Nothing in the legacy emitter is **deleted yet** — every helper is still live for `--no-hir` and for
-the positions the prototype does not traverse (vector/matrix elements, `for`/`while`/`try` internals,
-class-field initializers, the program top level). Deleting early would reintroduce the divergent-copies
-bug in reverse. The cuts are scheduled by requirement:
+The prototype left the legacy emitter intact as an `--no-hir` fallback. Full inversion then modelled
+every value-bearing node as HIR — vectors, matrices, maps, member/index, call args, `try`, loops,
+special-form operands (`new`/`yield`/`throw`/`typeof`/…), `await`/spread, formatted-string
+interpolations, and `let`/`:=` initializers — so the emitter builds every value itself and no
+value-position child ever reaches legacy `asExpression`. Each node type was inverted as a gated
+increment, and the leak was verified to **zero** by instrumenting the legacy paths
+(`console.error("HIR-REACHED:…")`) and driving the whole corpus + the CLI under the HIR before any
+deletion. Then the cut, in atomic gated commits:
 
-- **R2 (operands, the big cut):** `asExpression`'s IIFE + refusal branch, `refuseReturnInExpression`,
-  the LL0103 definition and probes, `braceIfDangling`, the legacy `visitMatch` body,
-  `withTrailingReturn`/`withTrailingReturnIn`, `--no-hir` and the flag itself.
+- **Dropped the flag.** `CompilerOptions.hir`, `--hir`/`--no-hir`, `LL_HIR`, `hirDefault()` (and
+  `hirConfig.ts`) are gone; lowering is an **unconditional** Context stage for the JS backend, and the
+  `hir:` field is gone from every test harness. The dual-mode gate retired with the flag — there is one
+  mode now.
+- **Deleted the value-position machinery.** `asExpression`'s ternary / sequence / **IIFE** branches;
+  `refuseReturnInExpression` + `findSourceReturn` + the `refusedReturns` set (the whole LL0103
+  mechanism, def included); then `visitIf` / `visitWhen` / `visitCond` / `visitMatch` /
+  `braceIfDangling` and the legacy function-body loop. `asExpression` remains only as the **leaf
+  coercer** (fast-path + `SpreadElement` pass-through); a statement reaching it now throws an internal
+  invariant, because control flow is always HIR-lowered.
+- **On-demand lowering** covers the bodies the root-module pass never walks: an imported/inlined
+  function, a modifier-internal one, or any function reached by the **comptime** evaluator (which runs a
+  fresh transformer at the DESUGAR stage, *before* the lowering pass, so `context.hir` is unset). Each
+  is lowered on first visit with a distinct temp prefix (`__ll_hir_i`).
+
+Kept, deliberately: `withTrailingReturn`/`withTrailingReturnIn` (still used by `visitModifierDef`);
+`generateCondition` and `findIdentifiersToDefine`, reached as narrow HIR hooks (re-modelling patterns as
+HIR operand shapes is still open); and the store/dispatch families below.
+
+Two cuts remain, scheduled by requirement:
+
 - **R3 (stores):** `asValue`/`asValueEach`/`needsValueCopy`/`provablyNotAStruct`/`parameterCopyPrologue`
   and the scattered copy sites, once copy insertion is an explicit HIR pass.
 - **R4 (dispatch):** `computedExtensionCall`/`extensionFor`/`receiverConformsTo` and the
   checker/codegen double-decision, once dispatch is resolved at lowering.
 
-Until the R2 cut, the legacy path is the **fallback and must stay green in CI** — the dual-mode gate
-(`npm test` vs `LL_HIR=0 npm test`) has held for the whole prototype, so behavioural equivalence is
-continuously proven, and the fallback goes away *with* the machinery it guards, in one commit.
-
 ### What it measured
 
-Six atomic, RED-first steps (S1 plumbing → S2 if/when/cond → S3 match → S4 operands → S5 flip → S6
-record). At every step, all suites green in **both** modes: the golden runner (71/0, every example run
-behaviourally under the HIR), `test:codegen` (300 cases, 13 of them new `hir: true` acceptance cases),
-`test:diagnostics` (46 probes, snapshot **unmoved** throughout — the pins kept it stable), corpus
-type-errors at 0, imports, repl. The central migration risk the brief named — golden churn — never
-materialised: the golden suite validates by **behaviour** (stdout), so ANF's restructuring is invisible
-to it, and the ternary peephole kept the emitted text identical wherever it was already good.
+The prototype was six atomic, RED-first steps (S1 plumbing → S2 if/when/cond → S3 match → S4 operands →
+S5 flip → S6 record), and at every step all suites stayed green in **both** modes: the golden runner
+(71/0, every example run behaviourally under the HIR), `test:codegen` (300 cases, 13 of them new `hir:
+true` acceptance cases), `test:diagnostics` (46 probes, snapshot **unmoved** throughout — the pins kept
+it stable), corpus type-errors at 0, imports, repl. The central migration risk the brief named — golden
+churn — never materialised: the golden suite validates by **behaviour** (stdout), so ANF's restructuring
+is invisible to it, and the ternary peephole kept the emitted text identical wherever it was already
+good. After full inversion and the cut there is a single mode; the gate now stands at runner **71/0**,
+`test:codegen` **297/0** (the three LL0103 cases removed), `test:diagnostics` **45 probes** (the LL0103
+probe removed), type-errors 0, imports 19/19, repl 26/0.
