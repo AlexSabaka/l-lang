@@ -182,6 +182,12 @@ export class LowerAstToHirVisitor {
         return this.lowerIndexer(node as ast.IndexerNode, dest);
       case "try-catch":
         return this.lowerTry(node as ast.TryCatchNode, dest);
+      case "while":
+        return this.lowerWhile(node as ast.WhileNode, dest);
+      case "for":
+        return this.lowerFor(node as ast.ForNode, dest);
+      case "for-each":
+        return this.lowerForEach(node as ast.ForEachNode, dest);
       case "await":
         return this.lowerViaLegacy(
           node,
@@ -652,6 +658,60 @@ export class LowerAstToHirVisitor {
   private isElseCase(c: ast.CondCaseNode): boolean {
     const cond = c.condition as any;
     return cond?._type === "simple-identifier" && cond.id === "else";
+  }
+
+  // -- loops ----------------------------------------------------------------------------------------
+
+  /** A loop is a statement; place it (loops-as-values are rare, so the value is D9 nil). */
+  private loopResult(hloop: HStmt, node: ast.ASTNode, dest: Dest, prelude: HStmt[] = []): Lowered {
+    if (dest.kind === "effect") return { stmts: [...prelude, hloop], value: null };
+    return this.placeValue(this.nil(node), [...prelude, hloop], dest);
+  }
+
+  private lowerWhile(node: ast.WhileNode, dest: Dest): Lowered {
+    const cond = this.lowerNode(node.condition, VALUE);
+    // The test re-evaluates each iteration, so it cannot carry a hoisted prelude -- a statement-bearing
+    // condition (rare) falls back to the legacy emitter.
+    if (cond.stmts.length > 0 || cond.value === null) return this.leaf(node, dest);
+    const hw: HStmt = {
+      ...this.base(node),
+      kind: "while",
+      test: cond.value,
+      body: { stmts: this.lowerNode(node.then, EFFECT).stmts },
+    };
+    return this.loopResult(hw, node, dest);
+  }
+
+  private lowerFor(node: ast.ForNode, dest: Dest): Lowered {
+    const test = node.condition ? this.lowerNode(node.condition, VALUE) : null;
+    const update = node.step ? this.lowerNode(node.step, VALUE) : null;
+    if ((test && (test.stmts.length > 0 || test.value === null)) || (update && (update.stmts.length > 0 || update.value === null))) {
+      return this.leaf(node, dest); // re-evaluated test/step can't hoist -> legacy (rare)
+    }
+    const hf: HStmt = {
+      ...this.base(node),
+      kind: "for",
+      init: { stmts: node.initial ? this.lowerNode(node.initial, EFFECT).stmts : [] },
+      test: test ? test.value : null,
+      update: update ? update.value : null,
+      body: { stmts: this.lowerNode(node.then, EFFECT).stmts },
+      elseBlock: node.else ? { stmts: this.lowerNode(node.else, EFFECT).stmts } : null,
+    };
+    return this.loopResult(hf, node, dest);
+  }
+
+  private lowerForEach(node: ast.ForEachNode, dest: Dest): Lowered {
+    // The collection is evaluated ONCE, so it MAY carry a prelude (hoisted before the loop).
+    const coll = this.lowerNode(node.collection, VALUE);
+    if (coll.value === null) return { stmts: coll.stmts, value: null }; // collection diverged
+    const hfe: HStmt = {
+      ...this.base(node),
+      kind: "for-each",
+      collection: coll.value,
+      body: { stmts: this.lowerNode(node.then, EFFECT).stmts },
+      elseBlock: node.else ? { stmts: this.lowerNode(node.else, EFFECT).stmts } : null,
+    };
+    return this.loopResult(hfe, node, dest, coll.stmts);
   }
 
   // -- try / catch / finally ------------------------------------------------------------------------

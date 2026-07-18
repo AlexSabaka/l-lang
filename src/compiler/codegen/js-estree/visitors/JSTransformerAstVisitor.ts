@@ -2008,6 +2008,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         nilLiteral: (src) => this.nilLiteral(src),
         patternTest: (pattern, scrutName) => this.generateCondition(pattern, scrutName),
         patternVars: (match) => findIdentifiersToDefine(match),
+        emitForEach: (node, collection, bodyStmt, elseFor) =>
+          this.assembleForEach(node as ast.ForEachNode, collection, bodyStmt, elseFor),
       };
       this.hirEmitter = new EmitHirToEstree(legacy);
     }
@@ -2261,16 +2263,35 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   visitForEach(node: ast.ForEachNode): ESTree.BlockStatement {
+    const collection = this.visitExpr(node.collection);
+    const body = this.visit(node.then);
+    const bodyStmt = this.isStatement(body)
+      ? (body as ESTree.Statement)
+      : ESTreeBuilder.blockStatement(node.then, [
+          ESTreeBuilder.expressionStatement(node.then, body as ESTree.Expression),
+        ]);
+    const elseFor =
+      node.else !== null ? (this.visit(node.else) as ESTree.Statement) : null;
+    return this.assembleForEach(node, collection, bodyStmt, elseFor);
+  }
+
+  /**
+   * The for-each STRUCTURE (D16 destructuring, D11 per-iteration copy, `__ll_map_copy_each`) over
+   * ALREADY-EMITTED collection / body / else. Shared by the legacy `visitForEach` and the HIR emitter
+   * (which supplies HIR-emitted pieces, so control flow in the loop body is lowered, not IIFE'd).
+   */
+  public assembleForEach(
+    node: ast.ForEachNode,
+    collection: ESTree.Expression,
+    bodyStmt: ESTree.Statement,
+    elseFor: ESTree.Statement | null
+  ): ESTree.BlockStatement {
     // D16: `(for :each [key val] :from settings.entries ...)` destructures the loop variable.
     const variable = (
       ast.isBindingPattern(node.variable)
         ? this.bindingPatternToESTree(node.variable as ast.ASTNode)
         : this.visit(node.variable)
     ) as ESTree.Identifier;
-    const collection = this.visitExpr(node.collection);
-    const body = this.visit(node.then);
-    const elseFor =
-      node.else !== null ? (this.visit(node.else) as ESTree.Statement) : null;
 
     // The loop variable is declared OUTSIDE the for-of, not in its head, and deliberately so:
     // the `:else` clause runs after the loop and may reference the final value (11_foreach.lisp
@@ -2299,15 +2320,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       })),
       loc: ESTreeBuilder.loc(node.variable as ast.ASTNode),
     };
-
-    const bodyStmt = this.isStatement(body)
-      ? (body as ESTree.Statement)
-      : ESTreeBuilder.blockStatement(node.then, [
-          ESTreeBuilder.expressionStatement(
-            node.then,
-            body as ESTree.Expression
-          ),
-        ]);
 
     // `for :each` BINDS BY REFERENCE, and a struct must be a copy (D11).
     //

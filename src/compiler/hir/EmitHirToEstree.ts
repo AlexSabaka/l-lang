@@ -29,6 +29,9 @@ export interface LegacyLeafEmitter {
   patternTest(pattern: ast.PatternNode, scrutName: string): ESTree.Expression;
   /** The pattern variables a match binds, to hoist (findIdentifiersToDefine). */
   patternVars(match: ast.MatchNode): string[];
+  /** Assemble a for-each (D11 per-iteration copy, D16 destructuring, `__ll_map_copy_each`) over the
+   *  HIR-emitted collection / body / else (JSTransformer.assembleForEach). */
+  emitForEach(node: ast.ASTNode, collection: ESTree.Expression, bodyStmt: ESTree.Statement, elseFor: ESTree.Statement | null): ESTree.Statement;
 }
 
 /** Mirrors ESTreeBuilder.loc: a located source range, or null when the node has no location. */
@@ -138,6 +141,39 @@ export class EmitHirToEstree {
         let arg: ESTree.Expression | null = h.value ? this.emitExpr(h.value) : null;
         if (arg && h.isStore) arg = this.legacy.storeValue(arg, h.src);
         return { type: "ReturnStatement", argument: arg, loc: loc(h.src) } as ESTree.ReturnStatement;
+      }
+
+      case "while":
+        return {
+          type: "WhileStatement",
+          test: this.emitExpr(h.test),
+          body: { type: "BlockStatement", body: this.emitBlock(h.body), loc: loc(h.src) } as ESTree.BlockStatement,
+          loc: loc(h.src),
+        } as ESTree.WhileStatement;
+
+      case "for": {
+        const stmts: ESTree.Statement[] = [...this.emitBlock(h.init)];
+        stmts.push({
+          type: "ForStatement",
+          init: null,
+          test: h.test ? this.emitExpr(h.test) : null,
+          update: h.update ? this.emitExpr(h.update) : null,
+          body: { type: "BlockStatement", body: this.emitBlock(h.body), loc: loc(h.src) } as ESTree.BlockStatement,
+          loc: loc(h.src),
+        } as ESTree.ForStatement);
+        if (h.elseBlock) stmts.push(...this.emitBlock(h.elseBlock));
+        return stmts.length === 1
+          ? stmts[0]
+          : ({ type: "BlockStatement", body: stmts, loc: loc(h.src) } as ESTree.BlockStatement);
+      }
+
+      case "for-each": {
+        const collectionES = this.emitExpr(h.collection);
+        const bodyStmt = { type: "BlockStatement", body: this.emitBlock(h.body), loc: loc(h.src) } as ESTree.BlockStatement;
+        const elseFor = h.elseBlock
+          ? ({ type: "BlockStatement", body: this.emitBlock(h.elseBlock), loc: loc(h.src) } as ESTree.BlockStatement)
+          : null;
+        return this.legacy.emitForEach(h.src, collectionES, bodyStmt, elseFor);
       }
 
       case "try": {

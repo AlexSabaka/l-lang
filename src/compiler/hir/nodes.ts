@@ -154,6 +154,9 @@ export type HStmt =
   | HReturn
   | HHoist
   | HTry
+  | HWhile
+  | HFor
+  | HForEach
   | HOpaqueStmt;
 
 /** An expression evaluated for effect; its value is discarded. */
@@ -230,6 +233,35 @@ export interface HTry extends HBase {
   catchVar: string;
   catches: HCatch[];
   finalizer: HBlock | null;
+}
+
+/**
+ * The loops. Their BODY (and `for`'s init / `else`) is an HBlock lowered in effect position -- which is
+ * the STATEMENT SINK a value-position `if` in the body needs (the whole reason loops must be modelled,
+ * not delegated). The test/step of a `while`/`for` are inline HExprs (re-evaluated each iteration, so
+ * they cannot be hoisted -- a statement-bearing test falls back to legacy at lowering). The for-each
+ * copy/destructuring assembly stays a legacy emit hook, driven by the HIR-emitted collection + body.
+ */
+export interface HWhile extends HBase {
+  kind: "while";
+  test: HExpr;
+  body: HBlock;
+}
+
+export interface HFor extends HBase {
+  kind: "for";
+  init: HBlock;
+  test: HExpr | null;
+  update: HExpr | null;
+  body: HBlock;
+  elseBlock: HBlock | null;
+}
+
+export interface HForEach extends HBase {
+  kind: "for-each";
+  collection: HExpr;
+  body: HBlock;
+  elseBlock: HBlock | null;
 }
 
 /** A leaf statement: emit by coercing the legacy `visit(src)` to a statement. */
