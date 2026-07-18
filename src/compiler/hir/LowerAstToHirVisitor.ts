@@ -175,6 +175,10 @@ export class LowerAstToHirVisitor {
         return this.lowerMatrix(node as ast.MatrixNode, dest);
       case "map":
         return this.lowerMap(node as ast.MapNode, dest);
+      case "member":
+        return this.lowerMember(node as ast.MemberNode, dest);
+      case "indexer":
+        return this.lowerIndexer(node as ast.IndexerNode, dest);
       case "variable":
         return this.lowerVariable(node as ast.VariableNode, dest);
       case "simple-assignment":
@@ -396,6 +400,35 @@ export class LowerAstToHirVisitor {
     });
     const map: HExpr = { ...this.base(node), kind: "map", entries: hentries };
     return this.placeValue(map, prelude, dest);
+  }
+
+  private lowerMember(node: ast.MemberNode, dest: Dest): Lowered {
+    const { prelude, atoms, diverged } = this.lowerChildrenToAtoms([node.object, node.property]);
+    if (diverged) return { stmts: prelude, value: null };
+    const mem: HExpr = {
+      ...this.base(node),
+      kind: "member",
+      object: atoms[0],
+      property: atoms[1],
+      computed: node.computed,
+    };
+    return this.placeValue(mem, prelude, dest);
+  }
+
+  private lowerIndexer(node: ast.IndexerNode, dest: Dest): Lowered {
+    const flatIndices: ast.ASTNode[] = [];
+    const flags: boolean[] = [];
+    (node.indices ?? []).forEach((group, g) => {
+      for (const idx of group) {
+        flatIndices.push(idx);
+        flags.push(node.members?.[g] === true);
+      }
+    });
+    const { prelude, atoms, diverged } = this.lowerChildrenToAtoms([node.id, ...flatIndices]);
+    if (diverged) return { stmts: prelude, value: null };
+    const steps = atoms.slice(1).map((index, i) => ({ isMember: flags[i], index }));
+    const idx: HExpr = { ...this.base(node), kind: "index", base: atoms[0], steps };
+    return this.placeValue(idx, prelude, dest);
   }
 
   private isImmovable(h: HExpr): boolean {

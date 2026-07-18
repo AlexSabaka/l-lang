@@ -219,6 +219,41 @@ export class EmitHirToEstree {
           loc: loc(h.src),
         } as ESTree.ObjectExpression;
 
+      case "member":
+        return {
+          type: "MemberExpression",
+          object: this.emitExpr(h.object),
+          property: this.emitExpr(h.property),
+          computed: h.computed,
+          optional: false,
+          loc: loc(h.src),
+        } as ESTree.MemberExpression;
+
+      case "index": {
+        // Fold the suffix chain: `.member` -> plain `expr[idx]` (D1 read); a bracket -> checked
+        // `__ll_index(expr, idx)` (D9f). Children emit via emitExpr, so a control-flow index works.
+        let expr: ESTree.Expression = this.emitExpr(h.base);
+        for (const step of h.steps) {
+          expr = step.isMember
+            ? ({
+                type: "MemberExpression",
+                object: expr,
+                property: this.emitExpr(step.index),
+                computed: true,
+                optional: false,
+                loc: loc(h.src),
+              } as ESTree.MemberExpression)
+            : ({
+                type: "CallExpression",
+                callee: { type: "Identifier", name: "__ll_index", loc: loc(h.src) } as ESTree.Identifier,
+                arguments: [expr, this.emitExpr(step.index)],
+                optional: false,
+                loc: loc(h.src),
+              } as ESTree.CallExpression);
+        }
+        return expr;
+      }
+
       case "pattern-test": {
         const cond = this.legacy.patternTest(h.pattern, h.scrutName);
         if (!h.guard) return cond;

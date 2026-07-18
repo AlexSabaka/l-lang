@@ -34,7 +34,18 @@ export interface HBase {
 // An HExpr is an ATOM or a shallow pure combinator over atoms. It never contains a statement; a
 // construct that would need one is lowered to statements with a temp, and the temp is the HExpr.
 
-export type HExpr = HTemp | HOpaqueExpr | HNil | HTernary | HSeq | HPatternTest | HVector | HMatrix | HMap;
+export type HExpr =
+  | HTemp
+  | HOpaqueExpr
+  | HNil
+  | HTernary
+  | HSeq
+  | HPatternTest
+  | HVector
+  | HMatrix
+  | HMap
+  | HMember
+  | HIndex;
 
 /** A lowering-introduced name (`__ll_hir_<n>`), declared by an HDeclTemp and read here. */
 export interface HTemp extends HBase {
@@ -109,6 +120,27 @@ export interface HMapEntry {
 export interface HMap extends HBase {
   kind: "map";
   entries: HMapEntry[];
+}
+
+/** A member access `obj.field` / `obj[expr]` (the core, post-desugar node). */
+export interface HMember extends HBase {
+  kind: "member";
+  object: HExpr;
+  property: HExpr;
+  computed: boolean;
+}
+
+/** One suffix of an indexer chain. `isMember` -> plain `expr[idx]` (D1 read); else checked `__ll_index` (D9f). */
+export interface HIndexStep {
+  isMember: boolean;
+  index: HExpr;
+}
+
+/** An indexer `xs[i]` / `xs[0].name` (the READ form; a call head is lowered as a call). */
+export interface HIndex extends HBase {
+  kind: "index";
+  base: HExpr;
+  steps: HIndexStep[];
 }
 
 // -- Statements ------------------------------------------------------------------------------------
