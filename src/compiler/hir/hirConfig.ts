@@ -4,11 +4,12 @@
 /**
  * The compiled-in default for the HIR lowering path.
  *
- * `false` through the prototype (S1-S4); flipped to `true` at S5 once the destination-driven lowering
- * covers the conditional cluster (if/when/cond/match) and every acceptance case is green. The
- * `--no-hir` / `LL_HIR=0` escape survives until R2 retires the legacy control-flow path entirely.
+ * `true` as of S5: the destination-driven lowering covers the conditional cluster (if/when/cond/match)
+ * and operand hoisting, every acceptance case is green, and the whole corpus is behaviourally
+ * equivalent under it. The direct AST->ESTree emit remains as the `--no-hir` / `LL_HIR=0` fallback
+ * until R2 retires it (and the LL0103 refusal, and the value-position IIFE machinery) entirely.
  */
-export const HIR_DEFAULT = false;
+export const HIR_DEFAULT = true;
 
 /**
  * Whether the HIR path is on when nothing sets it explicitly.
