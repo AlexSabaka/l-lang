@@ -270,9 +270,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   private enumKeys: Record<string, string> = {};
   private inlineStandardSymbols: string[] = [];
   private inlinedSymbols: Record<string, string> = {};
-
-  /** `(return ...)` nodes already refused by LL0103, so nested IIFEs do not report one twice. */
-  private refusedReturns: Set<ast.ASTNode> = new Set();
   private inlinedDefinitions: Record<string, ESTree.Statement> = {};
   /**
    * The file being compiled. Set by `beginProgram()` -- which `compile()` calls, and which an external
@@ -604,86 +601,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    */
   private visitExpr(node: ast.ASTNode): ESTree.Expression {
     return this.asExpression(this.visit(node), node);
-  }
-
-  /**
-   * Does this subtree contain a SOURCE `(return ...)` that would end up inside an IIFE (D40/LL0103)?
-   *
-   * STOPS AT FUNCTION BOUNDARIES, and that is the whole subtlety. A nested `fn` or lambda's `return`
-   * returns from THAT function, which is correct and ordinary -- `(match x { 1 => (fn [] (return 5)) })`
-   * must not be refused. A walk that does not stop here reports the most common code in the language.
-   *
-   * Only SOURCE returns count. The desugarer injects `(return e)` of its own (a function's tail
-   * expression; both branches of a trailing `if`), but those land at STATEMENT position or wrap the
-   * whole expression -- never inside an operand -- so they are never seen from the sites that call
-   * this. Verified against `wrapIfValue`/`wrapTail` rather than assumed.
-   *
-   * Returns the offending node, so the diagnostic points at the `return` the user wrote rather than
-   * at the enclosing form they did not.
-   */
-  private findSourceReturn(node: ast.ASTNode | undefined | null): ast.ASTNode | undefined {
-    if (!node || !ast.isAstNode(node)) return undefined;
-
-    // A nested function OWNS its returns. Do not descend.
-
-    if (node._type === "function") return undefined;
-
-    // A LIST's content is `nodes`, and ONLY `nodes` -- which is what `ListNode` declares, and is not
-    // the same as "every key on the object".
-    //
-    // Some list nodes reaching codegen carry a FUNCTION's entire field set as well (`params`,
-    // `returns`, `body`, `modifiers`, ...) while still saying `_type: "list"`. `BaseAstTreeWalker.visit`
-    // builds `{...super.visit(node), _type: node._type}` -- so when a `visitList` returns a node of a
-    // DIFFERENT kind, the walker spreads that node's fields and then stamps the original `_type` back
-    // over the top. A lambda in expression position -- `(fn [] -> Int (return 5))`, a one-element list
-    // around a function -- comes out of that as a node that lies about what it is.
-    //
-    // It works by luck: codegen dispatches on `_type`, so the hybrid is visited as a list, reads
-    // `nodes[0]` (the REAL function node), and never touches the stray fields. This walk was the first
-    // code to read them -- and a generic key walk went straight into the lambda's `body` and found its
-    // `(return 5)`, which is the lambda's own business. Filed; not fixed here.
-    //
-    // Walking `nodes` only is not a workaround for that, it is the correct reading of a list.
-    if (ast.isListNode(node)) {
-      const nodes = (node as ast.ListNode).nodes ?? [];
-      const head = nodes[0];
-      if (
-        head?._type === "simple-identifier" &&
-        (head as ast.SimpleIdentifierNode).id === "return"
-      ) {
-        return node;
-      }
-      for (const child of nodes.flat(Infinity)) {
-        const found = this.findSourceReturn(child as ast.ASTNode);
-        if (found) return found;
-      }
-      return undefined;
-    }
-
-    for (const key of ast.getNodeIterableKeys(node)) {
-      const value = (node as any)[key];
-      const children = Array.isArray(value) ? value.flat(Infinity) : [value];
-      for (const child of children) {
-        const found = this.findSourceReturn(child as ast.ASTNode);
-        if (found) return found;
-      }
-    }
-    return undefined;
-  }
-
-  /**
-   * Refuse a `return` that an IIFE would capture (D40/LL0103), once.
-   *
-   * DEDUPED: IIFEs nest -- an `if` in value position inside a `match` arm would scan the same
-   * `(return ...)` twice and report it twice. The node is the identity, so the first site to see it
-   * wins and the rest stay quiet.
-   */
-  private refuseReturnInExpression(node: ast.ASTNode, form: string): void {
-    const offender = this.findSourceReturn(node);
-    if (!offender) return;
-    if (this.refusedReturns.has(offender)) return;
-    this.refusedReturns.add(offender);
-    this.report(CD.ReturnInExpressionPosition, offender, { form });
   }
 
   private runInScope<T>(scope: ScopeType, action: () => T): T {
@@ -1931,78 +1848,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       return emitted as unknown as ESTree.Expression;
     }
 
-    // An `if` in expression position is a TERNARY, with each branch independently coerced. This is
-    // NOT a new rule -- it is exactly what `visitIf` did when `isExpressionContext()` said yes, moved
-    // to where the position is actually known. Getting this right is what stops the corpus churning:
-    // route an `if` through the IIFE below instead and every ternary in ~100 codegen cases and every
-    // golden becomes `(() => { ... })()`. By the standing rule a moved golden is a FINDING, so a
-    // careless fix here manufactures a hundred false ones.
-    if (emitted.type === "IfStatement") {
-      const stmt = emitted as ESTree.IfStatement;
-      return {
-        type: "ConditionalExpression",
-        test: stmt.test,
-        consequent: this.asExpression(stmt.consequent, node),
-        alternate: stmt.alternate
-          ? this.asExpression(stmt.alternate, node)
-          : this.nilLiteral(node),
-        loc: ESTreeBuilder.loc(node),
-      } as ESTree.ConditionalExpression;
-    }
-
-    const statements =
-      emitted.type === "BlockStatement"
-        ? ((emitted as ESTree.BlockStatement).body as ESTree.Statement[])
-        : [emitted as ESTree.Statement];
-
-    // An empty body has no value. `(when true)` yielded nil before, and an IIFE over nothing would
-    // quietly hand back `undefined` instead -- a SECOND bottom value, which D9 exists to prevent.
-    if (statements.length === 0) {
-      return this.nilLiteral(node);
-    }
-
-    // A run of pure expressions is a SEQUENCE, not an IIFE: `(a, b)` evaluates both and yields the
-    // last -- exactly the semantics wanted, and far cheaper than a function call. A single one is
-    // just itself. `visitWhen` relied on this for a multi-expression `:then` body, and it must keep
-    // holding now that the coercion lives here instead of there.
-    if (
-      statements.length > 0 &&
-      statements.every((s) => s.type === "ExpressionStatement")
-    ) {
-      const exprs = statements.map(
-        (s) => (s as ESTree.ExpressionStatement).expression
-      );
-      return exprs.length === 1
-        ? exprs[0]
-        : ESTreeBuilder.sequenceExpression(node, exprs);
-    }
-
-    // THE IIFE IS WHERE A `return` STOPS MEANING WHAT IT SAYS (D40/LL0103). Everything above this
-    // point either kept the node as an expression or turned it into a ternary/sequence, all of which
-    // preserve a `return`'s meaning because they contain none. Below, the statements are moved INTO
-    // an arrow -- so a `(return x)` among them returns from the arrow, and the function the user
-    // meant keeps running. Refuse instead of silently rewiring the control flow.
-    //
-    // This is the chokepoint for `||`/`&&` operands and for an `if` in value position (whose branches
-    // are coerced through here). `visitMatch` builds its own arrow and checks separately.
-    this.refuseReturnInExpression(node, "an expression");
-
-    return {
-      type: "CallExpression",
-      callee: {
-        type: "ArrowFunctionExpression",
-        params: [],
-        body: ESTreeBuilder.blockStatement(
-          node,
-          this.withTrailingReturn(statements, node)
-        ),
-        expression: false,
-        async: false,
-      } as ESTree.ArrowFunctionExpression,
-      arguments: [],
-      optional: false,
-      loc: ESTreeBuilder.loc(node),
-    } as ESTree.CallExpression;
+    // Under the HIR, EVERY value-position control-flow construct (an `if`/`when`/`cond`/`match` used as
+    // a value, a `||`/`&&` operand, a value-position `try`) is lowered before it reaches here -- to a
+    // ternary or a temp assigned in each branch, never an IIFE (D45). So a statement in expression
+    // position is now an internal invariant violation, not a user-reachable state: the ternary / IIFE /
+    // sequence coercions and the LL0103 refusal this method used to do are retired. `asExpression`
+    // stays only as the leaf coercer (the fast-path + SpreadElement pass-through above).
+    throw new Error(
+      `asExpression: '${emitted.type}' in expression position -- control flow must be HIR-lowered`
+    );
   }
 
   /** Force an emitted node into STATEMENT position. */
@@ -2783,17 +2637,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   visitMatch(node: ast.MatchNode): ESTree.CallExpression {
-    // `match` is ALWAYS an IIFE -- its return type says so -- so a `return` in an arm always returns
-    // from the arrow, even when the match itself sits in statement position. That makes it the one
-    // form where D40 is broken regardless of where you put it, and the likeliest place in a Lisp to
-    // write a `return`. It does not route through `asExpression`, so it is checked here (LL0103).
-    //
-    // The ARMS, not the scrutinee: `(match (f x) {...})` is fine, and only an arm's body ends up
-    // inside the arrow.
-    for (const c of node.cases ?? []) {
-      this.refuseReturnInExpression(c as unknown as ast.ASTNode, "a `match` arm");
-    }
-
+    // DEAD under the HIR: a `match` is always lowered (to a scrutinee temp + an if/else chain), so this
+    // legacy always-IIFE emission is never reached (verified: zero reaches across the corpus). Kept as
+    // an unreachable fallback; the LL0103 refusal it used to raise is retired with the rest (D45). A
+    // future cleanup can delete this and visitIf/visitWhen/visitCond outright.
     return this.runInScope(ScopeType.match, () => {
       const matchVar = uniqueIdentifier("tmp_match_id");
       const matchVarId = ESTreeBuilder.identifier(node, matchVar);
