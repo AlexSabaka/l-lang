@@ -1307,7 +1307,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // written as ONE parenthesized block into the function body, so the two spellings emit the same
       // JavaScript. The desugarer puts the `(return e)` INSIDE that block; this is what unwraps it.
       let hirBody = this.context.hir?.bodyFor(node);
-      if (!hirBody && this.context.options.hir) {
+      if (!hirBody && this.context.hir) {
         // An IMPORTED/INLINED function (or a modifier-internal one) whose body the root-module lowering
         // never walked. Lower it on demand -- a whole body is self-contained (its own statement sink),
         // so this is safe (unlike per-node control-flow delegation). Distinct temp prefix, no collision.

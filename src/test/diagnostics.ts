@@ -28,7 +28,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
-import { hirDefault } from "../compiler/hir";
 import { RuleSeverity } from "../compiler/rules/RuleBuilder";
 import { DIAGNOSTIC_CATEGORIES } from "../compiler/rules/diagnostics";
 import { Rules } from "../compiler/rules";
@@ -177,8 +176,6 @@ interface Probe {
   source: string;
   /** Stage to compile to. Defaults to "types"; codegen diagnostics (LL01xx) need "codegen". */
   stage?: "types" | "codegen";
-  /** Force the HIR path on/off for this probe. Used to pin a codegen diagnostic the HIR retires (LL0103). */
-  hir?: boolean;
 }
 
 /**
@@ -287,16 +284,6 @@ const PROBES: Probe[] = [
 
   // --- codegen band (LL0100-LL0103): the backend must actually run, so stage "codegen" ---
   {
-    // Ya/D40. `return` returns from the FUNCTION (the rule); the JS backend cannot express that from
-    // inside an IIFE yet, so it refuses rather than swallowing. Deleted when HIR lands. Pinned to the
-    // LEGACY path: the HIR RETIRES this refusal (a match arm lowers to a real if/else chain, so the
-    // return is real -- see codegen A4), and this probe now characterizes the `--no-hir` fallback.
-    name: "LL0103 return in a match arm",
-    source: "(fn f [x <- Int] -> Int ((match x { 1 => (return 5) _ => (return 9) }) (return 0)))",
-    stage: "codegen",
-    hir: false,
-  },
-  {
     // Zc. `:of` on a type the runtime cannot test. It used to emit `__ll_is_type(v, "Any")` and match
     // every value in the language; it refuses now.
     //
@@ -330,7 +317,7 @@ const PROBES: Probe[] = [
   { name: "silent: JS globals", source: '(console.log (Math.max 1 2) (JSON.stringify [1]))' },
 ];
 
-function baseOptions(stage: "types" | "codegen", hir?: boolean): CompilerOptions {
+function baseOptions(stage: "types" | "codegen"): CompilerOptions {
   return {
     minimumLogLevel: LogLevel.Warning,
     logger: () => {},
@@ -340,7 +327,6 @@ function baseOptions(stage: "types" | "codegen", hir?: boolean): CompilerOptions
     // to actually run, so those probes ask for "codegen".
     stage,
     language: "js",
-    hir: hir ?? hirDefault(),
   };
 }
 
@@ -355,7 +341,7 @@ let TMP_DIR: string;
 function diagnosticsOf(probe: Probe, idx: number): Emitted[] {
   const file = path.join(TMP_DIR, `probe_${idx}.lisp`);
   fs.writeFileSync(file, probe.source, "utf8");
-  const context = new Context(file, baseOptions(probe.stage ?? "types", probe.hir));
+  const context = new Context(file, baseOptions(probe.stage ?? "types"));
   try {
     context.process(file);
   } catch {

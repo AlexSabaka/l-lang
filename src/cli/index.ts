@@ -32,8 +32,6 @@ program
   .option("--perf", "enable performance metrics and reporting")
   .option("--strict-phases", "enforce strict separation between compilation phases")
   .option("--validate-metadata", "validate completeness of type metadata before codegen")
-  .option("--hir", "route codegen through the HIR lowering path (typed AST -> HIR -> ESTree)")
-  .option("--no-hir", "disable the HIR lowering path (use the direct AST -> ESTree emit)")
   .version(COMPILER_VERSION);
 
 program

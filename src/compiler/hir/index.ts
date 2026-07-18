@@ -6,4 +6,3 @@ export * from "./HirModule";
 export * from "./TempAllocator";
 export * from "./LowerAstToHirVisitor";
 export * from "./EmitHirToEstree";
-export * from "./hirConfig";

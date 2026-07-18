@@ -30,7 +30,6 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { CHILD_ENV } from "./childEnv";
 import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
-import { hirDefault } from "../compiler/hir";
 
 const VERBOSE = process.argv.includes("--verbose");
 const RUN_TIMEOUT_MS = 10_000;
@@ -75,12 +74,6 @@ interface Case {
    * a memoizer is that no cache appears in the output.
    */
   emitted?: { must?: RegExp[]; mustNot?: RegExp[] };
-  /**
-   * Force the HIR lowering path on/off for this case, regardless of the ambient default. The HIR
-   * acceptance cases pin `hir: true` so they are meaningful BEFORE the default flips at S5; omit to
-   * follow `hirDefault()` (the LL_HIR env / compiled default).
-   */
-  hir?: boolean;
   /** What was wrong before -- printed on failure, so a regression names its own bug. */
   wasBroken: string;
 }
@@ -3393,56 +3386,6 @@ catch b ((console.log "two")))`,
   // Nothing in examples/ or lib/ hits this. Measured: zero sites.
   // ===============================================================================================
   {
-    name: "Ya/D40: `return` as a `||` operand is REFUSED, not swallowed",
-    source: `(fn f [] -> String (
-  (if (|| false (return "early")) (console.log "UNREACHABLE"))
-  (return "fell-through")
-))
-(console.log (f))`,
-    expectDiagnostic: /LL0103/,
-    // Pinned to the LEGACY path: LL0103 is the direct-emit refusal, and the HIR lowering RETIRES it
-    // (return-in-operand becomes a real return -- D40). These cases assert the `--no-hir` fallback
-    // behaviour, retained until R2; the positive HIR acceptance is asserted by the `hir: true` cases.
-    hir: false,
-    wasBroken:
-      "printed `UNREACHABLE` and then `fell-through` -- the return became `(() => { return \"early\"; })()`, " +
-      "so it returned from the ARROW and handed its value to `||` as an ordinary operand. Silent. AF-003.",
-  },
-  {
-    // The one that matters: a match arm is where a Lisp programmer actually reaches for `return`, and
-    // AF-003 never names it.
-    name: "Ya/D40: `return` in a match arm is REFUSED, not swallowed",
-    source: `(fn f [x <- Int] -> String (
-  (match x { 1 => (return "match-early") _ => (return "match-other") })
-  (return "fell-through")
-))
-(console.log (f 1))`,
-    expectDiagnostic: /LL0103/,
-    // Pinned to the LEGACY path: LL0103 is the direct-emit refusal, and the HIR lowering RETIRES it
-    // (return-in-operand becomes a real return -- D40). These cases assert the `--no-hir` fallback
-    // behaviour, retained until R2; the positive HIR acceptance is asserted by the `hir: true` cases.
-    hir: false,
-    wasBroken:
-      "printed `fell-through` -- BOTH arms' returns returned from the match's IIFE, not from `f`. " +
-      "Unreported by the audit, and the likeliest place in the language to write a `return`.",
-  },
-  {
-    name: "Ya/D40: `return` inside an if in VALUE position is REFUSED",
-    source: `(fn f [c <- Boolean] -> String (
-  (let r (if c (return "if-early") "no"))
-  (return "fell-through")
-))
-(console.log (f true))`,
-    expectDiagnostic: /LL0103/,
-    // Pinned to the LEGACY path: LL0103 is the direct-emit refusal, and the HIR lowering RETIRES it
-    // (return-in-operand becomes a real return -- D40). These cases assert the `--no-hir` fallback
-    // behaviour, retained until R2; the positive HIR acceptance is asserted by the `hir: true` cases.
-    hir: false,
-    wasBroken:
-      "printed `fell-through`. A value-position `if` is a ternary, and each branch is coerced to an " +
-      "expression -- so the return was IIFE'd exactly as a `||` operand is. Also unreported.",
-  },
-  {
     // THE GUARD THAT DEFINES THE BOUNDARY. These three are the forms that emit STATEMENTS, they work
     // today, and D25/Xb pins the cond one under "The three that must NOT move". The diagnostic must
     // not touch them -- if it does, it has misidentified position for form.
@@ -3509,7 +3452,6 @@ catch b ((console.log "two")))`,
     // The temp path fired (`__ll_hir_*`), and NOT an IIFE (`(() =>` -- absent from the runtime shim,
     // so this pattern is specific to asExpression's wrapper).
     emitted: { must: [/__ll_hir/], mustNot: [/\(\(\) =>/] },
-    hir: true,
     wasBroken:
       "legacy asExpression wrapped a statement-bearing value-position `if` in an IIFE. The HIR lowers " +
       "it to a fresh temp assigned in each arm -- no arrow, no scope, and a `return` inside would still " +
@@ -3525,7 +3467,6 @@ catch b ((console.log "two")))`,
     expect: ["if-early", "fell-through"],
     // The positive of the pinned `expectDiagnostic: /LL0103/` case above: HIR retires the refusal.
     emitted: { mustNot: [/\(\(\) =>/] },
-    hir: true,
     wasBroken:
       "the direct emit REFUSED this (LL0103) because a value-position `if` coerced each branch to an " +
       "expression, IIFE-ing the `return`. HIR hoists the `if` to statement position, so the `return` is " +
@@ -3542,7 +3483,6 @@ catch b ((console.log "two")))`,
 (console.log (f true false))
 (console.log (f false false))`,
     expect: ["ab", "a-not-b", "not-a"],
-    hir: true,
     wasBroken:
       "astring serializes `if (a) if (b) X; else Y` with the `else` bound to the INNER `if` -- so " +
       "`f(true, false)` would take the else and print `not-a`. HIR braces every `if` arm, so the else " +
@@ -3566,7 +3506,6 @@ catch b ((console.log "two")))`,
 (console.log (viaWhen -1))`,
     expect: ["pos", "nonpos", "cpos", "cneg", "wpos", "wneg"],
     emitted: { mustNot: [/\(\(\) =>/] },
-    hir: true,
     wasBroken:
       "not broken -- the GUARD that the HIR does not disturb the half of the language that already " +
       "honoured D40. Statement-position returns stay real returns; no IIFE appears.",
@@ -3588,7 +3527,6 @@ catch b ((console.log "two")))`,
     // still applies its D11 copy to the SUBSTITUTED temp -- so the copy wraps `__ll_hir_*`, and `a` is
     // not aliased. This is the nodeTypes-through-substitution mitigation, observed.
     emitted: { must: [/__ll_copy\(__ll_hir/] },
-    hir: true,
     wasBroken:
       "R3 preserved through R1's substitution: if the rebuilt binding lost the init's type, the copy " +
       "would be elided and `b.x := 99` would alias `a` (printing `99 99`). The temp carries the type, " +
@@ -3609,7 +3547,6 @@ catch b ((console.log "two")))`,
 (console.log (f 2))`,
     expect: ["match-early", "match-other"],
     emitted: { mustNot: [/\(\(\) =>/] },
-    hir: true,
     wasBroken:
       "the positive of the pinned match-arm LL0103 case: legacy wrapped `match` in an arrow, so both " +
       "arms' `return`s returned from the ARROW and `f` printed `fell-through`. HIR emits a real " +
@@ -3624,7 +3561,6 @@ catch b ((console.log "two")))`,
 (f 3)`,
     expect: ["one", "two", "other"],
     emitted: { mustNot: [/\(\(\) =>/] },
-    hir: true,
     wasBroken:
       "legacy `visitMatch` ALWAYS built `((v) => { ... })(scrut)` even in statement position. HIR emits " +
       "a bare `{ let scrut = ...; if (...) {...} else if (...) {...} }` -- no arrow, no allocation.",
@@ -3641,7 +3577,6 @@ catch b ((console.log "two")))`,
     // f(1): arm 1 matches, so arm 2's guard is in the ELSE branch and never runs -> "guard-ran" prints
     // ONCE (for f(2) only). A sequential chain, or one that evaluated all tests, would print it twice.
     expect: ["one", "guard-ran", "other"],
-    hir: true,
     wasBroken:
       "not broken -- the GUARD that the de-IIFE'd chain preserves first-match-wins. Pattern tests bind " +
       "as a side effect, so a later arm's test (and guard) must sit in the `else`, not run unconditionally.",
@@ -3656,7 +3591,6 @@ catch b ((console.log "two")))`,
     // Each match hoists its `let v` into its OWN block. Without the block scope the second `let v`
     // is a duplicate-declaration SyntaxError (the acorn re-parse, LL0101, would catch it).
     expect: ["10"],
-    hir: true,
     wasBroken:
       "the arrow used to give each match its own scope. De-IIFE-ing removes it, so the HIR wraps each " +
       "match in a `{ }` block -- restoring the isolation the pattern-var hoist depends on.",
@@ -3668,7 +3602,6 @@ catch b ((console.log "two")))`,
   (return 0)))
 (console.log (f 1))`,
     expect: ["0"],
-    hir: true,
     wasBroken:
       "not broken -- the GUARD that the arm-body lowering stops at a function boundary. The arm holds a " +
       "LAMBDA whose `return` is the lambda's; `f` returns 0. A lowering that hoisted the lambda's return " +
@@ -3688,7 +3621,6 @@ catch b ((console.log "two")))`,
 (console.log (f))`,
     expect: ["early"],
     emitted: { mustNot: [/\(\(\) =>/] },
-    hir: true,
     wasBroken:
       "legacy routed the `||` operand through a shim call and IIFE'd the `return`, so it returned from " +
       "the ARROW and `||` got its value as an ordinary operand (AF-003). HIR lowers `||` to a temp + " +
@@ -3705,7 +3637,6 @@ catch b ((console.log "two")))`,
     // BEFORE it, so it is bound to a temp first -- "a" prints before "b". Without the unnest, the
     // match's prelude would run first and print "b" before "a".
     expect: ["a", "b", "10"],
-    hir: true,
     wasBroken:
       "not built before -- calls were opaque, so an operand needing statements forced the legacy IIFE. " +
       "Hoisting a later operand's statements past an earlier effectful operand would reorder them; the " +
@@ -3720,7 +3651,6 @@ catch b ((console.log "two")))`,
   (return)))
 (for :each v :from (g 1) :then (console.log v))`,
     expect: ["100", "999"],
-    hir: true,
     wasBroken:
       "legacy `match` is an arrow, and `yield` inside an arrow is a SyntaxError -- so a `yield` in a " +
       "match arm could not be written at all. HIR inlines the match into the generator body, so the " +
@@ -5097,8 +5027,6 @@ function run(c: Case, tmp: string): Outcome {
     stdout: false,
     stage: "codegen",
     language: "js",
-    // Per-case override wins; otherwise follow the ambient default (LL_HIR env / compiled default).
-    hir: c.hir ?? hirDefault(),
   };
 
   let code: string;

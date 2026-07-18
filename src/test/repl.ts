@@ -29,7 +29,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CompilerOptions, LogLevel } from "../compiler/Context";
-import { hirDefault } from "../compiler/hir";
 import { ReplSession, ReplResult } from "../cli/repl/ReplSession";
 import { MultiLineBuffer } from "../cli/repl/MultiLineBuffer";
 import { ReplCompleter } from "../cli/repl/ReplCompleter";
@@ -524,7 +523,6 @@ function options(): CompilerOptions {
     stdout: false,
     stage: "codegen",
     language: "js",
-    hir: hirDefault(),
   };
 }
 

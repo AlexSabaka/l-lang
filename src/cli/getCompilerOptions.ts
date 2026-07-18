@@ -6,7 +6,6 @@ import {
   LogLevel,
 } from "../compiler/Context";
 import { ModuleResolver } from "../compiler/analysis/ModuleResolver";
-import { hirDefault } from "../compiler/hir";
 
 const VALID_LANGUAGES: CompilationLanguage[] = ["js", "llang"];
 
@@ -88,8 +87,5 @@ export function getCompilerOptions(
     perf: !!opts.perf,
     strictPhases: !!opts.strictPhases,
     validateMetadata: !!opts.validateMetadata,
-    // Tri-state: `--hir` / `--no-hir` win (commander sets opts.hir true/false); otherwise undefined,
-    // and hirDefault() decides (LL_HIR env, then the compiled-in default).
-    hir: opts.hir !== undefined ? !!opts.hir : hirDefault(),
   };
 }

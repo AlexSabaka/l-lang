@@ -57,12 +57,6 @@ export interface CompilerOptions {
   perf?: boolean; // Performance tracking flag
   strictPhases?: boolean; // Enforce strict separation between compilation phases
   validateMetadata?: boolean; // Validate completeness of type metadata before codegen
-  /**
-   * Route codegen through the HIR: typed AST -> HIR (destination-driven lowering) -> ESTree, instead
-   * of the direct AST -> ESTree emit. Off through the prototype (S1-S4), default via `hirDefault()`
-   * once flipped at S5; `--no-hir` / `LL_HIR=0` is the escape until R2. See hir-brief.md.
-   */
-  hir?: boolean;
 }
 
 export function logCompilationMessages(context: Context) {
@@ -618,14 +612,10 @@ export class Context {
     this.performanceMetrics.startTimer("codegen");
     let transformer = undefined;
     if (this.options.language === "js") {
-      // HIR LOWERING STAGE. Typed AST -> HIR side-table (destination-driven lowering), consumed by
-      // the emitter's per-body seam. Gated by the flag and the JS backend only; runs after the type
-      // channel is published and only when the program is error-free (we are past the hasErrors gate
-      // above). An absent module means every body is emitted the legacy way.
-      if (this.options.hir) {
-        this.hir = new LowerAstToHirVisitor(this).lower(ast as ASTNode);
-      }
-      // Use the ESTree-based transformer (default)
+      // HIR LOWERING STAGE. Typed AST -> HIR side-table (destination-driven lowering), consumed by the
+      // emitter's per-body seam. Runs after the type channel is published and only when the program is
+      // error-free (we are past the hasErrors gate above). The HIR is the only JS codegen path now.
+      this.hir = new LowerAstToHirVisitor(this).lower(ast as ASTNode);
       transformer = new JSTransformerAstVisitorEstree(this);
     } else if (this.options.language === "llang") {
       // Use l-lang to l-lang transformer

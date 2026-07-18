@@ -19,7 +19,6 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { CHILD_ENV } from "./childEnv";
 import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
-import { hirDefault } from "../compiler/hir";
 import { ModuleResolver } from "../compiler/analysis/ModuleResolver";
 import { PackageRegistry } from "../compiler/analysis/PackageRegistry";
 
@@ -47,7 +46,6 @@ function options(): CompilerOptions {
     stdout: false,
     stage: "codegen",
     language: "js",
-    hir: hirDefault(),
   };
 }
 
