@@ -42,17 +42,17 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   // to `lib/std/`, where it is imported BY NAME -- `(import "std/math")`. `test:type-errors` walks
   // `lib/` alongside `examples/`, so it did not leave the diagnostic harness on the way out. Sf gives
   // it goldens. See STDLIB.md.
-  "20-stdlib/complex_math_test/math_utils.lisp": { status: "library" },
-  "99-p5js/p5-bindings.lisp": { status: "library" },
+  "16-stdlib/complex_math_test/math_utils.lisp": { status: "library" },
+  "99-fixtures/p5-bindings.lisp": { status: "library" },
 
   // --- fixture: not a plain-`node` language-conformance test ---
-  "99-p5js/main.lisp": {
+  "99-fixtures/main.lisp": {
     status: "fixture",
     reason: "requires a p5.js/browser runtime, not plain `node`",
   },
 
   // --- negative: the file MUST fail, with exactly these diagnostics ---
-  "08-types/01_type_errors.lisp": {
+  "90-diagnostics/01_type_errors.lisp": {
     status: "negative",
     codes: ["LL0203"],
     reason:
@@ -62,7 +62,7 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "warn about. The checker could not see a call ARGUMENT (the membersChecksOnly guard, removed " +
       "in P6g). Asserting the CODE is what the file always meant.",
   },
-  "02-errors/01_errors.lisp": {
+  "90-diagnostics/00_errors.lisp": {
     status: "negative",
     codes: ["LL0002", "LL0006", "LL0007"],
     reason:
@@ -74,14 +74,14 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
 
   // --- xfail: real examples, no golden authored yet ---
-  "00-tests/00_tree_shake.lisp": {
+  "00-basics/06_grouping.lisp": {
     status: "test",
   },
-  "01-basics/05_pattern_matching.lisp": {
+  "04-pattern-matching/03_pattern_kinds.lisp": {
     status: "xfail",
     reason: "match-guard misparse, see Phase 3 (form layer)",
   },
-  "01-basics/07_memoization_fixed.lisp": {
+  "20-algorithms/10_memoization_modifier.lisp": {
     status: "xfail",
     reason:
       "NOT D3 -- the old reason (':comptime/defmodifier metaprogramming broken') is stale; both work " +
@@ -90,18 +90,18 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "(placeholder for now)'. The example is at fault. Fixing it means adding a real " +
       "(defmodifier memoized ...) -- which examples/06-modifiers/ now has -- and authoring a golden.",
   },
-  "01-basics/09_more_for_loops.lisp": {
+  "03-loops/02_more_for_loops.lisp": {
     status: "xfail",
     reason:
       "D12 landed and the for-loops now PARSE. Blocked instead on ':inline' (LL0015) -- an " +
       "undeclared modifier that appears nowhere else in the corpus and has no (defmodifier " +
       "inline ...). The example is at fault, not the compiler.",
   },
-  "01-basics/17_higher_order_functions.lisp": {
+  "01-functions/03_higher_order_functions.lisp": {
     status: "xfail",
     reason: "parse failure, see Phase 3 (form layer)",
   },
-  "01-basics/18_destructuring.lisp": {
+  "04-pattern-matching/04_destructuring.lisp": {
     status: "xfail",
     reason:
       "Tuples (Phase U) and records (Phase R) BOTH work now. The :97 match-arm blocker is GONE (Pa): " +
@@ -113,10 +113,10 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "scope (an example bug: `(let [a b] [b a])` is a genuine TDZ read). The `r` report has no " +
       "measured root cause yet -- it is a false positive on valid code and wants a probe.",
   },
-  "01-basics/19_optional_and_mutability.lisp": {
+  "00-basics/03_optional_and_mutability.lisp": {
     status: "test",
   },
-  "01-basics/20_scope.lisp": {
+  "00-basics/02_scope.lisp": {
     status: "xfail",
     reason:
       "The :68 `for` blocker is GONE (Pa): `:i`/`:<` are not D12 clauses, rewritten to " +
@@ -129,10 +129,10 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "declared at :26 AND re-declared at :103 in the same top-level scope -- two `const x` in one " +
       "block, an EXAMPLE bug. Fix the duplicate before re-judging the diagnostic.",
   },
-  "01-basics/21_nil_handling.lisp": {
+  "00-basics/04_nil_handling.lisp": {
     status: "test",
   },
-  "02-errors/01_try_catch.lisp": {
+  "18-error-handling/01_try_catch.lisp": {
     status: "xfail",
     reason:
       "not goldenable as written: it does `(console.log \"Caught error:\" err)` on raw Error " +
@@ -141,11 +141,11 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "reason, 'needs a golden authored', was wrong: it compiles and runs fine.) Fix is to print " +
       "err.message, but that edits the corpus and needs a call.",
   },
-  "03-types/00_type_basics.lisp": {
+  "07-types/03_type_basics.lisp": {
     status: "xfail",
     reason: "D5: convertAstTypeToInferred false-positives on this exact file",
   },
-  "04-data-types/01_quoting.lisp": {
+  "12-quote-macros/00_quoting.lisp": {
     status: "xfail",
     reason:
       "Quote is no longer 'broken (compiles to a JSON string)' -- D3d fixed that, and this file now " +
@@ -156,7 +156,7 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "interpreter: `RuntimeProvider` registers `\"eval\": \"\"`, so it falls through to host JS eval. " +
       "Both are out of scope for D3, whose ruling is ':comptime + defmodifier'.",
   },
-  "04-data-types/02_maps.lisp": {
+  "05-data-structures/02_maps.lisp": {
     status: "xfail",
     reason:
       "The colon-path blocker is GONE (Pa). It was flagged here as needing a ruling, and it got one: " +
@@ -168,10 +168,10 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "the checker drops the SECOND index in assignment position. A REAL CHECKER BUG -- the read form " +
       "`nested[\"user\"][\"contact\"][\"email\"]` on :31 works fine. Unfiled by the audit. It also has no golden.",
   },
-  "04-data-types/06_structs.lisp": {
+  "06-value-semantics/00_structs.lisp": {
     status: "test",
   },
-  "04-data-types/07_structs.lisp": {
+  "06-value-semantics/01_structs_refinement.lisp": {
     status: "xfail",
     reason:
       "NOT defstruct, and NOT unblockable by D11 -- the old reason ('D11: defstruct value-type " +
@@ -183,15 +183,15 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "`(fn :operator * [...] (return this))` which returns `this` -- the one thing in the corpus that " +
       "by-copy value semantics would actually change. Its struct declaration is the least of it.",
   },
-  "08-types/01_arguments.lisp": {
+  "07-types/04_argument_types.lisp": {
     status: "xfail",
     reason: "D5: array/generic argument type-checking",
   },
-  "10-algorithms/00_bfs.lisp": {
+  "20-algorithms/00_bfs.lisp": {
     status: "xfail",
     reason: "D5: `new` expressions are untyped",
   },
-  "10-algorithms/02_game_of_life.lisp": {
+  "20-algorithms/02_game_of_life.lisp": {
     status: "xfail",
     reason:
       "The for-OF blocker is GONE (Pa): the old reason offered 'either add a :of clause to D12 or " +
@@ -216,7 +216,7 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   // replaced by a same-named top-level symbol (`(pow 2 3)` was NaN), a `deftype` being inlined as if
   // it had a runtime value (`is-int` threw ReferenceError), and a zero-arg call to a local function
   // value emitting a bare reference. See DECISIONS.md.
-  "20-stdlib/test_stdlib.lisp": { status: "test" },
+  "16-stdlib/test_stdlib.lisp": { status: "test" },
   // (Root files modifiers_demo.lisp / modifiers_test.lisp DELETED: both broken and redundant with the
   //  modifiers suite -- empty-body modifier that demonstrates nothing, and undeclared :memoized/:cached
   //  (LL0015). Modifier-with-arguments is properly shown by the retry-modifier example. The design
@@ -232,12 +232,12 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   // ===========================================================================
 
   // --- proposed-examples: multi-file package, imported units (compiled via main) ---
-  "06-import/02_packages/format.lisp": { status: "library" },
-  "06-import/02_packages/geometry/shapes.lisp": { status: "library" },
-  "06-import/02_packages/geometry/measure.lisp": { status: "library" },
+  "15-modules/02_packages/format.lisp": { status: "library" },
+  "15-modules/02_packages/geometry/shapes.lisp": { status: "library" },
+  "15-modules/02_packages/geometry/measure.lisp": { status: "library" },
 
   // --- proposed-examples: regressed since the audit commit (23a24cd -> HEAD) ---
-  "04-data-types/11_comptime_table.lisp": {
+  "11-comptime/01_comptime_table.lisp": {
     status: "xfail",
     reason:
       "REGRESSION since audit commit 23a24cd (was 10/10 green under bin/verify-examples; broken by " +
@@ -264,7 +264,7 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   // paren_absorption) carry goldens and pin bugs FIXED since the audit commit -- CP1 (spread
   // dropped all but the first element), CF1 (return inside ||/&& was swallowed by an IIFE), PR3
   // (\xHH degraded to the bare char). Only PR4 below is still live.
-  "90-adversarial/hyphen_field_encoding.lisp": {
+  "80-adversarial/hyphen_field_encoding.lisp": {
     status: "xfail",
     reason:
       "STILL BROKEN -- silent wrong answer (finding PR4, l-lang-ex snake). A hyphenated map field " +
@@ -282,64 +282,64 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   // Dropped from the probe set: ll0003/ll0020 (parse THROWS, not a located diagnostic, so
   // runNegativeTest can't assert them); ll0014/ll0024 (compile CLEAN -- dead wiring confirmed,
   // COVERAGE-MATRIX:126); ll0007 (already asserted by 02-errors/01_errors.lisp).
-  "02-errors/diagnostics/ll0005_nameless_let.lisp": {
+  "90-diagnostics/ll0005_nameless_let.lisp": {
     status: "negative", codes: ["LL0005"],
     reason: "`(let)` with no binding. Reports LL0005 (+LL0006); pins the never-exercised LL0005.",
   },
-  "02-errors/diagnostics/ll0008_two_default_catch.lisp": {
+  "90-diagnostics/ll0008_two_default_catch.lisp": {
     status: "negative", codes: ["LL0008"],
     reason:
       "FINDING: two default `catch` blocks -> LL0008 fires cleanly at HEAD, CONTRADICTING " +
       "COVERAGE-MATRIX:127 which recorded LL0008 as an 'unreachable predicate' that 'can never fire'. " +
       "Reachable now; pinned so it stays so.",
   },
-  "02-errors/diagnostics/ll0009_iface_invalid_member.lisp": {
+  "90-diagnostics/ll0009_iface_invalid_member.lisp": {
     status: "negative", codes: ["LL0009"],
     reason: "a `defclass` inside a `definterface` body -> LL0009. Never-exercised code.",
   },
-  "02-errors/diagnostics/ll0010_iface_init.lisp": {
+  "90-diagnostics/ll0010_iface_init.lisp": {
     status: "negative", codes: ["LL0010"],
     reason: "an initialized `let` in a `definterface` -> LL0010. Never-exercised code.",
   },
-  "02-errors/diagnostics/ll0011_iface_extern.lisp": {
+  "90-diagnostics/ll0011_iface_extern.lisp": {
     status: "negative", codes: ["LL0011"],
     reason: "`:extern` method in a `definterface` -> LL0011. Never-exercised code.",
   },
-  "02-errors/diagnostics/ll0012_iface_body.lisp": {
+  "90-diagnostics/ll0012_iface_body.lisp": {
     status: "negative", codes: ["LL0012"],
     reason: "a method WITH a body in a `definterface` -> LL0012. Never-exercised code.",
   },
-  "02-errors/diagnostics/ll0019_bare_let.lisp": {
+  "90-diagnostics/ll0019_bare_let.lisp": {
     status: "negative", codes: ["LL0019"],
     reason: "a bare top-level `let x 5` (not wrapped in a form) -> LL0019. Never-exercised code.",
   },
-  "02-errors/diagnostics/ll0025_nameless_class.lisp": {
+  "90-diagnostics/ll0025_nameless_class.lisp": {
     status: "negative", codes: ["LL0025"],
     reason:
       "`(defclass)` with no name -> LL0025 under the runner frontend. (COVERAGE-MATRIX:135: peg " +
       "diverges to LL0210; the runner's frontend gives LL0025.) Never-exercised code.",
   },
-  "02-errors/diagnostics/ll0026_if_no_cond.lisp": {
+  "90-diagnostics/ll0026_if_no_cond.lisp": {
     status: "negative", codes: ["LL0026"],
     reason: "`(if)` with no condition -> LL0026 (+LL0027). Never-exercised code.",
   },
-  "02-errors/diagnostics/ll0028_when_no_then.lisp": {
+  "90-diagnostics/ll0028_when_no_then.lisp": {
     status: "negative", codes: ["LL0028"],
     reason: "`(when)` with no then-branch -> LL0028 (+LL0026). Never-exercised code.",
   },
-  "02-errors/diagnostics/ll0212_dup_decl.lisp": {
+  "90-diagnostics/ll0212_dup_decl.lisp": {
     status: "negative", codes: ["LL0212"],
     reason:
       "two `(let d ...)` in one scope -> LL0212. COVERAGE-MATRIX:128 flagged the diagnostics.ts " +
       "snapshot as pinning LL0212's NON-firing shape; this asserts it actually fires.",
   },
-  "02-errors/diagnostics/ll0217_import_empty.lisp": {
+  "90-diagnostics/ll0217_import_empty.lisp": {
     status: "negative", codes: ["LL0217"],
     reason:
       "`(import \"\")` empty source -> LL0217 from the dependency-graph builder (NOT LL0003, which " +
       "COVERAGE-MATRIX:129 shows is masked/unobservable).",
   },
-  "02-errors/diagnostics/ll0100_hex_number.lisp": {
+  "90-diagnostics/ll0100_hex_number.lisp": {
     status: "negative", codes: ["LL0100"],
     reason:
       "a hex literal `0xFF` lexes but has no JS emitter -> LL0100. Representative of the numeric " +
