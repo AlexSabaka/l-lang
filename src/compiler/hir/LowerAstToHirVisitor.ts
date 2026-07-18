@@ -182,6 +182,22 @@ export class LowerAstToHirVisitor {
         return this.lowerIndexer(node as ast.IndexerNode, dest);
       case "try-catch":
         return this.lowerTry(node as ast.TryCatchNode, dest);
+      case "await":
+        return this.lowerViaLegacy(
+          node,
+          [(node as ast.AwaitNode).expression],
+          ([e]) => ({ ...(node as ast.AwaitNode), expression: e } as ast.ASTNode),
+          dest
+        );
+      case "spread":
+        return this.lowerViaLegacy(
+          node,
+          [(node as ast.SpreadNode).expression],
+          ([e]) => ({ ...(node as ast.SpreadNode), expression: e } as ast.ASTNode),
+          dest
+        );
+      case "formatted-string":
+        return this.lowerFormattedString(node as ast.FormattedStringNode, dest);
       case "variable":
         return this.lowerVariable(node as ast.VariableNode, dest);
       case "simple-assignment":
@@ -216,11 +232,14 @@ export class LowerAstToHirVisitor {
         return this.lowerNode(form.inner, dest);
       case "special":
         // `(return e)` transfers control to the function boundary; push it into e's branches so a
-        // value-position `return` finally works (D40/LL0103). new/throw/yield/await/typeof/... stay
-        // opaque -- `new` because binding its class arg would break constructor detection, the rest
-        // because they are expressions (or, for throw, IIFE-benign).
+        // value-position `return` finally works (D40/LL0103).
         if (form.name === "return") return this.lowerReturn(node, form.args);
-        return this.leaf(node, dest);
+        // `quote` is DATA, not evaluated -- never lower its operand.
+        if (form.name === "quote") return this.leaf(node, dest);
+        // new / yield / throw / typeof / delete / instanceof / in (and operand-less this / super):
+        // keep the special form legacy, atomize its operands through the HIR (the class name of a
+        // `new` is a plain identifier, so it stays inline and constructor detection is unaffected).
+        return this.lowerCallLike(node, dest);
       case "call":
         // `||`/`&&` short-circuit, so a prelude-bearing right operand can't be hoisted eagerly.
         if (this.isLogicalHead(node)) return this.lowerLogical(node, dest);
@@ -255,51 +274,90 @@ export class LowerAstToHirVisitor {
    * constructor/method detection). The UNNEST rule preserves evaluation order: an earlier non-immovable
    * argument that precedes a hoisting one is bound to a temp so its effects run first.
    */
-  private lowerCallLike(node: ast.ListNode, dest: Dest): Lowered {
-    const args = node.nodes.slice(1);
-    if (args.length === 0) return this.leaf(node, dest);
-    const lowered = args.map((a) => this.lowerNode(a, VALUE));
-
+  /**
+   * Lower a node whose STRUCTURE stays legacy (a call and its dispatch, a `new`, an await, a formatted
+   * string) but whose value-position CHILDREN must go through the HIR. Each child is lowered; any that
+   * is hoisting, diverging, or COMPOUND (a ternary / inverted collection -- not a temp or opaque leaf)
+   * is bound to a temp the HIR emits, then substituted into a rebuilt AST node the legacy emitter
+   * visits. So a control-flow child never reaches legacy asExpression. Plain-leaf children stay inline;
+   * the unnest binds an earlier effectful child before a hoisting one.
+   */
+  private lowerViaLegacy(
+    node: ast.ASTNode,
+    children: ast.ASTNode[],
+    rebuild: (newChildren: ast.ASTNode[]) => ast.ASTNode,
+    dest: Dest
+  ): Lowered {
+    if (children.length === 0) return this.leaf(node, dest);
+    const lowered = children.map((c) => this.lowerNode(c, VALUE));
     let last = -1;
     for (let i = 0; i < lowered.length; i++) {
       if (lowered[i].stmts.length > 0 || lowered[i].value === null) last = i;
     }
-    // An argument whose value is COMPOUND (a ternary, an inverted collection/member -- anything not a
-    // temp or opaque leaf) cannot be substituted into the AST for legacy dispatch, so it must be bound
-    // to a temp the HIR emits. That, not just hoisting, is what makes a control-flow argument bypass
-    // legacy asExpression.
     const anyCompound = lowered.some((l) => l.value !== null && !this.isSubstitutable(l.value));
-    if (last === -1 && !anyCompound) return this.leaf(node, dest); // all args are plain leaves -> unchanged
+    if (last === -1 && !anyCompound) return this.leaf(node, dest); // all children plain leaves -> unchanged
 
     const prelude: HStmt[] = [];
-    const finalArgs: HExpr[] = [];
+    const finalChildren: ast.ASTNode[] = [];
     for (let i = 0; i < lowered.length; i++) {
       const l = lowered[i];
       prelude.push(...l.stmts);
-      if (l.value === null) {
-        // This argument diverged (a `return` in operand position). The call, and every later argument,
-        // is dead -- the enclosing expression diverges too.
-        return { stmts: prelude, value: null };
-      }
-      // Bind to a temp when the value can't go straight into the AST, or the unnest needs it (an
-      // earlier non-immovable arg before a hoisting one, to preserve left-to-right order).
+      if (l.value === null) return { stmts: prelude, value: null }; // a child diverged (return in operand)
       const mustBind = !this.isSubstitutable(l.value) || (i < last && !this.isImmovable(l.value));
-      if (mustBind) {
-        const t = this.temps.fresh();
-        prelude.push(this.declTempInit(t, l.value, args[i]));
-        finalArgs.push(this.temp(t, args[i]));
+      const atom = mustBind
+        ? (this.temps.fresh() as string)
+        : null;
+      if (atom !== null) {
+        prelude.push(this.declTempInit(atom, l.value, children[i]));
+        finalChildren.push(this.hexprToAst(this.temp(atom, children[i]), children[i]));
       } else {
-        finalArgs.push(l.value);
+        finalChildren.push(this.hexprToAst(l.value, children[i]));
       }
     }
-
-    const rebuilt = this.rebuildCall(node, finalArgs.map((h, i) => this.hexprToAst(h, args[i])));
+    const rebuilt = rebuild(finalChildren);
+    const t = this.context.nodeTypes.get(node);
+    if (t) this.context.recordSynthesizedNodeType(rebuilt, t);
     const inner = this.leaf(rebuilt, dest);
     return { stmts: [...prelude, ...inner.stmts], value: inner.value };
   }
 
+  private lowerCallLike(node: ast.ListNode, dest: Dest): Lowered {
+    // Callee (nodes[0]) is left untouched -- hoisting it would break constructor/method detection.
+    return this.lowerViaLegacy(
+      node,
+      node.nodes.slice(1),
+      (args) => ({ ...node, nodes: [node.nodes[0], ...args] } as ast.ListNode),
+      dest
+    );
+  }
+
   private isSubstitutable(h: HExpr): boolean {
     return h.kind === "temp" || h.kind === "opaque-expr";
+  }
+
+  private lowerFormattedString(node: ast.FormattedStringNode, dest: Dest): Lowered {
+    // The string segments stay; only the `{expr}` interpolations are value-position children.
+    const slots: number[] = [];
+    const children: ast.ASTNode[] = [];
+    (node.value ?? []).forEach((v, i) => {
+      if (v._type === "format-expression") {
+        slots.push(i);
+        children.push((v as ast.FormatExpressionNode).expression);
+      }
+    });
+    if (children.length === 0) return this.leaf(node, dest);
+    return this.lowerViaLegacy(
+      node,
+      children,
+      (newExprs) => {
+        const newValue = [...node.value];
+        slots.forEach((slot, k) => {
+          newValue[slot] = { ...(node.value[slot] as ast.FormatExpressionNode), expression: newExprs[k] } as ast.ASTNode;
+        });
+        return { ...node, value: newValue } as ast.ASTNode;
+      },
+      dest
+    );
   }
 
   /**
@@ -466,13 +524,6 @@ export class LowerAstToHirVisitor {
       case "return":
         return { stmts: [...prelude, this.hReturn(value, true, value.src)], value: null };
     }
-  }
-
-  private rebuildCall(node: ast.ListNode, newArgs: ast.ASTNode[]): ast.ListNode {
-    const rebuilt = { ...node, nodes: [node.nodes[0], ...newArgs] } as ast.ListNode;
-    const t = this.context.nodeTypes.get(node);
-    if (t) this.context.recordSynthesizedNodeType(rebuilt, t);
-    return rebuilt;
   }
 
   /** A leaf: the node is an atom as far as HIR is concerned. `src` carries it; the legacy emitter re-visits. */
