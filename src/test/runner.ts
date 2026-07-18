@@ -16,6 +16,7 @@ import path from 'path';
 import chalk from 'chalk';
 import { spawnSync } from 'child_process';
 import { Context, CompilerOptions, LogLevel } from '../compiler/Context';
+import { hirDefault } from '../compiler/hir';
 import { MANIFEST, ExampleStatus } from './manifest';
 import { CHILD_ENV } from './childEnv';
 
@@ -47,6 +48,8 @@ const COMPILE_OPTIONS: CompilerOptions = {
   stdout: false,
   stage: 'codegen',
   language: 'js',
+  // Honours LL_HIR so `LL_HIR=1 npm test` vs `npm test` is the behavioural parallel-run gate.
+  hir: hirDefault(),
 };
 
 interface TestResult {

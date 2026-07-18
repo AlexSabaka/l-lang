@@ -28,6 +28,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
+import { hirDefault } from "../compiler/hir";
 import { RuleSeverity } from "../compiler/rules/RuleBuilder";
 import { DIAGNOSTIC_CATEGORIES } from "../compiler/rules/diagnostics";
 import { Rules } from "../compiler/rules";
@@ -334,6 +335,7 @@ function baseOptions(stage: "types" | "codegen"): CompilerOptions {
     // to actually run, so those probes ask for "codegen".
     stage,
     language: "js",
+    hir: hirDefault(),
   };
 }
 

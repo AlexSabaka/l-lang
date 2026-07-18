@@ -30,6 +30,7 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { CHILD_ENV } from "./childEnv";
 import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
+import { hirDefault } from "../compiler/hir";
 
 const VERBOSE = process.argv.includes("--verbose");
 const RUN_TIMEOUT_MS = 10_000;
@@ -74,6 +75,12 @@ interface Case {
    * a memoizer is that no cache appears in the output.
    */
   emitted?: { must?: RegExp[]; mustNot?: RegExp[] };
+  /**
+   * Force the HIR lowering path on/off for this case, regardless of the ambient default. The HIR
+   * acceptance cases pin `hir: true` so they are meaningful BEFORE the default flips at S5; omit to
+   * follow `hirDefault()` (the LL_HIR env / compiled default).
+   */
+  hir?: boolean;
   /** What was wrong before -- printed on failure, so a regression names its own bug. */
   wasBroken: string;
 }
@@ -4843,6 +4850,8 @@ function run(c: Case, tmp: string): Outcome {
     stdout: false,
     stage: "codegen",
     language: "js",
+    // Per-case override wins; otherwise follow the ambient default (LL_HIR env / compiled default).
+    hir: c.hir ?? hirDefault(),
   };
 
   let code: string;

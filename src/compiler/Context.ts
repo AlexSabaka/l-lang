@@ -20,6 +20,7 @@ import {
 } from "./codegen";
 
 import { ASTNode } from "./frontend/ast";
+import { HirModule, LowerAstToHirVisitor } from "./hir";
 import { SymbolTable, InferredType } from "./analysis/SymbolTable";
 import { AstProvider } from "./frontend/AstProvider";
 import { DependencyGraph } from "./analysis/DependencyGraph";
@@ -56,6 +57,12 @@ export interface CompilerOptions {
   perf?: boolean; // Performance tracking flag
   strictPhases?: boolean; // Enforce strict separation between compilation phases
   validateMetadata?: boolean; // Validate completeness of type metadata before codegen
+  /**
+   * Route codegen through the HIR: typed AST -> HIR (destination-driven lowering) -> ESTree, instead
+   * of the direct AST -> ESTree emit. Off through the prototype (S1-S4), default via `hirDefault()`
+   * once flipped at S5; `--no-hir` / `LL_HIR=0` is the escape until R2. See hir-brief.md.
+   */
+  hir?: boolean;
 }
 
 export function logCompilationMessages(context: Context) {
@@ -102,6 +109,26 @@ export class Context {
    * as "I do not know", never as "it is not a struct".
    */
   public nodeTypes: ReadonlyMap<ASTNode, InferredType> = new Map();
+
+  /**
+   * The HIR lowering's output for this compilation -- lowered function/program bodies, keyed by node
+   * identity -- or undefined when the HIR path is off. Filled by the lowering stage in processModule,
+   * read by the codegen body seam. A missing body is the always-correct legacy fallback.
+   */
+  public hir?: HirModule;
+
+  /**
+   * Register the type of a node the HIR lowering SYNTHESIZED (a temp identifier) or REBUILT (a parent
+   * whose operand was hoisted to a temp). `nodeTypes` is identity-keyed, so a fresh node object has no
+   * entry and the legacy emitter's copy / dispatch / primitive-fold decisions would silently degrade
+   * to "unknown". The lowering's single substitution helper calls this so those decisions keep
+   * answering correctly for substituted receivers and arguments. This is the one sanctioned mutation
+   * seam; `nodeTypes` stays ReadonlyMap to every other reader.
+   */
+  public recordSynthesizedNodeType(node: ASTNode, type: InferredType): void {
+    (this.nodeTypes as Map<ASTNode, InferredType>).set(node, type);
+  }
+
   public performanceMetrics: PerformanceMetrics =
     new PerformanceMetrics();
   public results: RuleValidationResultsCollection =
@@ -591,6 +618,13 @@ export class Context {
     this.performanceMetrics.startTimer("codegen");
     let transformer = undefined;
     if (this.options.language === "js") {
+      // HIR LOWERING STAGE. Typed AST -> HIR side-table (destination-driven lowering), consumed by
+      // the emitter's per-body seam. Gated by the flag and the JS backend only; runs after the type
+      // channel is published and only when the program is error-free (we are past the hasErrors gate
+      // above). An absent module means every body is emitted the legacy way.
+      if (this.options.hir) {
+        this.hir = new LowerAstToHirVisitor(this).lower(ast as ASTNode);
+      }
       // Use the ESTree-based transformer (default)
       transformer = new JSTransformerAstVisitorEstree(this);
     } else if (this.options.language === "llang") {
