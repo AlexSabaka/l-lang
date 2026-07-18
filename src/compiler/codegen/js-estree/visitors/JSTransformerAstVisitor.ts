@@ -1224,66 +1224,20 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // written as ONE parenthesized block into the function body, so the two spellings emit the same
       // JavaScript. The desugarer puts the `(return e)` INSIDE that block; this is what unwraps it.
       let hirBody = this.context.hir?.bodyFor(node);
-      if (!hirBody && this.context.hir) {
-        // An IMPORTED/INLINED function (or a modifier-internal one) whose body the root-module lowering
-        // never walked. Lower it on demand -- a whole body is self-contained (its own statement sink),
-        // so this is safe (unlike per-node control-flow delegation). Distinct temp prefix, no collision.
+      if (!hirBody) {
+        // Any function body the root-module lowering never walked: an IMPORTED/INLINED function, a
+        // modifier-internal one, or ANY function reached by the comptime evaluator (which drives a
+        // fresh transformer at DESUGAR stage, before the lowering pass runs, so context.hir is unset).
+        // Lower it on demand -- a whole body is self-contained (its own statement sink), so this is
+        // safe (unlike per-node control-flow delegation). Distinct temp prefix, no collision.
         if (!this.onDemandLower) this.onDemandLower = new LowerAstToHirVisitor(this.context, "__ll_hir_i");
         hirBody = this.onDemandLower.lowerBody(node.body ?? []);
       }
-      if (hirBody) {
-        // HIR PATH. The lowering already resolved implicit-return, value-position control flow, and the
-        // dangling-else guard; emit is mechanical (hir-brief.md R6). parameterCopyPrologue above still
-        // runs for both paths. Only reached when the flag is on AND this body was lowered.
+      {
+        // HIR PATH -- the only path now. The lowering already resolved implicit-return, value-position
+        // control flow, and the dangling-else guard; emit is mechanical (hir-brief.md R6).
+        // parameterCopyPrologue above still runs.
         bodyStatements.push(...this.emitHir(hirBody));
-      } else {
-      node.body.forEach((x, index) => {
-        const visited = this.visit(x);
-        const isLast = index === node.body.length - 1;
-
-        if (
-          isLast &&
-          !this.isReturnStatement(visited) &&
-          !this.isControlStatement(visited) &&
-          x._type !== "variable"
-        ) {
-          if ((visited as ESTree.Node).type === "BlockStatement") {
-            // A body written as ONE PARENTHESIZED BLOCK emits a BlockStatement, and its value was
-            // simply dropped -- the implicit return above only fired on an EXPRESSION. So:
-            //
-            //     (fn f [n] ((console.log "side") (* n 2)))   ->  undefined
-            //     (fn f [n]  (console.log "side") (* n 2))    ->  8
-            //
-            // The same program, two spellings, two different answers. The corpus works around it by
-            // writing an explicit `(return ...)` inside such blocks -- every function in
-            // 01-basics/01_function_types.lisp does.
-            //
-            // `withTrailingReturn` is the same helper visitWhen and visitMatch already use to give a
-            // multi-statement body a value. The block's statements are SPLICED into the function
-            // body rather than left nested, so the two spellings emit the same JavaScript, which is
-            // the whole point: they are the same program.
-            //
-            // Note it returns the statements untouched when the tail is not an expression (an `if`,
-            // a loop, a `return`), so this adds a value where one was written and nowhere else.
-            bodyStatements.push(
-              ...this.withTrailingReturn(
-                (visited as ESTree.BlockStatement).body as ESTree.Statement[],
-                x
-              )
-            );
-          } else {
-            bodyStatements.push(visited as ESTree.Statement);
-          }
-        } else {
-          if (this.isStatement(visited)) {
-            bodyStatements.push(visited as ESTree.Statement);
-          } else {
-            bodyStatements.push(
-              ESTreeBuilder.expressionStatement(x, visited as ESTree.Expression)
-            );
-          }
-        }
-      });
       }
 
       const body = ESTreeBuilder.blockStatement(node, bodyStatements);
@@ -1894,171 +1848,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   /**
-   * ONE canonical form: the statement. A consumer that needs a value calls `asExpression`, which turns
-   * it into the very ternary this method used to build itself.
-   *
-   * It used to build either, by asking `isExpressionContext()` -- and that query is answerable only
-   * from ambient scope, never from position, so `(let x (if true 1 2))` compiled and
-   * `(console.log (if true 1 2))` emitted `console.log(if (true) {`. Same node. Different neighbours.
-   */
-  /**
-   * The dangling-else guard (CF2, games). An else-less `IfStatement` as a consequent, WITH an
-   * `alternate` present, must be wrapped in a `BlockStatement` -- astring serializes `IfStatement`
-   * non-defensively, so `if (a) if (b) X; else Y` emits with the `else` bound to the INNER `if`. A
-   * one-armed `if`/`when` as the THEN branch of an `if`/`cond` clause is exactly this shape; it killed
-   * tetris's spacebar. Wrapping only this shape leaves every other emitted `if` untouched (measured: 0
-   * golden churn).
-   */
-  private braceIfDangling(
-    consequent: ESTree.Statement,
-    hasAlternate: boolean,
-    node: ast.ASTNode
-  ): ESTree.Statement {
-    return hasAlternate && consequent.type === "IfStatement" && !consequent.alternate
-      ? ESTreeBuilder.blockStatement(node, [consequent])
-      : consequent;
-  }
-
-  visitIf(node: ast.IfNode): ESTree.IfStatement {
-    return this.runInScope(ScopeType.if, () => {
-      const condition = this.visitExpr(node.condition!);
-      const thenBranch = this.visit(node.then!);
-      const elseBranch = node.else ? this.visit(node.else) : null;
-
-      const consequentRaw = this.isStatement(thenBranch)
-        ? (thenBranch as ESTree.Statement)
-        : ESTreeBuilder.blockStatement(node.then!, [
-            ESTreeBuilder.expressionStatement(
-              node.then!,
-              thenBranch as ESTree.Expression
-            ),
-          ]);
-      const consequent = this.braceIfDangling(consequentRaw, elseBranch !== null, node.then!);
-
-      const alternate = elseBranch
-        ? this.isStatement(elseBranch)
-          ? (elseBranch as ESTree.Statement)
-          : ESTreeBuilder.blockStatement(node.else!, [
-              ESTreeBuilder.expressionStatement(
-                node.else!,
-                elseBranch as ESTree.Expression
-              ),
-            ])
-        : null;
-
-      return {
-        type: "IfStatement",
-        test: condition,
-        consequent,
-        alternate,
-        loc: ESTreeBuilder.loc(node),
-      } as ESTree.IfStatement;
-    });
-  }
-
-  /**
-   * `when` is an `if` WITHOUT an else -- `WhenNode { condition, then[] }`. A false condition yields nil.
-   *
-   * ONE canonical form, exactly like `visitIf`, and every reading it used to produce is now produced
-   * by `asExpression` instead -- from the same IfStatement, at the slot that actually wants a value:
-   *
-   *   - a single-expression body   -> the expression itself (the old `asExpression(body[0])`)
-   *   - a multi-EXPRESSION body    -> a SEQUENCE, `("a", "b")` -- still not an IIFE, still cheaper
-   *   - anything with a statement  -> an IIFE whose tail is returned
-   *   - an empty body              -> nil, not `undefined` (D9: one bottom value, not two)
-   *
-   * The asymmetry that was the whole bug -- `visitIf` consulted the context query and `when` did not,
-   * so a multi-statement `when` body in statement position emitted `cond ? { log(); n = 1; } : undefined`,
-   * a BlockStatement inside a ternary -- cannot recur, because there is no longer a context to consult.
-   */
-  visitWhen(node: ast.WhenNode): ESTree.IfStatement {
-    return this.runInScope(ScopeType.when, () => {
-      const condition = this.visitExpr(node.condition!);
-      const body = (node.then ?? []).map((x) => this.visit(x));
-
-      return {
-        type: "IfStatement",
-        test: condition,
-        consequent: ESTreeBuilder.blockStatement(
-          node,
-          body.map((b, i) => this.asStatement(b, node.then![i]))
-        ),
-        alternate: null,
-        loc: ESTreeBuilder.loc(node),
-      } as ESTree.IfStatement;
-    });
-  }
-
-  /**
-   * ONE canonical form, and for `cond` that form is an `if / else if / else` CHAIN.
-   *
-   * The old pair was a nested ternary (expression position) or `switch (true) { case <test>: ... }`
-   * (statement position). Both are gone, and the chain is strictly better than either:
-   *
-   *   - The switch is where `case _else:` came from. `else` arrives as an ordinary identifier, so the
-   *     switch had to EVALUATE it as a case test, and `_else` is bound to nothing: valid JavaScript,
-   *     `ReferenceError` the moment no earlier case matched. In a chain, `else` is the final
-   *     alternate -- which is what it actually is -- so the hazard cannot be expressed.
-   *
-   *   - The ternary cannot host a `return`. The corpus leans on this HARD:
-   *
-   *         (fn get-grade [score] (cond ((>= score 90) (return "A")) ... ))
-   *
-   *     Coerce that case body into an expression and it becomes `(() => { return "A"; })()`, which
-   *     returns from the ARROW. `get-grade` then returns undefined and 13_flow_cond's golden prints
-   *     `95 is: ` -- which is exactly what it did when this method emitted a ternary unconditionally.
-   *     A statement chain keeps `return` meaning what it says.
-   *
-   * And in expression position `asExpression` walks the chain into a nested ternary anyway, because
-   * it converts an IfStatement recursively. One form, both positions, no query.
-   */
-  visitCond(node: ast.CondNode): ESTree.Statement {
-    let chain: ESTree.Statement | null = null;
-
-    for (let i = node.cases.length - 1; i >= 0; i--) {
-      const c = node.cases[i];
-      const body = this.asStatement(this.visit(c.body), c.body);
-
-      if (this.isElseCase(c)) {
-        // The catch-all IS the final alternate. It has no test to emit.
-        chain = body;
-        continue;
-      }
-
-      chain = {
-        type: "IfStatement",
-        test: this.visitExpr(c.condition),
-        // CF2: a clause body that is a one-armed `if` must be braced, or its missing `else` captures
-        // the NEXT clause (which becomes this if's `alternate`).
-        consequent: this.braceIfDangling(body, chain !== null, c),
-        alternate: chain,
-        loc: ESTreeBuilder.loc(c),
-      } as ESTree.IfStatement;
-    }
-
-    return chain ?? ESTreeBuilder.expressionStatement(node, this.nilLiteral(node));
-  }
-
-  /**
-   * The catch-all case of a `cond`: `(cond ((> n 0) ...) (else ...))`.
-   *
-   * Both frontends hand `else` through as an ordinary identifier -- `{_type:"simple-identifier",
-   * id:"else"}` -- so visiting it as a condition ran it through `encodeIdentifier`, which encodes it
-   * (`else` is a JS reserved word) and produced
-   *
-   *     case _else:
-   *
-   * `_else` is bound to nothing. The switch evaluates its case expressions in order, so the moment
-   * no earlier case matched, `_else` was evaluated and threw `ReferenceError: _else is not defined`.
-   * Valid JavaScript, so the acorn guard passed it; the only reason it was never seen is that not
-   * one example in the corpus uses `(else ...)`.
-   */
-  private isElseCase(node: ast.CondCaseNode): boolean {
-    const cond = node.condition as any;
-    return cond?._type === "simple-identifier" && cond.id === "else";
-  }
-
-  /**
    * A cond-case has no meaning on its own -- it is a (test, body) pair, and only the CHAIN decides
    * what its alternate is. `visitCond` therefore builds the whole chain from `node.cases` directly,
    * and nothing dispatches here any more.
@@ -2634,89 +2423,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       default:
         return "this type";
     }
-  }
-
-  visitMatch(node: ast.MatchNode): ESTree.CallExpression {
-    // DEAD under the HIR: a `match` is always lowered (to a scrutinee temp + an if/else chain), so this
-    // legacy always-IIFE emission is never reached (verified: zero reaches across the corpus). Kept as
-    // an unreachable fallback; the LL0103 refusal it used to raise is retired with the rest (D45). A
-    // future cleanup can delete this and visitIf/visitWhen/visitCond outright.
-    return this.runInScope(ScopeType.match, () => {
-      const matchVar = uniqueIdentifier("tmp_match_id");
-      const matchVarId = ESTreeBuilder.identifier(node, matchVar);
-      const matchVal = this.visitExpr(node.expression);
-
-      const predefinedVariables = findIdentifiersToDefine(node);
-      const declarations: ESTree.VariableDeclaration | null =
-        predefinedVariables.length > 0
-          ? {
-              type: "VariableDeclaration",
-              kind: "let",
-              declarations: predefinedVariables.map((v) => ({
-                type: "VariableDeclarator",
-                id: ESTreeBuilder.identifier(node, v),
-                init: null,
-              })),
-            }
-          : null;
-
-      const funcBody: ESTree.Statement[] = [];
-      if (declarations) funcBody.push(declarations);
-
-      // A match arm's value is its body's tail (CF3). Delegate to `withTrailingReturn`, the shared
-      // helper -- it recurses into an `IfStatement`'s arms (and a `TryStatement`'s), which this used to
-      // do with a LOCAL copy that fell through on both, so `(1 => (if flag "yes" "no"))` injected no
-      // `return` and the arm silently no-op'd. A bare expression (not yet a statement) still returns
-      // directly; everything else is a statement `withTrailingReturn` already understands.
-      const ensureReturns = (stmt: ESTree.Node): ESTree.Statement[] =>
-        this.isExpression(stmt)
-          ? [ESTreeBuilder.returnStatement(node, stmt as ESTree.Expression)]
-          : this.withTrailingReturn([stmt as ESTree.Statement], node);
-
-      for (const c of node.cases) {
-        const patternCond = this.generateCondition(c.pattern, matchVar);
-
-        // `:when <expr>` (D26). ANDed AFTER the pattern, and the order is load-bearing: an
-        // identifier-pattern's condition is `(x = matchVar, true)` -- it BINDS `x` as a side effect --
-        // so the guard, evaluated to its right, sees the binding the pattern just made. `&&` also
-        // short-circuits, so the guard never runs when the pattern did not match: `[a b] :when (> a b)`
-        // does not read `a`/`b` off a non-array.
-        const condition = c.guard
-          ? ({
-              type: "LogicalExpression",
-              operator: "&&",
-              left: patternCond,
-              right: this.visitExpr(c.guard),
-              loc: ESTreeBuilder.loc(c),
-            } as ESTree.LogicalExpression)
-          : patternCond;
-
-        const body = this.visit(c.body) as ESTree.Node;
-        const bodyStatements = ensureReturns(body);
-
-        funcBody.push({
-          type: "IfStatement",
-          test: condition,
-          consequent: ESTreeBuilder.blockStatement(c.body, bodyStatements),
-          alternate: null,
-        } as ESTree.IfStatement);
-      }
-      
-      funcBody.push(ESTreeBuilder.returnStatement(node, this.nilLiteral(node)));
-
-      return ESTreeBuilder.callExpression(
-        node,
-        {
-          type: "ArrowFunctionExpression",
-          params: [matchVarId],
-          body: ESTreeBuilder.blockStatement(node, funcBody),
-          expression: false,
-          generator: false,
-          async: false,
-        } as ESTree.ArrowFunctionExpression,
-        [matchVal]
-      );
-    });
   }
 
   private generateCondition(
