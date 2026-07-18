@@ -50,10 +50,6 @@ export const MANIFEST: Record<string, ManifestEntry> = {
     status: "fixture",
     reason: "requires a p5.js/browser runtime, not plain `node`",
   },
-  "W99_L_sloth_design_v1.lisp": {
-    status: "fixture",
-    reason: "design scratchpad, not a feature demonstration",
-  },
 
   // --- negative: the file MUST fail, with exactly these diagnostics ---
   "08-types/01_type_errors.lisp": {
@@ -221,25 +217,10 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   // it had a runtime value (`is-int` threw ReferenceError), and a zero-arg call to a local function
   // value emitting a bare reference. See DECISIONS.md.
   "20-stdlib/test_stdlib.lisp": { status: "test" },
-  "modifiers_demo.lisp": {
-    status: "xfail",
-    reason:
-      "It COMPILES AND RUNS clean now -- the old reason ('__ll_modifier_memoized not implemented') is " +
-      "stale. But it must not be given a golden as it stands: it declares `(defmodifier memoized [])` " +
-      "with an EMPTY body, which after D3b is an identity pass-through, so its 'memoized' fibonacci " +
-      "recomputes every call. A golden recorded from that output would certify a test that " +
-      "demonstrates nothing -- which is exactly the bug D3b found in four other modifier goldens. It " +
-      "needs a real modifier body, as examples/06-modifiers/ now has, and is largely redundant with " +
-      "06-modifiers/05_multiple_modifiers.lisp, which demonstrates memoization properly.",
-  },
-  "modifiers_test.lisp": {
-    status: "xfail",
-    reason:
-      "D4 is now enforced, and this file is what it catches: it applies ':memoized' and ':cached' " +
-      "while declaring neither (LL0015). Both are user-defined modifiers -- 05_memoization.lisp " +
-      "and 05_multiple_modifiers.lisp declare ':memoized' with (defmodifier memoized []) and pass. " +
-      "The example is at fault, not the compiler; fixing it edits the corpus and needs a call.",
-  },
+  // (Root files modifiers_demo.lisp / modifiers_test.lisp DELETED: both broken and redundant with the
+  //  modifiers suite -- empty-body modifier that demonstrates nothing, and undeclared :memoized/:cached
+  //  (LL0015). Modifier-with-arguments is properly shown by the retry-modifier example. The design
+  //  scratchpad W99_L_sloth_design_v1.lisp is DELETED too; its wishlist is in docs/inbox/language-ideas.md.)
 
   // ===========================================================================
   // ADVERSARIAL CORPUS INTEGRATION (l-lang-post-audit + l-lang-ex)
