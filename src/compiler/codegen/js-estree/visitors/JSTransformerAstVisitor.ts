@@ -934,15 +934,23 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     this.inlineImportedOperators();
 
-    for (const n of node.program) {
-      const result = this.visit(n);
-      if (result) {
-        if (this.isStatement(result)) {
-          statements.push(result as ESTree.Statement);
-        } else {
-          statements.push(
-            ESTreeBuilder.expressionStatement(n, result as ESTree.Expression)
-          );
+    const hirBody = this.context.hir?.bodyFor(node);
+    if (hirBody) {
+      // HIR PATH. Top-level value-position control flow is lowered like any body; the surrounding
+      // operator-registration dance is unchanged (opaque items still `visit` in order, so their
+      // registrations accumulate the same way). Only reached when the flag is on.
+      statements.push(...this.emitHir(hirBody));
+    } else {
+      for (const n of node.program) {
+        const result = this.visit(n);
+        if (result) {
+          if (this.isStatement(result)) {
+            statements.push(result as ESTree.Statement);
+          } else {
+            statements.push(
+              ESTreeBuilder.expressionStatement(n, result as ESTree.Expression)
+            );
+          }
         }
       }
     }
@@ -1392,6 +1400,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         //
         // An ANONYMOUS function is never a declaration. It has no name to declare. That is a fact
         // about the node, not about where the node happens to sit, and it belongs in the test.
+        //
+        // TOP-LEVEL stays `this.scope[1] === program`, deliberately, even under HIR top-level lowering.
+        // A node-based test (climb `_parent` to the program) is WRONG for an INLINED imported function:
+        // it is emitted as `const __ll_inlined_x = <arrow>` at the point of use for dependency ordering
+        // (ensureSymbolInlined), NOT hoisted as a declaration -- and it is visited at a DEEP scope, so
+        // the scope test correctly gives it the arrow. A real top-level function's own function-scope
+        // still makes scope[1] === program here, so top-level HIR lowering keeps producing declarations;
+        // the only divergence (a named function nested inside top-level control flow) is a discarded
+        // definition -- behaviourally inert, and absent from the corpus.
       } else if (name && this.scope[1] === ScopeType.program) {
         let declaration = {
           type: "FunctionDeclaration",

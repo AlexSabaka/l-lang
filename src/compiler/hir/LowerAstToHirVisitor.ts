@@ -69,9 +69,16 @@ export class LowerAstToHirVisitor {
 
   constructor(private readonly context: Context) {}
 
-  /** Lower every function/method body in the tree into a HirModule side-table, keyed by node identity. */
+  /**
+   * Lower the program top level and every function/method body into a HirModule side-table, keyed by
+   * node identity. The program body is a statement sequence (effect dest) -- no tail return -- so
+   * top-level value-position control flow no longer falls through to the legacy emitter.
+   */
   lower(root: ast.ASTNode): HirModule {
     const module = new HirModule();
+    if (root._type === "program") {
+      module.set(root, { stmts: this.lowerSeq((root as ast.ProgramNode).program ?? [], EFFECT).stmts });
+    }
     this.walkFunctions(root, (fn) => {
       module.set(fn, { stmts: this.lowerSeq(fn.body ?? [], EFFECT).stmts });
     });
@@ -518,6 +525,9 @@ export class LowerAstToHirVisitor {
   // -- variable / assignment (a value-position conditional hides in the RHS) -------------------------
 
   private lowerVariable(node: ast.VariableNode, dest: Dest): Lowered {
+    // A bodyless declaration -- an `:extern` `let` (an ambient global, Sd) -- has no initializer.
+    // Nothing to lower; emit it unchanged.
+    if (!node.value) return this.leaf(node, dest);
     const init = this.lowerNode(node.value, VALUE);
     if (init.value === null) return { stmts: init.stmts, value: null }; // RHS diverged -> the binding is dead
     if (init.stmts.length === 0) {
