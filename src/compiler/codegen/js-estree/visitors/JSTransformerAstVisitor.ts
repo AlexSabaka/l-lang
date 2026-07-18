@@ -17,6 +17,8 @@ import { nativeMemberKind } from "../../../types/nativeMembers";
 import { isBuiltinModifier, hasModifier } from "../../../helpers/modifiers";
 import * as acorn from "acorn";
 import { ClassBuilder } from "../JSClassBuilder";
+import { EmitHirToEstree, LegacyLeafEmitter } from "../../../hir";
+import type { HBlock } from "../../../hir";
 import { SourceMapGenerator } from "source-map";
 import path from "path";
 import { formatWithOptions } from "util";
@@ -1296,6 +1298,13 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // The BlockStatement splice below stays. It is not the implicit return: it flattens a body
       // written as ONE parenthesized block into the function body, so the two spellings emit the same
       // JavaScript. The desugarer puts the `(return e)` INSIDE that block; this is what unwraps it.
+      const hirBody = this.context.hir?.bodyFor(node);
+      if (hirBody) {
+        // HIR PATH. The lowering already resolved implicit-return, value-position control flow, and the
+        // dangling-else guard; emit is mechanical (hir-brief.md R6). parameterCopyPrologue above still
+        // runs for both paths. Only reached when the flag is on AND this body was lowered.
+        bodyStatements.push(...this.emitHir(hirBody));
+      } else {
       node.body.forEach((x, index) => {
         const visited = this.visit(x);
         const isLast = index === node.body.length - 1;
@@ -1343,6 +1352,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           }
         }
       });
+      }
 
       const body = ESTreeBuilder.blockStatement(node, bodyStatements);
 
@@ -1963,6 +1973,26 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return this.isStatement(emitted)
       ? (emitted as ESTree.Statement)
       : ESTreeBuilder.expressionStatement(node, emitted as ESTree.Expression);
+  }
+
+  private hirEmitter?: EmitHirToEstree;
+
+  /**
+   * Emit a lowered HIR body (see hir/). The HIR resolved position/tail/value-conditionals already, so
+   * this is a mechanical map; the leaf hooks below are the ONLY judgment left, and they defer to the
+   * legacy visitor (an opaque leaf), to `asValue` for a D11 store, and to `nilLiteral` for D9 bottom.
+   */
+  private emitHir(block: HBlock): ESTree.Statement[] {
+    if (!this.hirEmitter) {
+      const legacy: LegacyLeafEmitter = {
+        leafExpr: (n) => this.visitExpr(n),
+        leafStmt: (n) => this.asStatement(this.visit(n) as ESTree.Node, n),
+        storeValue: (e, src) => this.asValue(e, src),
+        nilLiteral: (src) => this.nilLiteral(src),
+      };
+      this.hirEmitter = new EmitHirToEstree(legacy);
+    }
+    return this.hirEmitter.emitBlock(block);
   }
 
   /**

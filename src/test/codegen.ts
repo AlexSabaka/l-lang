@@ -3400,6 +3400,10 @@ catch b ((console.log "two")))`,
 ))
 (console.log (f))`,
     expectDiagnostic: /LL0103/,
+    // Pinned to the LEGACY path: LL0103 is the direct-emit refusal, and the HIR lowering RETIRES it
+    // (return-in-operand becomes a real return -- D40). These cases assert the `--no-hir` fallback
+    // behaviour, retained until R2; the positive HIR acceptance is asserted by the `hir: true` cases.
+    hir: false,
     wasBroken:
       "printed `UNREACHABLE` and then `fell-through` -- the return became `(() => { return \"early\"; })()`, " +
       "so it returned from the ARROW and handed its value to `||` as an ordinary operand. Silent. AF-003.",
@@ -3414,6 +3418,10 @@ catch b ((console.log "two")))`,
 ))
 (console.log (f 1))`,
     expectDiagnostic: /LL0103/,
+    // Pinned to the LEGACY path: LL0103 is the direct-emit refusal, and the HIR lowering RETIRES it
+    // (return-in-operand becomes a real return -- D40). These cases assert the `--no-hir` fallback
+    // behaviour, retained until R2; the positive HIR acceptance is asserted by the `hir: true` cases.
+    hir: false,
     wasBroken:
       "printed `fell-through` -- BOTH arms' returns returned from the match's IIFE, not from `f`. " +
       "Unreported by the audit, and the likeliest place in the language to write a `return`.",
@@ -3426,6 +3434,10 @@ catch b ((console.log "two")))`,
 ))
 (console.log (f true))`,
     expectDiagnostic: /LL0103/,
+    // Pinned to the LEGACY path: LL0103 is the direct-emit refusal, and the HIR lowering RETIRES it
+    // (return-in-operand becomes a real return -- D40). These cases assert the `--no-hir` fallback
+    // behaviour, retained until R2; the positive HIR acceptance is asserted by the `hir: true` cases.
+    hir: false,
     wasBroken:
       "printed `fell-through`. A value-position `if` is a ternary, and each branch is coerced to an " +
       "expression -- so the return was IIFE'd exactly as a `||` operand is. Also unreported.",
@@ -3478,6 +3490,109 @@ catch b ((console.log "two")))`,
       "NOT broken -- a GUARD on the scan's stopping rule. The lambda's `return` returns from the " +
       "LAMBDA, which is exactly right; a walk that does not stop at a function boundary would refuse " +
       "the most ordinary code in the language.",
+  },
+
+  // ===============================================================================================
+  // HIR acceptance cases (S2 -- the conditional cluster's R1 lowering). `hir: true` forces the HIR
+  // path so these are meaningful BEFORE the default flips at S5. They assert the POSITIVE of what the
+  // legacy `expectDiagnostic: /LL0103/` cases above refuse, plus the retirement of CF2 (dangling-else)
+  // and the preservation of D11 copies through the temp substitution.
+  // ===============================================================================================
+  {
+    name: "HIR A1: a value-position `if` with a STATEMENT arm is a temp, not an IIFE",
+    source: `(fn f [c <- Boolean] -> Int (
+  (let x (if c ((let y (* 2 3)) (+ y 1)) 20))
+  (return x)))
+(console.log (f true))
+(console.log (f false))`,
+    expect: ["7", "20"],
+    // The temp path fired (`__ll_hir_*`), and NOT an IIFE (`(() =>` -- absent from the runtime shim,
+    // so this pattern is specific to asExpression's wrapper).
+    emitted: { must: [/__ll_hir/], mustNot: [/\(\(\) =>/] },
+    hir: true,
+    wasBroken:
+      "legacy asExpression wrapped a statement-bearing value-position `if` in an IIFE. The HIR lowers " +
+      "it to a fresh temp assigned in each arm -- no arrow, no scope, and a `return` inside would still " +
+      "return from the function.",
+  },
+  {
+    name: "HIR A2: a `return` inside a value-position `if` returns from the FUNCTION (D40)",
+    source: `(fn f [c <- Boolean] -> String (
+  (let r (if c (return "if-early") "no"))
+  (return "fell-through")))
+(console.log (f true))
+(console.log (f false))`,
+    expect: ["if-early", "fell-through"],
+    // The positive of the pinned `expectDiagnostic: /LL0103/` case above: HIR retires the refusal.
+    emitted: { mustNot: [/\(\(\) =>/] },
+    hir: true,
+    wasBroken:
+      "the direct emit REFUSED this (LL0103) because a value-position `if` coerced each branch to an " +
+      "expression, IIFE-ing the `return`. HIR hoists the `if` to statement position, so the `return` is " +
+      "real: `f(true)` returns `if-early` early; `f(false)` falls through.",
+  },
+  {
+    name: "HIR A9: dangling-else -- a one-armed `when` as a THEN branch binds the else OUTWARD (CF2)",
+    source: `(fn f [a <- Boolean b <- Boolean] -> String (
+  (if a
+      (when b :then ((return "ab")))
+      (return "not-a"))
+  (return "a-not-b")))
+(console.log (f true true))
+(console.log (f true false))
+(console.log (f false false))`,
+    expect: ["ab", "a-not-b", "not-a"],
+    hir: true,
+    wasBroken:
+      "astring serializes `if (a) if (b) X; else Y` with the `else` bound to the INNER `if` -- so " +
+      "`f(true, false)` would take the else and print `not-a`. HIR braces every `if` arm, so the else " +
+      "binds to the OUTER `if`: `f(true, false)` falls through to `a-not-b`. `braceIfDangling`, retired.",
+  },
+  {
+    name: "HIR A11 GUARD: a statement-position `return` in if/cond/when is unchanged under HIR",
+    source: `(fn viaIf [x <- Int] -> String (
+  (if (> x 0) (return "pos"))
+  (return "nonpos")))
+(fn viaCond [x <- Int] -> String (
+  (cond ((> x 0) (return "cpos")) (else (return "cneg")))))
+(fn viaWhen [x <- Int] -> String (
+  (when (> x 0) :then ((return "wpos")))
+  (return "wneg")))
+(console.log (viaIf 1))
+(console.log (viaIf -1))
+(console.log (viaCond 1))
+(console.log (viaCond -1))
+(console.log (viaWhen 1))
+(console.log (viaWhen -1))`,
+    expect: ["pos", "nonpos", "cpos", "cneg", "wpos", "wneg"],
+    emitted: { mustNot: [/\(\(\) =>/] },
+    hir: true,
+    wasBroken:
+      "not broken -- the GUARD that the HIR does not disturb the half of the language that already " +
+      "honoured D40. Statement-position returns stay real returns; no IIFE appears.",
+  },
+  {
+    name: "HIR A13 GUARD: a struct copied through the temp substitution stays isolated (D11)",
+    // Inside a function -- S2 lowers function bodies, not the program top level. The value-position
+    // `if` has a statement arm (`when false`, no output) whose VALUE is `a` directly, so the init is
+    // lowered to a temp and the copy at `let b` is load-bearing: without it, `b` aliases `a`.
+    source: `(defstruct P (mut :ctor x <- Int 0))
+(fn go [] -> Void (
+  (let a (P 1))
+  (let b (if true ((when false :then ((console.log "x"))) a) a))
+  (b.x := 99)
+  (console.log a.x b.x)))
+(go)`,
+    expect: ["1 99"],
+    // The value-position `if` has a statement arm, so its init is lowered to a temp; legacy visitVariable
+    // still applies its D11 copy to the SUBSTITUTED temp -- so the copy wraps `__ll_hir_*`, and `a` is
+    // not aliased. This is the nodeTypes-through-substitution mitigation, observed.
+    emitted: { must: [/__ll_copy\(__ll_hir/] },
+    hir: true,
+    wasBroken:
+      "R3 preserved through R1's substitution: if the rebuilt binding lost the init's type, the copy " +
+      "would be elided and `b.x := 99` would alias `a` (printing `99 99`). The temp carries the type, " +
+      "so the copy fires and `a.x` stays 1.",
   },
 
   // ===============================================================================================
