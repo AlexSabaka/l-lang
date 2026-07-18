@@ -95,7 +95,7 @@ single form would make every binding in it invisible at the prompt. `.load` unwr
 loads the forms as sibling cells.
 
 ```
-> .load examples/01-basics/00_vars.lisp
+> .load examples/00-basics/00_vars.lisp
 loaded 15/15 forms
 > .symbols
   variable

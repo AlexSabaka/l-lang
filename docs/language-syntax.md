@@ -252,7 +252,7 @@ Modifiers are applied in order, creating nested transformations.
 
 ### Examples
 
-See `examples/06-modifiers/` for comprehensive examples including:
+See `examples/10-modifiers/` for comprehensive examples including:
 - Basic modifier usage
 - Logging and timing modifiers  
 - Retry logic modifiers

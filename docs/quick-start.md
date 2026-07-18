@@ -182,16 +182,16 @@ Output (.js)
 **Inspect intermediate stages:**
 ```bash
 # View raw AST
-ts-node src/index.ts transform --stage parse examples/01-basics/00_vars.lisp
-cat examples/01-basics/00_vars.parsed.json | jq .
+ts-node src/index.ts transform --stage parse examples/00-basics/00_vars.lisp
+cat examples/00-basics/00_vars.parsed.json | jq .
 
 # View symbol table (with types)
-ts-node src/index.ts transform --stage types examples/01-basics/00_vars.lisp
-cat examples/01-basics/00_vars.types.json | jq '.symbols'
+ts-node src/index.ts transform --stage types examples/00-basics/00_vars.lisp
+cat examples/00-basics/00_vars.types.json | jq '.symbols'
 
 # View generated JavaScript
-ts-node src/index.ts transform examples/01-basics/00_vars.lisp
-cat examples/01-basics/00_vars.js
+ts-node src/index.ts transform examples/00-basics/00_vars.lisp
+cat examples/00-basics/00_vars.js
 ```
 
 ---

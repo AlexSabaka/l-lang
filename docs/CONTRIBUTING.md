@@ -238,6 +238,28 @@ const buildSymbolTableVisitor = new BuildSymbolTableAstVisitor(this);
 - **Coverage target**: 80%+ for new code
 - **Format**: Example-based (`.lisp` + `.expect` files)
 
+> **`examples/` has two jobs — a feature showcase AND the end-to-end conformance
+> suite.** Unlike `test:codegen` / `test:grammar-v2-smoke` / `test:diagnostics`
+> (which assert on emitted text, tokens, or diagnostic codes), the runner
+> (`npm test`) actually *compiles and runs* every `.lisp` and diffs stdout
+> against its `.expect` golden. So the corpus is the language's behavioural
+> regression net.
+>
+> After each feature or refactor, **add new example program(s) that try to break
+> the change in several ways** — adversarial shapes and edge cases, not just a
+> happy-path demo. A happy-path corpus is a *regression* guard, not a
+> *correctness* guard: it demonstrates features, it doesn't attack them. (Two
+> evaluation-order bugs once shipped green because nothing in the corpus
+> exercised an impure operand before a compound one.)
+>
+> Golden only output you have reasoned is **correct** — never bless whatever
+> falls out, or you freeze the bug into "expected". If an example can't be made
+> green because it hits a real gap, classify it in `src/test/manifest.ts` as
+> `xfail` (with a reason) or `negative` (with codes) — never leave a bare failing
+> file; the runner hard-errors on any undeclared, goldenless `.lisp`. Examples
+> are grouped by domain under decade-block numbers (`00-basics` … `20-algorithms`,
+> `30-applications`, `80-adversarial`, `90-diagnostics`, `99-fixtures`).
+
 ### Documentation
 
 - Update [docs/](docs/) if changing APIs
@@ -380,7 +402,7 @@ See [code change instructions in README](../README.md) - summary:
 ### Week 2: Understand the Compiler
 - [ ] Read [COMPILER_ARCHITECTURE.md](language-compiler.md)
 - [ ] Run `npm test` and understand test structure
-- [ ] Test compilation stages: `ts-node src/index.ts transform --stage types examples/01-basics/00_vars.lisp`
+- [ ] Test compilation stages: `ts-node src/index.ts transform --stage types examples/00-basics/00_vars.lisp`
 - [ ] Inspect `.json` artifacts with `jq`
 
 ### Week 3: Make Your First Change

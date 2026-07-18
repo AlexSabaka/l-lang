@@ -191,7 +191,7 @@ const fibonacci = __ll_modifier_memoized()(function (n) {
 
 **Application Pattern**: Functions with `:modifier` syntax trigger `applyModifiersToDeclaration()` which wraps the function declaration with modifier transformations.
 
-**Examples**: See `examples/06-modifiers/` for comprehensive usage patterns including memoization, logging, timing, and multiple modifier combinations.
+**Examples**: See `examples/10-modifiers/` for comprehensive usage patterns including memoization, logging, timing, and multiple modifier combinations.
 
 ## Development Workflows
 
@@ -201,19 +201,19 @@ Use `transform --stage <stage>` to inspect intermediate outputs:
 
 ```bash
 # Parse only (raw AST)
-ts-node ./src/index.ts transform --stage parse examples/01-basics/00_vars.lisp
+ts-node ./src/index.ts transform --stage parse examples/00-basics/00_vars.lisp
 # Outputs: 00_vars.parsed.json
 
 # After symbol resolution (with symbol table)
-ts-node ./src/index.ts transform --stage symbols examples/01-basics/00_vars.lisp
+ts-node ./src/index.ts transform --stage symbols examples/00-basics/00_vars.lisp
 # Outputs: 00_vars.symbols.json (includes symbol table)
 
 # After type inference (with inferred types)
-ts-node ./src/index.ts transform --stage types examples/01-basics/00_vars.lisp
+ts-node ./src/index.ts transform --stage types examples/00-basics/00_vars.lisp
 # Outputs: 00_vars.types.json (types IN symbol entries)
 
 # Full JavaScript compilation
-ts-node ./src/index.ts transform examples/01-basics/00_vars.lisp
+ts-node ./src/index.ts transform examples/00-basics/00_vars.lisp
 # Outputs: 00_vars.js
 ```
 
@@ -228,13 +228,13 @@ Use `--perf` flag to measure compilation pass performance and identify bottlenec
 
 ```bash
 # Performance profiling for full compilation
-ts-node ./src/index.ts transform --perf examples/05-oop/00_inheritance.lisp
+ts-node ./src/index.ts transform --perf examples/09-oop/00_inheritance.lisp
 
 # Profiling specific compilation stages
-ts-node ./src/index.ts transform --perf --stage types examples/01-basics/08_pipelines.lisp
+ts-node ./src/index.ts transform --perf --stage types examples/01-functions/04_pipelines.lisp
 
 # Performance analysis while running code
-ts-node ./src/index.ts run --perf examples/01-basics/07_memoization.lisp
+ts-node ./src/index.ts run --perf examples/20-algorithms/09_memoization_intro.lisp
 ```
 
 **Typical Performance Characteristics**:
@@ -343,16 +343,16 @@ npm test
 ### Example-Based Testing
 All examples in `examples/` have `.expect` files showing expected output:
 ```bash
-examples/01-basics/00_vars.lisp      # Input
-examples/01-basics/00_vars.expect    # Expected stdout
-examples/01-basics/00_vars.js        # Generated (after compile)
+examples/00-basics/00_vars.lisp      # Input
+examples/00-basics/00_vars.expect    # Expected stdout
+examples/00-basics/00_vars.js        # Generated (after compile)
 ```
 
 ### Common Test Patterns
 
-- **Type inference**: [examples/04-data-types/04_enums.lisp](../../examples/04-data-types/04_enums.lisp) (union types)
-- **Scoping**: [examples/10-algorithms/01_evaluator.lisp](../../examples/10-algorithms/01_evaluator.lisp) (nested functions)
-- **Classes**: [examples/05-oop/00_inheritance.lisp](../../examples/05-oop/00_inheritance.lisp) (super calls, member access)
+- **Type inference**: [examples/05-data-structures/04_enums.lisp](../../examples/05-data-structures/04_enums.lisp) (union types)
+- **Scoping**: [examples/20-algorithms/01_evaluator.lisp](../../examples/20-algorithms/01_evaluator.lisp) (nested functions)
+- **Classes**: [examples/09-oop/00_inheritance.lisp](../../examples/09-oop/00_inheritance.lisp) (super calls, member access)
 
 ## Build & Deployment
 
@@ -913,7 +913,7 @@ Now scans for `type-def` and `struct` nodes during second pass
 # DefModifier Implementation Guide
 
 **Status**: ✅ Implemented (January 16, 2026)  
-**Examples**: `examples/06-modifiers/`  
+**Examples**: `examples/10-modifiers/`  
 **Version**: l-lang 0.0.1+
 
 ## Overview
@@ -1113,7 +1113,7 @@ The memoization implementation provides significant performance improvements for
 ## Testing
 
 ### Example Files
-All defmodifier examples located in `examples/06-modifiers/`:
+All defmodifier examples located in `examples/10-modifiers/`:
 - `00_memoization.lisp` - Basic memoized fibonacci
 - `01_basic_modifier.lisp` - Identity modifier demo
 - `02_logging_modifier.lisp` - Logging modifier demo  
@@ -1130,7 +1130,7 @@ for file in *.lisp; do
 done
 
 # Test specific stage  
-ts-node src/index.ts transform --stage types examples/06-modifiers/00_memoization.lisp
+ts-node src/index.ts transform --stage types examples/10-modifiers/00_memoization.lisp
 ```
 
 ### Validation Commands

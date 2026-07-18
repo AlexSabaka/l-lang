@@ -300,7 +300,7 @@ native struct holding a pointer would. The struct's own storage is copied; what 
 Assigning to `this` inside a struct `:operator` is an error (**LL0207**) rather than a mutation that
 silently escapes to the caller. Build a new value and return it.
 
-See `examples/04-data-types/10_value_semantics.lisp`.
+See `examples/06-value-semantics/02_value_semantics.lisp`.
 
 #### Operator overloads
 

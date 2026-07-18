@@ -1,5 +1,13 @@
 # Adversarial corpus integration
 
+> **Note (post-integration reorg):** the paths in this writeup are as they were at
+> integration time. `examples/` was subsequently reorganized into a decade-block
+> taxonomy (`00-basics` … `20-algorithms`, `30-applications`, `80-adversarial`,
+> `90-diagnostics`, `99-fixtures`), and the 7 full games under `30-games/` were
+> dropped after their runnable feature-logic was extracted into `30-applications/`
+> (they live on in the separate `l-lang-ex` repo). See the reorg commit and
+> `src/test/manifest.ts` for current locations.
+
 Folding three external directories of l-lang programs into `examples/` as adversarial
 feature + language coverage — the regression net for the JS→LLVM backend split.
 
