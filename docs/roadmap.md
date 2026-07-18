@@ -418,10 +418,13 @@ proven by a characterization snapshot (`test:diagnostics`, 42 probes, byte-for-b
 ## 🧠 Phase 6: The Brain Transplant (v0.6.0)
 **Theme:** "Prepare for the metal."
 
-*   [ ] **HIR:** a *typed, desugared* tree — **unblocked by Phase 3**, which built both halves: there
-        is a desugared tree now, and a per-node type channel to type it with
-*   [ ] **Lowering:** AST → HIR
-*   [ ] **IR Codegen:** refactor JS codegen to consume HIR
+*   [x] **HIR:** a *typed, desugared* tree — **prototype landed** (D45). Two-sorted (statement/
+        expression) node family in `src/compiler/hir/`, typed from the per-node channel.
+*   [x] **Lowering:** AST → HIR — destination-driven (`lower(node, dest)`), prototype scope: the
+        conditional cluster (if/when/cond/match) + operand hoisting. R2–R4 (uniform operands, explicit
+        stores, dispatch-at-HIR) are the remaining expansion.
+*   [x] **IR Codegen:** HIR → ESTree, mechanical. HIR is the **default** path as of D45/S5; the direct
+        emit survives as the `--no-hir` fallback until the R2 cut.
 
 ## 🚀 Phase 7: The Speed of Light (v1.0.0)
 **Theme:** "The Sloth becomes a Cheetah."

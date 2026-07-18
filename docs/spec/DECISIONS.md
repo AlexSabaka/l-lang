@@ -3747,3 +3747,104 @@ mismatch (LL0213) in a whitespace example, and **three async/generator negative 
 vacuously** — `silent` because `Task<Int>` / `Iterator<Int>` resolved to `Unknown` and nothing could
 be checked, not because the type was right. A diagnostic that makes vacuous "it type-checks" tests
 impossible is doing exactly what it is for.
+
+## D45 — the HIR prototype: a typed post-typecheck IR, destination-driven (Phase 6, prototype)
+
+D40 named the fix and deferred it: "a real HIR / ANF lowering pass ... explicitly deferred to a future
+phase." This is that phase, done prototype-first. There is now a typed intermediate representation
+(`src/compiler/hir/`) between the typed AST and ESTree, and the conditional cluster plus operand
+hoisting lower through it. As of S5 the HIR is the **default** codegen path; the direct AST→ESTree
+emit survives as the `--no-hir` fallback.
+
+### The shape, and the two designs that lost
+
+The brief walked in with two candidate designs (§6 Q1). **Position-tagging** — annotate each AST node
+with statement/value position and hoist only what must — lost. The prior art is decisive: ClojureScript's
+`:context` tags smear the decision across ~40 emit sites and still fall back to an IIFE for every
+non-`if` form, leaning on Google Closure to clean up after; PureScript shipped optional types in its
+CoreFn IR and *deleted them* in 2023 when they rotted from disuse. Both are the cautionary tale for
+"reuse the AST, tag it."
+
+What won is the **Kotlin/JS-IR shape**: a distinct, two-sorted (statement/expression) node family
+whose datatype *is* the invariant — control flow exists only in statement position, a value-position
+conditional carries an explicit temp, every node carries its type (mandatory, from the checker's
+channel, `undefined` only where the checker itself did not know). The lowering that fills it is
+**destination-driven** (ReScript's `continuation` ≙ Dybvig's DDCG ≙ rustc's `expr_into_dest`):
+`lower(node, dest)` threads a destination — `effect | value | assign(temp) | return` — down the tree
+and returns `{stmts, value}`. One mechanism subsumes three of the emitter's ad-hoc lowerings:
+tail-return injection (`withTrailingReturn`), value-position control flow (`asExpression`'s
+ternary/IIFE), and dead-code-after-return. A ternary is kept as a **peephole** on the pure-arm case, so
+the common output is byte-identical to before; the temp path fires only where the old output was an
+IIFE or an LL0103 refusal. **No IIFEs in the new path** — the field's universal lesson is that every
+compiler that migrated went *from* IIFEs *to* destination-assignment, never the reverse.
+
+### Where it runs, and the one non-obvious boundary
+
+The lowering is a Context stage (after the type channel is published, before codegen), but it is
+**consumed at the `visitFunction` body seam**, not by replacing the whole emitter. Unmodelled
+constructs are opaque leaves handed back to the *same* legacy visitor instance, so no node is visited
+twice and all its accumulator state (inlined symbols, operator registrations) is filled exactly once.
+The **program top level is deliberately not lowered**: codegen's function-form choice keys off scope
+*depth* (`this.scope[1] === program` decides declaration-vs-arrow), and a lowered top-level construct
+would drop an intermediate scope level; a function body always keeps its own function scope on the
+stack, so the invariant holds there and only there. Promoting the pass to own the whole tree is R2's
+job, once the opaque set has shrunk to nothing.
+
+Patterns are **reused, not re-modelled**: a `match` arm's condition is still built by the legacy
+`generateCondition`, and the pattern-variable list by `findIdentifiersToDefine`, reached through two
+narrow emitter hooks. Re-modelling patterns as HIR operand shapes is R2.
+
+### What it retires (in behaviour, on the default path)
+
+- **The value-position IIFE**, for `if`/`when`/`cond`/`match` used as a value — replaced by a temp
+  assigned in each branch, or a ternary when the branches are pure. Retires CF1/CF3.
+- **The always-IIFE `match`.** A `match` was the one form *always* compiled to an arrow, which is why a
+  `return` in an arm always returned from the arrow, not the function — D40's worst case. It now lowers
+  to a scrutinee temp + a hoisted block scope + an if/**else** chain (the else-chain is load-bearing:
+  a pattern test binds as a side effect, so a later arm's test must not run once one matched).
+- **The LL0103 refusal**, for a `return` in a value-position `if`, a `||`/`&&` operand, or a `match`
+  arm — the return now lowers to a real return from the function (D40 honoured). The diagnostic and its
+  refusal are still reachable via `--no-hir`, and the three `expectDiagnostic: /LL0103/` cases plus the
+  diagnostics probe are pinned to that path so they characterize the fallback; the positive is asserted
+  by the `hir: true` acceptance cases (codegen A2/A3/A4).
+- **Dangling-else (CF2).** Every HIR `if` arm is emitted braced, so `braceIfDangling` has nothing left
+  to guard on the HIR path.
+- **New capability:** `yield` inside a `match` arm (impossible under the legacy arrow — `yield` in an
+  arrow is a SyntaxError).
+
+### The finding it surfaced
+
+`uniqueIdentifier()` (`src/compiler/utils/uniqueIdentifier.ts`) **never writes its incremented counter
+back** — every call returns `__ll_<prefix>_1`. The legacy match IIFE hid the collision by giving each
+match its own arrow scope; de-IIFE-ing removes that shield, which is *why* the HIR owns a working
+per-pass `TempAllocator` rather than reusing it. The bug is still live for the legacy path (match
+scrutinees, catch temps, the inliner); logged here, not fixed in this phase (scope discipline).
+
+### Retirement map, and the parallel-run policy
+
+Nothing in the legacy emitter is **deleted yet** — every helper is still live for `--no-hir` and for
+the positions the prototype does not traverse (vector/matrix elements, `for`/`while`/`try` internals,
+class-field initializers, the program top level). Deleting early would reintroduce the divergent-copies
+bug in reverse. The cuts are scheduled by requirement:
+
+- **R2 (operands, the big cut):** `asExpression`'s IIFE + refusal branch, `refuseReturnInExpression`,
+  the LL0103 definition and probes, `braceIfDangling`, the legacy `visitMatch` body,
+  `withTrailingReturn`/`withTrailingReturnIn`, `--no-hir` and the flag itself.
+- **R3 (stores):** `asValue`/`asValueEach`/`needsValueCopy`/`provablyNotAStruct`/`parameterCopyPrologue`
+  and the scattered copy sites, once copy insertion is an explicit HIR pass.
+- **R4 (dispatch):** `computedExtensionCall`/`extensionFor`/`receiverConformsTo` and the
+  checker/codegen double-decision, once dispatch is resolved at lowering.
+
+Until the R2 cut, the legacy path is the **fallback and must stay green in CI** — the dual-mode gate
+(`npm test` vs `LL_HIR=0 npm test`) has held for the whole prototype, so behavioural equivalence is
+continuously proven, and the fallback goes away *with* the machinery it guards, in one commit.
+
+### What it measured
+
+Six atomic, RED-first steps (S1 plumbing → S2 if/when/cond → S3 match → S4 operands → S5 flip → S6
+record). At every step, all suites green in **both** modes: the golden runner (71/0, every example run
+behaviourally under the HIR), `test:codegen` (300 cases, 13 of them new `hir: true` acceptance cases),
+`test:diagnostics` (46 probes, snapshot **unmoved** throughout — the pins kept it stable), corpus
+type-errors at 0, imports, repl. The central migration risk the brief named — golden churn — never
+materialised: the golden suite validates by **behaviour** (stdout), so ANF's restructuring is invisible
+to it, and the ternary peephole kept the emitted text identical wherever it was already good.
