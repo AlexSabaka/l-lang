@@ -53,6 +53,17 @@ interface Lowered {
 const EFFECT: Dest = { kind: "effect" };
 const VALUE: Dest = { kind: "value" };
 
+/**
+ * Node types whose value is IMMOVABLE -- a literal with no side effect and no dependence on mutable
+ * state, so it may be evaluated at the call site even after an earlier operand's prelude ran, without
+ * changing behaviour. Used by the unnest rule (S4): an operand that is not immovable and sits before a
+ * hoisting operand is bound to a temp to preserve left-to-right evaluation order.
+ */
+const LITERAL_TYPES: ReadonlySet<string> = new Set([
+  "integer-number", "float-number", "hex-number", "octal-number", "binary-number",
+  "fraction-number", "complex-number", "string", "boolean", "null",
+]);
+
 export class LowerAstToHirVisitor {
   private readonly temps = new TempAllocator();
 
@@ -180,14 +191,26 @@ export class LowerAstToHirVisitor {
         return this.lowerNode(form.inner, dest);
       case "special":
         // `(return e)` transfers control to the function boundary; push it into e's branches so a
-        // value-position `return` finally works (D40/LL0103). yield/throw/await/new stay opaque until
-        // S4 handles operand hoisting.
+        // value-position `return` finally works (D40/LL0103). new/throw/yield/await/typeof/... stay
+        // opaque -- `new` because binding its class arg would break constructor detection, the rest
+        // because they are expressions (or, for throw, IIFE-benign).
         if (form.name === "return") return this.lowerReturn(node, form.args);
         return this.leaf(node, dest);
+      case "call":
+        // `||`/`&&` short-circuit, so a prelude-bearing right operand can't be hoisted eagerly.
+        if (this.isLogicalHead(node)) return this.lowerLogical(node, dest);
+        return this.lowerCallLike(node, dest);
+      case "apply":
+        return this.lowerCallLike(node, dest);
       default:
-        // call / apply / empty -- opaque in S2 (S4 hoists their operands).
+        // empty -- opaque.
         return this.leaf(node, dest);
     }
+  }
+
+  private isLogicalHead(node: ast.ListNode): boolean {
+    const head = node.nodes[0];
+    return head?._type === "simple-identifier" && ((head as ast.SimpleIdentifierNode).id === "||" || (head as ast.SimpleIdentifierNode).id === "&&");
   }
 
   private lowerReturn(node: ast.ListNode, args: ast.ASTNode[]): Lowered {
@@ -195,6 +218,113 @@ export class LowerAstToHirVisitor {
     if (args.length > 1) return this.leaf(node, { kind: "return" }); // malformed; keep legacy shape
     // `return` ignores the incoming dest -- it always returns from the function (diverges).
     return this.lowerNode(args[0], { kind: "return" });
+  }
+
+  // -- operand hoisting (S4): unnest + lazy logical --------------------------------------------------
+
+  /**
+   * A call/apply whose arguments may contain value-position control flow or a diverging `return`. Lower
+   * each argument; if any needs statements (or diverges), emit them as a prelude and rebuild the call
+   * with the hoisted arguments substituted -- then hand the rebuilt call to the legacy emitter (its
+   * dispatch/copy stay legacy; that is R2-R4). The callee is left untouched (hoisting it would break
+   * constructor/method detection). The UNNEST rule preserves evaluation order: an earlier non-immovable
+   * argument that precedes a hoisting one is bound to a temp so its effects run first.
+   */
+  private lowerCallLike(node: ast.ListNode, dest: Dest): Lowered {
+    const args = node.nodes.slice(1);
+    if (args.length === 0) return this.leaf(node, dest);
+    const lowered = args.map((a) => this.lowerNode(a, VALUE));
+
+    let last = -1;
+    for (let i = 0; i < lowered.length; i++) {
+      if (lowered[i].stmts.length > 0 || lowered[i].value === null) last = i;
+    }
+    if (last === -1) return this.leaf(node, dest); // no argument hoists -> unchanged opaque
+
+    const prelude: HStmt[] = [];
+    const finalArgs: HExpr[] = [];
+    for (let i = 0; i < lowered.length; i++) {
+      const l = lowered[i];
+      prelude.push(...l.stmts);
+      if (l.value === null) {
+        // This argument diverged (a `return` in operand position). The call, and every later argument,
+        // is dead -- the enclosing expression diverges too.
+        return { stmts: prelude, value: null };
+      }
+      if (i < last && !this.isImmovable(l.value)) {
+        const t = this.temps.fresh();
+        prelude.push(this.declTempInit(t, l.value, args[i]));
+        finalArgs.push(this.temp(t, args[i]));
+      } else {
+        finalArgs.push(l.value);
+      }
+    }
+
+    const rebuilt = this.rebuildCall(node, finalArgs.map((h, i) => this.hexprToAst(h, args[i])));
+    const inner = this.leaf(rebuilt, dest);
+    return { stmts: [...prelude, ...inner.stmts], value: inner.value };
+  }
+
+  /**
+   * `(|| a b ...)` / `(&& a b ...)` where a right operand needs a prelude. A shim call would evaluate
+   * that operand eagerly (defeating the short-circuit), so lower to a temp + guarded if-chain instead.
+   * When no right operand has a prelude, stay opaque -- the legacy native LogicalExpression, zero churn.
+   */
+  private lowerLogical(node: ast.ListNode, dest: Dest): Lowered {
+    const op = (node.nodes[0] as ast.SimpleIdentifierNode).id as "||" | "&&";
+    const args = node.nodes.slice(1);
+    if (args.length <= 1) return this.leaf(node, dest);
+
+    const lowered = args.map((a) => this.lowerNode(a, VALUE));
+    const rhsNeedsPrelude = lowered.slice(1).some((l) => l.stmts.length > 0 || l.value === null);
+    if (!rhsNeedsPrelude) return this.leaf(node, dest); // native LogicalExpression
+
+    const first = lowered[0];
+    if (first.value === null) return { stmts: first.stmts, value: null }; // a0 diverges
+
+    const t = this.temps.fresh();
+    const stmts: HStmt[] = [...first.stmts, this.declTempInit(t, first.value, args[0])];
+    for (let i = 1; i < lowered.length; i++) {
+      const l = lowered[i];
+      const evalBlock: HStmt[] = [...l.stmts];
+      if (l.value !== null) evalBlock.push(this.assignTemp(t, l.value, args[i]));
+      // ||: evaluate the next operand only when `t` is still falsy (else branch);
+      // &&: only when `t` is still truthy (then branch). A diverged operand ends in its own return/throw.
+      const test = this.temp(t, args[i]);
+      stmts.push(
+        op === "||"
+          ? this.hIf(test, { stmts: [] }, { stmts: evalBlock }, args[i])
+          : this.hIf(test, { stmts: evalBlock }, null, args[i])
+      );
+    }
+    return this.placeValue(this.temp(t, node), stmts, dest);
+  }
+
+  private isImmovable(h: HExpr): boolean {
+    if (h.kind === "temp" || h.kind === "nil") return true;
+    if (h.kind === "opaque-expr") return LITERAL_TYPES.has(h.src._type);
+    return false;
+  }
+
+  /** Place an already-computed value (with its prelude) into a destination. */
+  private placeValue(value: HExpr, prelude: HStmt[], dest: Dest): Lowered {
+    switch (dest.kind) {
+      case "value":
+        return { stmts: prelude, value };
+      case "effect":
+        return { stmts: prelude, value: null }; // computed for its effects; the value is discarded
+      case "assign":
+        return { stmts: [...prelude, this.assignTemp(dest.temp, value, value.src)], value: null };
+      case "return":
+        return { stmts: [...prelude, this.hReturn(value, true, value.src)], value: null };
+    }
+  }
+
+  private rebuildCall(node: ast.ListNode, newArgs: ast.ASTNode[]): ast.ListNode {
+    const rebuilt = { ...node, nodes: [node.nodes[0], ...newArgs] } as ast.ListNode;
+    const t = this.context.nodeTypes.get(node);
+    if (t) this.context.recordSynthesizedNodeType(rebuilt, t);
+    return rebuilt;
   }
 
   /** A leaf: the node is an atom as far as HIR is concerned. `src` carries it; the legacy emitter re-visits. */
@@ -215,7 +345,8 @@ export class LowerAstToHirVisitor {
 
   private lowerIf(node: ast.IfNode, dest: Dest): Lowered {
     const cond = this.lowerNode(node.condition, VALUE);
-    const test = cond.value!;
+    if (cond.value === null) return { stmts: cond.stmts, value: null }; // condition diverged
+    const test = cond.value;
 
     if (dest.kind === "value") {
       const thenL = this.lowerNode(node.then, VALUE);
@@ -250,7 +381,8 @@ export class LowerAstToHirVisitor {
 
   private lowerWhen(node: ast.WhenNode, dest: Dest): Lowered {
     const cond = this.lowerNode(node.condition, VALUE);
-    const test = cond.value!;
+    if (cond.value === null) return { stmts: cond.stmts, value: null }; // condition diverged
+    const test = cond.value;
     const then = node.then ?? [];
 
     if (dest.kind === "value") {
@@ -331,6 +463,7 @@ export class LowerAstToHirVisitor {
     // binding name don't collide); the arms become an if/ELSE chain (never sequential ifs -- a later
     // arm's pattern test must not run once one matched, and pattern tests bind as a side effect).
     const scrutL = this.lowerNode(node.expression, VALUE);
+    if (scrutL.value === null) return { stmts: scrutL.stmts, value: null }; // scrutinee diverged
     const scrut = this.temps.fresh();
 
     if (dest.kind === "value") {
@@ -386,6 +519,7 @@ export class LowerAstToHirVisitor {
 
   private lowerVariable(node: ast.VariableNode, dest: Dest): Lowered {
     const init = this.lowerNode(node.value, VALUE);
+    if (init.value === null) return { stmts: init.stmts, value: null }; // RHS diverged -> the binding is dead
     if (init.stmts.length === 0) {
       // Pure init -> emit the variable unchanged. Legacy visitVariable owns destructuring / D11 copy /
       // const-vs-let, and the pure case stays byte-identical.
@@ -400,6 +534,7 @@ export class LowerAstToHirVisitor {
 
   private lowerAssignment(node: ast.SimpleAssignmentNode | ast.CompoundAssignmentNode, dest: Dest): Lowered {
     const rhs = this.lowerNode(node.value, VALUE);
+    if (rhs.value === null) return { stmts: rhs.stmts, value: null }; // RHS diverged -> the assignment is dead
     if (rhs.stmts.length === 0) return this.leaf(node, dest);
     const rebuilt: any = { ...node, value: this.hexprToAst(rhs.value!, node.value) };
     const tail: HStmt = { ...this.base(rebuilt), kind: "opaque-stmt" };

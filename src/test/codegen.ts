@@ -3676,6 +3676,58 @@ catch b ((console.log "two")))`,
   },
 
   // ===============================================================================================
+  // HIR acceptance cases (S4 -- operand hoisting). A call argument / logical operand that carries
+  // value-position control flow or a diverging `return` is hoisted to statement position; the unnest
+  // rule keeps evaluation order; `||`/`&&` short-circuit is preserved.
+  // ===============================================================================================
+  {
+    name: "HIR A3: a `return` as a `||` operand returns from the FUNCTION, lazily (D40)",
+    source: `(fn f [] -> String (
+  (if (|| false (return "early")) (console.log "UNREACHABLE"))
+  (return "fell-through")))
+(console.log (f))`,
+    expect: ["early"],
+    emitted: { mustNot: [/\(\(\) =>/] },
+    hir: true,
+    wasBroken:
+      "legacy routed the `||` operand through a shim call and IIFE'd the `return`, so it returned from " +
+      "the ARROW and `||` got its value as an ordinary operand (AF-003). HIR lowers `||` to a temp + " +
+      "guarded if, so `false` is falsy, the `(return \"early\")` runs, and `f` returns `early`.",
+  },
+  {
+    name: "HIR A8: unnest preserves evaluation order across a hoisted argument",
+    source: `(fn probe [s <- String] -> Int ((console.log s) 0))
+(fn add2 [a <- Int b <- Int] -> Int (+ a b))
+(fn go [x <- Int] -> Int (
+  (add2 (probe "a") (match x { 1 => ((probe "b") 10) _ => 20 }))))
+(console.log (go 1))`,
+    // The 2nd argument (a `match`) hoists to a prelude. The 1st (`probe "a"`, side-effecting) sits
+    // BEFORE it, so it is bound to a temp first -- "a" prints before "b". Without the unnest, the
+    // match's prelude would run first and print "b" before "a".
+    expect: ["a", "b", "10"],
+    hir: true,
+    wasBroken:
+      "not built before -- calls were opaque, so an operand needing statements forced the legacy IIFE. " +
+      "Hoisting a later operand's statements past an earlier effectful operand would reorder them; the " +
+      "unnest binds the earlier operand first.",
+  },
+  {
+    name: "HIR A10: `yield` inside a `match` arm works in a :gen function (new capability)",
+    source: `(import "std/iter")
+(fn :gen g [x <- Int] -> Iterator<Int> (
+  (match x { 1 => (yield 100) _ => (yield 200) })
+  (yield 999)
+  (return)))
+(for :each v :from (g 1) :then (console.log v))`,
+    expect: ["100", "999"],
+    hir: true,
+    wasBroken:
+      "legacy `match` is an arrow, and `yield` inside an arrow is a SyntaxError -- so a `yield` in a " +
+      "match arm could not be written at all. HIR inlines the match into the generator body, so the " +
+      "`yield` belongs to the enclosing function* and just works.",
+  },
+
+  // ===============================================================================================
   // Yb -- a trailing `cond` / `when` returned `undefined` against a DECLARED return type.
   //
   //     (fn f [x <- Int] -> String (cond ((> x 0) "pos") (true "neg")))   ->  undefined
