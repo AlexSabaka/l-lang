@@ -25,6 +25,10 @@ export interface LegacyLeafEmitter {
   storeValue(emitted: ESTree.Expression, src: ast.ASTNode): ESTree.Expression;
   /** The runtime nil literal for the D9 bottom value. */
   nilLiteral(src: ast.ASTNode): ESTree.Expression;
+  /** A match arm's pattern condition against the scrutinee temp (JSTransformer.generateCondition). */
+  patternTest(pattern: ast.PatternNode, scrutName: string): ESTree.Expression;
+  /** The pattern variables a match binds, to hoist (findIdentifiersToDefine). */
+  patternVars(match: ast.MatchNode): string[];
 }
 
 /** Mirrors ESTreeBuilder.loc: a located source range, or null when the node has no location. */
@@ -46,7 +50,8 @@ export class EmitHirToEstree {
   constructor(private readonly legacy: LegacyLeafEmitter) {}
 
   emitBlock(block: HBlock): ESTree.Statement[] {
-    return block.stmts.map((s) => this.emitStmt(s));
+    // Drop EmptyStatements -- an empty pattern-hoist (a match that binds no variables) emits one.
+    return block.stmts.map((s) => this.emitStmt(s)).filter((s) => s.type !== "EmptyStatement");
   }
 
   private emitStmt(h: HStmt): ESTree.Statement {
@@ -116,6 +121,19 @@ export class EmitHirToEstree {
       case "block":
         return { type: "BlockStatement", body: this.emitBlock(h.body), loc: loc(h.src) } as ESTree.BlockStatement;
 
+      case "hoist": {
+        const names = this.legacy.patternVars(h.src as ast.MatchNode);
+        if (names.length === 0) return { type: "EmptyStatement", loc: loc(h.src) } as ESTree.EmptyStatement;
+        return {
+          type: "VariableDeclaration",
+          kind: "let",
+          declarations: names.map(
+            (n) => ({ type: "VariableDeclarator", id: ident(n, h.src), init: null, loc: loc(h.src) } as ESTree.VariableDeclarator)
+          ),
+          loc: loc(h.src),
+        } as ESTree.VariableDeclaration;
+      }
+
       case "return": {
         let arg: ESTree.Expression | null = h.value ? this.emitExpr(h.value) : null;
         if (arg && h.isStore) arg = this.legacy.storeValue(arg, h.src);
@@ -155,6 +173,19 @@ export class EmitHirToEstree {
           expressions: h.exprs.map((e) => this.emitExpr(e)),
           loc: loc(h.src),
         } as ESTree.SequenceExpression;
+
+      case "pattern-test": {
+        const cond = this.legacy.patternTest(h.pattern, h.scrutName);
+        if (!h.guard) return cond;
+        // `:when` (D26): ANDed AFTER the pattern so the guard sees the bindings the pattern made.
+        return {
+          type: "LogicalExpression",
+          operator: "&&",
+          left: cond,
+          right: this.legacy.leafExpr(h.guard),
+          loc: loc(h.src),
+        } as ESTree.LogicalExpression;
+      }
 
       default: {
         const never: never = h;

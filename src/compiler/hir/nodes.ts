@@ -34,7 +34,7 @@ export interface HBase {
 // An HExpr is an ATOM or a shallow pure combinator over atoms. It never contains a statement; a
 // construct that would need one is lowered to statements with a temp, and the temp is the HExpr.
 
-export type HExpr = HTemp | HOpaqueExpr | HNil | HTernary | HSeq;
+export type HExpr = HTemp | HOpaqueExpr | HNil | HTernary | HSeq | HPatternTest;
 
 /** A lowering-introduced name (`__ll_hir_<n>`), declared by an HDeclTemp and read here. */
 export interface HTemp extends HBase {
@@ -66,6 +66,20 @@ export interface HSeq extends HBase {
   exprs: HExpr[];
 }
 
+/**
+ * A `match` arm's test against the scrutinee temp -- the pattern condition, optionally ANDed with a
+ * `:when` guard. Built at EMIT time by the legacy `generateCondition` (patterns are not re-modelled in
+ * S3; that is R2). The pattern condition may BIND pattern variables as a side effect, so these tests
+ * live in an if/ELSE chain (never sequential ifs) -- a later arm's test must not run once one matched.
+ */
+export interface HPatternTest extends HBase {
+  kind: "pattern-test";
+  pattern: ast.PatternNode;
+  scrutName: string;
+  /** `:when <expr>` (D26) -- emitted as `<patternCond> && <guard>` so the guard sees the bindings. */
+  guard?: ast.ASTNode;
+}
+
 // -- Statements ------------------------------------------------------------------------------------
 
 export type HStmt =
@@ -75,6 +89,7 @@ export type HStmt =
   | HIf
   | HBlockStmt
   | HReturn
+  | HHoist
   | HOpaqueStmt;
 
 /** An expression evaluated for effect; its value is discarded. */
@@ -121,6 +136,15 @@ export interface HReturn extends HBase {
   kind: "return";
   value: HExpr | null;
   isStore: boolean;
+}
+
+/**
+ * Hoisted `match` pattern-variable declarations (`let a, b;`) at the top of the match's block scope.
+ * The names are computed at EMIT from `src` (the MatchNode) via the legacy findIdentifiersToDefine,
+ * so lowering and legacy stay single-sourced. Emits nothing when the match binds no variables.
+ */
+export interface HHoist extends HBase {
+  kind: "hoist";
 }
 
 /** A leaf statement: emit by coercing the legacy `visit(src)` to a statement. */

@@ -118,6 +118,22 @@ export class LowerAstToHirVisitor {
     return { ...this.base(src), kind: "if", test, then, else: els };
   }
 
+  private declTempInit(name: string, init: HExpr, src: ast.ASTNode): HStmt {
+    return { ...this.base(src), kind: "decl-temp", name, init };
+  }
+
+  private blockStmt(stmts: HStmt[], src: ast.ASTNode): HStmt {
+    return { ...this.base(src), kind: "block", body: { stmts } };
+  }
+
+  private patternTest(pattern: ast.PatternNode, scrutName: string, guard: ast.ASTNode | undefined, src: ast.ASTNode): HExpr {
+    return { ...this.base(src), kind: "pattern-test", pattern, scrutName, guard };
+  }
+
+  private hoist(src: ast.ASTNode): HStmt {
+    return { ...this.base(src), kind: "hoist" };
+  }
+
   // -- the driver -----------------------------------------------------------------------------------
 
   private lowerNode(node: ast.ASTNode, dest: Dest): Lowered {
@@ -128,6 +144,8 @@ export class LowerAstToHirVisitor {
         return this.lowerWhen(node as ast.WhenNode, dest);
       case "cond":
         return this.lowerCond(node as ast.CondNode, dest);
+      case "match":
+        return this.lowerMatch(node as ast.MatchNode, dest);
       case "variable":
         return this.lowerVariable(node as ast.VariableNode, dest);
       case "simple-assignment":
@@ -303,6 +321,65 @@ export class LowerAstToHirVisitor {
   private isElseCase(c: ast.CondCaseNode): boolean {
     const cond = c.condition as any;
     return cond?._type === "simple-identifier" && cond.id === "else";
+  }
+
+  // -- match ----------------------------------------------------------------------------------------
+
+  private lowerMatch(node: ast.MatchNode, dest: Dest): Lowered {
+    // De-IIFE the one construct that is ALWAYS an arrow today. The scrutinee is bound once to a temp;
+    // the pattern variables are hoisted into a fresh block scope (so nested matches with the same
+    // binding name don't collide); the arms become an if/ELSE chain (never sequential ifs -- a later
+    // arm's pattern test must not run once one matched, and pattern tests bind as a side effect).
+    const scrutL = this.lowerNode(node.expression, VALUE);
+    const scrut = this.temps.fresh();
+
+    if (dest.kind === "value") {
+      const result = this.temps.fresh();
+      const chain = this.buildMatchChain(node, scrut, { kind: "assign", temp: result });
+      const blockStmts: HStmt[] = [
+        ...scrutL.stmts,
+        this.declTempInit(scrut, scrutL.value!, node),
+        this.hoist(node),
+        ...(chain ? [chain] : []),
+      ];
+      return {
+        stmts: [this.declTemp(result, node), this.blockStmt(blockStmts, node)],
+        value: this.temp(result, node),
+      };
+    }
+
+    // effect / assign / return: the arms take the dest directly (a `return` arm returns from the
+    // function -- D40, retiring the per-arm LL0103 refusal).
+    const chain = this.buildMatchChain(node, scrut, dest);
+    const blockStmts: HStmt[] = [
+      ...scrutL.stmts,
+      this.declTempInit(scrut, scrutL.value!, node),
+      this.hoist(node),
+      ...(chain ? [chain] : []),
+    ];
+    return { stmts: [this.blockStmt(blockStmts, node)], value: null };
+  }
+
+  /** Fold the match arms into an if/else chain. The final else is the D9 "no arm matched" -> nil tail. */
+  private buildMatchChain(node: ast.MatchNode, scrutName: string, dest: Dest): HStmt | null {
+    const cases = node.cases ?? [];
+    const tail: HBlock | null =
+      dest.kind === "assign"
+        ? { stmts: [this.assignTemp(dest.temp, this.nil(node), node)] }
+        : dest.kind === "return"
+        ? { stmts: [this.hReturn(this.nil(node), false, node)] }
+        : null; // effect: no arm matched -> nothing
+
+    let elseBlock: HBlock | null = tail;
+    let out: HStmt | null = null;
+    for (let i = cases.length - 1; i >= 0; i--) {
+      const c = cases[i];
+      const armL = this.lowerNode(c.body, dest);
+      out = this.hIf(this.patternTest(c.pattern, scrutName, c.guard, c), { stmts: armL.stmts }, elseBlock, c);
+      elseBlock = { stmts: [out] };
+    }
+    if (out === null) return tail ? this.blockStmt(tail.stmts, node) : null; // no cases
+    return out;
   }
 
   // -- variable / assignment (a value-position conditional hides in the RHS) -------------------------

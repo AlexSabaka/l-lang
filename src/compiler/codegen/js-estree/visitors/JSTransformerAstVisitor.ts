@@ -1989,6 +1989,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         leafStmt: (n) => this.asStatement(this.visit(n) as ESTree.Node, n),
         storeValue: (e, src) => this.asValue(e, src),
         nilLiteral: (src) => this.nilLiteral(src),
+        patternTest: (pattern, scrutName) => this.generateCondition(pattern, scrutName),
+        patternVars: (match) => findIdentifiersToDefine(match),
       };
       this.hirEmitter = new EmitHirToEstree(legacy);
     }

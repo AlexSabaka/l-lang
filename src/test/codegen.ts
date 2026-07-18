@@ -3596,6 +3596,86 @@ catch b ((console.log "two")))`,
   },
 
   // ===============================================================================================
+  // HIR acceptance cases (S3 -- `match` de-IIFE'd). A `match` is the one form that was ALWAYS an
+  // arrow, so it is where a `return` in an arm always broke (D40). The HIR lowers it to a scrutinee
+  // temp + a hoisted block scope + an if/ELSE chain -- no arrow.
+  // ===============================================================================================
+  {
+    name: "HIR A4: a `return` in a `match` arm returns from the FUNCTION (D40)",
+    source: `(fn f [x <- Int] -> String (
+  (match x { 1 => (return "match-early") _ => (return "match-other") })
+  (return "fell-through")))
+(console.log (f 1))
+(console.log (f 2))`,
+    expect: ["match-early", "match-other"],
+    emitted: { mustNot: [/\(\(\) =>/] },
+    hir: true,
+    wasBroken:
+      "the positive of the pinned match-arm LL0103 case: legacy wrapped `match` in an arrow, so both " +
+      "arms' `return`s returned from the ARROW and `f` printed `fell-through`. HIR emits a real " +
+      "if/else chain, so `return` returns from `f`.",
+  },
+  {
+    name: "HIR A5: a statement-position `match` is an if/else chain, not an IIFE",
+    source: `(fn f [x <- Int] -> Void (
+  (match x { 1 => (console.log "one") 2 => (console.log "two") _ => (console.log "other") })))
+(f 1)
+(f 2)
+(f 3)`,
+    expect: ["one", "two", "other"],
+    emitted: { mustNot: [/\(\(\) =>/] },
+    hir: true,
+    wasBroken:
+      "legacy `visitMatch` ALWAYS built `((v) => { ... })(scrut)` even in statement position. HIR emits " +
+      "a bare `{ let scrut = ...; if (...) {...} else if (...) {...} }` -- no arrow, no allocation.",
+  },
+  {
+    name: "HIR A6: first-match-wins -- a later arm's guard does not run once one matched",
+    source: `(fn probe [s <- String] -> Boolean ((console.log s) true))
+(fn f [n <- Int] -> String (
+  (match n {
+    1                          => "one"
+    _ :when (probe "guard-ran") => "other" })))
+(console.log (f 1))
+(console.log (f 2))`,
+    // f(1): arm 1 matches, so arm 2's guard is in the ELSE branch and never runs -> "guard-ran" prints
+    // ONCE (for f(2) only). A sequential chain, or one that evaluated all tests, would print it twice.
+    expect: ["one", "guard-ran", "other"],
+    hir: true,
+    wasBroken:
+      "not broken -- the GUARD that the de-IIFE'd chain preserves first-match-wins. Pattern tests bind " +
+      "as a side effect, so a later arm's test (and guard) must sit in the `else`, not run unconditionally.",
+  },
+  {
+    name: "HIR A7: nested/sibling matches binding the SAME name stay isolated (block scope)",
+    source: `(fn f [a <- Int b <- Int] -> Int (
+  (let x (match a { v => v }))
+  (let y (match b { v => v }))
+  (+ x y)))
+(console.log (f 3 7))`,
+    // Each match hoists its `let v` into its OWN block. Without the block scope the second `let v`
+    // is a duplicate-declaration SyntaxError (the acorn re-parse, LL0101, would catch it).
+    expect: ["10"],
+    hir: true,
+    wasBroken:
+      "the arrow used to give each match its own scope. De-IIFE-ing removes it, so the HIR wraps each " +
+      "match in a `{ }` block -- restoring the isolation the pattern-var hoist depends on.",
+  },
+  {
+    name: "HIR A12 GUARD: a nested fn's `return` in a match arm is its own, not the function's",
+    source: `(fn f [x <- Int] -> Int (
+  (let g (match x { 1 => (fn [] -> Int (return 5)) _ => (fn [] -> Int (return 9)) }))
+  (return 0)))
+(console.log (f 1))`,
+    expect: ["0"],
+    hir: true,
+    wasBroken:
+      "not broken -- the GUARD that the arm-body lowering stops at a function boundary. The arm holds a " +
+      "LAMBDA whose `return` is the lambda's; `f` returns 0. A lowering that hoisted the lambda's return " +
+      "would make `f` return 5.",
+  },
+
+  // ===============================================================================================
   // Yb -- a trailing `cond` / `when` returned `undefined` against a DECLARED return type.
   //
   //     (fn f [x <- Int] -> String (cond ((> x 0) "pos") (true "neg")))   ->  undefined
