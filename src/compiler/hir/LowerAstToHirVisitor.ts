@@ -33,6 +33,7 @@ import {
   HBlock,
   HExpr,
   HIf,
+  HMapEntry,
   HReturn,
   HStmt,
 } from "./nodes";
@@ -170,6 +171,10 @@ export class LowerAstToHirVisitor {
         return this.lowerMatch(node as ast.MatchNode, dest);
       case "vector":
         return this.lowerVector(node as ast.VectorNode, dest);
+      case "matrix":
+        return this.lowerMatrix(node as ast.MatrixNode, dest);
+      case "map":
+        return this.lowerMap(node as ast.MapNode, dest);
       case "variable":
         return this.lowerVariable(node as ast.VariableNode, dest);
       case "simple-assignment":
@@ -348,6 +353,49 @@ export class LowerAstToHirVisitor {
     if (diverged) return { stmts: prelude, value: null };
     const vec: HExpr = { ...this.base(node), kind: "vector", elements: atoms };
     return this.placeValue(vec, prelude, dest);
+  }
+
+  private lowerMatrix(node: ast.MatrixNode, dest: Dest): Lowered {
+    const rows = node.rows ?? [];
+    // Flatten cells for one row-major hoist (preserving evaluation order), then re-split into rows.
+    const { prelude, atoms, diverged } = this.lowerChildrenToAtoms(rows.flat());
+    if (diverged) return { stmts: prelude, value: null };
+    const hrows: HExpr[][] = [];
+    let idx = 0;
+    for (const row of rows) {
+      hrows.push(atoms.slice(idx, idx + row.length));
+      idx += row.length;
+    }
+    const mat: HExpr = { ...this.base(node), kind: "matrix", rows: hrows };
+    return this.placeValue(mat, prelude, dest);
+  }
+
+  private lowerMap(node: ast.MapNode, dest: Dest): Lowered {
+    const entries = (node.values ?? []) as ast.KeyValueNode[];
+    // Flat child list in evaluation order: a COMPUTED key (a non-`:id` key), then the value, per entry.
+    const children: ast.ASTNode[] = [];
+    const shape: { i: number; part: "key" | "value" }[] = [];
+    entries.forEach((kv, i) => {
+      if (kv.key._type !== "simple-identifier") {
+        children.push(kv.key);
+        shape.push({ i, part: "key" });
+      }
+      children.push(kv.value);
+      shape.push({ i, part: "value" });
+    });
+    const { prelude, atoms, diverged } = this.lowerChildrenToAtoms(children);
+    if (diverged) return { stmts: prelude, value: null };
+    const hentries: HMapEntry[] = entries.map((kv) => ({
+      src: kv,
+      keyLiteral: kv.key._type === "simple-identifier" ? (kv.key as ast.SimpleIdentifierNode).id : undefined,
+      value: this.nil(kv), // placeholder, filled below
+    }));
+    shape.forEach((slot, k) => {
+      if (slot.part === "key") hentries[slot.i].key = atoms[k];
+      else hentries[slot.i].value = atoms[k];
+    });
+    const map: HExpr = { ...this.base(node), kind: "map", entries: hentries };
+    return this.placeValue(map, prelude, dest);
   }
 
   private isImmovable(h: HExpr): boolean {

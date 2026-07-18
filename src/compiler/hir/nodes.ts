@@ -34,7 +34,7 @@ export interface HBase {
 // An HExpr is an ATOM or a shallow pure combinator over atoms. It never contains a statement; a
 // construct that would need one is lowered to statements with a temp, and the temp is the HExpr.
 
-export type HExpr = HTemp | HOpaqueExpr | HNil | HTernary | HSeq | HPatternTest | HVector;
+export type HExpr = HTemp | HOpaqueExpr | HNil | HTernary | HSeq | HPatternTest | HVector | HMatrix | HMap;
 
 /** A lowering-introduced name (`__ll_hir_<n>`), declared by an HDeclTemp and read here. */
 export interface HTemp extends HBase {
@@ -89,6 +89,26 @@ export interface HPatternTest extends HBase {
 export interface HVector extends HBase {
   kind: "vector";
   elements: HExpr[];
+}
+
+/** A matrix literal `[[a b][c d]]` -- an array of row arrays. Cells are HExprs (D11-copied at emit). */
+export interface HMatrix extends HBase {
+  kind: "matrix";
+  rows: HExpr[][];
+}
+
+/** One `{ key: value }` entry. `keyLiteral` set for a `:identifier` key (a string, unmangled -- D13). */
+export interface HMapEntry {
+  src: ast.ASTNode;
+  keyLiteral?: string;
+  key?: HExpr;
+  value: HExpr;
+}
+
+/** A map literal `{ :k v }` -- an object. Values are HExprs (D11-copied at emit); keys are data (D13). */
+export interface HMap extends HBase {
+  kind: "map";
+  entries: HMapEntry[];
 }
 
 // -- Statements ------------------------------------------------------------------------------------

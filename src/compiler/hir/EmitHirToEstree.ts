@@ -183,6 +183,42 @@ export class EmitHirToEstree {
           loc: loc(h.src),
         } as ESTree.ArrayExpression;
 
+      case "matrix":
+        return {
+          type: "ArrayExpression",
+          elements: h.rows.map(
+            (row) =>
+              ({
+                type: "ArrayExpression",
+                elements: row.map((e) => this.legacy.storeValue(this.emitExpr(e), e.src)),
+              } as ESTree.ArrayExpression)
+          ),
+          loc: loc(h.src),
+        } as ESTree.ArrayExpression;
+
+      case "map":
+        return {
+          type: "ObjectExpression",
+          properties: h.entries.map(
+            (e) =>
+              ({
+                type: "Property",
+                // D13: a `:identifier` key is a STRING, unmangled; a computed key emits via emitExpr.
+                key:
+                  e.keyLiteral !== undefined
+                    ? ({ type: "Literal", value: e.keyLiteral, loc: loc(e.src) } as ESTree.Literal)
+                    : this.emitExpr(e.key!),
+                value: this.legacy.storeValue(this.emitExpr(e.value), e.value.src),
+                kind: "init",
+                method: false,
+                shorthand: false,
+                computed: false,
+                loc: loc(e.src),
+              } as ESTree.Property)
+          ),
+          loc: loc(h.src),
+        } as ESTree.ObjectExpression;
+
       case "pattern-test": {
         const cond = this.legacy.patternTest(h.pattern, h.scrutName);
         if (!h.guard) return cond;
