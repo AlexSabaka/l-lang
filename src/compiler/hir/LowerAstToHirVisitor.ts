@@ -261,7 +261,12 @@ export class LowerAstToHirVisitor {
     for (let i = 0; i < lowered.length; i++) {
       if (lowered[i].stmts.length > 0 || lowered[i].value === null) last = i;
     }
-    if (last === -1) return this.leaf(node, dest); // no argument hoists -> unchanged opaque
+    // An argument whose value is COMPOUND (a ternary, an inverted collection/member -- anything not a
+    // temp or opaque leaf) cannot be substituted into the AST for legacy dispatch, so it must be bound
+    // to a temp the HIR emits. That, not just hoisting, is what makes a control-flow argument bypass
+    // legacy asExpression.
+    const anyCompound = lowered.some((l) => l.value !== null && !this.isSubstitutable(l.value));
+    if (last === -1 && !anyCompound) return this.leaf(node, dest); // all args are plain leaves -> unchanged
 
     const prelude: HStmt[] = [];
     const finalArgs: HExpr[] = [];
@@ -273,7 +278,10 @@ export class LowerAstToHirVisitor {
         // is dead -- the enclosing expression diverges too.
         return { stmts: prelude, value: null };
       }
-      if (i < last && !this.isImmovable(l.value)) {
+      // Bind to a temp when the value can't go straight into the AST, or the unnest needs it (an
+      // earlier non-immovable arg before a hoisting one, to preserve left-to-right order).
+      const mustBind = !this.isSubstitutable(l.value) || (i < last && !this.isImmovable(l.value));
+      if (mustBind) {
         const t = this.temps.fresh();
         prelude.push(this.declTempInit(t, l.value, args[i]));
         finalArgs.push(this.temp(t, args[i]));
@@ -285,6 +293,10 @@ export class LowerAstToHirVisitor {
     const rebuilt = this.rebuildCall(node, finalArgs.map((h, i) => this.hexprToAst(h, args[i])));
     const inner = this.leaf(rebuilt, dest);
     return { stmts: [...prelude, ...inner.stmts], value: inner.value };
+  }
+
+  private isSubstitutable(h: HExpr): boolean {
+    return h.kind === "temp" || h.kind === "opaque-expr";
   }
 
   /**
