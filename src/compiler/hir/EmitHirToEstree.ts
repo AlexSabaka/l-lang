@@ -174,6 +174,15 @@ export class EmitHirToEstree {
           loc: loc(h.src),
         } as ESTree.SequenceExpression;
 
+      case "vector":
+        // Fully inverted: build the array here, emitting each element via emitExpr (so a ternary/temp
+        // element is handled by the HIR, never legacy asExpression) and applying the D11 element copy.
+        return {
+          type: "ArrayExpression",
+          elements: h.elements.map((e) => this.legacy.storeValue(this.emitExpr(e), e.src)),
+          loc: loc(h.src),
+        } as ESTree.ArrayExpression;
+
       case "pattern-test": {
         const cond = this.legacy.patternTest(h.pattern, h.scrutName);
         if (!h.guard) return cond;

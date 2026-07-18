@@ -34,7 +34,7 @@ export interface HBase {
 // An HExpr is an ATOM or a shallow pure combinator over atoms. It never contains a statement; a
 // construct that would need one is lowered to statements with a temp, and the temp is the HExpr.
 
-export type HExpr = HTemp | HOpaqueExpr | HNil | HTernary | HSeq | HPatternTest;
+export type HExpr = HTemp | HOpaqueExpr | HNil | HTernary | HSeq | HPatternTest | HVector;
 
 /** A lowering-introduced name (`__ll_hir_<n>`), declared by an HDeclTemp and read here. */
 export interface HTemp extends HBase {
@@ -78,6 +78,17 @@ export interface HPatternTest extends HBase {
   scrutName: string;
   /** `:when <expr>` (D26) -- emitted as `<patternCond> && <guard>` so the guard sees the bindings. */
   guard?: ast.ASTNode;
+}
+
+/**
+ * A vector literal `[a b c]`, FULLY inverted: the elements are HExprs the HIR emitter builds directly,
+ * so a value-position `if` element emits as a real ternary/temp via emitExpr -- it never reaches the
+ * legacy `asExpression`. This is the R2 (full-inversion) shape: the datatype models the structure, and
+ * the resolved D11 element copy stays a legacy hook (`storeValue`). The first collection so modelled.
+ */
+export interface HVector extends HBase {
+  kind: "vector";
+  elements: HExpr[];
 }
 
 // -- Statements ------------------------------------------------------------------------------------

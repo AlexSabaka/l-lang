@@ -128,6 +128,10 @@ export class LowerAstToHirVisitor {
     return { ...this.base(src), kind: "assign-temp", name, value, isStore: false };
   }
 
+  private exprStmt(expr: HExpr, src: ast.ASTNode): HStmt {
+    return { ...this.base(src), kind: "expr-stmt", expr };
+  }
+
   private hReturn(value: HExpr | null, isStore: boolean, src: ast.ASTNode): HReturn {
     return { ...this.base(src), kind: "return", value, isStore };
   }
@@ -164,6 +168,8 @@ export class LowerAstToHirVisitor {
         return this.lowerCond(node as ast.CondNode, dest);
       case "match":
         return this.lowerMatch(node as ast.MatchNode, dest);
+      case "vector":
+        return this.lowerVector(node as ast.VectorNode, dest);
       case "variable":
         return this.lowerVariable(node as ast.VariableNode, dest);
       case "simple-assignment":
@@ -307,6 +313,43 @@ export class LowerAstToHirVisitor {
     return this.placeValue(this.temp(t, node), stmts, dest);
   }
 
+  /**
+   * Lower a list of value-position children to ATOMS (HExprs), hoisting any that need statements into
+   * a shared prelude and applying the unnest rule for evaluation order. Unlike `lowerCallLike` (which
+   * substitutes temps back into an AST node for the LEGACY emitter), this keeps the children as HExprs
+   * for a FULLY-INVERTED parent the HIR emitter builds itself -- so a pure control-flow child stays a
+   * ternary and never reaches legacy `asExpression`.
+   */
+  private lowerChildrenToAtoms(children: ast.ASTNode[]): { prelude: HStmt[]; atoms: HExpr[]; diverged: boolean } {
+    const lowered = children.map((c) => this.lowerNode(c, VALUE));
+    let last = -1;
+    for (let i = 0; i < lowered.length; i++) {
+      if (lowered[i].stmts.length > 0 || lowered[i].value === null) last = i;
+    }
+    const prelude: HStmt[] = [];
+    const atoms: HExpr[] = [];
+    for (let i = 0; i < lowered.length; i++) {
+      const l = lowered[i];
+      prelude.push(...l.stmts);
+      if (l.value === null) return { prelude, atoms, diverged: true };
+      if (i < last && !this.isImmovable(l.value)) {
+        const t = this.temps.fresh();
+        prelude.push(this.declTempInit(t, l.value, children[i]));
+        atoms.push(this.temp(t, children[i]));
+      } else {
+        atoms.push(l.value);
+      }
+    }
+    return { prelude, atoms, diverged: false };
+  }
+
+  private lowerVector(node: ast.VectorNode, dest: Dest): Lowered {
+    const { prelude, atoms, diverged } = this.lowerChildrenToAtoms(node.values ?? []);
+    if (diverged) return { stmts: prelude, value: null };
+    const vec: HExpr = { ...this.base(node), kind: "vector", elements: atoms };
+    return this.placeValue(vec, prelude, dest);
+  }
+
   private isImmovable(h: HExpr): boolean {
     if (h.kind === "temp" || h.kind === "nil") return true;
     if (h.kind === "opaque-expr") return LITERAL_TYPES.has(h.src._type);
@@ -319,7 +362,9 @@ export class LowerAstToHirVisitor {
       case "value":
         return { stmts: prelude, value };
       case "effect":
-        return { stmts: prelude, value: null }; // computed for its effects; the value is discarded
+        // Evaluated for effect: keep the expression as a statement so its own side effects still run
+        // (a bare temp is a harmless `t;`).
+        return { stmts: [...prelude, this.exprStmt(value, value.src)], value: null };
       case "assign":
         return { stmts: [...prelude, this.assignTemp(dest.temp, value, value.src)], value: null };
       case "return":
@@ -535,20 +580,38 @@ export class LowerAstToHirVisitor {
       // const-vs-let, and the pure case stays byte-identical.
       return this.leaf(node, dest);
     }
-    // The init needed statements (a value-position if/when/cond with statement arms). Emit the prelude,
-    // then a REBUILT variable whose init is the temp; legacy still applies its D11 copy to the temp.
-    const rebuilt: ast.VariableNode = { ...node, value: this.hexprToAst(init.value!, node.value) };
+    // The init needed statements (a value-position conditional, or a hoisted collection element). Emit
+    // the prelude, then a REBUILT variable whose init is a substitutable atom; legacy visitVariable
+    // still owns the declaration (destructuring / D11 copy / const-vs-let) over that atom.
+    const prelude: HStmt[] = [...init.stmts];
+    const valueAst = this.atomizeForSubstitution(init.value, prelude, node.value);
+    const rebuilt: ast.VariableNode = { ...node, value: valueAst };
     const tail: HStmt = { ...this.base(rebuilt), kind: "opaque-stmt" };
-    return { stmts: [...init.stmts, tail], value: dest.kind === "value" ? this.nil(node) : null };
+    return { stmts: [...prelude, tail], value: dest.kind === "value" ? this.nil(node) : null };
   }
 
   private lowerAssignment(node: ast.SimpleAssignmentNode | ast.CompoundAssignmentNode, dest: Dest): Lowered {
     const rhs = this.lowerNode(node.value, VALUE);
     if (rhs.value === null) return { stmts: rhs.stmts, value: null }; // RHS diverged -> the assignment is dead
     if (rhs.stmts.length === 0) return this.leaf(node, dest);
-    const rebuilt: any = { ...node, value: this.hexprToAst(rhs.value!, node.value) };
+    const prelude: HStmt[] = [...rhs.stmts];
+    const valueAst = this.atomizeForSubstitution(rhs.value, prelude, node.value);
+    const rebuilt: any = { ...node, value: valueAst };
     const tail: HStmt = { ...this.base(rebuilt), kind: "opaque-stmt" };
-    return { stmts: [...rhs.stmts, tail], value: dest.kind === "value" ? this.nil(node) : null };
+    return { stmts: [...prelude, tail], value: dest.kind === "value" ? this.nil(node) : null };
+  }
+
+  /**
+   * Ensure a lowered value can be SUBSTITUTED into an AST node the legacy emitter will visit. A temp or
+   * an opaque leaf goes straight in; a COMPOUND HExpr (a fully-inverted HVector, a ternary) is not an
+   * AST node, so bind it to a fresh temp -- emitted by the HIR -- and substitute that. Any binding is
+   * appended to `prelude`.
+   */
+  private atomizeForSubstitution(value: HExpr, prelude: HStmt[], srcForLoc: ast.ASTNode): ast.ASTNode {
+    if (value.kind === "temp" || value.kind === "opaque-expr") return this.hexprToAst(value, srcForLoc);
+    const t = this.temps.fresh();
+    prelude.push(this.declTempInit(t, value, srcForLoc));
+    return this.hexprToAst(this.temp(t, srcForLoc), srcForLoc);
   }
 
   /**
