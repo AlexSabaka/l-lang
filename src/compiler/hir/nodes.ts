@@ -153,6 +153,7 @@ export type HStmt =
   | HBlockStmt
   | HReturn
   | HHoist
+  | HTry
   | HOpaqueStmt;
 
 /** An expression evaluated for effect; its value is discarded. */
@@ -208,6 +209,27 @@ export interface HReturn extends HBase {
  */
 export interface HHoist extends HBase {
   kind: "hoist";
+}
+
+/** One `catch e :of T (...)` clause. `filterTypeName` undefined = the default catch; `errorName` binds `e`. */
+export interface HCatch {
+  errorName?: ast.ASTNode;
+  filterTypeName?: string;
+  body: HBlock;
+}
+
+/**
+ * A try/catch/finally. Its bodies are HIR-lowered with the enclosing destination, so a value-position
+ * `(let v (try (42) catch e (0)))` assigns a result temp in each arm instead of wrapping in an IIFE.
+ * The catch-filter CHAIN (instanceof tests, default catch, rethrow, `const e = <tmp>`) is rebuilt by
+ * the emitter -- the same shape legacy visitTryCatch produced, over HIR-emitted bodies.
+ */
+export interface HTry extends HBase {
+  kind: "try";
+  tryBlock: HBlock;
+  catchVar: string;
+  catches: HCatch[];
+  finalizer: HBlock | null;
 }
 
 /** A leaf statement: emit by coercing the legacy `visit(src)` to a statement. */

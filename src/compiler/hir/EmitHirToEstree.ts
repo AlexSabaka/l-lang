@@ -140,6 +140,58 @@ export class EmitHirToEstree {
         return { type: "ReturnStatement", argument: arg, loc: loc(h.src) } as ESTree.ReturnStatement;
       }
 
+      case "try": {
+        const catchVarId = ident(h.catchVar, h.src);
+        const errBinding = (name: ast.ASTNode | undefined): ESTree.Statement[] =>
+          name
+            ? [
+                {
+                  type: "VariableDeclaration",
+                  kind: "const",
+                  declarations: [
+                    { type: "VariableDeclarator", id: this.legacy.leafExpr(name), init: catchVarId } as ESTree.VariableDeclarator,
+                  ],
+                  loc: loc(h.src),
+                } as ESTree.VariableDeclaration,
+              ]
+            : [];
+        let handler: ESTree.CatchClause | null = null;
+        if (h.catches.length > 0) {
+          const def = h.catches.find((c) => !c.filterTypeName);
+          let chainTail: ESTree.Statement = def
+            ? ({ type: "BlockStatement", body: [...errBinding(def.errorName), ...this.emitBlock(def.body)], loc: loc(h.src) } as ESTree.BlockStatement)
+            : ({ type: "ThrowStatement", argument: catchVarId, loc: loc(h.src) } as ESTree.ThrowStatement);
+          const filtered = h.catches.filter((c) => c.filterTypeName);
+          for (let i = filtered.length - 1; i >= 0; i--) {
+            const c = filtered[i];
+            chainTail = {
+              type: "IfStatement",
+              test: {
+                type: "BinaryExpression",
+                operator: "instanceof",
+                left: catchVarId,
+                right: { type: "Identifier", name: c.filterTypeName! } as ESTree.Identifier,
+              } as ESTree.BinaryExpression,
+              consequent: { type: "BlockStatement", body: [...errBinding(c.errorName), ...this.emitBlock(c.body)], loc: loc(h.src) } as ESTree.BlockStatement,
+              alternate: chainTail,
+              loc: loc(h.src),
+            } as ESTree.IfStatement;
+          }
+          handler = {
+            type: "CatchClause",
+            param: catchVarId,
+            body: { type: "BlockStatement", body: [chainTail], loc: loc(h.src) } as ESTree.BlockStatement,
+          } as ESTree.CatchClause;
+        }
+        return {
+          type: "TryStatement",
+          block: { type: "BlockStatement", body: this.emitBlock(h.tryBlock), loc: loc(h.src) } as ESTree.BlockStatement,
+          handler,
+          finalizer: h.finalizer ? ({ type: "BlockStatement", body: this.emitBlock(h.finalizer), loc: loc(h.src) } as ESTree.BlockStatement) : null,
+          loc: loc(h.src),
+        } as ESTree.TryStatement;
+      }
+
       default: {
         const never: never = h;
         throw new Error(`HIR emit: unhandled statement kind '${(never as any).kind}'`);

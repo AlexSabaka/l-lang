@@ -31,6 +31,7 @@ import { TempAllocator } from "./TempAllocator";
 import {
   HBase,
   HBlock,
+  HCatch,
   HExpr,
   HIf,
   HMapEntry,
@@ -179,6 +180,8 @@ export class LowerAstToHirVisitor {
         return this.lowerMember(node as ast.MemberNode, dest);
       case "indexer":
         return this.lowerIndexer(node as ast.IndexerNode, dest);
+      case "try-catch":
+        return this.lowerTry(node as ast.TryCatchNode, dest);
       case "variable":
         return this.lowerVariable(node as ast.VariableNode, dest);
       case "simple-assignment":
@@ -598,6 +601,32 @@ export class LowerAstToHirVisitor {
   private isElseCase(c: ast.CondCaseNode): boolean {
     const cond = c.condition as any;
     return cond?._type === "simple-identifier" && cond.id === "else";
+  }
+
+  // -- try / catch / finally ------------------------------------------------------------------------
+
+  private lowerTry(node: ast.TryCatchNode, dest: Dest): Lowered {
+    const catchVar = this.temps.fresh();
+    if (dest.kind === "value") {
+      // Value-position try: bind a result temp, each arm assigns it (no IIFE).
+      const result = this.temps.fresh();
+      const htry = this.buildTry(node, catchVar, { kind: "assign", temp: result });
+      return { stmts: [this.declTemp(result, node), htry], value: this.temp(result, node) };
+    }
+    return { stmts: [this.buildTry(node, catchVar, dest)], value: null };
+  }
+
+  private buildTry(node: ast.TryCatchNode, catchVar: string, bodyDest: Dest): HStmt {
+    const tryBlock: HBlock = { stmts: this.lowerNode(node.try, bodyDest).stmts };
+    const catches: HCatch[] = (node.catch ?? []).map((c) => ({
+      errorName: c.filter?.name,
+      filterTypeName: c.filter?.type?.name,
+      body: { stmts: this.lowerNode(c.body, bodyDest).stmts },
+    }));
+    const finalizer: HBlock | null = node.finally
+      ? { stmts: this.lowerNode(node.finally, EFFECT).stmts }
+      : null;
+    return { ...this.base(node), kind: "try", tryBlock, catchVar, catches, finalizer };
   }
 
   // -- match ----------------------------------------------------------------------------------------
