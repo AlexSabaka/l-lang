@@ -177,8 +177,17 @@ function convertAstTypeCore(
     // gets a chance. Reading only `typeNode.array` therefore dropped the array-ness of EVERY `T[]`
     // annotation, silently degrading it to a scalar `T` -- which is why the stdlib's
     // `(fn range [...] -> Int[])` was reported as "declares it returns Int".
-    const isArray = !!typeNode.array || !!(typeNode as any).type?.array;
-    const withArray = (t: InferredType) => (isArray ? TypeEnvironment.array(t) : t);
+    // COUNT the array flags, do not OR them (TY7). `Int[][]` captures a flag on BOTH nodes -- the inner
+    // `basicType` consumes the first `[]`, the outer `type` rule the second -- and collapsing them to
+    // one boolean dropped a dimension, so a 2D annotation read as 1D (`cannot assign Int[][] to Int[]`).
+    // The two-site grammar tops out at 2D, which is what a grid needs; deeper nesting is a grammar item.
+    const arrayDims =
+      (typeNode.array ? 1 : 0) + ((typeNode as any).type?.array ? 1 : 0);
+    const withArray = (t: InferredType) => {
+      let r = t;
+      for (let i = 0; i < arrayDims; i++) r = TypeEnvironment.array(r);
+      return r;
+    };
 
     // A generic type PARAMETER in scope (the `T` of a generic class) -- was only in copy 2.
     const genericParam = typeEnv.resolveIdentifier(name);

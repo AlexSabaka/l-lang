@@ -1620,6 +1620,29 @@ ${PRODUCER}
       "assigning it to Int was a spurious mismatch. Also fixes nested-index READS (map-of-maps).",
   },
   {
+    name: "TY7: a 2D array annotation `Int[][]` type-checks",
+    source: `(let grid <- Int[][] [[1 2] [3 4]])
+(console.log grid[0][1])`,
+    silent: true,
+    why:
+      "TY7 (games): `Int[][]` captures an array flag on BOTH the inner basicType and the outer type " +
+      "rule, but convertAstType OR'd them and applied `array` once -- so a 2D annotation read as 1D " +
+      "(`cannot assign Int[][] to Int[]`). Now the flags are counted; every grid game needs this.",
+  },
+  {
+    name: "TY7: `Int[]` (1D) still type-checks (GUARD)",
+    source: `(let xs <- Int[] [1 2 3])
+(console.log xs[0])`,
+    silent: true,
+    why: "GUARD. Counting flags must not DOUBLE-wrap a 1D array -- one flag -> one dimension.",
+  },
+  {
+    name: "TY7: a 2D value into a 1D annotation is still a mismatch",
+    source: `(let bad <- Int[] [[1 2] [3 4]])`,
+    expect: /LL0200/,
+    why: "GUARD the other way: `Int[]` is 1D, the value is 2D -- the dimensions must be checked, not lost.",
+  },
+  {
     name: "TY8: an :extension on a STRUCTURAL-only conformer is refused, not a runtime crash",
     source: `(definterface Entity (fn describe [] -> String))
 (fn :extension threat [self <- Entity] -> Int (return 5))
