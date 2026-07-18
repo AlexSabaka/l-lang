@@ -84,6 +84,46 @@ const CASES: SmokeCase[] = [
     },
   },
   {
+    // The D14 longer_alt class, for OPERATORS. `**`/`++`/`--`/`//` are built from a single-char
+    // operator token (`Star`/`Plus`/`Minus`/`Slash`) whose pattern excludes only a following `=`,
+    // not a following copy of itself -- so each lexed as TWO tokens. `||`/`&&` escaped because their
+    // patterns DO exclude their own double; `<>`/`<|` escaped because `LAngle` already carries
+    // `longer_alt: OperatorIdent`. So `(fn :operator ** ...)` died at the parser ("Expecting LBracket
+    // but found '*'"), and `(-- 5)` silently lexed as `(- - 5)` and folded to NaN.
+    name: "longer_alt: a doubled operator lexes as ONE OperatorIdent, not two single-char tokens",
+    source: "(** 2 3) (++ 1) (-- 5)",
+    check: ({ tokens }) => {
+      const names = tokenNames(tokens);
+      assert(
+        names.join(" ") ===
+          "LParen OperatorIdent IntegerNumber IntegerNumber RParen " +
+          "LParen OperatorIdent IntegerNumber RParen " +
+          "LParen OperatorIdent IntegerNumber RParen",
+        `got ${names.join(" ")} -- each of **/++/-- must be one OperatorIdent`
+      );
+    },
+  },
+  {
+    // The exact crash: a doubled-char operator NAME in a `:operator` definition. The name lexed as
+    // `Star Star`, the def rule read `Star` as the name and then demanded `[`, hit the second `Star`.
+    name: "longer_alt: (fn :operator ** ...) parses instead of 'Expecting LBracket'",
+    source: "(fn :operator ** [a <- Int b <- Int] -> Int (return a))",
+    check: ({ ast }) => {
+      assert(!!ast && Array.isArray(ast.program), "a doubled-char operator name must parse");
+    },
+  },
+  {
+    // GUARD: RAngle must NOT get `longer_alt: OperatorIdent`, or nested generics close (`>>`) would
+    // lex as one OperatorIdent and the generics rule -- which wants two RAngle -- would break.
+    name: "longer_alt guard: nested generics still close with two RAngle",
+    source: "(fn f [x <- Map<Int, List<Int>>] -> Int (return 0))",
+    check: ({ tokens }) => {
+      const names = tokenNames(tokens);
+      const raCount = names.filter((n) => n === "RAngle").length;
+      assert(raCount === 2, `nested generics must close with two RAngle, got ${raCount} in ${names.join(" ")}`);
+    },
+  },
+  {
     name: "case-sensitivity fix: DEFCLASS vs defclass",
     source: "(DEFCLASS Foo) (defclass Foo)",
     check: ({ tokens }) => {

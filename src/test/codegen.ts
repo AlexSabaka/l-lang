@@ -2962,6 +2962,35 @@ const CASES: Case[] = [
   },
 
   // ===============================================================================================
+  // Qf -- doubled operators (`**`/`++`/`--`) were shredded into two single-char tokens.
+  //
+  // A single-char operator token (`Star`/`Plus`/`Minus`) excluded only a following `=`, not a
+  // following COPY of itself, and -- unlike `LAngle`, cured long ago -- carried no
+  // `longer_alt: OperatorIdent`. So `**` lexed as `Star Star`, and two failures followed: a
+  // `(fn :operator ** ...)` definition crashed the PARSER ("Expecting LBracket but found '*'"), and
+  // `(-- 5)` lexed as `(- - 5)` -- the `-` operator applied to the `-` FUNCTION and 5 -- which runs
+  // and folds to NaN. (`||`/`&&` escaped: their patterns exclude their own double. `<>` escaped:
+  // `LAngle` already deferred to the longer match.) Now each doubled operator is one `OperatorIdent`,
+  // so an undefined one is a loud LL0204 like any other symbol -- not a silent NaN. (smoke-grammar-v2
+  // pins the lexing; RAngle is deliberately NOT cured, so nested generics `>>` still close.)
+  // ===============================================================================================
+  {
+    name: "Qf: `(-- 5)` is a loud undefined-operator, not a silent NaN",
+    source: `(console.log (-- 5))`,
+    expectDiagnostic: /LL0204/,
+    wasBroken:
+      "`--` lexed as `- -`, so `(-- 5)` was the minus operator folded over its own function and 5, " +
+      "and ran to `NaN` -- a silent wrong answer where `--` is simply an undefined operator.",
+  },
+  {
+    name: "Qf: `(** 2 3)` is a loud undefined-operator, not a silent NaN",
+    source: `(console.log (** 2 3))`,
+    expectDiagnostic: /LL0204/,
+    wasBroken:
+      "`**` lexed as `* *`, so `(** 2 3)` folded the `*` function into arithmetic and ran to `NaN`.",
+  },
+
+  // ===============================================================================================
   // Qe / AF-020 -- a MID-LIST rest `[a ...mid z]` was accepted and silently misbound.
   //
   // D28: "Rest is trailing only -- a rest in the middle (`[a ...mid z]`) is a separate, harder

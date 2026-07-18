@@ -188,12 +188,19 @@ export const Dot = createToken({ name: "Dot", pattern: /\.(?!\.)/ });
 export const Pipe = createToken({ name: "Pipe", pattern: /\|(?![=|>])/ });
 export const Ampersand = createToken({ name: "Ampersand", pattern: /&(?![=&])/ });
 export const Equal = createToken({ name: "Equal", pattern: /=(?![=>])/ });
-export const Plus = createToken({ name: "Plus", pattern: /\+(?!=)/ });
-export const Minus = createToken({ name: "Minus", pattern: /-(?![=>])/ });
-export const Star = createToken({ name: "Star", pattern: /\*(?!=)/ });
-export const Slash = createToken({ name: "Slash", pattern: /\/(?!=)/ });
-export const Percent = createToken({ name: "Percent", pattern: /%(?!=)/ });
-export const Caret = createToken({ name: "Caret", pattern: /\^(?!=)/ });
+// `longer_alt: OperatorIdent` is the D14 cure applied to operators (see LAngle below). Each of these
+// excludes only a following `=` (so `+=`/`*=`/... still win as compound-assign tokens), NOT a
+// following copy of itself -- so without the fallback `**` lexed as `Star Star`, `++` as `Plus Plus`,
+// `--` as `Minus Minus`, breaking `(fn :operator ** ...)` at the parser and folding `(-- 5)` to NaN.
+// A lone `+`/`*`/... still wins (OperatorIdent matches no further); the fallback fires only when a
+// second operator char follows. `Pipe`/`Ampersand` already exclude their own double (`||`/`&&`), and
+// `RAngle` is deliberately left uncured so nested generics still close as two `>` (`List<Int>>`).
+export const Plus = createToken({ name: "Plus", pattern: /\+(?!=)/, longer_alt: OperatorIdent });
+export const Minus = createToken({ name: "Minus", pattern: /-(?![=>])/, longer_alt: OperatorIdent });
+export const Star = createToken({ name: "Star", pattern: /\*(?!=)/, longer_alt: OperatorIdent });
+export const Slash = createToken({ name: "Slash", pattern: /\/(?!=)/, longer_alt: OperatorIdent });
+export const Percent = createToken({ name: "Percent", pattern: /%(?!=)/, longer_alt: OperatorIdent });
+export const Caret = createToken({ name: "Caret", pattern: /\^(?!=)/, longer_alt: OperatorIdent });
 export const Question = createToken({ name: "Question", pattern: /\?/ });
 export const Exclamation = createToken({ name: "Exclamation", pattern: /!(?!=)/ });
 export const Tilde = createToken({ name: "Tilde", pattern: /~(?!=)/ });
