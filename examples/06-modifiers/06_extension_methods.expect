@@ -1,0 +1,10 @@
+raw:        '  the  quick brown fox  '
+words:      the|quick|brown|fox
+wordcount:  4
+titlecase:  The Quick Brown Fox
+reversed:   fox brown quick the
+shout:      THE  QUICK BROWN FOX!
+pipe:       The Quick Brown Fox
+chain:      Fox Brown Quick The
+chain3:     FOX BROWN QUICK THE!
+pipechain:  FOX BROWN QUICK THE!

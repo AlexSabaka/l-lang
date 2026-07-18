@@ -1,0 +1,7 @@
+pipeline: start
+sync tail: main is still in flight
+  row 0: ADA was born in 1815
+  row 1: ALAN was born in 1912
+  row 2: GRACE was born in 1906
+  caught: no row with id 9
+pipeline: done

@@ -1,0 +1,18 @@
+--- Engineers (pipe) ---
+Ada, Grace, Barbara, Edsger
+--- Page 2: (skip 1) then (take 2) ---
+Grace: 150
+Barbara: 140
+--- Terminals ---
+engineers: 4
+eng payroll: 610
+top salary: 165
+--- Ranked (enumerate) ---
+0. Ada (165)
+1. Grace (150)
+2. Barbara (140)
+--- Engineers (method chain) ---
+Ada, Grace, Barbara, Edsger
+--- Laziness ---
+Ada, Grace
+touched all 6 records? false

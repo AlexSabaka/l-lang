@@ -1,0 +1,9 @@
+seeded, count = 1
+after 2 adds, count = 3
+at 0 = rusty dagger
+at 2 = healing potion
+at 5 = (nil)
+take 1 -> short sword
+after take, count = 2
+at 1 now = healing potion
+take 9 -> (nil)

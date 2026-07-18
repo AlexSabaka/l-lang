@@ -1,0 +1,8 @@
+a       = (1,2)
+b       = (3,4)
+a + b   = (4,6)
+a == a       = true
+a == b       = false
+a+b == (4,6) = true
+manhattan(a, a+b) = 7
+manhattan(a, b)   = 4

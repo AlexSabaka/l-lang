@@ -1,0 +1,9 @@
+--- RPN Calculator ---
+3 4 + 2 * => 14
+5 1 2 + 4 * + 3 - => 14
+10 2 / => 5
+--- Error Paths ---
+1 0 / !! division by zero
+1 + !! stack underflow
+2 3 % !! unknown token: %
+1 2 3 + !! malformed expression: 2 values left

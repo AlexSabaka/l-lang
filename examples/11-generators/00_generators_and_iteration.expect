@@ -1,0 +1,23 @@
+--- count-up 5 ---
+1
+2
+3
+4
+5
+--- first 8 fibs (take over an infinite source) ---
+0 1 1 2 3 5 8 13
+--- even fibs below 1000 ---
+0 2 8 34 144 610
+--- Countdown 3 (hand-written iterator) ---
+3
+2
+1
+--- zip: generator + struct ---
+1 <-> 3
+2 <-> 2
+3 <-> 1
+--- raw cursor over count-up 3 ---
+pulled 1
+pulled 2
+pulled 3
+cursor exhausted

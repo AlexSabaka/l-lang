@@ -1,0 +1,47 @@
+initial
+#######
+#     #
+#.$@  #
+#     #
+#######
+moves 0  pushes 0  undo-depth 0  solved false
+
+down -> accepted
+#######
+#     #
+#.$   #
+#  @  #
+#######
+moves 1  pushes 0  undo-depth 1  solved false
+
+down -> rejected
+#######
+#     #
+#.$   #
+#  @  #
+#######
+moves 1  pushes 0  undo-depth 1  solved false
+
+up -> accepted
+#######
+#     #
+#.$@  #
+#     #
+#######
+moves 2  pushes 0  undo-depth 2  solved false
+
+left -> accepted
+#######
+#     #
+#*@   #
+#     #
+#######
+moves 3  pushes 1  undo-depth 3  solved true
+
+after undo
+#######
+#     #
+#.$@  #
+#     #
+#######
+moves 2  pushes 0  undo-depth 2  solved false

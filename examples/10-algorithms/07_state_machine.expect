@@ -1,0 +1,12 @@
+--- transitions ---
+1. LOCKED --PUSH--> LOCKED : blocks you
+2. LOCKED --COIN--> UNLOCKED : unlocks
+3. UNLOCKED --COIN--> UNLOCKED : already open, coin refunded
+4. UNLOCKED --PUSH--> LOCKED : lets you through, then locks
+5. LOCKED --PUSH--> LOCKED : blocks you
+6. LOCKED --COIN--> UNLOCKED : unlocks
+7. UNLOCKED --PUSH--> LOCKED : lets you through, then locks
+--- summary ---
+final state: LOCKED
+coins taken: 3
+entries: 2

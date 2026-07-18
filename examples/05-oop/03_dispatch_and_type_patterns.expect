@@ -1,0 +1,7 @@
+source: ((2 + 3) * (4 + (5 * 6)))
+value:  170
+nodes:  9
+--- Node Introspection ---
+Num: literal 7 => 7
+Add: addition => 3
+Mul: multiplication => 12

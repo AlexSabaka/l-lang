@@ -1,0 +1,14 @@
+mines at (3,1) (1,3) (4,3) (2,4)
+revealed by a flood fill from corner (0,0):
+  1··
+  1··
+112··
+·····
+·····
+cells revealed: 9
+--- same board, all mines shown ---
+  1··
+  1*·
+112··
+·*··*
+··*··

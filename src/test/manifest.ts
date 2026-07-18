@@ -240,4 +240,128 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "and 05_multiple_modifiers.lisp declare ':memoized' with (defmodifier memoized []) and pass. " +
       "The example is at fault, not the compiler; fixing it edits the corpus and needs a call.",
   },
+
+  // ===========================================================================
+  // ADVERSARIAL CORPUS INTEGRATION (l-lang-post-audit + l-lang-ex)
+  // Three external sources folded in as feature + adversarial coverage. Green
+  // additions carry their own .expect and need no entry here; everything below
+  // is quarantined with a reason (xfail), pinned to codes (negative), or is an
+  // imported unit (library) / non-node program (fixture). See
+  // docs/inbox/adversarial-corpus-integration.md for the full writeup.
+  // ===========================================================================
+
+  // --- proposed-examples: multi-file package, imported units (compiled via main) ---
+  "06-import/02_packages/format.lisp": { status: "library" },
+  "06-import/02_packages/geometry/shapes.lisp": { status: "library" },
+  "06-import/02_packages/geometry/measure.lisp": { status: "library" },
+
+  // --- proposed-examples: regressed since the audit commit (23a24cd -> HEAD) ---
+  "04-data-types/11_comptime_table.lisp": {
+    status: "xfail",
+    reason:
+      "REGRESSION since audit commit 23a24cd (was 10/10 green under bin/verify-examples; broken by " +
+      "HEAD). NEW BUG in the :comptime inliner: a :comptime helper `deg-to-rad` is called by another " +
+      ":comptime fn `cos2`, and `cosines` folds `cos2` five times. Each fold re-inlines `deg-to-rad` " +
+      "into the SAME comptime-eval scope, emitting a duplicate `const __ll_inlined_deg2dto2drad_1` -- " +
+      "the evaluator throws 'Identifier __ll_inlined_deg2dto2drad_1 has already been declared' (LL0099). " +
+      "Squares/triangles/lookup-square fold fine; only the nested comptime-calls-comptime, folded >1x, " +
+      "collides. Same family as ROADMAP-DELTA AF-046 (comptime + inlining). No golden -- would bake a " +
+      "crash. Expected output documented in the writeup.",
+  },
+
+  // --- l-lang-ex games: DROPPED (not node-runnable) after their runnable parts were extracted ---
+  // The 7 full games (5 terminal, 2 p5) compiled clean but could never run under the golden harness
+  // (raw-mode TTY / browser p5). Rather than keep them as inert fixtures, their self-contained,
+  // deterministic feature logic was lifted into runnable examples under 30-applications/ (generic
+  // Inventory<T>, Vec2 operator overloading, interface conformance, the :undoable modifier + snapshot,
+  // minesweeper flood-fill, snake tick, tetromino rotation, line-clear, boids vector toolkit). The
+  // full games live on in the separate l-lang-ex repo; the bug repros they exposed live in
+  // 90-adversarial/. See docs/inbox/adversarial-corpus-integration.md.
+
+  // --- 90-adversarial: minimal repros extracted from the audit's p5-friction probes ---
+  // The four GREEN siblings (spread_in_literals, return_in_logical_operand, hex_string_escape,
+  // paren_absorption) carry goldens and pin bugs FIXED since the audit commit -- CP1 (spread
+  // dropped all but the first element), CF1 (return inside ||/&& was swallowed by an IIFE), PR3
+  // (\xHH degraded to the bare char). Only PR4 below is still live.
+  "90-adversarial/hyphen_field_encoding.lisp": {
+    status: "xfail",
+    reason:
+      "STILL BROKEN -- silent wrong answer (finding PR4, l-lang-ex snake). A hyphenated map field " +
+      "encodes inconsistently: the `:next-dir` map key stays literal, but DOT access mangles the " +
+      "hyphen (`.next-dir` -> `.next2ddir`). So `w.next-dir` reads a key that was never written " +
+      "(undefined), `(w.next-dir := \"down\")` writes a SECOND mangled `next2ddir` key, and " +
+      "`(w[\"next-dir\"])` bracket-reads the original -- the three spellings disagree on one field. " +
+      "No golden: current output is wrong and a golden would bless it. Expected-vs-actual is in the " +
+      "file header and the writeup.",
+  },
+
+  // --- 02-errors/diagnostics: negative tests (p1-matrix ll* probes) ---
+  // Each is a minimal program that MUST fail with the pinned code. These fill the coverage
+  // hole COVERAGE-MATRIX flagged: 21 registered diagnostics with zero test asserting them.
+  // Dropped from the probe set: ll0003/ll0020 (parse THROWS, not a located diagnostic, so
+  // runNegativeTest can't assert them); ll0014/ll0024 (compile CLEAN -- dead wiring confirmed,
+  // COVERAGE-MATRIX:126); ll0007 (already asserted by 02-errors/01_errors.lisp).
+  "02-errors/diagnostics/ll0005_nameless_let.lisp": {
+    status: "negative", codes: ["LL0005"],
+    reason: "`(let)` with no binding. Reports LL0005 (+LL0006); pins the never-exercised LL0005.",
+  },
+  "02-errors/diagnostics/ll0008_two_default_catch.lisp": {
+    status: "negative", codes: ["LL0008"],
+    reason:
+      "FINDING: two default `catch` blocks -> LL0008 fires cleanly at HEAD, CONTRADICTING " +
+      "COVERAGE-MATRIX:127 which recorded LL0008 as an 'unreachable predicate' that 'can never fire'. " +
+      "Reachable now; pinned so it stays so.",
+  },
+  "02-errors/diagnostics/ll0009_iface_invalid_member.lisp": {
+    status: "negative", codes: ["LL0009"],
+    reason: "a `defclass` inside a `definterface` body -> LL0009. Never-exercised code.",
+  },
+  "02-errors/diagnostics/ll0010_iface_init.lisp": {
+    status: "negative", codes: ["LL0010"],
+    reason: "an initialized `let` in a `definterface` -> LL0010. Never-exercised code.",
+  },
+  "02-errors/diagnostics/ll0011_iface_extern.lisp": {
+    status: "negative", codes: ["LL0011"],
+    reason: "`:extern` method in a `definterface` -> LL0011. Never-exercised code.",
+  },
+  "02-errors/diagnostics/ll0012_iface_body.lisp": {
+    status: "negative", codes: ["LL0012"],
+    reason: "a method WITH a body in a `definterface` -> LL0012. Never-exercised code.",
+  },
+  "02-errors/diagnostics/ll0019_bare_let.lisp": {
+    status: "negative", codes: ["LL0019"],
+    reason: "a bare top-level `let x 5` (not wrapped in a form) -> LL0019. Never-exercised code.",
+  },
+  "02-errors/diagnostics/ll0025_nameless_class.lisp": {
+    status: "negative", codes: ["LL0025"],
+    reason:
+      "`(defclass)` with no name -> LL0025 under the runner frontend. (COVERAGE-MATRIX:135: peg " +
+      "diverges to LL0210; the runner's frontend gives LL0025.) Never-exercised code.",
+  },
+  "02-errors/diagnostics/ll0026_if_no_cond.lisp": {
+    status: "negative", codes: ["LL0026"],
+    reason: "`(if)` with no condition -> LL0026 (+LL0027). Never-exercised code.",
+  },
+  "02-errors/diagnostics/ll0028_when_no_then.lisp": {
+    status: "negative", codes: ["LL0028"],
+    reason: "`(when)` with no then-branch -> LL0028 (+LL0026). Never-exercised code.",
+  },
+  "02-errors/diagnostics/ll0212_dup_decl.lisp": {
+    status: "negative", codes: ["LL0212"],
+    reason:
+      "two `(let d ...)` in one scope -> LL0212. COVERAGE-MATRIX:128 flagged the diagnostics.ts " +
+      "snapshot as pinning LL0212's NON-firing shape; this asserts it actually fires.",
+  },
+  "02-errors/diagnostics/ll0217_import_empty.lisp": {
+    status: "negative", codes: ["LL0217"],
+    reason:
+      "`(import \"\")` empty source -> LL0217 from the dependency-graph builder (NOT LL0003, which " +
+      "COVERAGE-MATRIX:129 shows is masked/unobservable).",
+  },
+  "02-errors/diagnostics/ll0100_hex_number.lisp": {
+    status: "negative", codes: ["LL0100"],
+    reason:
+      "a hex literal `0xFF` lexes but has no JS emitter -> LL0100. Representative of the numeric " +
+      "tower (hex/octal/binary/complex/fraction all no-emitter). Pins LL0100, which had 0 assertions.",
+  },
 };

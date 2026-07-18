@@ -1,0 +1,19 @@
+start   dir=right  head=[3,2]  len=3  score=0  alive=true
+-- try-turn is pure; current heading is right --
+  steer left -> right   (180 reversal rejected)
+  steer up   -> up      (accepted)
+-- ticks --
+t1 in=right  dir=right  head=[4,2]  len=3  score=0  alive=true
+t2 in=right  dir=right  head=[5,2]  len=4  score=1  alive=true
+t3 in=up     dir=up  head=[5,1]  len=4  score=1  alive=true
+t4 in=down   dir=up  head=[5,0]  len=5  score=2  alive=true
+t5 in=left   dir=left  head=[4,0]  len=5  score=2  alive=true
+-- final frame --
++--------+
+|....Oo..|
+|.....o..|
+|....oo..|
+|........|
+|..*.....|
++--------+
+final snake: [4,0][5,0][5,1][5,2][4,2]

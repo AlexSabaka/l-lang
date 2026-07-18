@@ -1,0 +1,6 @@
+=== GEOMETRY REPORT ===
+rect    3x4     area=12     diag=5
+rect    10x2    area=20     diag=10.2
+rect    6x8     area=48     diag=10
+circle  r=2     area=12.57  diag=0
+total rect area: 80

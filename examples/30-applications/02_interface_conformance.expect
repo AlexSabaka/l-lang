@@ -1,0 +1,8 @@
+Nominal Entities (declared :implements):
+  g  goblin (hp 3)  (blocks: true)
+  !  torch  (blocks: false)
+Structural Entity (no :implements, still accepted):
+  #  a wooden chest  (blocks: true)
+Extension dispatch (nominal only):
+  goblin passable? no
+  torch passable?  yes

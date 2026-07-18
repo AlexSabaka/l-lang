@@ -1,0 +1,4 @@
+(
+  (definterface I
+    (defclass C))
+)
