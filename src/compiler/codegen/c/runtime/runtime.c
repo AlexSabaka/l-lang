@@ -147,6 +147,35 @@ static ll_map *ll_map_of(size_t n, ll_str **keys, ll_value *vals) {
   return m;
 }
 
+/* -- structs / classes (spec A4: the whole layer is absent from the HIR) ------------------------- */
+
+typedef struct ll_class {
+  const char *name;
+  bool is_struct;          /* true = value semantics (copied); false = reference (shared) */
+  size_t field_count;
+  const char **field_names;
+} ll_class;
+
+struct ll_obj {
+  const ll_class *cls;
+  ll_value fields[];       /* boxed, in slot order */
+};
+
+static ll_value ll_box_obj(ll_obj *o) { ll_value v; v.tag = LL_OBJ; v.as.o = o; return v; }
+
+static ll_obj *ll_unbox_obj(ll_value v) {
+  if (v.tag == LL_OBJ) return v.as.o;
+  ll_trap("TypeError", "expected an object");
+  return NULL;
+}
+
+static ll_obj *ll_obj_new(const ll_class *cls, size_t argc, ll_value *args) {
+  ll_obj *o = (ll_obj *)ll_alloc(sizeof(ll_obj) + cls->field_count * sizeof(ll_value));
+  o->cls = cls;
+  for (size_t i = 0; i < cls->field_count; i++) o->fields[i] = i < argc ? args[i] : ll_nil();
+  return o;
+}
+
 /* -- closures (the env the HIR does not model -- spec A3) ----------------------------------------- */
 
 struct ll_closure {
@@ -403,6 +432,21 @@ static void ll_inspect_sb(ll_sb *sb, ll_value v) {
       }
       return;
     }
+    case LL_OBJ: {
+      /* node prints a class instance as `ClassName { field: value, ... }`. */
+      const ll_obj *o = v.as.o;
+      ll_sb_puts(sb, o->cls->name);
+      if (o->cls->field_count == 0) { ll_sb_puts(sb, " {}"); return; }
+      ll_sb_puts(sb, " { ");
+      for (size_t i = 0; i < o->cls->field_count; i++) {
+        if (i) ll_sb_puts(sb, ", ");
+        ll_sb_puts(sb, o->cls->field_names[i]);
+        ll_sb_puts(sb, ": ");
+        ll_inspect_sb(sb, o->fields[i]);
+      }
+      ll_sb_puts(sb, " }");
+      return;
+    }
     default: ll_sb_puts(sb, "[object]"); return;
   }
 }
@@ -465,6 +509,13 @@ static bool ll_deep_eq(ll_value a, ll_value b) {
       }
       return true;
     }
+    case LL_OBJ: {
+      if (a.as.o->cls != b.as.o->cls) return false;
+      for (size_t i = 0; i < a.as.o->cls->field_count; i++) {
+        if (!ll_deep_eq(a.as.o->fields[i], b.as.o->fields[i])) return false;
+      }
+      return true;
+    }
     default: return false;
   }
 }
@@ -490,9 +541,41 @@ static bool ll_strict_eq(ll_value a, ll_value b) {
   }
 }
 
-/* -- copy (D11/CP3: shallow-at-reference; structs recurse in Phase C -- identity for now) -------- */
+/* -- copy (D11/CP3: shallow-at-reference, like a C# struct) --------------------------------------
+ * A STRUCT is copied memberwise, RECURSING into struct-typed fields; a field holding a reference
+ * (array, map, class instance, closure) copies the reference, NOT the target. Everything else -- a
+ * primitive, an array, a class instance -- is returned unchanged (a value or a shared reference).
+ * The elision proof differs from the deep-MVS papers precisely because the semantics are shallow. */
+static ll_value ll_copy(ll_value v) {
+  if (v.tag != LL_OBJ || !v.as.o->cls->is_struct) return v; /* not a struct -> value or shared ref */
+  const ll_obj *src = v.as.o;
+  ll_obj *dst = (ll_obj *)ll_alloc(sizeof(ll_obj) + src->cls->field_count * sizeof(ll_value));
+  dst->cls = src->cls;
+  for (size_t i = 0; i < src->cls->field_count; i++) dst->fields[i] = ll_copy(src->fields[i]);
+  return ll_box_obj(dst);
+}
 
-static ll_value ll_copy(ll_value v) { return v; }
+/* Copy keeping the typed obj shape (for a struct-typed local/param/return slot). */
+static ll_obj *ll_copy_obj(ll_obj *o) {
+  return ll_unbox_obj(ll_copy(ll_box_obj(o)));
+}
+
+/* An lvalue slot into a map for `m[k] := v` -- inserts the key if absent, returns the value slot. */
+static ll_value *ll_map_slot(ll_map *m, ll_value key) {
+  ll_str *ks = ll_to_str(key);
+  for (size_t i = 0; i < m->len; i++) {
+    if (ll_str_eq(m->keys[i], ks)) return &m->vals[i];
+  }
+  if (m->len == m->cap) {
+    m->cap *= 2;
+    m->keys = (ll_str **)realloc(m->keys, m->cap * sizeof(ll_str *));
+    m->vals = (ll_value *)realloc(m->vals, m->cap * sizeof(ll_value));
+    if (!m->keys || !m->vals) ll_trap("OutOfMemory", "map grow failed");
+  }
+  m->keys[m->len] = ks;
+  m->vals[m->len] = ll_nil();
+  return &m->vals[m->len++];
+}
 
 /* -- indexing: partial (trap) vs total (nil) ----------------------------------------------------- */
 
@@ -959,6 +1042,11 @@ static double ll_math_exp(double x) { return exp(x); }
 static double ll_math_sin(double x) { return sin(x); }
 static double ll_math_cos(double x) { return cos(x); }
 static double ll_math_tan(double x) { return tan(x); }
+static double ll_math_asin(double x) { return asin(x); }
+static double ll_math_acos(double x) { return acos(x); }
+static double ll_math_atan(double x) { return atan(x); }
+static double ll_math_atan2(double y, double x) { return atan2(y, x); }
+static double ll_math_hypot(double a, double b) { return hypot(a, b); }
 static double ll_math_abs(double x) { return fabs(x); }
 static double ll_math_floor(double x) { return floor(x); }
 static double ll_math_ceil(double x) { return ceil(x); }
@@ -980,7 +1068,8 @@ static bool ll_is_type(ll_value v, const char *name, int primitive) {
   }
   if (strcmp(name, "Array") == 0) return v.tag == LL_VEC;
   if (strcmp(name, "Map") == 0) return v.tag == LL_MAP;
-  /* Nominal class identity (structs/classes) arrives with Phase D; nothing carries a tag yet. */
+  /* Nominal struct/class identity: the descriptor carries the source name. */
+  if (v.tag == LL_OBJ) return strcmp(v.as.o->cls->name, name) == 0;
   return false;
 }
 

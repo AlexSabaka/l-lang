@@ -38,6 +38,8 @@ export type CExpr = CBase & (
   | CMapLit
   | CIndex
   | CMember
+  | CConstruct
+  | CFieldGet
   | CClosureMake
   | CTypeTest
   | CBox
@@ -45,6 +47,25 @@ export type CExpr = CBase & (
   | CCast
   | CCopy
 );
+
+/** Construct a struct/class instance (spec A4 -- construction is NOT in the HIR; resolved from the
+ *  symbol table). Fields are stored boxed in slot order; `args` are the positional constructor args. */
+export interface CConstruct {
+  kind: "c-construct";
+  className: string;
+  isStruct: boolean;
+  args: CExpr[];
+  /** Default field values for constructor params not supplied (already typed). */
+  fieldCount: number;
+}
+
+/** A struct/class field READ by slot: `obj->fields[slot]`, unboxed to the field's static type. */
+export interface CFieldGet {
+  kind: "c-field-get";
+  object: CExpr;
+  slot: number;
+  fieldName: string;
+}
 
 /** One captured free variable of a lifted closure. `value` is computed in the ENCLOSING scope; for a
  *  mutable-captured (cell) binding it is the `ll_value*` pointer itself, shared with the origin. */
@@ -260,7 +281,8 @@ export interface CDecl {
 
 export type CLValue =
   | { kind: "name"; cName: string; ctype: CType; cell?: boolean }
-  | { kind: "index"; base: CExpr; index: CExpr; mode: IndexMode };
+  | { kind: "index"; base: CExpr; index: CExpr; mode: IndexMode }
+  | { kind: "field"; object: CExpr; slot: number; fieldName: string };
 
 export interface CAssign {
   kind: "c-assign";
@@ -338,9 +360,17 @@ export interface CLifted {
   body: CBlock;
 }
 
+/** A struct/class descriptor -> an `ll_class` in the emitted runtime (spec A4). */
+export interface CClass {
+  name: string;
+  isStruct: boolean;
+  fields: { name: string; ctype: CType }[]; // slot order
+}
+
 export interface CModule {
   functions: CFunction[];
   lifted: CLifted[];
+  classes: CClass[];
   /** Top-level functions used as VALUES need a boxed-convention adapter; keyed by cName. */
   adapters: { forCName: string; params: CType[]; ret: CType; arity: number }[];
   /** Top-level statements, in order -- the body of `int main(void)`. */

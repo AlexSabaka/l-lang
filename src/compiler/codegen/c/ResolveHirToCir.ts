@@ -21,7 +21,7 @@ import { report, CBackendDiagnostics } from "../../rules/diagnostics";
 import { GapLedger, Assumption } from "./GapLedger";
 import {
   CBlock, CExpr, CStmt, CModule, CFunction, CParam, CLValue, CCallee, BinopMode, CMapEntry,
-  CLifted, CCapture,
+  CLifted, CCapture, CClass,
 } from "./cir";
 import { CType, C_BOOL, C_INT, C_REAL, C_STR, C_VALUE, C_VOID, mapType, ctypeEquals } from "./ctype";
 import { INTRINSIC_CALLS, NATIVE_METHODS, NATIVE_FIELDS } from "./intrinsics";
@@ -39,6 +39,16 @@ export function mangleC(name: string): string {
   );
 }
 
+/** Mangle without the `u_` user prefix, for compiler-synthesized symbols (class/method names). */
+function mangleBare(name: string): string {
+  return name.replace(/[^A-Za-z0-9_]/g, (ch) => `_${ch.codePointAt(0)!.toString(16)}`);
+}
+
+/** Encode an operator's characters to hex, mirroring the JS backend's encodeIdentifier. */
+function encodeOp(op: string): string {
+  return [...op].map((ch) => ch.codePointAt(0)!.toString(16)).join("");
+}
+
 class Refusal extends Error {}
 
 /** What the resolver knows about a local binding (a param, a let/mut, or a captured var). */
@@ -49,6 +59,16 @@ interface VarInfo {
   cell: boolean;
 }
 
+/** A struct/class descriptor: field layout + methods. Construction/fields/methods are all resolved
+ *  from HERE, not the HIR (spec A4 -- the HIR models no construction at all). */
+interface ClassDesc {
+  name: string;
+  isStruct: boolean;
+  fields: { name: string; ctype: CType }[];
+  fieldSlot: Map<string, number>;
+  methods: Map<string, { cName: string; params: CType[]; ret: CType }>;
+}
+
 export class ResolveHirToCir {
   private readonly functions: CFunction[] = [];
   private readonly lifted: CLifted[] = [];
@@ -57,6 +77,13 @@ export class ResolveHirToCir {
   private readonly topLevelFns = new Map<string, { params: CType[]; ret: CType; arity: number }>();
   /** Imported (non-intrinsic) l-lang bodies lowered on demand, by source name (dedup). */
   private readonly importedLowered = new Set<string>();
+  /** Struct/class descriptors, by source name (spec A4). */
+  private readonly classes = new Map<string, ClassDesc>();
+  /** Operator overloads: key `<op>:<leftOperandTypeName>` -> the operator's C function. `isMethod`
+   *  = an in-struct operator whose LEFT operand is the implicit `this`; `unary` = a one-operand op. */
+  private readonly operators = new Map<string, { cName: string; ret: CType; isMethod: boolean; unary: boolean }>();
+  /** The class whose method body is being resolved (so `this` binds to `__self`). */
+  private selfClass: string | undefined;
   /** Lexical scope stack of local bindings (by C name). scope[0] is the module/main body. */
   private readonly scopes: Map<string, VarInfo>[] = [new Map()];
   /** Names (C names) that must be heap cells in the CURRENT function scope (mutable-captured). */
@@ -141,22 +168,178 @@ export class ResolveHirToCir {
 
   resolveModule(root: ast.ASTNode): CModule | null {
     this.rootSource = root._location?.source;
-    const items = root._type === "program" ? (root as ast.ProgramNode).program ?? [] : [];
+    const body = this.hir.bodyFor(root);
+    // The top-level declarations, flattened out of the HIR body (the whole program is one block, so
+    // each declaration arrives as an opaque-stmt whose `src` is the desugared StructNode / ClassNode
+    // / FunctionNode). Drive the pre-pass off these, not the raw program (which is still list-wrapped).
+    const items = this.topLevelStmtNodes(body);
+    // Collect struct/class descriptors and operator overloads first: construction, field access,
+    // methods and operator dispatch are all resolved from these, not from the HIR (spec A4/A3).
+    this.collectClassesAndOperators(items);
     // Register every top-level function first, so forward references (call before declaration, or a
     // function used as a value) resolve regardless of order.
     this.registerModuleFunctions(items);
-    const body = this.hir.bodyFor(root);
     // The module body is itself a scope for capture purposes (a top-level lambda still captures
     // module locals). Compute its cell set from nested closures before resolving.
     this.cellVars = this.computeCellVars(items);
     const main = body ? this.resolveBlock(body) : { stmts: [] };
     if (this.refused) return null;
+    const classes: CClass[] = [...this.classes.values()].map((c) => ({
+      name: c.name, isStruct: c.isStruct, fields: c.fields,
+    }));
     return {
       functions: this.functions,
       lifted: this.lifted,
+      classes,
       adapters: [...this.adapters.values()],
       main,
     };
+  }
+
+  // -- struct/class collection (spec A4: the whole layer is absent from the HIR) -------------------
+
+  /** The desugared declaration nodes at module top level (opaque-stmt src nodes from the HIR body). */
+  private topLevelStmtNodes(body: HBlock | undefined): ast.ASTNode[] {
+    const out: ast.ASTNode[] = [];
+    const walk = (b: HBlock | undefined): void => {
+      for (const s of b?.stmts ?? []) {
+        if (s.kind === "opaque-stmt" || s.kind === "expr-stmt") out.push(s.src);
+        else if (s.kind === "block") walk(s.body);
+      }
+    };
+    walk(body);
+    return out;
+  }
+
+  private collectClassesAndOperators(items: ast.ASTNode[]): void {
+    for (const n of items) {
+      if (!n) continue;
+      if (n._type === "struct" || n._type === "class") this.registerClass(n as ast.StructNode | ast.ClassNode);
+      // A top-level `:operator` function -- collected for static devirtualization.
+      if (n._type === "function") this.maybeRegisterOperator(n as ast.FunctionNode);
+    }
+  }
+
+  private registerClass(node: ast.StructNode | ast.ClassNode): void {
+    const name = ast.symbolName(node.name);
+    if (this.classes.has(name)) return;
+    const isStruct = node._type === "struct";
+    this.ledger.record("A4", isStruct ? "defstruct" : "defclass", node, "construction/field-layout resolved from the symbol table (the HIR has none)");
+    const t: any = (() => { try { return this.context.symbolTable.resolveSymbol(name, node)?.inferredType; } catch { return undefined; } })();
+    // Field order: constructor params (the slot order the JS ClassBuilder also uses). Field TYPES
+    // come from the AST annotations (`(let :ctor x <- Real)`) -- more complete than the checker's
+    // ctorInfo, which erases an inferred struct field type to Unknown (spec A1).
+    const ctorParams: any[] = t?.ctorInfo?.params ?? [];
+    const astFieldTypes = this.memberFieldTypes(node);
+    const memberType = (fname: string): CType => {
+      const m = (t?.members ?? []).find((mm: any) => mm.name === fname && mm.type?.kind !== "function");
+      return m?.type ? mapType(m.type) : C_VALUE;
+    };
+    const fields = ctorParams.map((p: any) => ({
+      name: p.name,
+      ctype: astFieldTypes.get(p.name) ?? (p.type ? mapType(p.type) : memberType(p.name)),
+    }));
+    const fieldSlot = new Map<string, number>();
+    fields.forEach((f, i) => fieldSlot.set(f.name, i));
+    const methods = new Map<string, { cName: string; params: CType[]; ret: CType }>();
+    // Register the descriptor NOW (before processing members) so a self-referential member type --
+    // an operator returning its own class, a method taking the same struct -- resolves to obj.
+    this.classes.set(name, { name, isStruct, fields, fieldSlot, methods });
+    for (const m of this.memberFunctions(node)) {
+      if (!m.name) continue;
+      const mn = ast.symbolName(m.name);
+      const isOp = m.modifiers?.some((mod) => mod.modifier === "operator");
+      if (isOp) { this.maybeRegisterOperator(m, name); continue; }
+      const sig: any = t?.methodSignatures?.get?.(mn);
+      const paramCTypes = m.params.map((p, i) => this.typeNodeToCType(p.type) ?? (sig?.params?.[i] ? mapType(sig.params[i]) : C_VALUE));
+      methods.set(mn, {
+        cName: `__ll_method_${mangleBare(name)}_${mangleBare(mn)}`,
+        params: paramCTypes,
+        ret: this.typeNodeToCType(m.returns) ?? mapType(sig?.returns),
+      });
+    }
+  }
+
+  /** Field type annotations from the struct/class body (`(let :ctor x <- Real 0)` -> {x: real}). */
+  private memberFieldTypes(node: ast.StructNode | ast.ClassNode): Map<string, CType> {
+    const out = new Map<string, CType>();
+    const consider = (v: ast.VariableNode): void => {
+      const nm = v.name;
+      if (nm?._type !== "simple-identifier" && nm?._type !== "composite-identifier") return;
+      const ct = this.typeNodeToCType(v.type);
+      if (ct) out.set(ast.symbolName(nm as ast.IdentifierNode), ct);
+    };
+    for (const item of node.body ?? []) {
+      if (item._type === "variable") { consider(item as ast.VariableNode); continue; }
+      if (item._type === "list") {
+        const v = ((item as ast.ListNode).nodes ?? []).find((n) => n._type === "variable");
+        if (v) consider(v as ast.VariableNode);
+      }
+    }
+    return out;
+  }
+
+  /** The member functions (methods + operators) of a struct/class. Each body member is a `list`
+   *  wrapping the function node (the desugared `(fn ...)` form); unwrap it. */
+  private memberFunctions(node: ast.StructNode | ast.ClassNode): ast.FunctionNode[] {
+    const out: ast.FunctionNode[] = [];
+    for (const item of node.body ?? []) {
+      if (item._type === "function") { out.push(item as ast.FunctionNode); continue; }
+      if (item._type === "list") {
+        const fn = ((item as ast.ListNode).nodes ?? []).find((n) => n._type === "function");
+        if (fn) out.push(fn as ast.FunctionNode);
+      }
+    }
+    return out;
+  }
+
+  /** Record a `:operator` function keyed by (op, left-operand type) for static devirtualization.
+   *  Two shapes: a TOP-LEVEL op writes both operands (`[a b]`); an IN-STRUCT method op writes only
+   *  the right operand, the left being the implicit `this` (`[other]`, or `[]` for a unary op). */
+  private maybeRegisterOperator(fn: ast.FunctionNode, ownerClass?: string): void {
+    const isOp = fn.modifiers?.some((m) => m.modifier === "operator");
+    if (!isOp || !fn.name) return;
+    const op = ast.symbolName(fn.name);
+    const isMethod = ownerClass !== undefined;
+    const unary = isMethod ? fn.params.length === 0 : fn.params.length <= 1;
+    const opType = ownerClass ?? this.paramTypeName(fn.params[0]);
+    if (!opType) return;
+    const cName = isMethod
+      ? `__ll_method_${mangleBare(ownerClass!)}_op${unary ? "u" : ""}_${encodeOp(op)}`
+      : mangleC(`op${unary ? "u" : ""}${op}_${opType}`);
+    const t: any = (() => { try { return this.context.symbolTable.resolveSymbol(op, fn)?.inferredType; } catch { return undefined; } })();
+    const ret = this.typeNodeToCType(fn.returns) ?? mapType(t?.kind === "function" ? t.returns : undefined);
+    this.operators.set(`${unary ? "u" : ""}${op}:${opType}`, { cName, ret, isMethod, unary });
+    this.ledger.record("A3", "operator-devirt", fn, "operator overload devirtualized to a direct call by (op, operand type)");
+  }
+
+  private paramTypeName(p: ast.ParameterNode | undefined): string | undefined {
+    return this.typeNodeName(p?.type);
+  }
+
+  /** The source name of a TypeNode, unwrapping the `type` -> `simple-type` -> `type-name` nesting. */
+  private typeNodeName(t: any): string | undefined {
+    if (!t || typeof t !== "object") return undefined;
+    if (t._type === "type") return this.typeNodeName(t.type);
+    const nm = typeof t.name === "string" ? t.name : t.name?.name;
+    return typeof nm === "string" ? nm : undefined;
+  }
+
+  /** Map a TypeNode annotation to a CType: a known struct/class -> obj, primitive -> native, else
+   *  undefined (the caller falls back to the symbol channel / boxed). The AST annotation is often
+   *  more complete than the symbol table for a struct type (which erases to Unknown). */
+  private typeNodeToCType(t: any): CType | undefined {
+    if (!t || typeof t !== "object") return undefined;
+    // An OPTIONAL type `T?` admits nil -> it must stay boxed (value). Defer to the symbol channel.
+    if (t.optional === true || t.type?.optional === true) return undefined;
+    if (t.array === true || t.type?.array === true) return { k: "vec", elem: C_VALUE };
+    const nm = this.typeNodeName(t);
+    if (!nm) return undefined;
+    if (this.classes.has(nm)) return { k: "obj", className: nm };
+    const prim: Record<string, CType> = {
+      Int: C_INT, Real: C_REAL, Boolean: C_BOOL, Bool: C_BOOL, String: C_STR, Char: { k: "char" }, Void: C_VOID,
+    };
+    return prim[nm];
   }
 
   // -- cell analysis: which mut-locals of a scope are captured by nested closures ------------------
@@ -365,6 +548,14 @@ export class ResolveHirToCir {
       }
     }
     let declCType = t !== undefined ? mapType(t) : init ? init.ctype : C_VALUE;
+    // A binding whose type resolved to boxed but whose initializer is a concrete struct/vector keeps
+    // the initializer's shape: the symbol table erases an inferred struct type to Unknown, but the
+    // init is authoritative (a struct binding must stay typed for field access). Skip when the
+    // annotation is OPTIONAL -- `T?` must stay boxed so it can later hold nil.
+    const optionalAnn = !!(node.type && ((node.type as any).optional || (node.type as any).type?.optional));
+    if (declCType.k === "value" && !optionalAnn && init && (init.ctype.k === "obj" || init.ctype.k === "vec")) {
+      declCType = init.ctype;
+    }
     if (t === undefined && !init) this.ledger.record("A1", "decl-untyped", node, "no channel or symbol type for binding; boxed");
     // A mutable binding captured by an escaping closure becomes a heap cell (boxed) so the closure
     // and the origin share the mutation -- the env the HIR does not model (spec A3/A5).
@@ -374,18 +565,97 @@ export class ResolveHirToCir {
       declCType = C_VALUE;
     }
     this.declareLocal(cName, declCType, node.mutable, cell);
-    return [{ src: node, ctype: C_VOID, kind: "c-decl", cName, declCType, init, cell }];
+    // A `let`/`mut` is a store site: a struct initializer is COPIED (D11).
+    const storedInit = init ? this.copyStore(init, node, "let-decl") : null;
+    return [{ src: node, ctype: C_VOID, kind: "c-decl", cName, declCType, init: storedInit, cell }];
   }
 
   private resolveUserAssign(node: ast.SimpleAssignmentNode | ast.CompoundAssignmentNode, rhs: CExpr): CStmt[] {
     const target = this.dipAst("A2", "assign-target", node, "assignment target read from raw AST (legacy emitAssign seam)", () => node.assignable);
+    const lval = this.resolveLValue(node, target);
+    return [{ src: node, ctype: C_VOID, kind: "c-assign", target: lval, value: this.copyStore(rhs, node, "user-assign") }];
+  }
+
+  /** The D11 copy DECISION at a store site (spec A5). Wraps a struct/boxed value in an explicit copy
+   *  node; a native primitive, array or class reference is left alone (CP3 shallow-at-reference). The
+   *  copy MATERIALIZATION (deep vs shared) is the runtime's ll_copy dispatching on the tag. */
+  private copyStore(e: CExpr, src: ast.ASTNode, site: string): CExpr {
+    if (e.ctype.k !== "obj" && e.ctype.k !== "value") return e; // int/real/str/vec/map/closure: no copy
+    // A fresh construction is already a new value -- no copy needed (matches the JS elision).
+    if (e.kind === "c-construct") return e;
+    this.ledger.record("A5", `copy:${site}`, src, "explicit CP3 value-copy at a store site (the D11 decision the HIR only flags)");
+    return { src, ctype: e.ctype, kind: "c-copy", inner: e };
+  }
+
+  /** Resolve an assignment target to an lvalue: a name, a struct FIELD chain, or an INDEX. */
+  private resolveLValue(node: ast.ASTNode, target: ast.ASTNode): CLValue {
+    // `x` / `this.x` / `a.b.c` -- an identifier or dotted chain.
     if (target._type === "simple-identifier" || target._type === "composite-identifier") {
-      const cName = mangleC(ast.symbolName(target));
-      const info = this.localInfo(cName);
-      const ctype = info?.ctype ?? this.bindingCType(target as ast.IdentifierNode);
-      return [{ src: node, ctype: C_VOID, kind: "c-assign", target: { kind: "name", cName, ctype, cell: info?.cell }, value: rhs }];
+      const parts = target._type === "composite-identifier" ? (target as ast.CompositeIdentifierNode).parts : [(target as ast.SimpleIdentifierNode).id];
+      if (parts.length === 1) {
+        const cName = mangleC(parts[0]);
+        const info = this.localInfo(cName);
+        const ctype = info?.ctype ?? this.bindingCType(target as ast.IdentifierNode);
+        return { kind: "name", cName, ctype, cell: info?.cell };
+      }
+      // A field chain: read the head + intermediate fields, then the LAST part is the store slot.
+      let obj = this.headObject(node, parts[0]);
+      for (const mid of parts.slice(1, -1)) obj = this.memberRead(node, obj, mid);
+      return this.fieldLValue(node, obj, parts[parts.length - 1]);
     }
-    throw this.refuse(node, `assign-to-${target._type}`, "resolveUserAssign");
+    // A core `member` node target: `obj.field := v` (member of a computed value).
+    if (target._type === "member") {
+      const m = target as ast.MemberNode;
+      const obj = this.resolveAstExpr(m.object);
+      const fieldName = this.memberName(m.property);
+      if (fieldName === null) throw this.refuse(node, "computed-member-store", "resolveLValue");
+      return this.fieldLValue(node, obj, fieldName);
+    }
+    // `arr[i] := v` / `obj[k] := v` / `m.field[i] := v` -- an indexer target.
+    if (target._type === "indexer") {
+      const idx = target as ast.IndexerNode;
+      const steps: { isMember: boolean; index: ast.ASTNode }[] = [];
+      (idx.indices ?? []).forEach((group, g) => {
+        for (const ix of group) steps.push({ isMember: idx.members?.[g] === true, index: ix });
+      });
+      let obj = this.headObject(node, ast.symbolName(idx.id));
+      for (let i = 0; i < steps.length - 1; i++) {
+        obj = steps[i].isMember
+          ? this.memberRead(node, obj, this.stepName(steps[i].index))
+          : this.indexRead(node, obj, this.resolveAstExpr(steps[i].index), true);
+      }
+      const last = steps[steps.length - 1];
+      if (last.isMember) return this.fieldLValue(node, obj, this.stepName(last.index));
+      this.ledger.record("A5", "index-store", node, "index assignment lvalue (partial write)");
+      const mode = obj.ctype.k === "vec" ? "vec" : obj.ctype.k === "map" ? "map" : obj.ctype.k === "str" ? "str" : "boxed";
+      return { kind: "index", base: obj, index: this.resolveAstExpr(last.index), mode };
+    }
+    throw this.refuse(node, `assign-to-${target._type}`, "resolveLValue");
+  }
+
+  private headObject(node: ast.ASTNode, headName: string): CExpr {
+    if (headName === "this" && this.selfClass) {
+      return { src: node, ctype: { k: "obj", className: this.selfClass }, kind: "c-ref", cName: "__self" };
+    }
+    const cName = mangleC(headName);
+    const info = this.localInfo(cName);
+    const ctype = info?.ctype ?? this.bindingCType({ _type: "simple-identifier", id: headName } as any);
+    return { src: node, ctype, kind: "c-ref", cName, cell: info?.cell };
+  }
+
+  private stepName(step: ast.ASTNode): string {
+    return (step as any).id ?? String((step as any).value ?? "");
+  }
+
+  private fieldLValue(node: ast.ASTNode, obj: CExpr, fieldName: string): CLValue {
+    if (obj.ctype.k === "obj") {
+      const desc = this.classes.get(obj.ctype.className);
+      if (desc?.fieldSlot.has(fieldName)) {
+        this.ledger.record("A4", "field-store", node, "struct field store resolved to a slot (not the HIR)");
+        return { kind: "field", object: obj, slot: desc.fieldSlot.get(fieldName)!, fieldName };
+      }
+    }
+    throw this.refuse(node, `field-store:${fieldName}`, "fieldLValue");
   }
 
   private resolveForEach(h: Extract<HStmt, { kind: "for-each" }>): CStmt[] {
@@ -441,9 +711,13 @@ export class ResolveHirToCir {
       }
 
       case "vector": {
-        const elements = h.elements.map((e) => this.resolveExpr(e));
+        // A collection slot is a store site: a struct element is copied (D11).
+        const elements = h.elements.map((e) => this.copyStore(this.resolveExpr(e), h.src, "collection-elem"));
         const ct = this.ctypeOf(h, "vector");
-        return { src: h.src, ctype: ct.k === "vec" ? ct : { k: "vec", elem: C_VALUE }, kind: "c-vector", elements };
+        // Prefer the channel's element type; else infer a common concrete element type (so a vector of
+        // structs stays `vec<obj>` and its for-each binding / index reads stay typed).
+        const elem = ct.k === "vec" && ct.elem.k !== "value" ? ct.elem : (this.commonElemType(elements) ?? C_VALUE);
+        return { src: h.src, ctype: { k: "vec", elem }, kind: "c-vector", elements };
       }
 
       case "matrix": {
@@ -499,6 +773,15 @@ export class ResolveHirToCir {
   }
 
   private memberRead(src: ast.ASTNode, object: CExpr, fieldName: string): CExpr {
+    // A struct/class field read routes to slot access (spec A4). A zero-arg method reference stays a
+    // member read here only if it is a field-held closure; a genuine method reference is not a value.
+    if (object.ctype.k === "obj") {
+      const desc = this.classes.get(object.ctype.className);
+      if (desc?.fieldSlot.has(fieldName)) return this.fieldGet(src, object, fieldName);
+      // A zero-arg method invoked in `{(v.str)}` form: `(v.str)` is a call. Reached here only as a
+      // value read of a method -> invoke it (the D1 dotted-call rule); the method takes only self.
+      if (desc?.methods.has(fieldName)) return this.resolveObjMethod(src, object, fieldName, []);
+    }
     const baseKey = object.ctype.k === "str" ? "str" : object.ctype.k === "vec" ? "vec" : "dyn";
     const field = NATIVE_FIELDS.get(`${baseKey}.${fieldName}`) ?? NATIVE_FIELDS.get(`dyn.${fieldName}`);
     if (baseKey === "dyn") {
@@ -563,7 +846,14 @@ export class ResolveHirToCir {
         this.ledger.record("A9-extern", "import", node, "module import skipped (v0 intrinsics stand in for the stdlib)");
         return [];
       case "type-def":
-        return []; // compile-time only
+      case "interface":
+      case "modifier-def":
+      case "macro-def":
+        return []; // compile-time / erased declarations (interfaces are erased per D24)
+      case "struct":
+      case "class":
+        this.collectClassMembers(node as ast.StructNode | ast.ClassNode);
+        return [];
       case "function": {
         const f = node as ast.FunctionNode;
         // A module-level declaration is a top-level C function; a declaration inside a function body
@@ -835,6 +1125,59 @@ export class ResolveHirToCir {
     return null;
   }
 
+  // -- struct/class construction, fields, methods (spec A4) ----------------------------------------
+
+  /** The common concrete element type of a vector literal, or undefined if the elements disagree. */
+  private commonElemType(elements: CExpr[]): CType | undefined {
+    if (elements.length === 0) return undefined;
+    const unwrap = (e: CExpr): CType => (e.kind === "c-copy" ? e.inner.ctype : e.ctype);
+    const first = unwrap(elements[0]);
+    if (first.k === "value") return undefined;
+    return elements.every((e) => ctypeEquals(unwrap(e), first)) ? first : undefined;
+  }
+
+  private resolveConstruct(node: ast.ASTNode, className: string, args: ast.ASTNode[]): CExpr {
+    const desc = this.classes.get(className)!;
+    this.ledger.record("A4", "construct", node, `construction of '${className}' resolved from the symbol table (no HIR node)`);
+    // A field initializer is a store site: a struct-typed arg is copied (D11), an array/class shared.
+    const cArgs = args.map((a) => this.copyStore(this.resolveAstExpr(a), node, "field-init"));
+    return {
+      src: node, ctype: { k: "obj", className },
+      kind: "c-construct", className, isStruct: desc.isStruct, args: cArgs, fieldCount: desc.fields.length,
+    };
+  }
+
+  /** A field read off a typed struct/class receiver: slot access + unbox. */
+  private fieldGet(node: ast.ASTNode, object: CExpr, fieldName: string): CExpr {
+    const className = object.ctype.k === "obj" ? object.ctype.className : undefined;
+    const desc = className ? this.classes.get(className) : undefined;
+    if (desc && desc.fieldSlot.has(fieldName)) {
+      const slot = desc.fieldSlot.get(fieldName)!;
+      this.ledger.record("A4", "field-get", node, "struct field access resolved to a slot from the descriptor (not the HIR)");
+      return { src: node, ctype: desc.fields[slot].ctype, kind: "c-field-get", object, slot, fieldName };
+    }
+    // A method referenced as a value, or a dynamic member -> fall back to boxed member read.
+    return this.memberRead(node, object, fieldName);
+  }
+
+  /** A method call on a typed struct/class receiver, devirtualized to a direct call with self. */
+  private resolveObjMethod(node: ast.ASTNode, recv: CExpr, method: string, args: ast.ASTNode[]): CExpr {
+    const className = (recv.ctype as any).className as string;
+    const desc = this.classes.get(className)!;
+    const m = desc.methods.get(method);
+    if (m) {
+      this.ledger.record("A3", "method-devirt", node, "method call devirtualized to a direct call with explicit self (SIL-style)");
+      const cArgs = args.map((a) => this.resolveAstExpr(a));
+      return { src: node, ctype: m.ret, kind: "c-call", callee: { kind: "free", cName: m.cName, params: [{ k: "obj", className }, ...m.params], ret: m.ret }, args: [recv, ...cArgs] };
+    }
+    if (desc.fieldSlot.has(method)) {
+      // `(obj.field)` with NO args is a D1 field READ; with args, a call through a field-held closure.
+      const field = this.fieldGet(node, recv, method);
+      return args.length === 0 ? field : this.closureCall(node, field, args);
+    }
+    throw this.refuse(node, `method:${className}.${method}`, "resolveObjMethod");
+  }
+
   private resolveRawIndexer(node: ast.IndexerNode): CExpr {
     let expr: CExpr = this.resolveIdentifier(node.id);
     (node.indices ?? []).forEach((group, g) => {
@@ -858,6 +1201,10 @@ export class ResolveHirToCir {
     if (name.startsWith("__ll_hir")) {
       const ctype = this.localCType(name) ?? this.ctypeOfAst(node, "temp-substituted");
       return { src: node, ctype, kind: "c-temp", name };
+    }
+    // `this` inside a method body binds to the self object.
+    if (name === "this" && this.selfClass) {
+      return { src: node, ctype: { k: "obj", className: this.selfClass }, kind: "c-ref", cName: "__self" };
     }
     if (node._type === "composite-identifier") {
       return this.resolveCompositeRead(node as ast.CompositeIdentifierNode);
@@ -912,10 +1259,16 @@ export class ResolveHirToCir {
     return entry?.inferredType !== undefined ? mapType(entry.inferredType) : C_VALUE;
   }
 
-  /** `a.b` as a VALUE: a local's native member, or a host global (A9). */
+  /** `a.b` as a VALUE: `this.field`, a local's struct field / native member, or a host global (A9). */
   private resolveCompositeRead(node: ast.CompositeIdentifierNode): CExpr {
     const parts = node.parts;
     const headName = parts[0];
+    // `this.x` inside a method.
+    if (headName === "this" && this.selfClass) {
+      let expr: CExpr = { src: node, ctype: { k: "obj", className: this.selfClass }, kind: "c-ref", cName: "__self" };
+      for (const field of parts.slice(1)) expr = this.memberRead(node, expr, field);
+      return expr;
+    }
     const local = (() => { try { return this.context.symbolTable.resolveSymbol(headName, node); } catch { return undefined; } })();
     const info = this.localInfo(mangleC(headName));
     const isLocal = !this.isExtern(local) && (local?.inferredType !== undefined || info !== undefined);
@@ -960,6 +1313,13 @@ export class ResolveHirToCir {
       case "call":
         return this.resolveCall(node, form.callee, form.args);
       case "special":
+        // `(new Point 1 2)` -- explicit construction. The class name is the first argument.
+        if (form.name === "new" && form.args.length >= 1) {
+          const cls = form.args[0];
+          const clsName = cls._type === "simple-identifier" ? (cls as ast.SimpleIdentifierNode).id
+            : cls._type === "type-name" ? (cls as any).name : undefined;
+          if (clsName && this.classes.has(clsName)) return this.resolveConstruct(node, clsName, form.args.slice(1));
+        }
         throw this.refuse(node, `special:${form.name}`, "resolveList");
       case "apply":
         throw this.refuse(node, "apply-lambda", "resolveList");
@@ -982,6 +1342,14 @@ export class ResolveHirToCir {
       }
       if (op === "-" && args.length === 1) {
         const operand = this.resolveAstExpr(args[0]);
+        // A user unary `:operator -` on a struct operand -> a devirtualized call.
+        if (operand.ctype.k === "obj") {
+          const overload = this.operators.get(`u-:${operand.ctype.className}`);
+          if (overload) {
+            this.ledger.record("A3", "operator-call", node, "unary operator overload dispatched statically");
+            return { src: node, ctype: overload.ret, kind: "c-call", callee: { kind: "free", cName: overload.cName, params: [operand.ctype], ret: overload.ret }, args: [operand] };
+          }
+        }
         const mode = operand.ctype.k === "real" ? "real" : "int";
         return { src: node, ctype: operand.ctype.k === "real" ? C_REAL : C_INT, kind: "c-unop", op: "-", mode, operand };
       }
@@ -1025,7 +1393,11 @@ export class ResolveHirToCir {
         if (args.length === 0) return this.resolveIdentifier(callee as ast.IdentifierNode);
         return this.closureCall(node, this.resolveIdentifier(callee as ast.IdentifierNode), args);
       }
-      // (2) A top-level function defined in this module -> a direct typed C call.
+      // (2) A struct/class name -> construction (spec A4: the HIR models no construction).
+      if (this.classes.has(name)) {
+        return this.resolveConstruct(node, name, args);
+      }
+      // (3) A top-level function defined in this module -> a direct typed C call.
       if (this.topLevelFns.has(name)) {
         const sig = this.topLevelFns.get(name)!;
         const cArgs = args.map((a) => this.resolveAstExpr(a));
@@ -1067,28 +1439,24 @@ export class ResolveHirToCir {
     this.ledger.record("A9-extern", "imported-body", fn, `imported l-lang function '${name}' lowered on demand (C analog of ensureSymbolInlined)`);
     this.registerTopLevel(fn, name);
     const sig = this.topLevelFns.get(name)!;
-    const savedScopes = this.scopes.slice();
-    const savedCells = this.cellVars;
-    const savedInFn = this.inFunctionBody;
-    (this as any).scopes = [new Map<string, VarInfo>()];
-    this.inFunctionBody = true;
-    try {
-      this.cellVars = this.computeCellVars(fn.body ?? []);
+    this.isolated(fn, () => {
       const params: CParam[] = fn.params.map((p, i) => this.declareParam(p, sig.params[i]));
       const prologue = this.paramCopyPrologue(fn, params);
       const body = this.resolveFunctionBody(fn);
       this.functions.push({ src: fn, cName: mangleC(name), params, ret: sig.ret, body: { stmts: [...prologue, ...body.stmts] } });
-    } finally {
-      (this as any).scopes = savedScopes;
-      this.cellVars = savedCells;
-      this.inFunctionBody = savedInFn;
-    }
+    });
   }
 
   private resolveDottedCall(node: ast.ListNode, callee: ast.CompositeIdentifierNode, args: ast.ASTNode[]): CExpr {
     const whole = callee.id;
     const intrinsic = INTRINSIC_CALLS.get(whole);
     const headName = callee.parts[0];
+    // `(this.field)` / `(this.method args)` inside a method body.
+    if (headName === "this" && this.selfClass) {
+      let recv: CExpr = { src: callee, ctype: { k: "obj", className: this.selfClass }, kind: "c-ref", cName: "__self" };
+      for (const mid of callee.parts.slice(1, -1)) recv = this.memberRead(node, recv, mid);
+      return this.resolveNativeMethod(node, recv, callee.parts[callee.parts.length - 1], args);
+    }
     const localEntry = (() => { try { return this.context.symbolTable.resolveSymbol(headName, callee); } catch { return undefined; } })();
     const localVar = this.localInfo(mangleC(headName));
 
@@ -1118,6 +1486,8 @@ export class ResolveHirToCir {
   }
 
   private resolveNativeMethod(node: ast.ListNode, recv: CExpr, method: string, args: ast.ASTNode[]): CExpr {
+    // A struct/class receiver -> a devirtualized user method (spec A3/A4).
+    if (recv.ctype.k === "obj") return this.resolveObjMethod(node, recv, method, args);
     const baseKey = recv.ctype.k === "str" ? "str" : recv.ctype.k === "vec" ? "vec" : "dyn";
     let def = NATIVE_METHODS.get(`${baseKey}.${method}`);
     let cArgs = args.map((a) => this.resolveAstExpr(a));
@@ -1149,6 +1519,20 @@ export class ResolveHirToCir {
 
   private mkBinop(op: string, lhs: CExpr, rhs: CExpr, src: ast.ASTNode): CExpr {
     const canonOp = op === "≠" ? "!=" : op;
+    // A user `:operator` overload on a struct/class LEFT operand -> a direct devirtualized call (Q4:
+    // extensions/operators resolve statically when the operand type is known). Both shapes call
+    // `opfn(lhs, rhs)`: a method op takes lhs as self, a top-level op takes both as params.
+    if (lhs.ctype.k === "obj") {
+      const overload = this.operators.get(`${canonOp}:${lhs.ctype.className}`);
+      if (overload) {
+        this.ledger.record("A3", "operator-call", src, "operator overload dispatched statically to a direct call");
+        return {
+          src, ctype: overload.ret, kind: "c-call",
+          callee: { kind: "free", cName: overload.cName, params: [lhs.ctype, rhs.ctype], ret: overload.ret },
+          args: [lhs, rhs],
+        };
+      }
+    }
     const mode = this.binopMode(canonOp, lhs, rhs, src);
     const ctype = this.binopCType(canonOp, mode);
     return { src, ctype, kind: "c-binop", op: canonOp, mode, lhs, rhs };
@@ -1242,26 +1626,48 @@ export class ResolveHirToCir {
     return true;
   }
 
-  /** Register a top-level (module-scope) function's signature so calls and value-uses resolve. */
+  /** Register a top-level (module-scope) function's signature so calls and value-uses resolve. The
+   *  param/return CTypes must match the DEFINITION site (declareParam), so the AST annotation wins
+   *  over a boxed symbol-table type (a struct param the checker erased to Unknown). */
   private registerTopLevel(fn: ast.FunctionNode, name: string): void {
     if (this.topLevelFns.has(name)) return;
     const symT = this.dipSymbols("A3", "function-signature", fn, "signature resolved through the symbol table (not on the HIR)", name)?.inferredType;
-    const params = (symT?.kind === "function" ? symT.params ?? [] : fn.params.map(() => undefined)).map((p) => mapType(p));
-    const ret = this.userFnRet(symT, fn);
-    this.topLevelFns.set(name, { params, ret, arity: fn.params.length });
+    const symParams: any[] = symT?.kind === "function" ? symT.params ?? [] : [];
+    const params = fn.params.map((p, i) => {
+      const sigT = symParams[i] ? mapType(symParams[i]) : undefined;
+      return (sigT && sigT.k !== "value" ? sigT : undefined) ?? this.ctypeFromAnnotation(p) ?? sigT ?? C_VALUE;
+    });
+    const ret = this.userFnRet(symT, fn) ;
+    const annotatedRet = this.typeNodeToCType(fn.returns);
+    this.topLevelFns.set(name, { params, ret: ret.k === "value" && annotatedRet ? annotatedRet : ret, arity: fn.params.length });
   }
 
   /** Pre-scan the module body: register every top-level function BEFORE resolving (forward refs). */
   private registerModuleFunctions(items: ast.ASTNode[]): void {
-    for (const item of items) {
-      let n: ast.ASTNode | undefined = item;
-      if (n?._type === "list") {
-        const form = classifyList(n as ast.ListNode);
-        if (form.kind === "grouping") n = form.inner;
-      }
-      if (n?._type === "function" && (n as ast.FunctionNode).name && !(n as ast.FunctionNode).generator && !(n as ast.FunctionNode).async) {
+    for (const n of items) {
+      if (n?._type === "function" && (n as ast.FunctionNode).name && !(n as ast.FunctionNode).generator && !(n as ast.FunctionNode).async
+          && !(n as ast.FunctionNode).modifiers?.some((m) => m.modifier === "operator")) {
         this.registerTopLevel(n as ast.FunctionNode, ast.symbolName((n as ast.FunctionNode).name));
       }
+    }
+  }
+
+  /** Run `body` with a fresh isolated scope stack (a C function sees no enclosing frame). */
+  private isolated<T>(fn: ast.FunctionNode, run: () => T): T {
+    const savedScopes = this.scopes.slice();
+    const savedCells = this.cellVars;
+    const savedInFn = this.inFunctionBody;
+    const savedSelf = this.selfClass;
+    (this as any).scopes = [new Map<string, VarInfo>()];
+    this.inFunctionBody = true;
+    try {
+      this.cellVars = this.computeCellVars(fn.body ?? []);
+      return run();
+    } finally {
+      (this as any).scopes = savedScopes;
+      this.cellVars = savedCells;
+      this.inFunctionBody = savedInFn;
+      this.selfClass = savedSelf;
     }
   }
 
@@ -1270,27 +1676,74 @@ export class ResolveHirToCir {
     const name = fn.name ? ast.symbolName(fn.name) : "<anonymous>";
     if (this.refuseCoroutine(fn, name)) return;
     if (!fn.name) { this.refuse(fn, "lambda", "collectFunction"); return; }
+    // A top-level `:operator` function compiles under its operator symbol, not its `+` name.
+    if (fn.modifiers?.some((m) => m.modifier === "operator")) { this.collectOperatorFn(fn); return; }
     this.registerTopLevel(fn, name);
     const sig = this.topLevelFns.get(name)!;
-
-    // A top-level C function is ISOLATED: it cannot see module-body (`main`) locals except through
-    // its parameters, so resolution runs on a fresh scope stack.
-    const savedScopes = this.scopes.slice();
-    const savedCells = this.cellVars;
-    const savedInFn = this.inFunctionBody;
-    (this as any).scopes = [new Map<string, VarInfo>()];
-    this.inFunctionBody = true;
-    try {
-      this.cellVars = this.computeCellVars(fn.body ?? []);
+    this.isolated(fn, () => {
       const params: CParam[] = fn.params.map((p, i) => this.declareParam(p, sig.params[i]));
       const prologue = this.paramCopyPrologue(fn, params);
       const body = this.resolveFunctionBody(fn);
       this.functions.push({ src: fn, cName: mangleC(name), params, ret: sig.ret, body: { stmts: [...prologue, ...body.stmts] } });
-    } finally {
-      (this as any).scopes = savedScopes;
-      this.cellVars = savedCells;
-      this.inFunctionBody = savedInFn;
+    });
+  }
+
+  /** Compile a struct/class's method bodies (and in-struct operators) as free functions with self. */
+  private collectClassMembers(node: ast.StructNode | ast.ClassNode): void {
+    const className = ast.symbolName(node.name);
+    // The descriptor may not exist yet if this struct was nested past the pre-pass -- register now.
+    if (!this.classes.has(className)) this.registerClass(node);
+    for (const fn of this.memberFunctions(node)) {
+      if (!fn.name) continue;
+      if (fn.modifiers?.some((mod) => mod.modifier === "operator")) { this.collectOperatorFn(fn, className); continue; }
+      this.collectMethod(fn, className);
     }
+  }
+
+  private collectMethod(fn: ast.FunctionNode, className: string): void {
+    const mname = ast.symbolName(fn.name);
+    if (this.refuseCoroutine(fn, mname)) return;
+    const m = this.classes.get(className)!.methods.get(mname)!;
+    const selfType: CType = { k: "obj", className };
+    this.isolated(fn, () => {
+      this.selfClass = className;
+      this.declareLocal("__self", selfType);
+      const params: CParam[] = fn.params.map((p, i) => this.declareParam(p, m.params[i]));
+      const prologue = this.paramCopyPrologue(fn, params);
+      const body = this.resolveFunctionBody(fn);
+      this.functions.push({
+        src: fn, cName: m.cName,
+        params: [{ cName: "__self", ctype: selfType }, ...params],
+        ret: m.ret, body: { stmts: [...prologue, ...body.stmts] },
+      });
+    });
+  }
+
+  /** Compile an operator function (top-level or in-struct) under its devirtualized operator symbol.
+   *  An in-struct method operator gets `self` as its first C parameter (the left operand = `this`). */
+  private collectOperatorFn(fn: ast.FunctionNode, ownerClass?: string): void {
+    const op = ast.symbolName(fn.name);
+    const isMethod = ownerClass !== undefined;
+    const unary = isMethod ? fn.params.length === 0 : fn.params.length <= 1;
+    const opType = ownerClass ?? this.paramTypeName(fn.params[0]);
+    if (!opType) { this.refuse(fn, "operator-untyped-operand", "collectOperatorFn"); return; }
+    const entry = this.operators.get(`${unary ? "u" : ""}${op}:${opType}`);
+    if (!entry) { this.refuse(fn, `operator:${op}`, "collectOperatorFn"); return; }
+    const t: any = (() => { try { return this.context.symbolTable.resolveSymbol(op, fn)?.inferredType; } catch { return undefined; } })();
+    const paramTs: any[] = t?.kind === "function" && t.params ? t.params : fn.params.map(() => undefined);
+    this.isolated(fn, () => {
+      const selfParams: CParam[] = [];
+      if (isMethod) {
+        this.selfClass = ownerClass;
+        this.declareLocal("__self", { k: "obj", className: ownerClass! });
+        selfParams.push({ cName: "__self", ctype: { k: "obj", className: ownerClass! } });
+      }
+      const params: CParam[] = fn.params.map((p, i) => this.declareParam(p, paramTs[i] !== undefined ? mapType(paramTs[i]) : undefined));
+      const allParams = [...selfParams, ...params];
+      const prologue = this.paramCopyPrologue(fn, params);
+      const body = this.resolveFunctionBody(fn);
+      this.functions.push({ src: fn, cName: entry.cName, params: allParams, ret: entry.ret, body: { stmts: [...prologue, ...body.stmts] } });
+    });
   }
 
   private declareParam(p: ast.ParameterNode, sigT: CType | undefined): CParam {
@@ -1298,8 +1751,11 @@ export class ResolveHirToCir {
       this.refuse(p, "param-destructuring", "declareParam");
       return { cName: `p_bad`, ctype: C_VALUE };
     }
-    const ctype = sigT ?? C_VALUE;
-    if (sigT === undefined) this.ledger.record("A1", "param-untyped", p, "parameter type unavailable; boxed");
+    // Prefer a CONCRETE signature type; when the checker only offers a boxed/Unknown type, the AST
+    // annotation wins (the symbol table erases an inferred struct type to Unknown -- spec A1).
+    const annotated = this.ctypeFromAnnotation(p);
+    const ctype = (sigT && sigT.k !== "value" ? sigT : undefined) ?? annotated ?? sigT ?? C_VALUE;
+    if (ctype.k === "value") this.ledger.record("A1", "param-untyped", p, "parameter type unavailable; boxed");
     const cName = mangleC(ast.symbolName(p.name as ast.IdentifierNode));
     // A param captured mutably by a nested closure must be a cell (the mut-capture channel again).
     const cell = this.cellVars.has(cName);
@@ -1307,12 +1763,18 @@ export class ResolveHirToCir {
     return { cName, ctype };
   }
 
-  /** D11 copy-on-entry (A5): a boxed param may hold a struct; copy it. Native primitives are skipped. */
+  /** Map a parameter's AST type annotation to a CType -- a known struct/class -> obj, else primitive. */
+  private ctypeFromAnnotation(p: ast.ParameterNode): CType | undefined {
+    return this.typeNodeToCType(p.type);
+  }
+
+  /** D11 copy-on-entry (A5): a struct-typed or boxed param is copied (passed by value). A native
+   *  primitive, array or class-reference param is not (it is already a value or a shared reference). */
   private paramCopyPrologue(fn: ast.FunctionNode, params: CParam[]): CStmt[] {
     const out: CStmt[] = [];
     for (const p of params) {
-      if (p.ctype.k !== "value") continue; // only a boxed param can be a struct value
-      this.ledger.record("A5", "param-copy", fn, "callee-side D11 copy-on-entry (a boxed param may be a struct)");
+      if (p.ctype.k !== "value" && p.ctype.k !== "obj") continue;
+      this.ledger.record("A5", "param-copy", fn, "callee-side D11 copy-on-entry (a struct/boxed param passes by value)");
       out.push({
         src: fn, ctype: C_VOID, kind: "c-assign",
         target: { kind: "name", cName: p.cName, ctype: p.ctype },

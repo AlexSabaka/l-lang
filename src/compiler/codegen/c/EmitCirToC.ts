@@ -80,6 +80,15 @@ export class EmitCirToC {
 
   emitModule(m: CModule): string {
     this.out = [];
+    // Struct/class descriptors (ll_class): field names in slot order + the is_struct flag.
+    for (const c of m.classes) {
+      const fieldsArr = c.fields.length
+        ? `static const char* __ll_fields_${c.name}[] = {${c.fields.map((f) => `"${f.name}"`).join(", ")}};`
+        : `static const char** __ll_fields_${c.name} = 0;`;
+      this.line(fieldsArr);
+      this.line(`static ll_class __ll_class_${c.name} = {"${c.name}", ${c.isStruct ? "true" : "false"}, ${c.fields.length}, __ll_fields_${c.name}};`);
+    }
+    if (m.classes.length) this.line("");
     // Env struct definitions for lifted closures that capture.
     for (const l of m.lifted) {
       if (!l.envStruct) continue;
@@ -272,7 +281,10 @@ export class EmitCirToC {
 
   private lvalue(l: CLValue): string {
     if (l.kind === "name") return l.cell ? `(*${l.cName})` : l.cName;
-    throw new Error("C emit: index lvalue not implemented (Phase C)");
+    if (l.kind === "field") return `(${this.expr(l.object)})->fields[${l.slot}]`;
+    // index store: a partial write into a vector or map.
+    if (l.mode === "map") return `*ll_map_slot(${this.expr(l.base)}, ${this.expr(l.index)})`;
+    return `(${this.expr(l.base)})->items[${this.expr(l.index)}]`;
   }
 
   private expr(e: CExpr): string {
@@ -410,8 +422,21 @@ export class EmitCirToC {
         if (e.to.k === "bool" && e.from.k === "int") return `((${inner}) != 0)`;
         throw new Error(`C emit: no cast ${e.from.k} -> ${e.to.k}`);
       }
+      case "c-construct": {
+        const args = e.args.map((a) => this.expr(a));
+        return args.length
+          ? `ll_obj_new(&__ll_class_${e.className}, ${args.length}, (ll_value[]){${args.join(", ")}})`
+          : `ll_obj_new(&__ll_class_${e.className}, 0, (ll_value*)0)`;
+      }
+      case "c-field-get":
+        // The raw slot holds a boxed ll_value; P2 inserts the unbox to the field's static type.
+        return `(${this.expr(e.object)})->fields[${e.slot}]`;
       case "c-copy":
-        return e.inner.ctype.k === "value" ? `ll_copy(${this.expr(e.inner)})` : this.expr(e.inner);
+        // CP3 materialization: a struct deep-copies (recursing struct fields); everything else is
+        // shared/value. The runtime dispatches on the tag; ll_copy_obj keeps the typed obj shape.
+        if (e.inner.ctype.k === "obj") return `ll_copy_obj(${this.expr(e.inner)})`;
+        if (e.inner.ctype.k === "value") return `ll_copy(${this.expr(e.inner)})`;
+        return this.expr(e.inner);
       case "c-closure-make": {
         const nm = `"${cEscape(e.name)}"`;
         if (!e.envStruct) {

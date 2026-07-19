@@ -46,4 +46,19 @@ export const C_PASSING: readonly string[] = [
   // 01-functions/03_higher_order_functions.lisp is an xfail (parse failure, form layer).
   "01-functions/04_pipelines.lisp",
   "15-modules/00_main.lisp", // unlocked by on-demand imported-body lowering (a real multi-module program)
+  // Phase C -- structs/classes, CP3 value semantics (struct copies, class aliases, recursive-into-
+  // struct-fields), operator overloading (top-level + method + unary, devirtualized), maps, index
+  // assignment, defmodifier (desugars away).
+  "05-data-structures/01_arrays.lisp",
+  "06-value-semantics/00_structs.lisp",
+  "06-value-semantics/02_value_semantics.lisp",
+  "06-value-semantics/03_operators_vector.lisp",
+  "06-value-semantics/04_operators_complex.lisp",
+  "08-generics/01_interface_basic.lisp",  // generics erase at runtime (D24); the classes/interfaces compile
+  "08-generics/02_multiple_generics.lisp",
+  "08-generics/03_generic_constraints.lisp",
+  "08-generics/04_generic_interface.lisp",
+  "10-modifiers/01_basic_modifier.lisp",  // defmodifier desugars before codegen
+  "20-algorithms/04_mutual_recursion.lisp",
+  "20-algorithms/05_memoization.lisp",
 ];

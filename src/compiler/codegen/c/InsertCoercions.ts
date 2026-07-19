@@ -25,7 +25,7 @@ export class InsertCoercions {
     if (this.inserted > 0) {
       this.ledger.record("A6", "coercions-inserted", undefined as any, `${this.inserted} box/unbox/cast nodes inserted by the coercion pass`);
     }
-    return { functions, lifted, adapters: m.adapters, main };
+    return { functions, lifted, classes: m.classes, adapters: m.adapters, main };
   }
 
   private runFunction(f: CFunction): CFunction {
@@ -50,9 +50,10 @@ export class InsertCoercions {
       case "c-decl":
         return { ...s, init: s.init ? this.coerce(this.expr(s.init), s.declCType) : null };
       case "c-assign": {
-        const target = s.target.kind === "index"
-          ? { ...s.target, base: this.expr(s.target.base), index: this.expr(s.target.index) }
-          : s.target;
+        let target = s.target;
+        if (s.target.kind === "index") target = { ...s.target, base: this.expr(s.target.base), index: this.expr(s.target.index) };
+        else if (s.target.kind === "field") target = { ...s.target, object: this.expr(s.target.object) };
+        // A name target keeps its native type; a field/index slot stores boxed (ll_value).
         const expected = s.target.kind === "name" ? s.target.ctype : C_VALUE;
         return { ...s, target, value: this.coerce(this.expr(s.value), expected) };
       }
@@ -180,6 +181,18 @@ export class InsertCoercions {
 
       case "c-member":
         return { ...e, object: this.expr(e.object) };
+
+      case "c-construct":
+        // Fields are stored boxed (ll_value); each constructor arg is coerced to value.
+        return { ...e, args: e.args.map((a) => this.coerce(this.expr(a), C_VALUE)) };
+
+      case "c-field-get": {
+        // The slot holds a boxed ll_value; unbox to the field's static type.
+        const object = this.expr(e.object);
+        if (e.ctype.k === "value") return { ...e, object };
+        const inner: CExpr = { ...e, object, ctype: C_VALUE };
+        return this.coerce(inner, e.ctype);
+      }
 
       case "c-closure-make":
         // Capture values are already-typed reads of enclosing bindings; no edge to coerce. The env
