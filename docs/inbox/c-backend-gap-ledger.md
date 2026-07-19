@@ -13,14 +13,16 @@ The C pipeline is deliberately **fail-closed and structural**: P1 (`ResolveHirTo
 `GapEntry` before returning. So the ledger isn't editorializing after the fact; it's a machine-generated
 census of contract violations, one per dip, aggregated by `assumption:construct` across the whole corpus.
 
-Everything below cites counts reproducible with:
+Every count below is reproducible with:
 
 ```bash
 npm run test:c -- --gap-ledger /tmp/ledger.json     # dumps the full census + a summary table
 ```
 
-Status at time of writing: **draft** (Phase E, pre-broad-sweep). Numbers are the pre-sweep census;
-the sweep that follows drains the refusal frontier and will move them.
+Status: **final** (Phase E). The numbers are the post-sweep census — Phase E ran a breadth sweep
+(field mutation, enums, `:extension` devirtualization, a native, a global-store correctness fix) that
+drained most of the mechanical refusal frontier into evidence, so the residual frontier in §6 is the
+*genuinely hard* remainder, not low-hanging fruit.
 
 ---
 
@@ -51,33 +53,33 @@ load-bearing, not cosmetic.
 
 ---
 
-## 2. Scoreboard (corpus-wide, pre-sweep)
+## 2. Scoreboard (corpus-wide)
 
 | Outcome | Count | Meaning |
 |---|--:|---|
-| ✅ Pass | 49 | C output == golden, byte-for-byte |
+| ✅ Pass | 53 | C output == golden, byte-for-byte |
 | ❌ Fail / 💥 Error | 0 | no regressions, no emitter crashes on the green set |
-| 🚧 Not-yet | 19 | unlisted-failing (cc error, output mismatch, or runtime trap) — the frontier |
-| 🚫 Refused | 25 | honest LL0105/06/07 diagnostics (coroutine / no-lowering / host-global) |
-| 📚 Library / 🧪 Fixture / ⏳ XFail | 22 | not executable as standalone `node` programs by design |
+| 🚧 Not-yet | 24 | unlisted-failing (cc error, output mismatch, or runtime trap) — the frontier (§6) |
+| 🚫 Refused | 16 | honest LL0105/06/07 diagnostics (coroutine / no-lowering / host-global) |
+| 📚 Library / 🧪 Fixture / ⏳ XFail / ⚠️ Skip | 37 | not executable as standalone `node` programs by design |
 | **Total** | **130** | |
 
-**Total recorded dips: 8 240**, distributed:
+**Total recorded dips: 8 209**, distributed:
 
 | Assumption | Dips | One-line |
 |---|--:|---|
-| A3 — calls modeled | 2 710 | the biggest hole: no call node exists in the HIR at all |
-| A2 — atoms modeled | 2 469 | every variable read and decl is an opaque leaf |
-| A5 — copy/coerce decided | 807 | the D11 value-copy decision lives nowhere in the HIR |
-| A1 — types on every node | 789 | `nodeTypes` misses identifier *uses*; fall back to symbols |
+| A3 — calls modeled | 2 728 | the biggest hole: no call node exists in the HIR at all |
+| A2 — atoms modeled | 2 386 | every variable read and decl is an opaque leaf |
+| A5 — copy/coerce decided | 809 | the D11 value-copy decision lives nowhere in the HIR |
+| A1 — types on every node | 753 | `nodeTypes` misses identifier *uses*; fall back to symbols |
 | A9-extern — the extern boundary | 642 | **new**: unmodeled by the spec; every program preludes `std/js` |
-| A4 — construction modeled | 363 | constructors/field layout reconstructed from the symbol table |
-| A6 — coercions inserted | 166 | the P2 pass's own traffic (backend pipeline, not a core cut) |
+| A4 — construction modeled | 457 | constructors, field layout, **enums** reconstructed off the HIR |
+| A6 — coercions inserted | 174 | the P2 pass's own traffic (backend pipeline, not a core cut) |
 | A7 — pattern tests modeled | 144 | match decomposed from the raw `PatternNode` |
-| "new" bucket | 126 | findings with no A-row: see §4 |
+| "new" bucket | 92 | findings with no A-row: see §4 |
 | A8 — coroutines / native machinery | 24 | refused (coroutines) or lowered to native (try/throw) |
 
-The shape is the headline: **A3 + A2 = 63% of all dips.** The HIR's two largest holes are the two
+The shape is the headline: **A3 + A2 = 62% of all dips.** The HIR's two largest holes are the two
 most fundamental things a backend does — *name a value* and *call something*. Everything else is a
 rounding error against those two. That is the empirical case for prioritizing the atom/call node
 families (spec Steps 3–4) above all other cuts.
@@ -97,35 +99,36 @@ be chased through the symbol table's binding — precisely the A1/A2 entanglemen
 
 | construct | dips | files | via | note |
 |---|--:|--:|---|---|
-| `ref-type-via-symbols` | 415 | 62 | symbols | identifier use missing from the channel; type from the binding |
+| `ref-type-via-symbols` | 396 | 62 | symbols | identifier use missing from the channel; type from the binding |
 | `param-untyped` | 160 | 41 | symbols | parameter type unavailable → boxed |
 | `mut-decl-narrowed` | 109 | 28 | symbols | a `mut` decl's channel type is the initializer's *narrowing*, not the declared type |
 | `index-boxed-base` | 51 | 7 | — | index base has no static container type → boxed element |
 | `foreach-elem` | 21 | 10 | — | collection element type unknown → boxed loop var |
-| `ref-untyped` / `vector` | 33 | 9 | — | no channel *or* symbol type; boxed |
+| `vector` / `ref-untyped` | 16 | 7 | — | no channel *or* symbol type; boxed |
 
 **Workaround:** resolve the binding through `SymbolTable.resolveSymbol().inferredType` when
 `nodeTypes` misses. **The `mut-decl-narrowed` row is the sharpest A1 finding**: the channel stores the
 *narrowed* initializer type, so `(mut x 0)` later assigned a `Real` reads back as `Int` from the
-channel — a backend that trusted it would mis-lay-out the slot. The declared type has to come from the
-symbol table instead. This is a concrete instance of "the channel type is not the layout type."
+channel — a backend that trusted it would mis-lay-out the slot. This same channel-vs-declared mismatch
+bit a store site during the sweep (§5, the global-store fix). "The channel type is not the layout type"
+is not a subtlety; it is a bug the moment a target believes it.
 
 ### A2 — Atoms are modeled, not opaque
 
 | construct | dips | files | via | note |
 |---|--:|--:|---|---|
-| `atom-ref` | 1 513 | 86 | AST | a variable read is an `HOpaqueExpr` leaf |
+| `atom-ref` | 1 465 | 86 | AST | a variable read is an `HOpaqueExpr` leaf |
 | `decl-structure` | 447 | 75 | AST | binding name/mutability read from the raw `VariableNode` |
 | `assign-target` | 169 | 38 | AST | assignment target from raw AST (the `emitAssign` legacy seam) |
 | `formatted-string` | 146 | 47 | AST | interpolation segments from raw AST |
-| `decl-type` / `binding-type` | 150 | 30 | symbols | declaration/binding type through the symbol table |
+| `decl-type` / `binding-type` | 115 | 30 | symbols | declaration/binding type through the symbol table |
 | `foreach-variable` | 44 | 21 | AST | loop binding from the raw `ForEachNode` (`emitForEach` seam) |
 
-**Workaround:** `resolveAstExpr`/`resolveAstStmt` re-drive off `h.src`. **`atom-ref` at 1 513 dips
+**Workaround:** `resolveAstExpr`/`resolveAstStmt` re-drive off `h.src`. **`atom-ref` at 1 465 dips
 across 86 of ~90 executable files is the single most-hit construct in the entire corpus** — literally
 every program reads a variable, and every read is opaque. This is Step 3's mandate (`HRef`) stated as
-a number. Note `HLiteral` already landed on `dev` mid-probe and was chased here (the exhaustive CIR
-switch flagged it at compile time); the ref half is what remains.
+a number. `HLiteral` already landed on `dev` mid-probe and was chased here (the exhaustive CIR switch
+flagged it at compile time); the ref half is what remains.
 
 ### A3 — Calls are modeled (kind + callee identity on the node)
 
@@ -134,49 +137,58 @@ switch flagged it at compile time); the ref half is what remains.
 | `call-dispatch` | 1 960 | 95 | AST | call kind/callee resolved below the HIR — **there is no call node** |
 | `function-signature` | 239 | 61 | symbols | signature through the symbol table |
 | `callee-identity` | 121 | 38 | symbols | callee resolved through symbols (spec wants it *on* the call node) |
-| `member-dyn` / `method-dyn` | 181 | 33 | — | boxed receiver → runtime member/method dispatch |
+| `member-dyn` / `method-dyn` | 182 | 34 | — | boxed receiver → runtime member/method dispatch |
 | `on-demand-lower` | 55 | 9 | — | imported body not pre-lowered; lowered on demand |
-| `method-devirt` / `operator-*` | 85 | 23 | symbols | method/operator overload devirtualized to a direct call |
-| `closure-call` / `closure-lift` / `function-as-value` | 50 | 20 | symbols | first-class function → boxed calling convention |
+| `method-devirt` / `operator-*` / `extension-devirt` | 99 | 25 | symbols | method / operator / extension overload devirtualized to a direct call |
+| `closure-call` / `closure-lift` / `function-as-value` | 53 | 21 | symbols | first-class function → boxed calling convention |
 
 **Workaround:** `resolveConstruct`/`resolveObjMethod`/`binopMode` reconstruct the call shape from the
 raw call AST plus symbol lookups. **`call-dispatch` at 1 960 dips / 95 files is the largest single
 number in the ledger.** The HIR has no `HCall` — every call is an opaque expression whose kind (free
-function / method / intrinsic / closure / operator) the backend must re-derive. This is the strongest
-evidence in the document for Step 4 (the `HCall`-kinds family), and the sub-rows are a ready-made
-taxonomy for that node's variants.
+function / method / intrinsic / closure / operator / **extension**) the backend must re-derive. The
+sweep added the `extension-devirt` row: an `:extension` is a free function that `(recv.m args)`
+statically rewrites to `m(recv, ...)` on its first parameter (Dove's easy Q4 case, D34) — one more
+callee *kind* the HIR doesn't distinguish. This is the strongest evidence in the document for Step 4,
+and the sub-rows are a ready-made taxonomy for the `HCall` kind field.
 
-### A4 — Construction is modeled (constructors, field layout, `super`)
+### A4 — Construction is modeled (constructors, field layout, `super`, enums)
 
 | construct | dips | files | via | note |
 |---|--:|--:|---|---|
 | `field-get` | 190 | 20 | symbols | struct field access → slot index from the descriptor |
 | `construct` | 91 | 24 | symbols | construction resolved from the symbol table (no HIR node) |
+| `field-store` | 51 | 12 | symbols | struct field *store* → static slot **or** runtime member write (see §5) |
+| `enum-ref` | 50 | 5 | — | an enum member reference folded to its constant |
 | `defclass` / `defstruct` | 44 | 25 | symbols | field layout reconstructed from the symbol table |
-| `field-store` | 32 | 9 | symbols | struct field *store* → slot (partial: mutable-field frontier, see §5) |
+| `enum-member` | 25 | 5 | — | an enum member is a compile-time constant (enums aren't even symbols) |
 | `inherit` | 6 | 4 | symbols | parent field/method flattening walked below the HIR |
 
-**Workaround:** a `registerClass` pass reads the symbol table to build `ll_class` descriptors (name,
-is_struct, ordered field names, parent), and every field access/construction is resolved against those
-descriptors. **The HIR carries none of this** — as the spec says, "every emitted constructor is an A4
-entry." The field layout, the slot assignment, the inheritance flattening: all reconstructed. This is
-Step 5 (`HConstruct`/`HFieldInit`), and the `field-store` row is the live edge the sweep extends.
+**Workaround:** a `registerClass`/`registerEnum` pass reads the symbol table (and the raw `EnumNode`)
+to build `ll_class` descriptors and an enum-constant table; every field access, construction, store,
+and enum reference resolves against those. **The HIR carries none of this** — as the spec says, "every
+emitted constructor is an A4 entry." The sweep added two evidence rows here: **enums are the sharpest
+new A4 finding** — `(defenum HttpMethod :GET ...)` produces no HIR node *and no symbol at all*, so the
+member `HttpMethod:GET` is a bare identifier-with-a-colon whose value (ordinal or explicit) is
+reconstructed entirely below the HIR, and a match arm `HttpMethod:GET =>` has to be re-classified from
+a *binding* into an *equality test*. The `field-store` row now also covers the boxed-receiver case
+(`(cell.mine := v)` on an array element → a runtime `ll_member_slot` write). This is Step 5
+(`HConstruct`/`HFieldInit`), and enums argue for an `HEnum`/const-fold companion.
 
 ### A5 — The copy/coerce decision is a node, not a flag
 
 | construct | dips | files | via | note |
 |---|--:|--:|---|---|
-| `return-store` | 405 | 69 | synth | the `isStore` flag stands in for an explicit copy node |
+| `return-store` | 408 | 69 | synth | the `isStore` flag stands in for an explicit copy node |
 | `param-copy` | 159 | 44 | synth | callee-side D11 copy-on-entry (struct/boxed param by value) |
-| `copy:let-decl` | 122 | 36 | synth | explicit CP3 value-copy at a `let` store site |
+| `copy:let-decl` | 121 | 36 | synth | explicit CP3 value-copy at a `let` store site |
 | `foreach-copy` | 42 | 21 | synth | per-iteration element copy |
-| `copy:collection-elem` / `copy:user-assign` / `copy:field-init` | 55 | 25 | synth | copy at other store sites |
+| `copy:user-assign` / `copy:collection-elem` / `copy:field-init` | 55 | 25 | synth | copy at other store sites |
 | `mut-capture-cell` | 16 | 7 | synth | `mut` captured by a closure → shared heap cell |
 | `index-store` | 8 | 5 | — | index-assignment lvalue (partial write) |
 
 **Workaround:** the CP3 value-copy decision (D11) is *synthesized* by the backend at each of the six
 store sites, because the HIR only records an `isStore` boolean, not *where a copy must be inserted*.
-`return-store` at 405 dips shows the reach: two-thirds of executable files return a value and each
+`return-store` at 408 dips shows the reach: two-thirds of executable files return a value and each
 return is a place the backend had to decide "copy or share." This is Step 6's `HCopyStore` — and A5's
 reversibility (decision-as-node, materialization-as-backend-code) is exactly what let the C backend
 pick shallow-at-reference without the HIR committing to it.
@@ -185,8 +197,8 @@ pick shallow-at-reference without the HIR committing to it.
 
 | construct | dips | files | note |
 |---|--:|--:|---|
+| `coercions-inserted` | 75 | 1 | box/unbox/cast nodes the P2 pass actually minted (self-report) |
 | `boxed-arith` | 72 | 24 | boxed operand in arithmetic → runtime tag dispatch (**cannot narrow an Unknown to a guessed native**) |
-| `coercions-inserted` | 67 | 1 | box/unbox/cast nodes the P2 pass actually minted (self-report) |
 | `boxed-compare` | 27 | 10 | boxed operand in comparison → runtime tag dispatch |
 
 **This is the assumption the typed target *validated the hardest*, and it surfaced a genuine
@@ -210,8 +222,9 @@ count measures coercion traffic, deliberately upper-bounded by the maximally-box
 | `type-test` | 2 | 1 | — | runtime type test → `ll_is_type` (D41) |
 
 **Workaround:** P1 expands `HPatternTest` into a bind-then-test comma sequence `(v = scrut, test)` and
-`HHoist` into boxed variable declarations — the A7 decomposition, executed. The spec's `HMatchTest`
-would move this structure onto the HIR; today the match arms are reconstructed from the raw
+`HHoist` into boxed variable declarations — the A7 decomposition, executed. Enum patterns extend the
+same seam: an enum member arm is folded into an equality test here rather than a binder. The spec's
+`HMatchTest` would move this structure onto the HIR; today the arms are reconstructed from the raw
 `MatchNode` on both the test and the variable-hoisting side.
 
 ### A8 — Coroutines refused; native machinery lowered in the backend
@@ -250,19 +263,19 @@ first-class assumption**, with intrinsic-vs-stdlib-body-vs-refuse as its three r
 
 ---
 
-## 4. "New" findings — dips with no A-row (126 total)
+## 4. "New" findings — dips with no A-row (92 total)
 
 These are things the C backend had to decide that the spec's A1–A8 frame doesn't name. The
-`unhandled:*` rows are the **refusal frontier** (§5); the rest are genuine semantic findings:
+`unhandled:*` rows are the residual refusal frontier (§6); the rest are genuine semantic findings:
 
 | finding | dips | files | what it means for the spec |
 |---|--:|--:|---|
 | `void-fn-boxed` | 19 | 8 | the checker types a function `-> Void` but its body *returns values*; the backend must keep it boxed rather than emit a C `void` return. **The `Void` type is not a reliable "returns nothing" signal.** |
-| `void-in-value-position` | 10 | 7 | a `void` call used as a value; JS yields `undefined`, the C backend sequences with nil. A layout question the HIR doesn't answer. |
+| `void-in-value-position` | 13 | 9 | a `void` call used as a value; JS yields `undefined`, the C backend sequences with nil. A layout question the HIR doesn't answer. |
 | `module-global` | 11 | 11 | a module-level binding referenced by a top-level function; hoisted to a C global with external linkage. The HIR has no module-global concept. |
-| `raw-structural:for` | 9 | 2 | **`HFor` cannot carry a statement-bearing `:step`** — when the step is not a simple expression, the whole `for` arrives raw. A concrete HIR node-shape deficiency. |
 | `raw-structural:assign` | 10 | 2 | an assignment reached codegen raw inside a subtree that bailed to opaque. |
-| `int-division` | 2 | 2 | **the checker types `Int/Int` as `Int`, but the JS runtime yields `Real`** (`5/2 == 2.5`). A real static-vs-runtime *semantic divergence* — the C backend must pick one and diverges from a golden if it picks wrong. |
+| `raw-structural:for` | 9 | 2 | **`HFor` cannot carry a statement-bearing `:step`** — when the step is not a simple expression, the whole `for` arrives raw. A concrete HIR node-shape deficiency. |
+| `int-division` | 2 | 2 | **the checker types `Int/Int` as `Int`, but the JS runtime yields `Real`** (`5/2 == 2.5`). A real static-vs-runtime *semantic divergence* — the backend must pick one and diverges from a golden if it picks wrong. |
 
 The two bolded rows (`void-fn-boxed`, `int-division`) are the kind of finding only a typed backend can
 produce: places where the *type the checker assigned* is not the type the *value actually has*. On JS
@@ -271,77 +284,141 @@ forced box. **These deserve to be tracked as first-class HIR-contract questions*
 
 ---
 
-## 5. The refusal frontier (the broad-sweep worklist)
+## 5. What the breadth sweep proved (Phase E)
 
-The 25 refusals are dominated by **LL0106** ("no CIR lowering exists for construct") — the totality
-net. Because every refusal is also a ledger dip (`unhandled:<construct>`), the frontier is a precisely
-enumerated worklist, not a vibe:
+The sweep implemented five things. Each was chosen because it converts a *refusal* into either a green
+(proving what construct the backend needed) or a sharper dip — turning "the backend can't do X" into
+"here is exactly what X costs off the HIR." Net: **+4 green (49→53), refusals 25→16.**
 
-| construct | files | disposition |
-|---|--:|---|
-| `special:new` | 4 | the `(new Class …)` construction form — a second construction syntax P1 doesn't yet route to `resolveConstruct` |
-| `enum` (`defenum`) | 5 | enum member values + enum match patterns |
-| `field-store:*` | 3+ | mutable field assignment `(set obj.field v)` — the A4 store edge |
-| `method:str.*` | 2 | `:extension` methods (`words`, `shout`, `titlecase`, …) + a missing native (`trimEnd`) |
-| `method:Class.*` | 2 | user methods (`Vec2.manhattan`, `Item/Monster.passable`) not resolving — a `resolveObjMethod` gap |
-| `export` | 4 | bare library files whose top-level `export` P1 doesn't model (they lower fine *on demand* when imported) |
-| `foreach-destructuring` | 2 | for-each with a destructuring binding |
-| `spread` | 1 | spread in collection literals |
-| LL0105 (coroutine) | 6 | legitimate refusals — generators/async, kept refused by design |
-| LL0107 (host global) | 2 | `JSON.stringify` / other `std/js` globals with no C representation |
+1. **Field mutation on a boxed receiver (`dyn-field` / `ll_member_slot`).** `(cell.mine := v)` where
+   `cell` is an array element (`(let c cells[i])`, boxed) has no static slot to write. Modeled as a
+   runtime member write by name — the store-side analog of A3's boxed member *read*. Greened
+   `04_flood_fill`. *Evidence:* A4 `field-store` is a real cut in both the typed and boxed cases.
 
-Everything above LL0105 is **mechanically implementable** and is what the broad sweep targets next.
-Each one converts a refusal into either a green (proving what construct the backend needed) or a
-deeper, sharper dip. The LL0105 rows stay refused — that is the correct answer, not a gap.
+2. **Enums (`defenum`).** Members fold to compile-time constants (ordinal or explicit); a reference is
+   an identifier-with-a-colon; a match arm is an equality test, not a binder. Greened `04_enums`.
+   *Evidence:* the new A4 `enum-ref`/`enum-member` rows — enums produce *neither a HIR node nor a
+   symbol*, the most-erased construct measured.
+
+3. **`:extension` devirtualization.** A free fn callable as a method on its first-param type,
+   statically rewritten to a direct call, wired into every dispatch path (typed / native / member-read
+   / computed-member callee, so `((s.reversewords).titlecase)` chains). Greened `01_vec2_operators`.
+   *Evidence:* the new A3 `extension-devirt` row (Dove's easy Q4 case, confirmed static).
+
+4. **A missing native (`str.trimEnd`).** With enum match, greened `06_tetromino_rotation`.
+
+5. **A correctness fix: a module global's store site uses its *declared* ctype.** A captured-mut
+   global is boxed even though the channel still types it `Int`; the store side was re-inferring the
+   native type and unboxing the RHS into a boxed slot (a cc type error). Fixed at the store and
+   receiver sites. *Evidence:* a second, independent instance of A1's "channel type ≠ layout type"
+   — this time causing a miscompile, not just a box.
+
+The sweep did **not** chase the genuinely hard remainder (§6). Where a construct turned out to be deep
+— cross-module class registration, a captured-mut that is *also* a module global, field-chain index
+assignment — it was left refused/not-yet and root-caused here. That is the probe working as intended:
+a refusal that resists a breadth sweep *is itself* a high-value finding.
 
 ---
 
-## 6. Prioritized cut list for `dev` (mapped to spec Steps 3–8)
+## 6. The frontier — every non-green file, root-caused
+
+The remaining 16 refusals and 24 not-yets split three ways. This is the exhaustive "what's left and
+why" — the raw material for prioritizing HIR work.
+
+### 6a. Honest refusals (16) — the backend said so on purpose
+
+| construct | files | disposition |
+|---|--:|---|
+| LL0105 coroutine | 5 | `00_async`, `01_async_pipeline`, `00_generators`, `02_linq_pipeline`, `07_line_clear` — correct refusal, kept by design (A8) |
+| `special:new` (cross-module) | 4 | `00_generic_inventory`, `08_vector_toolkit`, `02_packages/main`, `complex_math_test/main` — the class is defined in an *imported* module (`std/math`, a user package); the C backend only registers *this* module's classes. **Cross-module class registration** is the real cut — a class-level analog of the on-demand `imported-body` lowering already done for functions. |
+| `export` | 4 | `00_lib`, `01_lib_a/b/c` — bare library files whose top-level `export` P1 doesn't model (they lower fine *on demand* when imported by a main). |
+| interface `passable` | 1 | `02_interface_conformance` — a method dispatched through an *interface*, not a concrete class: the statically-**unknown** receiver, i.e. the witness-table case (Dove's genuine Q4 answer, deferred). |
+| `spread` + host global | 1 | `spread_in_literals` — spread in collection literals + a `std/js` global. |
+| host global | 1 | `hex_string_escape` — `JSON.stringify`, no C representation (A9 `unresolvable`). |
+
+### 6b. cc errors (8) — the emitter produced C, cc rejected it
+
+Each is root-caused; several are the same underlying HIR/backend gap.
+
+| file | cc error | root cause |
+|---|---|---|
+| `10-modifiers/04_retry_modifier` | deref of non-pointer | **a captured-mut that is ALSO a module global** — wants both an `ll_value*` heap cell and a static `ll_value` slot; the two lowerings collide. |
+| `30-applications/03_undoable_modifier` | undeclared `u_world_2eboxes` | **field-chain index assignment** `world.boxes[i] := v` — the indexer lowers the composite head `world.boxes` as one mangled identifier instead of head-object + field read. |
+| `03-loops/01_for` | undeclared loop var | a nested/`raw-structural:for` scoping gap (`HFor` can't carry the statement-bearing step, §4). |
+| `04-pattern-matching/02_map_patterns` | call arity | a map-pattern whose value sub-pattern is itself a method call is decomposed with the wrong arity. |
+| `08-generics/05_covariance` | non-constant global init | a global initialized with a non-compile-time-constant (the `staticZero` net misses a case). |
+| `08-generics/06_multiple_interfaces` | undeclared `u_Any` | the `Any` *type name* leaks into value position. |
+| `15-modules/01_main` | undeclared `u_secret_2dnumber_2da` | a cross-module hyphenated binding referenced but not declared (cross-module scope). |
+| `30-applications/05_snake_tick` | `ll_value` vs `ll_map*` | a map op receives a boxed value where the runtime wants a concrete `ll_map*`. |
+
+### 6c. Runtime divergences (10) — compiled, ran, diverged
+
+| kind | files | note |
+|---|---|---|
+| trap (exit 70) | `09-oop/01_interfaces`, `02_classes`, `03_dispatch_and_type_patterns`, `20-algorithms/07_tokenizer`, `08_state_machine`, `09_memoization_intro` | interface/witness dispatch and a map-key stringification path trap at runtime — the honest "I don't have this yet." |
+| output mismatch | `07-types/01_type_reflection`, `08-generics/00_generics_basic`, `10-modifiers/02_logging`/`03_timing`/`05_multiple`, `16-stdlib/01_main`, `20-algorithms/03_functional` | stdlib breadth (`std/io` `print` positional `{0}` format vs `console.log`, reflection formatting) and generic-erasure display. |
+| segfault (exit null) | `18-error-handling/02_rpn_error_paths`, `10-modifiers/06_extension_methods` | stdlib bodies lowered on-demand (`filter`/`map`/`join`/`split`) that the C runtime doesn't fully support. |
+| P1 crash | `16-stdlib/test_stdlib` | a null `_type` during resolution — a lowering path only ever exercised behind the JS legacy emitter. |
+
+The `10-modifiers/*` cluster (logging/timing/retry/multiple modifiers) is one theme: a `defmodifier`
+that is a *real runtime decorator* stresses closure capture + `std/io` formatting simultaneously.
+
+---
+
+## 7. Prioritized cut list for `dev` (mapped to spec Steps 3–8)
 
 Ordered by measured dip weight — this is the empirical argument for sequencing the HIR modeling work:
 
-1. **`HRef` + `HCall` family first (Steps 3–4).** `atom-ref` (1 513) + `call-dispatch` (1 960) +
-   their symbol-table satellites = **~5 000 dips, 63% of the total.** Nothing else moves the needle
-   comparably. The A3 sub-rows (`method-devirt`, `closure-call`, `operator-call`, `member-dyn`) are a
-   ready-made taxonomy for `HCall`'s kind field. Do these two and the ledger halves.
+1. **`HRef` + `HCall` family first (Steps 3–4).** `atom-ref` (1 465) + `call-dispatch` (1 960) +
+   their symbol-table satellites = **~5 000 dips, 62% of the total.** Nothing else moves the needle
+   comparably. The A3 sub-rows (`method-devirt`, `closure-call`, `operator-call`, `extension-devirt`,
+   `member-dyn`) are a ready-made taxonomy for `HCall`'s kind field. Do these two and the ledger halves.
 
-2. **Types on every node, drain `nodeTypes` (Step 3, A1).** 789 dips, and the `mut-decl-narrowed`
-   (109) + `ref-type-via-symbols` (415) rows show the *specific* failure: the channel is keyed by raw
-   AST identity and misses identifier uses, and even when present it stores the narrowed type, not the
-   layout type. Fixing this is a precondition for A3 devirtualization being trustworthy.
+2. **Types on every node, drain `nodeTypes` (Step 3, A1).** 753 dips, and **two independent bugs**
+   now cite the same root cause — `mut-decl-narrowed` (109) reads the narrowed type where the layout
+   type is wanted, and the sweep's global-store fix hit the identical channel-vs-declared mismatch at
+   a *store*. This is not just missing types; it is a channel that is actively wrong at reassignment.
+   Fixing it is a precondition for A3 devirtualization being trustworthy.
 
-3. **`HConstruct`/`HFieldInit` (Step 5, A4).** 363 dips. The whole class/struct layout is
-   reconstructed from the symbol table today. Lower-volume than A2/A3 but *architecturally* central —
-   it's the difference between the HIR describing the program's data and not.
+3. **`HConstruct`/`HFieldInit` + an enum companion (Step 5, A4).** 457 dips. The whole class/struct
+   layout is reconstructed from the symbol table, and **enums have neither a node nor a symbol** — the
+   most-erased construct measured (75 dips across ref+member). Lower-volume than A2/A3 but
+   architecturally central: the difference between the HIR describing the program's data and not.
 
-4. **`HCopyStore` (Step 6, A5).** 807 dips, all synthesized from an `isStore` flag. Cheap to model
+4. **`HCopyStore` (Step 6, A5).** 809 dips, all synthesized from an `isStore` flag. Cheap to model
    (the decision is already boolean-ish), high coverage. Turning the flag into an explicit node is the
    A5 reversibility the spec wants.
 
 5. **`HMatchTest` (Step 7, A7).** 144 dips. Self-contained; the decomposition is already worked out
-   (bind-then-test) — this is lifting known structure onto the node.
+   (bind-then-test, with the enum-arm equality-test variant) — this is lifting known structure onto
+   the node.
 
 6. **Add A9-extern to the spec (new).** 642 dips. Not a node cut — a *boundary* the spec must name.
-   The three resolutions (intrinsic / on-demand stdlib body / refuse) are already implemented and can
-   be lifted into the contract.
+   The three resolutions (intrinsic / on-demand stdlib body / refuse) are already implemented; lift
+   them into the contract. **Cross-module class registration** (the `special:new` frontier, §6a) is
+   the natural next increment: a class-level analog of the on-demand function lowering.
 
-7. **Track `void-fn-boxed` and `int-division` as contract questions (new, §4).** Low volume, high
-   signal: the checker's type is not always the value's type. A native backend needs a ruling.
+7. **Track `void-fn-boxed`, `int-division`, and `HFor`-with-statement-step as contract questions.**
+   Low volume, high signal: the checker's type is not always the value's type, and `HFor` structurally
+   cannot carry a statement-bearing `:step` (every C-style `for` in the corpus bails to raw because of
+   it — §4, `raw-structural:for`). A native backend needs rulings on all three.
 
-8. **Coroutines (Step 8, A8) last.** 15 dips, correctly refused. The state-machine lowering is a
-   backend pipeline pass; the neutral core owes it nothing until someone wants native generators.
+8. **Coroutines (Step 8, A8) and witness tables last.** 15 coroutine dips, correctly refused; the one
+   interface-dispatch refusal (`passable`) is the statically-unknown receiver that genuinely needs
+   witness tables. Both are backend pipeline / new-machinery work the neutral core owes nothing to
+   until someone wants native generators or dynamic interface dispatch.
 
 ---
 
-## 7. Reproducibility
+## 8. Reproducibility
 
 ```bash
-npm run test:c                                   # ratchet: 49 green, frontier dim, refusals informational
+npm run test:c                                   # ratchet: 53 green, frontier dim, refusals informational
 npm run test:c -- --gap-ledger /tmp/ledger.json  # full census + summary; every count above is in here
-npm test                                          # JS baseline — unchanged by the entire probe
+npm test                                          # JS baseline — 108 green, unchanged by the entire probe
 npm run test:diagnostics                          # LL0105/07 negatives pinned; band next-free == LL0108
 ```
 
 Every A1–A9 count in §3 is an aggregation of `GapEntry` rows from `--gap-ledger`. The C backend never
 guesses: where it cannot resolve a construct it refuses (LL0106/07) rather than emit wrong code, so a
-green file is a *true* positive and the frontier in §5 is exhaustive.
+green file is a *true* positive and the frontier in §6 is exhaustive.
