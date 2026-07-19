@@ -295,10 +295,13 @@ export class EmitHirToEstree {
       }
 
       case "method-call":
-        // Resolved method dispatch (classifyCall): `obj.method(a)` stays the direct member call. The
-        // member callee is the legacy `leafExpr` of the head (visitExpr -- the JS receiver/member policy:
-        // `this`, encoding, import-inlining); args are HIR-emitted. Byte-identical to the emitter's
-        // callExpression(visitExpr(head), args), with no re-dispatch back through the legacy call path.
+      case "virtual-call":
+        // Resolved method dispatch (classifyCall): `obj.method(a)` stays the direct member call, whether
+        // the receiver is statically typed (method-call, devirt-able) or untyped (virtual-call, native
+        // vtable) -- on JS the runtime resolves both identically. The member callee is the legacy
+        // `leafExpr` of the head (visitExpr -- the JS receiver/member policy: `this`, encoding, import-
+        // inlining); args are HIR-emitted. Byte-identical to the emitter's callExpression(visitExpr(head),
+        // args), with no re-dispatch back through the legacy call path.
         return {
           type: "CallExpression",
           callee: this.legacy.leafExpr(h.head),

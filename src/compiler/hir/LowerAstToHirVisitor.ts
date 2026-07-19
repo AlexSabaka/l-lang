@@ -283,6 +283,7 @@ export class LowerAstToHirVisitor {
         if (dispatch.kind === "free") return this.lowerFreeCall(node, dispatch.callee, dispatch.args, dest);
         if (dispatch.kind === "ext") return this.lowerExtCall(node, dispatch.head, dispatch.fnName, dispatch.args, dest);
         if (dispatch.kind === "method") return this.lowerMethodCall(node, dispatch.head, dispatch.args, dest);
+        if (dispatch.kind === "virtual") return this.lowerVirtualCall(node, dispatch.head, dispatch.args, dest);
         if (dispatch.kind === "operator") return this.lowerOperator(node, dispatch.op, dispatch.head, dispatch.args, dest);
         return this.lowerCallLike(node, dest);
       }
@@ -442,6 +443,20 @@ export class LowerAstToHirVisitor {
   }
 
   /**
+   * A resolved virtual call (`classifyCall` said `virtual`). Identical lowering to a method call -- the
+   * member callee stays the `leafExpr(head)` hook, so `obj.method(a)` emits the direct `obj.method(a)`
+   * the runtime dispatches. Distinct only in kind: the receiver is UNTYPED, so a native backend
+   * vtable-dispatches rather than devirtualizing. (A3 / TY8.)
+   */
+  private lowerVirtualCall(node: ast.ListNode, head: ast.ASTNode, args: ast.ASTNode[], dest: Dest): Lowered {
+    const { prelude, atoms, diverged } = this.lowerCallArgs(args);
+    if (diverged) return { stmts: prelude, value: null };
+    const src = prelude.length > 0 ? this.callSrcWithLoweredOperands(node, head, atoms, args) : node;
+    const call: HExpr = { ...this.base(src), kind: "virtual-call", head, args: atoms };
+    return this.placeValue(call, prelude, dest);
+  }
+
+  /**
    * A resolved operator call (`classifyCall` said `operator`). Lower the operands as HExprs (same binding
    * as the opaque path); the callee stays the `leafExpr(head)` hook -- so `(op a b)` emits the JS shim
    * call `_op(a, b)` -- and `op` is carried for the native backend. (A3 / TY8.)
@@ -513,6 +528,7 @@ export class LowerAstToHirVisitor {
       h.kind === "free-call" ||
       h.kind === "ext-call" ||
       h.kind === "method-call" ||
+      h.kind === "virtual-call" ||
       h.kind === "operator"
     );
   }
@@ -1040,11 +1056,11 @@ export class LowerAstToHirVisitor {
       if (t) this.context.recordSynthesizedNodeType(id, t);
       return id;
     }
-    if (h.kind === "free-call" || h.kind === "ext-call" || h.kind === "method-call" || h.kind === "operator") {
+    if (h.kind === "free-call" || h.kind === "ext-call" || h.kind === "method-call" || h.kind === "virtual-call" || h.kind === "operator") {
       // Rebuild the call AST with the LOWERED args (temps substituted) so a resolved call handed to a
       // legacy-parent operand re-emits with its hoisted operands, not its originals. The head is the
-      // free callee's src / the ext|method|operator head -- the legacy emitter re-classifies it (and
-      // re-takes the ext/method/operator branch), byte-identical to the direct HIR emission.
+      // free callee's src / the ext|method|virtual|operator head -- the legacy emitter re-classifies it
+      // (and re-takes the matching branch), byte-identical to the direct HIR emission.
       const head = h.kind === "free-call" ? h.callee.src : h.head;
       const rebuilt = {
         ...(h.src as ast.ListNode),

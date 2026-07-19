@@ -41,6 +41,7 @@ export type HExpr =
   | HFreeCall
   | HExtCall
   | HMethodCall
+  | HVirtualCall
   | HOperator
   | HOpaqueExpr
   | HNil
@@ -120,6 +121,23 @@ export interface HExtCall extends HBase {
  */
 export interface HMethodCall extends HBase {
   kind: "method-call";
+  head: ast.ASTNode;
+  args: HExpr[];
+}
+
+/**
+ * A resolved VIRTUAL (dynamic-receiver) method call `obj.method(a ...)` -- the fifth modeled dispatch
+ * kind (A3, TY8). `classifyCall` reached this because the receiver's TYPE is unknown (no native member,
+ * no conforming `:extension`), so dispatch is decided at RUNTIME. On JS that is byte-identical to a
+ * static method call -- `callExpression(leafExpr(head), args)`, the runtime resolves it -- so this
+ * reuses the same `leafExpr` hook and carries no extra data. It is a DISTINCT kind from `HMethodCall`
+ * only to ENCODE the dispatch decision: `method` is devirt-able (concrete receiver), `virtual` needs a
+ * witness/vtable on a native backend (the C backend's `ll_dyn_method`). The static/dynamic split is thus
+ * made once, in the shared classifier, not re-derived per backend. (0-arg dynamic access -> `__ll_member`
+ * is a separate member-dyn emission, still opaque.)
+ */
+export interface HVirtualCall extends HBase {
+  kind: "virtual-call";
   head: ast.ASTNode;
   args: HExpr[];
 }
