@@ -96,6 +96,10 @@ export class ResolveHirToCir {
    *  topLevelFns, callable directly / by pipeline) that `(recv.method args)` devirtualizes to a
    *  direct call `method(recv, ...args)` on its first parameter -- Dove's Q4 static case (D34). */
   private readonly extensions = new Map<string, string>();
+  /** ANF temps that hold a class NAME, not a runtime value: `(new Inventory ...)` lowers the class
+   *  head into `__ll_hir_N = Inventory`, but a class is not a value in C -- map the temp to the name so
+   *  the `new` reads it back, and emit no decl for it. */
+  private readonly tempClassName = new Map<string, string>();
   /** The class whose method body is being resolved (so `this` binds to `__self`). */
   private selfClass: string | undefined;
   /** Module-level binding names that top-level functions reference -> hoisted to C globals (a C
@@ -383,7 +387,13 @@ export class ResolveHirToCir {
       const sig: any = t?.methodSignatures?.get?.(mn);
       const paramCTypes = m.params.map((p, i) => this.typeNodeToCType(p.type) ?? (sig?.params?.[i] ? mapType(sig.params[i]) : C_VALUE));
       const cName = `__ll_method_${mangleBare(name)}_${mangleBare(mn)}`;
-      methods.set(mn, { cName, params: paramCTypes, ret: this.typeNodeToCType(m.returns) ?? mapType(sig?.returns) });
+      // NEVER downgrade a method to a C `void` return: like a top-level fn, a `-> Void` method whose
+      // body returns a value (the implicit-return desugar wraps every tail) stays boxed ll_value, or the
+      // `return <v>` cc-fails. Same void-fn-boxed treatment userFnRet gives free functions.
+      const rawRet = this.typeNodeToCType(m.returns) ?? mapType(sig?.returns);
+      let ret = rawRet;
+      if (rawRet.k === "void") { this.ledger.record("new", "void-fn-boxed", m, "checker-Void method returns ll_value (implicit-return tail)"); ret = C_VALUE; }
+      methods.set(mn, { cName, params: paramCTypes, ret });
       // A `:ctor` initializer method runs at construction time (after field init) to derive fields.
       if (m.modifiers?.some((mod) => mod.modifier === "ctor")) ctorMethods.push(cName);
     }
@@ -597,6 +607,10 @@ export class ResolveHirToCir {
         }
 
         case "decl-temp": {
+          // A temp whose value is merely a class NAME (the ANF-hoisted head of `(new C ...)`): a class
+          // is not a runtime value in C, so record the name for the `new` and emit no decl.
+          const cn = this.classNameOf(h.init);
+          if (cn) { this.tempClassName.set(h.name, cn); return []; }
           const t = h.init ? this.resolveExpr(h.init) : null;
           const declCType = t ? t.ctype : this.ctypeOf(h, "decl-temp");
           this.declareLocal(h.name, declCType);
@@ -1740,8 +1754,10 @@ export class ResolveHirToCir {
         // `(new Point 1 2)` -- explicit construction. The class name is the first argument.
         if (form.name === "new" && form.args.length >= 1) {
           const cls = form.args[0];
-          const clsName = cls._type === "simple-identifier" ? (cls as ast.SimpleIdentifierNode).id
+          let clsName = cls._type === "simple-identifier" ? (cls as ast.SimpleIdentifierNode).id
             : cls._type === "type-name" ? (cls as any).name : undefined;
+          // ANF may hoist the class head into a temp (`__ll_hir_N = Inventory`); read the name back.
+          if (clsName && this.tempClassName.has(clsName)) clsName = this.tempClassName.get(clsName)!;
           if (clsName && this.ensureClassRegistered(clsName, node)) return this.resolveConstruct(node, clsName, form.args.slice(1));
         }
         // `(throw x)` -> ll_throw(box(x)); diverges (void).
@@ -2174,6 +2190,21 @@ export class ResolveHirToCir {
       return this.classes.has(name);
     }
     return false;
+  }
+
+  /** If an HExpr is merely a reference to a class NAME (local or imported), return that name -- used to
+   *  recognize the ANF-hoisted head of a `new` (`__ll_hir_N = Inventory`), which is not a value. */
+  private classNameOf(h: HExpr | null | undefined): string | undefined {
+    if (!h) return undefined;
+    let name: string | undefined;
+    let node: ast.ASTNode | undefined;
+    if (h.kind === "ref") { name = h.name; node = h.src; }
+    else if (h.kind === "opaque-expr" && (h.src as any)?._type === "simple-identifier") { name = (h.src as any).id; node = h.src; }
+    if (!name) return undefined;
+    if (this.classes.has(name)) return name;
+    const entry = (() => { try { return this.context.symbolTable.resolveSymbol(name as any, node as any); } catch { return undefined; } })();
+    const v = entry?.value as any;
+    return (v && (v._type === "struct" || v._type === "class") && !this.isExtern(entry)) ? name : undefined;
   }
 
   /** A DESUGARED clone of a node pulled from the symbol table. `symbol.value` is the PRE-desugar parse

@@ -85,4 +85,6 @@ export const C_PASSING: readonly string[] = [
   "30-applications/08_vector_toolkit.lisp",
   // Non-ctor field defaults + `:ctor` initializer methods (derived fields computed at construction).
   "09-oop/02_classes.lisp",
+  // Generic construction: ANF-hoisted class-name temp resolved back + Void method stays boxed.
+  "30-applications/00_generic_inventory.lisp",
 ];
