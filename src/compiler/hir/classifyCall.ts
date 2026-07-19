@@ -28,6 +28,7 @@ export type CallDispatch =
   | { kind: "free"; callee: ast.ASTNode; args: ast.ASTNode[] }
   | { kind: "method"; head: ast.ASTNode; objectName: string; member: string; args: ast.ASTNode[] }
   | { kind: "ext"; head: ast.ASTNode; objectName: string; member: string; fnName: string; args: ast.ASTNode[] }
+  | { kind: "operator"; op: string; head: ast.ASTNode; args: ast.ASTNode[] }
   | { kind: "opaque" };
 
 // -- the same channel-based predicates JSTransformer uses, re-expressed against a bare Context --------
@@ -108,7 +109,15 @@ export function classifyCall(node: ast.ListNode, ctx: CallClassCtx): CallDispatc
 
   const id = (head as ast.SimpleIdentifierNode).id;
   if (id === "||" || id === "&&") return { kind: "opaque" };         // short-circuit LogicalExpression
-  if (RuntimeProvider.isOperatorSymbol(id)) return { kind: "opaque" }; // operator shim
+  if (RuntimeProvider.isOperatorSymbol(id)) {
+    // An operator CALL `(+ a b)`. On JS it routes through the runtime shim (`_2b(a, b)`, the callee is
+    // the encoded operator identifier + the shim gets registered); a native backend reads `op` + the
+    // operands and emits a machine op (static, D43) or boxed dispatch (an `Unknown` operand). ||/&& are
+    // excluded above (LogicalExpression, not a shim call). A bare `(+)` with no operands is the operator
+    // AS A VALUE (emits the bare shim ref, not a call) -> opaque.
+    if (args.length === 0) return { kind: "opaque" };
+    return { kind: "operator", op: id, head, args };
+  }
   if (isPrimitiveTypeFold(node, head, args, ctx)) return { kind: "opaque" };
   if (isConstructor(head, ctx)) return { kind: "opaque" };           // NewExpression
 
