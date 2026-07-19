@@ -279,6 +279,38 @@ export class EmitHirToEstree {
           } as ESTree.AssignmentExpression,
         } as ESTree.ExpressionStatement;
 
+      case "super-call":
+        // A4: `super(<param> ...)` in a constructor. Args are source param names encoded to identifiers.
+        // Byte-identical to the raw call JSClassBuilder built (callee Super, optional: false, no loc).
+        return {
+          type: "ExpressionStatement",
+          expression: {
+            type: "CallExpression",
+            callee: { type: "Super" } as ESTree.Super,
+            arguments: h.args.map((a) => ({ type: "Identifier", name: this.legacy.encodeName(a) } as ESTree.Identifier)),
+            optional: false,
+          } as ESTree.CallExpression,
+        } as ESTree.ExpressionStatement;
+
+      case "ctor-method-call":
+        // A4: `this.<method>()` -- a constructor running a `:ctor` initializer method. The method name is
+        // materialized by `leafExpr`. Byte-identical to the raw call JSClassBuilder built (no args, no loc).
+        return {
+          type: "ExpressionStatement",
+          expression: {
+            type: "CallExpression",
+            callee: {
+              type: "MemberExpression",
+              object: { type: "ThisExpression" } as ESTree.ThisExpression,
+              property: this.legacy.leafExpr(h.method),
+              computed: false,
+              optional: false,
+            } as ESTree.MemberExpression,
+            arguments: [],
+            optional: false,
+          } as ESTree.CallExpression,
+        } as ESTree.ExpressionStatement;
+
       default: {
         const never: never = h;
         throw new Error(`HIR emit: unhandled statement kind '${(never as any).kind}'`);

@@ -271,22 +271,9 @@ export class ClassBuilder {
       )
     );
 
-    // Add super() call if needed
+    // Add super() call if needed -- modeled as an HSuperCall, emitted through the HIR path (A4).
     if (parentClassName) {
-      const superArgs: ESTree.Identifier[] = superCallArgs.map(arg => ({
-        type: "Identifier",
-        name: encodeIdentifier(arg)
-      }));
-
-      bodyStatements.push({
-        type: "ExpressionStatement",
-        expression: {
-          type: "CallExpression",
-          callee: { type: "Super" } as ESTree.Super,
-          arguments: superArgs,
-          optional: false
-        }
-      });
+      bodyStatements.push(this.visitor.buildSuperCall(superCallArgs, this.node));
     }
 
     // Add field assignments `this.<field> = <param>` (A4). Modeled as an HFieldInit and emitted through
@@ -297,24 +284,10 @@ export class ClassBuilder {
       bodyStatements.push(this.visitor.buildFieldInit(v.name, paramNameRaw, v));
     }
 
+    // Run each `:ctor` initializer method `this.<method>()` -- modeled as an HCtorMethodCall (A4).
     const ctorMethods = this.methods.filter(x => x.modifiers.some(m => m.modifier === "ctor"));
     for (const m of ctorMethods) {
-      // Insert a method call to the constructor body
-      bodyStatements.push({
-        type: "ExpressionStatement",
-        expression: {
-          type: "CallExpression",
-          callee: {
-            type: "MemberExpression",
-            object: { type: "ThisExpression" },
-            property: this.visitor.visit(m.name) as ESTree.Identifier,
-            computed: false,
-            optional: false
-          },
-          arguments: [],
-          optional: false
-        }
-      });
+      bodyStatements.push(this.visitor.buildCtorMethodCall(m.name, this.node));
     }
 
     return {

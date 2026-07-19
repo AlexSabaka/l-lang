@@ -286,6 +286,8 @@ export type HStmt =
   | HVarDecl
   | HUserAssign
   | HFieldInit
+  | HSuperCall
+  | HCtorMethodCall
   | HOpaqueStmt;
 
 /** An expression evaluated for effect; its value is discarded. */
@@ -306,6 +308,26 @@ export interface HFieldInit extends HBase {
   kind: "field-init";
   field: ast.ASTNode;
   paramName: string;
+}
+
+/**
+ * A constructor `super(a, b)` call (A4). `args` are the SOURCE param names forwarded to the parent (the
+ * inheritance pass-through JSClassBuilder computes); the JS emitter encodes each to an identifier. A
+ * native backend calls the parent's initializer. Like HFieldInit, built by JSClassBuilder for now.
+ */
+export interface HSuperCall extends HBase {
+  kind: "super-call";
+  args: string[];
+}
+
+/**
+ * A constructor's call to a `:ctor` initializer METHOD `this.method()` (A4) -- a class may derive fields
+ * at construction via a `:ctor`-modified method, run after the field stores. `method` is the method-name
+ * node (encoded via `leafExpr`). Built by JSClassBuilder for now, like HFieldInit.
+ */
+export interface HCtorMethodCall extends HBase {
+  kind: "ctor-method-call";
+  method: ast.ASTNode;
 }
 
 /** `let <name>;` (init null) or `const <name> = <init>;`. The up-front declaration a value-if assigns into. */

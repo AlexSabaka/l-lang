@@ -1843,6 +1843,16 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return this.ensureHirEmitter().emitStatement({ src, type: undefined, kind: "field-init", field, paramName } as any);
   }
 
+  /** A4: the constructor's `super(<param> ...)` call, emitted through the HIR path (an HSuperCall). */
+  public buildSuperCall(args: string[], src: ast.ASTNode): ESTree.Statement {
+    return this.ensureHirEmitter().emitStatement({ src, type: undefined, kind: "super-call", args } as any);
+  }
+
+  /** A4: a constructor's `this.<method>()` call to a `:ctor` initializer method (an HCtorMethodCall). */
+  public buildCtorMethodCall(method: ast.ASTNode, src: ast.ASTNode): ESTree.Statement {
+    return this.ensureHirEmitter().emitStatement({ src, type: undefined, kind: "ctor-method-call", method } as any);
+  }
+
   /**
    * A cond-case has no meaning on its own -- it is a (test, body) pair, and only the CHAIN decides
    * what its alternate is. `visitCond` therefore builds the whole chain from `node.cases` directly,
