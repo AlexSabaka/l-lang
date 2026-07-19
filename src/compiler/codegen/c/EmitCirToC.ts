@@ -498,9 +498,14 @@ export class EmitCirToC {
       }
       case "c-construct": {
         const args = e.args.map((a) => this.expr(a));
-        return args.length
+        const make = args.length
           ? `ll_obj_new(&__ll_class_${e.className}, ${args.length}, (ll_value[]){${args.join(", ")}})`
           : `ll_obj_new(&__ll_class_${e.className}, 0, (ll_value*)0)`;
+        if (!e.initMethods || !e.initMethods.length) return make;
+        // `:ctor` initializer methods run on the fresh object (deriving fields) then it is the value:
+        // a GNU statement-expression, `({ ll_obj* __o = make; init1(__o); ...; __o; })`.
+        const calls = e.initMethods.map((cn) => `${cn}(__o);`).join(" ");
+        return `({ ll_obj* __o = ${make}; ${calls} __o; })`;
       }
       case "c-field-get":
         // The raw slot holds a boxed ll_value; P2 inserts the unbox to the field's static type.

@@ -66,6 +66,9 @@ export interface CConstruct {
   args: CExpr[];
   /** Default field values for constructor params not supplied (already typed). */
   fieldCount: number;
+  /** C names of `:ctor` initializer methods to run on the new object, in declaration order (each takes
+   *  self and mutates derived fields). Present -> the construct emits a statement-expression. */
+  initMethods?: string[];
 }
 
 /** A struct/class field READ by slot: `obj->fields[slot]`, unboxed to the field's static type. */

@@ -83,4 +83,6 @@ export const C_PASSING: readonly string[] = [
   // methods lowered on demand, with the implicit-return desugar the symbol-table AST lacked.
   "16-stdlib/complex_math_test/main.lisp",
   "30-applications/08_vector_toolkit.lisp",
+  // Non-ctor field defaults + `:ctor` initializer methods (derived fields computed at construction).
+  "09-oop/02_classes.lisp",
 ];

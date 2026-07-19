@@ -66,9 +66,12 @@ interface ClassDesc {
   name: string;
   isStruct: boolean;
   parent?: string; // `:extends` base class name (for inheritance + reflection)
-  fields: { name: string; ctype: CType }[];
+  fields: { name: string; ctype: CType; default?: ast.ASTNode }[];
   fieldSlot: Map<string, number>;
   methods: Map<string, { cName: string; params: CType[]; ret: CType }>;
+  /** C names of `:ctor` initializer methods, in declaration order -- run on the object right after
+   *  construction to compute derived fields (`this.full-name := ...`). */
+  ctorMethods: string[];
 }
 
 export class ResolveHirToCir {
@@ -246,7 +249,7 @@ export class ResolveHirToCir {
       if (this.classes.has(name)) continue;
       const fields = [{ name: "message", ctype: C_STR }];
       const fieldSlot = new Map([["message", 0]]);
-      this.classes.set(name, { name, isStruct: false, parent: name === "Error" ? undefined : "Error", fields, fieldSlot, methods: new Map() });
+      this.classes.set(name, { name, isStruct: false, parent: name === "Error" ? undefined : "Error", fields, fieldSlot, methods: new Map(), ctorMethods: [] });
     }
   }
 
@@ -336,13 +339,18 @@ export class ResolveHirToCir {
     };
     // Own fields = the constructor params (in ctor order) PLUS any non-ctor fields declared in the
     // body (`:public width 0`), which the ctorInfo omits. The JS ClassBuilder lays out both.
-    const ownFields: { name: string; ctype: CType }[] = ctorParams.map((p: any) => ({
+    // The per-field DEFAULT value (`(let :ctor x <- Real 0.0)` / `(let :private tag "rect")`): the
+    // initializer used when a ctor arg is omitted, and the ONLY initializer for a non-ctor field.
+    // Construction fills them (resolveConstruct); the HIR models neither the layout nor the defaults.
+    const astFieldDefaults = this.memberFieldDefaults(node);
+    const ownFields: { name: string; ctype: CType; default?: ast.ASTNode }[] = ctorParams.map((p: any) => ({
       name: p.name,
       ctype: astFieldTypes.get(p.name) ?? (p.type ? mapType(p.type) : memberType(p.name)),
+      default: astFieldDefaults.get(p.name),
     }));
     const seen = new Set(ownFields.map((f) => f.name));
     for (const [fname, ct] of astFieldTypes) {
-      if (!seen.has(fname)) { ownFields.push({ name: fname, ctype: ct }); seen.add(fname); }
+      if (!seen.has(fname)) { ownFields.push({ name: fname, ctype: ct, default: astFieldDefaults.get(fname) }); seen.add(fname); }
     }
     // Inheritance (`:extends`): the parent's fields come FIRST (lower slots), then this class's own --
     // the layout the JS ClassBuilder also produces. The whole hierarchy is a symbol-table walk the
@@ -363,9 +371,10 @@ export class ResolveHirToCir {
     // shadow by name below.
     const methods = new Map<string, { cName: string; params: CType[]; ret: CType }>();
     if (parentDesc) for (const [mn, m] of parentDesc.methods) methods.set(mn, m);
+    const ctorMethods: string[] = parentDesc ? [...parentDesc.ctorMethods] : [];
     // Register the descriptor NOW (before processing members) so a self-referential member type --
     // an operator returning its own class, a method taking the same struct -- resolves to obj.
-    this.classes.set(name, { name, isStruct, parent: parentDesc ? parent : undefined, fields, fieldSlot, methods });
+    this.classes.set(name, { name, isStruct, parent: parentDesc ? parent : undefined, fields, fieldSlot, methods, ctorMethods });
     for (const m of this.memberFunctions(node)) {
       if (!m.name) continue;
       const mn = ast.symbolName(m.name);
@@ -373,11 +382,10 @@ export class ResolveHirToCir {
       if (isOp) { this.maybeRegisterOperator(m, name); continue; }
       const sig: any = t?.methodSignatures?.get?.(mn);
       const paramCTypes = m.params.map((p, i) => this.typeNodeToCType(p.type) ?? (sig?.params?.[i] ? mapType(sig.params[i]) : C_VALUE));
-      methods.set(mn, {
-        cName: `__ll_method_${mangleBare(name)}_${mangleBare(mn)}`,
-        params: paramCTypes,
-        ret: this.typeNodeToCType(m.returns) ?? mapType(sig?.returns),
-      });
+      const cName = `__ll_method_${mangleBare(name)}_${mangleBare(mn)}`;
+      methods.set(mn, { cName, params: paramCTypes, ret: this.typeNodeToCType(m.returns) ?? mapType(sig?.returns) });
+      // A `:ctor` initializer method runs at construction time (after field init) to derive fields.
+      if (m.modifiers?.some((mod) => mod.modifier === "ctor")) ctorMethods.push(cName);
     }
   }
 
@@ -397,6 +405,25 @@ export class ResolveHirToCir {
       if (nm?._type !== "simple-identifier" && nm?._type !== "composite-identifier") return;
       const ct = this.typeNodeToCType(v.type) ?? this.ctypeFromLiteral(v.value) ?? C_VALUE;
       out.set(ast.symbolName(nm as ast.IdentifierNode), ct);
+    };
+    for (const item of node.body ?? []) {
+      if (item._type === "variable") { consider(item as ast.VariableNode); continue; }
+      if (item._type === "list") {
+        const v = ((item as ast.ListNode).nodes ?? []).find((n) => n._type === "variable");
+        if (v) consider(v as ast.VariableNode);
+      }
+    }
+    return out;
+  }
+
+  /** Field name -> its DEFAULT value AST (the initializer on `(let :ctor x <- Real 0.0)` / `(let tag
+   *  "rect")`). Same body walk as memberFieldTypes; used to fill fields a construction omits. */
+  private memberFieldDefaults(node: ast.StructNode | ast.ClassNode): Map<string, ast.ASTNode> {
+    const out = new Map<string, ast.ASTNode>();
+    const consider = (v: ast.VariableNode): void => {
+      const nm = v.name;
+      if ((nm?._type !== "simple-identifier" && nm?._type !== "composite-identifier") || !v.value) return;
+      out.set(ast.symbolName(nm as ast.IdentifierNode), v.value);
     };
     for (const item of node.body ?? []) {
       if (item._type === "variable") { consider(item as ast.VariableNode); continue; }
@@ -1492,11 +1519,19 @@ export class ResolveHirToCir {
   private resolveConstruct(node: ast.ASTNode, className: string, args: ast.ASTNode[]): CExpr {
     const desc = this.classes.get(className)!;
     this.ledger.record("A4", "construct", node, `construction of '${className}' resolved from the symbol table (no HIR node)`);
-    // A field initializer is a store site: a struct-typed arg is copied (D11), an array/class shared.
-    const cArgs = args.map((a) => this.copyStore(this.resolveAstExpr(a), node, "field-init"));
+    // Fill EVERY field slot: a provided positional arg, else the field's declared default, else nil.
+    // A non-ctor field (`(let :private tag "rect")`) or an omitted ctor arg (`(new Vector3)`) would
+    // otherwise land as nil (ll_obj_new zero-fills) -- the layout+defaults the HIR models nowhere (A4).
+    const cArgs = desc.fields.map((f, i) => {
+      const src = i < args.length ? args[i] : f.default;
+      if (!src) return { src: node, ctype: C_VALUE, kind: "c-nil" } as CExpr;
+      // A field initializer is a store site: a struct-typed value is copied (D11), an array/class shared.
+      return this.copyStore(this.resolveAstExpr(src), node, "field-init");
+    });
     return {
       src: node, ctype: { k: "obj", className },
       kind: "c-construct", className, isStruct: desc.isStruct, args: cArgs, fieldCount: desc.fields.length,
+      initMethods: desc.ctorMethods.length ? [...desc.ctorMethods] : undefined,
     };
   }
 
