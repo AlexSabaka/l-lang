@@ -15,7 +15,16 @@ export interface ExtResCtx {
   symbolTable?: any;
 }
 
-/** A type node's runtime name, or undefined for the un-nameable (union / tuple / …). Pure. */
+/**
+ * A type node's runtime name, or undefined for the un-nameable (union / tuple / …). Pure.
+ *
+ * `undefined` means REFUSE, not "Any": a union/tuple receiver carries no single runtime name, and
+ * naming it "Any" made it match EVERY receiver (the `:of` / operator failing-open bug, LL0104). But
+ * erasing GENERIC ARGUMENTS is deliberate and load-bearing -- `Iterable<Int>` -> "Iterable" is what
+ * lets an `:extension` on a generic protocol dispatch (Ea), and `Int[]` -> "Array" is the same bargain
+ * (array-ness is answerable, the element type is not). Inventing a name for a type that HAS none is
+ * exactly what this stops doing.
+ */
 export function getTypeName(t: any): string | undefined {
   if (!t) return undefined;
   if (t.array === true) return "Array";
@@ -42,7 +51,14 @@ export function unwrapReceiverType(ctx: ExtResCtx, typeInfo: any): any {
   return typeInfo;
 }
 
-/** Nominal conformance: the type IS `typeName`, `:implements` it (transitively), or an ancestor does. */
+/**
+ * Nominal conformance -- the same shape the checker's `isSubtype` walks (Na parity): the type IS
+ * `typeName`, `:implements` it (transitively), or an ancestor does. This is what EXCLUDES arrays and
+ * primitives -- their `InferredType` carries neither a matching name nor an `implements` entry, so a
+ * native `arr.map` is never captured by an `Iterable` extension. Re-resolves each interface by name to
+ * reach its own supers (`Iterator :implements Iterable`, `C :implements B :implements A`) -- an
+ * implements entry stores a bare `{interfaceName}` with none of its own, so multi-hop needs the decl.
+ */
 export function receiverConformsTo(ctx: ExtResCtx, typeInfo: any, typeName: string): boolean {
   const seen = new Set<string>();
   const visit = (t: any): boolean => {
@@ -117,7 +133,17 @@ export function receiverType(ctx: ExtResCtx, objectName: string, from?: ast.ASTN
   }
 }
 
-/** `memberName` as method/field on `objectName`'s type, walking inheritance. undefined = not native. */
+/**
+ * `memberName` as method/field on `objectName`'s type, walking inheritance. undefined = not native.
+ *
+ * This is what replaced codegen's hardcoded 30-name property list: the type ALREADY KNOWS
+ * (`methodSignatures` holds the methods, `members` holds fields AND methods with their kinds), so a
+ * FIELD is a read and a METHOD is a call decided by the type, not by whether the name happened to be on
+ * a list. The old list is why two fields of one class behaved differently -- `(this.breed)` read but
+ * `(this.nickname)` was CALLED and threw, because `breed` was on the list and `nickname` was not.
+ * `undefined` here means the compiler genuinely does not know the receiver's type (`arr.length`,
+ * `err.message`) -- JS interop, deferred to `__ll_member` at run time rather than guessed.
+ */
 export function memberKindOn(ctx: ExtResCtx, objectName: string, memberName: string, from?: ast.ASTNode): "method" | "field" | undefined {
   let typeInfo = receiverType(ctx, objectName, from);
   const seen = new Set<any>();

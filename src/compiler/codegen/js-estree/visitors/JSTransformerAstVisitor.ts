@@ -13,11 +13,17 @@ import {
 } from "../../../utils";
 import { CodegenDiagnostics as CD } from "../../../rules/diagnostics";
 import { TypeChecker } from "../../../types/TypeChecker";
-import { nativeMemberKind } from "../../../types/nativeMembers";
 import { isBuiltinModifier, hasModifier } from "../../../helpers/modifiers";
 import * as acorn from "acorn";
 import { ClassBuilder } from "../JSClassBuilder";
 import { EmitHirToEstree, LegacyLeafEmitter, LowerAstToHirVisitor } from "../../../hir";
+import {
+  getTypeName as resolveTypeName,
+  receiverType as resolveReceiverType,
+  memberKindOn as resolveMemberKindOn,
+  buildExtensionTable,
+  conformingExtensionFn,
+} from "../../../hir/extensionResolution";
 import type { HBlock } from "../../../hir";
 import { SourceMapGenerator } from "source-map";
 import path from "path";
@@ -521,45 +527,12 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * (Ea's `:extension` dispatch on a generic protocol needs it), and `Int[]` -> "Array" is the same
    * bargain: array-ness is answerable, the element type is not. Inventing a name for a type that HAS
    * none is what this stops doing.
+   *
+   * Implementation single-sourced onto hir/extensionResolution.ts (`getTypeName`) -- the dispatch
+   * classifier reads the same names, so `:of` tests and extension resolution cannot diverge.
    */
   private getTypeName(t: any): string | undefined {
-     if (!t) return undefined;
-
-     // `Int[]`. The ARRAY flag rides on the type node (AstBuilder's `type` and `basicType` both set
-     // it), and recursing past it into the ELEMENT name is what inverted the test: `Int[]` asked
-     // `__ll_is_type(v, "Int")`, so `(5 :of Int[])` was TRUE and `([1 2 3] :of Int[])` was FALSE.
-     // Checked before the wrappers below, because either level can carry it.
-     if (t.array === true) return 'Array';
-
-     // Recursive handling of wrapper nodes
-     if (t._type === 'type') {
-         return t.type ? this.getTypeName(t.type) : undefined;
-     }
-
-     if (t._type === 'simple-type') {
-         return t.name ? this.getTypeName(t.name) : undefined;
-     }
-
-     // Base cases
-     if (t._type === 'type-name') {
-         return typeof t.name === 'string' ? t.name : undefined;
-     }
-
-     // A generic type -- `Iterable<Int>` -- keeps its base under `.name` (a nested type-name); the
-     // generic ARGUMENTS are erased for a name lookup. Without this the base read as `Any`, and an
-     // `:extension` whose receiver was a generic protocol never matched (Ea).
-     if (t._type === 'generic-type') {
-         return t.name ? this.getTypeName(t.name) : undefined;
-     }
-
-     if (t._type === 'function-type') return 'Function';
-
-     // Fallback for direct string or object with name
-     if (typeof t.name === 'string') return t.name;
-     if (t.type && typeof t.type.name === 'string') return t.type.name;
-
-     // union-type, intersection-type, tuple-type, map-type: no runtime name, nothing to test.
-     return undefined;
+    return resolveTypeName(t);
   }
 
 
@@ -4022,153 +3995,33 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   /**
-   * Check if a member name is a method on the given object type.
-   * Uses symbol table type metadata for accurate detection.
+   * Is `obj.m` a METHOD, a FIELD, or does the compiler simply not know? Walks the inheritance chain.
+   *
+   * Single-sourced onto hir/extensionResolution.ts (`memberKindOn`) -- the SAME decision the dispatch
+   * classifier reads, so codegen and the HIR pass cannot diverge on what a member IS. The story of what
+   * this replaced (the hardcoded 30-name property list, where `(this.breed)` read but `(this.nickname)`
+   * was CALLED and threw) lives on the module function. `undefined` = the receiver's type is genuinely
+   * unknown (`arr.length`, `err.message`): JS interop, deferred to `__ll_member` at run time.
    */
-  /**
-   * Is `obj.m` a METHOD, a FIELD, or does the compiler simply not know?
-   *
-   * The question `isMethodOnType` should always have been. It asked only "is it a method", and when
-   * the answer was no, codegen fell through to a hardcoded list of 30 property names -- so whether
-   * `(this.m)` was a call or a read depended on whether `m` happened to appear in an array inside the
-   * compiler. Two fields of the same class, declared identically:
-   *
-   *     (this.breed)      -> this.breed       -- `breed` was on the list
-   *     (this.nickname)   -> this.nickname()  -- TypeError. It was not.
-   *
-   * The list's own comments say what it really was: `// Animal/entity properties: breed, species,
-   * color, weight`. Those are field names lifted out of the example files. Someone hit the bug in the
-   * inheritance demo and added `breed` to a list in codegen.
-   *
-   * And the type ALREADY KNOWS. `methodSignatures` holds the methods; `members` holds them AND the
-   * fields, with their types. Nothing had to be discovered -- only asked.
-   *
-   * `undefined` means the compiler genuinely does not know the receiver's type: `arr.length`,
-   * `err.message`. That is JS interop, it is the ONLY place a guess is still needed, and it is now the
-   * only thing the name list is used for.
-   */
-  private memberKindOn(
-    objectName: string,
-    memberName: string,
-    from?: ast.ASTNode
-  ): "method" | "field" | undefined {
-    let typeInfo = this.receiverType(objectName, from);
-
-    // Walk the inheritance chain. A class's stored `members` are its OWN only, so an INHERITED field
-    // -- `this.name` in a subclass whose `name` came from `:extends Animal` -- is not in the subclass
-    // type and fell to the untyped `__ll_member` fallback, while its own `this.breed` resolved. The
-    // parent link is on the type (`parentClass`); follow it until the member is found or the chain ends.
-    const seen = new Set<any>();
-    while (typeInfo && !seen.has(typeInfo)) {
-      seen.add(typeInfo);
-      const kind = this.memberKindIn(typeInfo, memberName);
-      if (kind) return kind;
-
-      const parent = typeInfo.parentClass ?? typeInfo.codegenMetadata?.parentClass;
-      if (!parent) break;
-      const parentSym = this.context.symbolTable?.resolveSymbol(parent);
-      typeInfo = parentSym?.inferredType
-        ? this.unwrapReceiverType(parentSym.inferredType)
-        : undefined;
-    }
-    return undefined;
+  private memberKindOn(objectName: string, memberName: string, from?: ast.ASTNode): "method" | "field" | undefined {
+    return resolveMemberKindOn(this.context, objectName, memberName, from);
   }
 
-  /** Is `memberName` a method or field DIRECTLY on this type (no inheritance)? */
-  private memberKindIn(typeInfo: any, memberName: string): "method" | "field" | undefined {
-    if (typeInfo.methodSignatures?.has(memberName)) return "method";
-    if (typeInfo.codegenMetadata?.methodSignatures?.has(memberName)) return "method";
-
-    const member =
-      typeInfo.members?.find((m: any) => m.name === memberName) ??
-      (typeInfo.detailedMembers?.find((m: any) => m.name === memberName) as any);
-
-    if (member) {
-      return member.type?.kind === "function" ? "method" : "field";
-    }
-
-    // Native String/Array members (Phase T / Jb): the same table the checker consults (Ja), so a typed
-    // `(s.toUpperCase)` / `(arr.length)` emits a direct call/read instead of the `__ll_member` fallback.
-    const native = nativeMemberKind(typeInfo, memberName);
-    if (native) return native;
-
-    return undefined;
-  }
-
-  /** The receiver's type, following type-refs and class names to the definition. */
+  /** The receiver's type -- following type-refs, bare class names, and `this`'s enclosing class to the
+   *  definition. Single-sourced onto hir/extensionResolution.ts (`receiverType`). */
   private receiverType(objectName: string, from?: ast.ASTNode): any | undefined {
-    try {
-      // `this` is not a symbol. It is the ENCLOSING class, and the AST already says which -- walk up.
-      //
-      // Without this, `(this.breed)` cannot be answered at all, and `(this.speak)` only worked by
-      // accident: `isKnownFunction` consults `this.functions`, a flat list of every function NAME in
-      // the file, so a method call on `this` was caught by a name collision rather than by knowing the
-      // receiver. Every FIELD read on `this` fell through to the name list -- which is exactly why
-      // that list is full of `breed`, `balance` and `age`.
-      if (objectName === "this") {
-        const owner = this.enclosingTypeName(from);
-        if (!owner) return undefined;
-        const ownerSymbol = this.context.symbolTable?.resolveSymbol(owner);
-        return ownerSymbol?.inferredType;
-      }
-
-      const symbol = from
-        ? this.context.symbolTable?.resolveSymbol(objectName, from)
-        : this.context.symbolTable?.resolveSymbol(objectName);
-      if (!symbol?.inferredType) return undefined;
-
-      return this.unwrapReceiverType(symbol.inferredType);
-    } catch {
-      return undefined;
-    }
-  }
-
-  /** Follow a type-ref (and a bare class name) to the full type carrying members/methods. */
-  private unwrapReceiverType(typeInfo: any): any {
-    if (typeInfo?.kind === "type-ref" && typeInfo.refName) {
-      const typeSymbol = this.context.symbolTable?.resolveSymbol(typeInfo.refName);
-      if (typeSymbol?.inferredType) typeInfo = typeSymbol.inferredType;
-    }
-
-    if (
-      typeInfo?.name &&
-      (typeInfo.kind === "class" || typeInfo.kind === "struct" || typeInfo.kind === "unknown")
-    ) {
-      const classSymbol = this.context.symbolTable?.resolveSymbol(typeInfo.name);
-      if (classSymbol?.inferredType) typeInfo = classSymbol.inferredType;
-    }
-
-    return typeInfo;
+    return resolveReceiverType(this.context, objectName, from);
   }
 
   private _extensionTable?: Map<string, { fnName: string; receiverType: string }[]>;
 
   /**
-   * Phase E / Ea: `:extension` dispatch, COMPILE-TIME and NOMINAL. Every `:extension` function in the
-   * symbol-table forest (imported ones count -- the forest is joined), keyed by its NAME, with the
-   * SOURCE name of its receiver type (the first parameter). Built once.
+   * Phase E / Ea: the `:extension` registry (name -> candidates with their receiver-type source names),
+   * COMPILE-TIME and NOMINAL, built once from the symbol-table forest. Single-sourced onto
+   * hir/extensionResolution.ts (`buildExtensionTable`); memoized here (the emitter builds it repeatedly).
    */
   private extensionTable(): Map<string, { fnName: string; receiverType: string }[]> {
-    if (this._extensionTable) return this._extensionTable;
-    const table = new Map<string, { fnName: string; receiverType: string }[]>();
-    const symbols = this.context.symbolTable?.getAllSymbols();
-    if (symbols) {
-      for (const [name, entry] of symbols) {
-        if (entry.nodeType !== "function" || !entry.modifiers?.has("extension")) continue;
-        const receiver = (entry.value as ast.FunctionNode)?.params?.[0]?.type;
-        if (!receiver) continue; // an extension with no receiver dispatches on nothing (Eb diagnoses it)
-        // ...and neither does one whose receiver the runtime cannot name (a union, a tuple). It used
-        // to enter the table as "Any" and then match EVERY receiver. Skipped, exactly as the
-        // no-receiver case is; the `:of`/operator sites report LL0104 where a user wrote one.
-        const receiverType = this.getTypeName(receiver);
-        if (receiverType === undefined) continue;
-        const list = table.get(name) ?? [];
-        list.push({ fnName: name, receiverType });
-        table.set(name, list);
-      }
-    }
-    this._extensionTable = table;
-    return table;
+    return (this._extensionTable ??= buildExtensionTable(this.context));
   }
 
   /**
@@ -4191,13 +4044,10 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * `receiverConformsTo` resolution.
    */
   private extensionForType(typeInfo: any, memberName: string, from?: ast.ASTNode): string | undefined {
-    const candidates = this.extensionTable().get(memberName);
-    if (!candidates?.length) return undefined;
-    const t = this.unwrapReceiverType(typeInfo);
-    for (const c of candidates) {
-      if (this.receiverConformsTo(t, c.receiverType)) return this.emittedExtensionName(c.fnName, from);
-    }
-    return undefined;
+    // Single-sourced onto hir/extensionResolution.ts: the module resolves the conforming SOURCE fnName
+    // (nominal conformance); `emittedExtensionName` (import-inlining / encoding) stays the JS backend's.
+    const fnName = conformingExtensionFn(this.context, this.extensionTable(), typeInfo, memberName);
+    return fnName ? this.emittedExtensionName(fnName, from) : undefined;
   }
 
   /**
@@ -4218,62 +4068,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // fall through to the plain encoded name
     }
     return encodeIdentifier(fnName);
-  }
-
-  /**
-   * Nominal conformance -- the same shape the checker's `isSubtype` walks: the type IS `typeName`, or it
-   * `:implements` it (transitively), or an ancestor does. This is what excludes arrays and primitives:
-   * their `InferredType` carries neither a matching name nor an `implements` entry, so a native `arr.map`
-   * is never captured by an `Iterable` extension. Re-resolves each interface by name to reach its own
-   * supers (`Iterator :implements Iterable`, or `C :implements B :implements A`) -- an implements entry
-   * stores a bare `{interfaceName}` with none of its own, so multi-hop needs the declaration. Mirrors the
-   * checker's `isSubtype` (Na parity).
-   */
-  private receiverConformsTo(typeInfo: any, typeName: string): boolean {
-    const seen = new Set<string>();
-    const visit = (t: any): boolean => {
-      if (!t) return false;
-      const name: string | undefined = typeof t.name === "string" ? t.name : undefined;
-      if (name) {
-        if (seen.has(name)) return false;
-        seen.add(name);
-      }
-      if (t.name === typeName) return true;
-
-      // Re-resolve to the DECLARED type for its transitive supers (the passed `t` may be a bare
-      // implements-entry type with none of its own).
-      const declared = name ? this.context.symbolTable?.resolveSymbol(name)?.inferredType : undefined;
-      const supersFrom = declared ? this.unwrapReceiverType(declared) : t;
-
-      for (const i of supersFrom.implementedInterfaces ?? []) {
-        if (i.interfaceName === typeName) return true;
-        const sup = this.context.symbolTable?.resolveSymbol(i.interfaceName)?.inferredType;
-        if (sup && visit(this.unwrapReceiverType(sup))) return true;
-      }
-
-      const parent =
-        supersFrom.parentClass ??
-        supersFrom.codegenMetadata?.parentClass ??
-        t.parentClass ??
-        t.codegenMetadata?.parentClass;
-      if (parent) {
-        const parentSym = this.context.symbolTable?.resolveSymbol(parent);
-        if (parentSym?.inferredType && visit(this.unwrapReceiverType(parentSym.inferredType))) return true;
-      }
-      return false;
-    };
-    return visit(typeInfo);
-  }
-
-  /** The class or struct that lexically encloses `node`, by name. */
-  private enclosingTypeName(node?: ast.ASTNode): string | undefined {
-    for (let n = node?._parent; n; n = n._parent) {
-      if (n._type === "class" || n._type === "struct") {
-        const name = (n as any).name;
-        return typeof name === "string" ? name : name?.id ?? name?.name;
-      }
-    }
-    return undefined;
   }
 
   private isMethodOnType(objectName: string, memberName: string, from?: ast.ASTNode): boolean {
