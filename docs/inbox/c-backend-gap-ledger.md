@@ -60,9 +60,9 @@ load-bearing, not cosmetic.
 
 | Outcome | Count | Meaning |
 |---|--:|---|
-| ✅ Pass | 57 | C output == golden, byte-for-byte |
+| ✅ Pass | 60 | C output == golden, byte-for-byte |
 | ❌ Fail / 💥 Error | 0 | no regressions, no emitter crashes on the green set |
-| 🚧 Not-yet | 24 | unlisted-failing (cc error, output mismatch, or runtime trap) — the frontier (§6) |
+| 🚧 Not-yet | 21 | unlisted-failing (cc error, output mismatch, or runtime trap) — the frontier (§6) |
 | 🚫 Refused | 12 | honest LL0105/06/07 diagnostics (coroutine / no-lowering / host-global) |
 | 📚 Library / 🧪 Fixture / ⏳ XFail / ⚠️ Skip | 37 | not executable as standalone `node` programs by design |
 | **Total** | **130** | |
@@ -440,11 +440,30 @@ greened two more files (55 → 57):
   *method* whose body returns a value (the implicit-return desugar wraps every tail) needs the same
   never-downgrade-to-`void` treatment free functions get — a Void method stays boxed `ll_value`.
 
-One `special:new` file remains not-yet: **`15-modules/02_packages/main`** compiles and runs past the
-field-default trap but needs **dynamic method dispatch on a boxed receiver** — `(fn area-of [s] …
-(s.area))` with `s` untyped, so `s.area` is a runtime dispatch the C backend has no vtable for. That
-is the same statically-unknown-receiver machinery (witness tables) the interface case needs (§6a), and
-is left as the honest remaining gap.
+### 5.5 Dynamic method dispatch — the witness/vtable machinery
+
+The one construct the C backend genuinely could not devirtualize: a method call on a statically
+**unknown** receiver — an interface value, or an `Any`/untyped param like `(fn area-of [s] (s.area))`.
+The JS backend gets this free (it dispatches on the JS object at runtime); a typed target must carry a
+runtime vtable. This is Dove's real Q4 answer — the part the settled design said *does* need witness
+tables, as opposed to the extension/operator cases that devirtualize statically (§5.0).
+
+The implementation is a per-class method table on the runtime `ll_class`: each class emits a
+boxed-convention adapter per own method (unbox self + args → call the typed method → box the result)
+and a `__ll_methods_X[]` table; `ll_dyn_method` walks the receiver's class + `:extends` chain for the
+name, so an override wins. It's a *general* vtable, not per-interface witness structs — it covers the
+interface case and the boxed-`Unknown` case with one mechanism.
+
+Greened `20-algorithms/07_tokenizer`, `08_state_machine`, and (with the higher-order vec methods
+below) `15-modules/02_packages/main` — 57 → 60. It also needed **higher-order vector methods**
+(`reduce`/`map`/`filter`/`forEach`): the corpus reaches them through `std/seq` as `(coll.reduce op
+init)`, a native the JS runtime gets from `Array.prototype` — each drives a boxed closure per element.
+Same runtime/stdlib-fidelity axis as §5.2, not an HIR-contract gap.
+
+Two files that this unblocked at the *dispatch* layer stay not-yet on a *different* gap, both from the
+§5.2 parity audit: `09-oop/01_interfaces` (reflection metadata depth — `type` returns a shallow stub)
+and `09-oop/03_dispatch_and_type_patterns` (`print`'s `{0}` positional format). Dispatch is no longer
+the blocker for either.
 
 ---
 
@@ -479,11 +498,12 @@ Each is root-caused; several are the same underlying HIR/backend gap.
 | `15-modules/01_main` | undeclared `u_secret_2dnumber_2da` | a cross-module hyphenated binding referenced but not declared (cross-module scope). |
 | `30-applications/05_snake_tick` | `ll_value` vs `ll_map*` | a map op receives a boxed value where the runtime wants a concrete `ll_map*`. |
 
-### 6c. Runtime divergences (16) — compiled, ran, diverged
+### 6c. Runtime divergences (13) — compiled, ran, diverged
 
 | kind | files | note |
 |---|---|---|
-| trap (exit 70) | `09-oop/01_interfaces`, `03_dispatch_and_type_patterns`, `20-algorithms/07_tokenizer`, `08_state_machine`, `09_memoization_intro`, `15-modules/02_packages/main` | **dynamic method dispatch on a boxed/interface receiver** (`01_interfaces`, `03_dispatch`, `02_packages/main`'s `area-of [s]`) and a map-key stringification path — the statically-unknown-receiver machinery (witness tables) the C backend has no vtable for. (`09-oop/02_classes` left this list — greened by §5.4.) |
+| trap (exit 70) | `20-algorithms/09_memoization_intro` | a map-key stringification path. (`07_tokenizer`, `08_state_machine`, `02_packages/main` left this list — greened by the §5.5 vtable; `09-oop/02_classes` by §5.4.) |
+| output mismatch (dispatch no longer the blocker) | `09-oop/01_interfaces` (reflection metadata depth), `09-oop/03_dispatch_and_type_patterns` (`print` `{0}` format) | now run correctly *through* dynamic dispatch (§5.5); the residual diff is the §5.2 runtime/stdlib axis. |
 | output mismatch (7, the §5.2 silent-wrong-answer set — exact JS↔C diffs captured) | `07-types/01_type_reflection` + `08-generics/00_generics_basic` (reflection metadata depth); `10-modifiers/02_logging`/`03_timing`/`05_multiple` (modifier decorator side-effects dropped); `16-stdlib/01_main` (`print` `{0}` format vs `console.log`); `20-algorithms/03_functional` (array-in-interpolation `[ 1, 4 ]` vs `1,4`) | all four causes are runtime/stdlib fidelity, **below** the HIR axis (§5.2) — the C-green set proves HIR-consumption parity; these are the stubbed runtime showing through. |
 | segfault (exit null) | `18-error-handling/02_rpn_error_paths`, `10-modifiers/06_extension_methods` | stdlib bodies lowered on-demand (`filter`/`map`/`join`/`split`) that the C runtime doesn't fully support. |
 | P1 crash | `16-stdlib/test_stdlib` | a null `_type` during resolution — a lowering path only ever exercised behind the JS legacy emitter. |
@@ -535,10 +555,11 @@ Ordered by measured dip weight — this is the empirical argument for sequencing
    cannot carry a statement-bearing `:step` (every C-style `for` in the corpus bails to raw because of
    it — §4, `raw-structural:for`). A native backend needs rulings on all three.
 
-8. **Coroutines (Step 8, A8) and witness tables last.** 15 coroutine dips, correctly refused; the one
-   interface-dispatch refusal (`passable`) is the statically-unknown receiver that genuinely needs
-   witness tables. Both are backend pipeline / new-machinery work the neutral core owes nothing to
-   until someone wants native generators or dynamic interface dispatch.
+8. **Witness tables — DONE (§5.5); coroutines (Step 8, A8) last.** The statically-unknown-receiver
+   dispatch that genuinely needs a vtable is now implemented as a general runtime method table (it
+   covers interface *and* boxed-`Unknown` receivers with one mechanism), greening three files. What
+   remains here is coroutines: 15 dips, correctly refused — backend pipeline / new-machinery work the
+   neutral core owes nothing until someone wants native generators.
 
 ---
 
