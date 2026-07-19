@@ -265,6 +265,17 @@ export class EmitHirToEstree {
         // Modeled atom: JS materializes the reference (its identifier policy) via the per-backend hook.
         return this.legacy.emitRef(h.src);
 
+      case "free-call":
+        // Resolved dispatch (classifyCall): build the call directly -- byte-identical to
+        // ESTreeBuilder.callExpression -- with no re-dispatch back through the legacy call path.
+        return {
+          type: "CallExpression",
+          callee: this.emitExpr(h.callee),
+          arguments: h.args.map((a) => this.emitExpr(a)),
+          optional: false,
+          loc: loc(h.src),
+        } as ESTree.CallExpression;
+
       case "nil":
         return this.legacy.nilLiteral(h.src);
 

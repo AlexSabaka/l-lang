@@ -38,6 +38,7 @@ export type HExpr =
   | HTemp
   | HLiteral
   | HRef
+  | HFreeCall
   | HOpaqueExpr
   | HNil
   | HTernary
@@ -72,6 +73,19 @@ export interface HLiteral extends HBase {
 export interface HRef extends HBase {
   kind: "ref";
   name: string;
+}
+
+/**
+ * A resolved FREE CALL `(f a ...)` -- the first modeled dispatch kind (A3). The dispatch decision was
+ * made at lowering by the shared `classifyCall` (D1: `f` names a function, or the call carries args),
+ * so the emitter just builds the `CallExpression` -- no re-dispatch. `callee` is the modeled reference,
+ * `args` the lowered operands (with the same evaluation-order hoisting the opaque path used). Emitted
+ * directly; falls back to legacy emission of `src` only when substituted into a legacy-parent operand.
+ */
+export interface HFreeCall extends HBase {
+  kind: "free-call";
+  callee: HExpr;
+  args: HExpr[];
 }
 
 /** A lowering-introduced name (`__ll_hir_<n>`), declared by an HDeclTemp and read here. */
