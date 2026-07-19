@@ -754,7 +754,10 @@ export class ResolveHirToCir {
       if (parts.length === 1) {
         const cName = mangleC(parts[0]);
         const info = this.localInfo(cName);
-        const ctype = info?.ctype ?? this.bindingCType(target as ast.IdentifierNode);
+        // A module global's DECLARED ctype wins over re-inference: a captured-mut global is boxed
+        // (ll_value) even though the symbol channel still types it Int, so the lvalue must be boxed
+        // too or the store unboxes the RHS into a boxed slot (a cc type error).
+        const ctype = info?.ctype ?? this.globalCType(parts[0], cName) ?? this.bindingCType(target as ast.IdentifierNode);
         return { kind: "name", cName, ctype, cell: info?.cell };
       }
       // A field chain: read the head + intermediate fields, then the LAST part is the store slot.
@@ -798,8 +801,15 @@ export class ResolveHirToCir {
     }
     const cName = mangleC(headName);
     const info = this.localInfo(cName);
-    const ctype = info?.ctype ?? this.bindingCType({ _type: "simple-identifier", id: headName } as any);
+    const ctype = info?.ctype ?? this.globalCType(headName, cName) ?? this.bindingCType({ _type: "simple-identifier", id: headName } as any);
     return { src: node, ctype, kind: "c-ref", cName, cell: info?.cell };
+  }
+
+  /** The DECLARED ctype of a module global (undefined if `name` is not a hoisted global). Used at
+   *  store/receiver sites, where re-inferring the type can disagree with how the global was declared. */
+  private globalCType(name: string, cName: string): CType | undefined {
+    if (!this.globalNames.has(name)) return undefined;
+    return this.globalDecls.find((d) => d.cName === cName)?.ctype;
   }
 
   private stepName(step: ast.ASTNode): string {
