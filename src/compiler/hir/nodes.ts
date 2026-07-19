@@ -43,6 +43,7 @@ export type HExpr =
   | HMethodCall
   | HVirtualCall
   | HOperator
+  | HConstruct
   | HOpaqueExpr
   | HNil
   | HTernary
@@ -156,6 +157,19 @@ export interface HOperator extends HBase {
   kind: "operator";
   op: string;
   head: ast.ASTNode;
+  args: HExpr[];
+}
+
+/**
+ * A CONSTRUCTION `(Dog "rex")` -> `new Dog("rex")` -- the `new`-emitting sibling of HFreeCall (A3/A4).
+ * `callee` is the modeled class-name reference; `args` the lowered operands (never copied at the call
+ * site). On JS it emits a `NewExpression`; a native backend allocates the object and runs the
+ * constructor. The first foothold of A4 (construction in the HIR) -- the class DEFINITION side (fields,
+ * `:ctor`, field initializers, super) stays in `JSClassBuilder` until that is inverted to HFieldInit.
+ */
+export interface HConstruct extends HBase {
+  kind: "construct";
+  callee: HExpr;
   args: HExpr[];
 }
 

@@ -975,6 +975,15 @@ export class ResolveHirToCir {
         // -- consuming `h.head`/`h.args` -- is the follow-up increment.
         return this.resolveAstExpr(h.src);
 
+      case "construct":
+        // A3/A4, construct step 2 (dev): `(Dog a)` is now MODELED as HConstruct. The C backend already
+        // resolves construction off the raw AST (`resolveConstruct` -- allocate + run the constructor,
+        // registering an imported class on demand) via `resolveList`, and `h.src` is that original call
+        // node (now carrying lowered operands) -- so routing through it reproduces the pre-model behavior
+        // byte-for-byte. Chasing HConstruct proper -- consuming `h.callee`/`h.args` -- lands with the
+        // wider A4 work (construction in the HIR; JSClassBuilder / its C analog become thin emitters).
+        return this.resolveAstExpr(h.src);
+
       case "operator":
         // A3, operator step 2 (dev): `(op a b)` is now MODELED as HOperator. The C backend already
         // resolves operators off the raw AST (`binopMode` / the `:operator` devirtualization table --

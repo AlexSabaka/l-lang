@@ -323,6 +323,17 @@ export class EmitHirToEstree {
           loc: loc(h.src),
         } as ESTree.CallExpression;
 
+      case "construct":
+        // Resolved construction (classifyCall): `(Dog a)` -> `new Dog(a)`. The class-name callee is the
+        // modeled reference (emitRef -- encoding / import-inlining); args are HIR-emitted, never copied at
+        // the site. Byte-identical to the emitter's NewExpression branch (no `optional` on a NewExpression).
+        return {
+          type: "NewExpression",
+          callee: this.emitExpr(h.callee),
+          arguments: h.args.map((a) => this.emitExpr(a)),
+          loc: loc(h.src),
+        } as ESTree.NewExpression;
+
       case "nil":
         return this.legacy.nilLiteral(h.src);
 

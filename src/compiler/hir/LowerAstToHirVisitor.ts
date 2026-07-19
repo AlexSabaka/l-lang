@@ -285,6 +285,7 @@ export class LowerAstToHirVisitor {
         if (dispatch.kind === "method") return this.lowerMethodCall(node, dispatch.head, dispatch.args, dest);
         if (dispatch.kind === "virtual") return this.lowerVirtualCall(node, dispatch.head, dispatch.args, dest);
         if (dispatch.kind === "operator") return this.lowerOperator(node, dispatch.op, dispatch.head, dispatch.args, dest);
+        if (dispatch.kind === "construct") return this.lowerConstruct(node, dispatch.callee, dispatch.args, dest);
         return this.lowerCallLike(node, dest);
       }
       case "apply":
@@ -469,6 +470,19 @@ export class LowerAstToHirVisitor {
     return this.placeValue(call, prelude, dest);
   }
 
+  /**
+   * A resolved construction (`classifyCall` said `construct`). Lower the args as HExprs (same binding as
+   * a free call -- construction args are never copied at the call site), model the class name as a
+   * reference, and let the emitter build the `NewExpression`. (A3 / A4.)
+   */
+  private lowerConstruct(node: ast.ListNode, callee: ast.ASTNode, args: ast.ASTNode[], dest: Dest): Lowered {
+    const { prelude, atoms, diverged } = this.lowerCallArgs(args);
+    if (diverged) return { stmts: prelude, value: null };
+    const src = prelude.length > 0 ? this.callSrcWithLoweredOperands(node, callee, atoms, args) : node;
+    const call: HExpr = { ...this.base(src), kind: "construct", callee: this.ref(callee), args: atoms };
+    return this.placeValue(call, prelude, dest);
+  }
+
   private lowerCallLike(node: ast.ListNode, dest: Dest): Lowered {
     const ops = this.lowerOperands(node.nodes.slice(1));
     if (ops.diverged) return { stmts: ops.prelude, value: null };
@@ -529,7 +543,8 @@ export class LowerAstToHirVisitor {
       h.kind === "ext-call" ||
       h.kind === "method-call" ||
       h.kind === "virtual-call" ||
-      h.kind === "operator"
+      h.kind === "operator" ||
+      h.kind === "construct"
     );
   }
 
@@ -1056,12 +1071,12 @@ export class LowerAstToHirVisitor {
       if (t) this.context.recordSynthesizedNodeType(id, t);
       return id;
     }
-    if (h.kind === "free-call" || h.kind === "ext-call" || h.kind === "method-call" || h.kind === "virtual-call" || h.kind === "operator") {
+    if (h.kind === "free-call" || h.kind === "ext-call" || h.kind === "method-call" || h.kind === "virtual-call" || h.kind === "operator" || h.kind === "construct") {
       // Rebuild the call AST with the LOWERED args (temps substituted) so a resolved call handed to a
       // legacy-parent operand re-emits with its hoisted operands, not its originals. The head is the
-      // free callee's src / the ext|method|virtual|operator head -- the legacy emitter re-classifies it
-      // (and re-takes the matching branch), byte-identical to the direct HIR emission.
-      const head = h.kind === "free-call" ? h.callee.src : h.head;
+      // free|construct callee's src / the ext|method|virtual|operator head -- the legacy emitter
+      // re-classifies it (and re-takes the matching branch), byte-identical to the direct HIR emission.
+      const head = h.kind === "free-call" || h.kind === "construct" ? h.callee.src : h.head;
       const rebuilt = {
         ...(h.src as ast.ListNode),
         nodes: [head, ...h.args.map((a) => this.hexprToAst(a, a.src))],
