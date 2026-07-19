@@ -1,175 +1,189 @@
-# HIR → LLVM consumption spec (draft v0)
+# HIR → LLVM consumption spec (v1 — Dove-refined)
 
-**What this is.** The contract a native (LLVM) backend would consume from `HirModule` — written
-*before* the modeling cuts, as the forcing function Dove asked for (gaps-and-seams Step 1). Its job
-is not to describe an LLVM backend; it is to state, per construct, **what the emitter must be handed**
-so the cuts aim at a real target instead of inferred negative space. Each assumption names the
-sequence step that makes it true and whether that cut pays off on JS *now* (most do).
-
-**Grounded in** `src/compiler/hir/nodes.ts` (the node family), `EmitHirToEstree.ts`
-(`LegacyLeafEmitter` — the JS coupling surface), and `LowerAstToHirVisitor.ts` (how `type` is
-populated). Draft for the Sabaka⇄Dove lane to refine; **not** ratified.
+**What this is.** The contract a native (LLVM) backend would consume from `HirModule` — the forcing
+function written *before* the modeling cuts. v0 stated the assumptions and posed five open questions;
+v1 folds in the strategy-lane review, which mostly **dissolved** those questions against l-lang's own
+rulings and settled prior art, and reframed the node-family target. Grounded in
+`src/compiler/hir/nodes.ts`, `EmitHirToEstree.ts` (`LegacyLeafEmitter`), `LowerAstToHirVisitor.ts`.
+Draft for the Sabaka⇄Dove lane; not ratified.
 
 ---
 
-## The bar for "separated" (SIL's standard)
+## The frame: a neutral core + per-backend pipelines
 
-> A stub non-ESTree emitter compiles against **`HirModule` and nothing else** — no `context.nodeTypes`
-> side-table, no original AST, and it imports **no** `JSTransformer` code.
+The shared HIR is a **neutral *core*.** Each backend runs its **own lowering pipeline** over it
+(rustc: one typed MIR → `rustc_codegen_ssa` → per-backend passes → LLVM/Cranelift/GCC; Kotlin: shared
+lowerings → per-target emit). Once you hold that frame, some of v0's "cuts" stop being *node families
+the AST→HIR lowering emits* and become **passes the LLVM pipeline runs that JS skips entirely** — JS
+erases coercions and has native generators, so the JS pipeline for those is ~empty.
 
-Today that is false on three counts, which the assumptions below enumerate: the emitter re-enters
-`visitExpr` for every atom/call/pattern (the 2 opaque leaves), it reads types out of `nodeTypes` by
-raw-AST identity (not off the node), and construction is built directly as ESTree in `JSClassBuilder`
-(not in the HIR at all). "Separated" = all three closed.
+This is the SIL model precisely: a *target-independent core that can still express target-specific
+concepts*, specialized by each target's pass pipeline. **The core HIR is the distributable artifact;
+box/unbox/coro are what the native pipeline adds on the way down.**
+
+## The bar for "separated" (updated)
+
+> A stub non-ESTree emitter consumes **core `HirModule` and nothing else** — no `context.nodeTypes`
+> side-table, no original AST, no `JSTransformer` imports. The LLVM *pipeline* (coercion pass +
+> coroutine pass + eventually copy-elision) produces the annotated form the LLVM emitter then consumes;
+> those passes are backend code, not part of the neutral core.
+
+Today core-consumption is false on three counts: the emitter re-enters `visitExpr` for every
+atom/call/pattern (2 opaque leaves), reads types out of `nodeTypes` by raw-AST identity (not off the
+node), and construction is built as ESTree in `JSClassBuilder` (not in the HIR at all).
 
 ---
 
-## Assumptions the backend makes (each = one cut)
+## Assumptions (each = a cut; ✔ = resolved by the review)
 
-### A1 — Every value node carries its own non-`undefined` type. `Unknown` is boxed, not rejected.
-`HBase.type` exists but is **write-only today** — the JS emitter never reads it, so a wrong/absent
-type passes 100% of tests, and the type lives in `context.nodeTypes` keyed by *raw-AST identity*, not
-on a synthesized node. LLVM needs a layout for every value.
-- `type === undefined` on a value node is a **bug** (it should have gotten a type) → fix at the source.
-- `type === Unknown` is **box-me** — the gradual concession, a *representation* not a hole. LLVM
-  readiness needs **zero `undefined`, never zero `Unknown`.** (Grift/Siek: `Dyn` is a uniformly boxed
-  64-bit value with coercions at the boundary, not a rejection.)
-- *Open:* what is l-lang's boxed-`Unknown` runtime repr on native (tagged 64-bit à la Grift's `Dyn`?),
-  and does `type` ride **every** `HExpr` or only the atoms (with combinators inferring from children)?
-- **Steps 2 (measure the split) + 3 (put types on atom nodes, drain `nodeTypes`).** JS benefit: none
-  directly, but Step 3's atom modeling is the vehicle and pays off on its own (below).
-- *Measured (Step 2, see below): `Unknown` is dominated by unresolved **call results** (70% of it),
-  not identifiers — so the boxing question is mostly downstream of dispatch (A3). Literals are already
-  well-typed; the numeric-tower hole is real but tiny.*
+### A1 — Every value node carries its own non-`undefined` type; `Unknown` is boxed.
+`HBase.type` is **write-only today** (the JS emitter never reads it) and lives in `nodeTypes` by raw-AST
+identity, not on the node. LLVM needs a layout at every node.
+- `undefined` on a value node = **bug** (fix at source). `Unknown` = **box-me** (the gradual
+  concession, a *representation* not a hole). Native readiness = **zero `undefined`, never zero `Unknown`.**
+- ✔ **Types on *every* value node** (Q2 dissolves under ANF): operands are only ever atoms or temps, so
+  type the atoms as ground truth and each temp at its definition site with the combinator result — every
+  value position is then covered, with no re-inference (R5). "Type every node" and "atoms + combinators"
+  are the same thing seen from two ends; the combinator runs **once at lowering, result stored**. This is
+  exactly what makes the A1 verify pass checkable.
+- ✔ **Boxed-`Unknown` repr = fat pointer for v0** (Q1): two words `{tag, payload}`, payload holds a full
+  `i64`/`f64`/pointer inline — no int-range trap, no float-boxing, trivially debuggable. Rejected the
+  compact tagged-word / NaN-boxing options *for now* because **D43 decides Int vs Real statically**, so
+  in typed code ints/reals are already unboxed natives and tagging never enters; NaN-boxing's whole
+  payoff (free dynamic doubles) is muted for a statically-typed language. A5/A6 keep this **reversible**:
+  the copy/coerce *decision* is IR nodes, only the *materialization* is backend code, so fat-pointer →
+  tagged-word later is a localized swap, not an ABI rewrite.
+- **Steps 2 (measure) + 3 (atoms carry types, drain `nodeTypes`).**
 
 ### A2 — Atoms are modeled, not opaque.
-A variable read and a literal — the two hottest constructs — are `HOpaqueExpr` today (emitted by
-`leafExpr` → `visitExpr`). The backend needs `HLiteral` (a typed constant, carrying the numeric-tower
-distinction Int/Real/hex/oct/bin — several of which type as `Unknown` today and are really `Int`) and
-`HRef` (a *resolved* binding: which declaration, which scope, is it a copy site). **Step 3.** JS
-benefit: makes the module type-self-contained; empties most of `leafExpr`.
+A variable read and a literal are `HOpaqueExpr` today (`leafExpr` → `visitExpr`). Need `HLiteral` (typed
+constant, numeric-tower-aware) and `HRef` (a **resolved** binding). ✔ Measurement constraint (Step 2):
+the type channel is **sparse for references**, so `HRef` must **resolve** its type via the symbol
+table / declaration — it cannot copy `nodeTypes`, which mostly doesn't have it. **Step 3.** JS benefit:
+makes the module type-self-contained; empties most of `leafExpr`.
 
-### A3 — Dispatch is resolved to concrete call kinds carrying callee identity.
-There is **no call/apply node in the HIR** — a call is an `HOpaqueExpr` whose `src` is re-dispatched
-by `visitExpr` (`computedExtensionCall` / `receiverConformsTo`), and the checker separately decides the
-same thing (the TY8 seam: two independent answers). The backend must be handed the *resolved* kind:
-`free-call(fn, args)` · `method-call(recv, sel, args)` · `extension-call(ext_total, recv, args)` ·
-`index-call` · `construct(type, args)` — with the callee/selector/extension identity recorded, not
-re-derived. **Step 4, a distinct AST→HIR lowering pass that reads the type channel** (SIL
-devirtualization is a pass *on* the IR; must not re-infer, R5). JS benefit: closes TY8 regardless of
-LLVM.
+### A3 — Dispatch resolved — but it is THREE mechanisms, not one (Q4 ✔).
+There is no call node in the HIR; a call is an `HOpaqueExpr` re-dispatched by `visitExpr`, and the
+checker decides the same thing independently (the TY8 seam). v0 lumped all dispatch as "resolve to a
+symbol." The review splits it by kind, because the answer differs:
+- **Extension methods (`:extension`, nominal):** *always statically resolvable* — l-lang **forbids** the
+  dynamic cases (LL0230 refuses extension on a bare array; LL0234 on a structural-only conformer;
+  extension requires nominal `:implements`). → **devirtualize to a direct `ext_total(recv, args)`
+  symbol** (SIL static devirt). The *easy* case; there is no dynamic extension dispatch in well-typed
+  l-lang.
+- **Interface / virtual methods (D42; `:extends` overrides):** the **genuinely dynamic** case v0 missed.
+  A value typed as interface `Shape` calling `.area` picks the impl at runtime. → **witness/vtable
+  representation + opportunistic devirt** (SIL hybrid: direct call when the concrete type is statically
+  known — a known allocation, a final class — indirect through the table otherwise).
+- **Operators (`__ll_op_registry`):** the one true runtime-dispatch mechanism today (Ze: the registry
+  can't consult static types). Same shape — **static when arg types are known** (D43 says most cases),
+  **boxed-dynamic dispatch when an arg is `Unknown`** (which is A1's repr doing its job, not a separate
+  mechanism).
+
+So the resolved call kinds are `free-call`, `ext-call(ext_total, recv, args)` [static],
+`virtual-call(recv, witness, args)` [table + opportunistic devirt], `operator(...)` [static | boxed],
+`construct(...)`. **Step 4, a distinct AST→HIR pass reading the type channel** (must not re-infer, R5).
+Closes TY8 on JS regardless of LLVM. *(Ties to A1: Step 2 measured that ~70% of `Unknown` is unresolved
+call results — so resolving dispatch and deciding the boxed repr are one conversation.)*
 
 ### A4 — Construction is in the HIR.
-`new`, `super(…)`, per-field `this.x = param`, field-initializer expressions, and copy-on-entry are
-built **directly as ESTree in `JSClassBuilder`** (`buildConstructor`/`buildFields`) — not even an
-opaque leaf. LLVM gets nothing for instantiation: no field layout, init order, copy-on-construct, or
-super dispatch. Needs `HConstruct` / `HFieldInit` + typed field stores; `JSClassBuilder` becomes a
-thin emitter of them. **Step 5.** JS benefit: a real gap today (construction is un-modeled).
+`new`, `super(…)`, per-field `this.x = param`, field initializers, copy-on-entry are built directly as
+ESTree in `JSClassBuilder` — not even an opaque leaf. Need `HConstruct` / `HFieldInit` + typed field
+stores; `JSClassBuilder` becomes a thin emitter. **Step 5.** Core node, both backends emit it.
 
 ### A5 — Stores and copies are explicit nodes.
-D11 value-copy is a JS hook (`storeValue` = `asValue`/`__ll_copy`) plus an `isStore` flag on
-`HAssignTemp`/`HReturn`, plus copies buried in `emitVarDecl`/`emitAssign`/`emitForEach` and applied
-unconditionally to collection elements. The **copy *decision*** (does this store copy? shallow per
-CP3?) is backend-neutral; only the **materialization** differs (`__ll_copy` vs `memcpy`/move). Needs an
-explicit copy node at every store site; retire `storeValue` + `isStore`. **Step 6.** Note l-lang's
-*shallow* value semantics make the elision proof different from the deep-MVS papers — elision is a
-later LLVM-era optimization, not part of this cut. JS benefit: uniformity; little runtime win.
+D11 copy is a JS hook (`storeValue`/`__ll_copy`) + an `isStore` flag + copies buried in
+`emitVarDecl`/`emitAssign`/`emitForEach`. The copy *decision* (does this store copy? shallow per CP3?) is
+backend-neutral; only the *materialization* differs (`__ll_copy` vs `memcpy`/move). Explicit copy node at
+every store; retire `storeValue`/`isStore`. **Step 6.** Elision is a later LLVM-era pass (shallow
+semantics make its proof different from the deep-MVS papers). Core node.
 
-### A6 — Coercions are explicit nodes. *(the family neither the code nor the first review named)*
-Where a typed value flows into an `Unknown` slot or back out, JS **erases** the coercion (which is
-why the HIR has no place for it and nobody noticed). On LLVM the box/unbox/cast is **load-bearing**.
-Needs a `box` / `unbox` / `cast` node family inserted at static↔dynamic boundaries (Grift's
-"explicit-cast IR"). **Step 7 — falls out of *this spec*; invisible from JS; probably a bigger cut
-than coroutines.** *Open:* inserted by a dedicated pass, or at lowering time off the type channel?
+### A6 — Coercions: an **LLVM-pipeline-only pass**, not a lowering-time emission (Q3 ✔).
+Where a typed value flows into an `Unknown` slot or back, JS **erases** the coercion; on native the
+box/unbox/cast is load-bearing. Grift settles it: cast insertion is a **discrete phase** over the IR
+(the blame-calculus translation), not folded into structural emit — inlining it at lowering is the exact
+judgment-in-the-emitter R6 exists to kill. And it is native-only, so it does **not** belong on the shared
+AST or in the base HIR. → **The base HIR out of AST→HIR is coercion-free.** The JS pipeline's coercion
+pass is the **identity**; the LLVM pipeline's *first* pass reads the type channel and produces a
+**coercion-annotated HIR** (`HBox`/`HUnbox`/`HCast`) the LLVM emitter consumes. **Step 7 — a pass, not a
+node family the lowering emits.** Broad (every static↔dynamic boundary) but mechanical.
 
 ### A7 — Pattern tests are IR facts, not a fused boolean.
-`HPatternTest` carries a raw `PatternNode` + `scrutName`; the actual test is built at emit by
-`generateCondition`, which **fuses binding into the boolean** as side-effecting commas
-(`(x = v, true) && __ll_is_type(…)`). A naïve LLVM consumer reading it as a pure boolean gets the
-semantics wrong (this bind-then-test ordering is *why* arms need an else-chain). Needs the test
-decomposition, binding set, and bind-then-test ordering modeled; retire `patternTest`/`patternVars`.
-**Step 8 (R2 pattern half).**
+`HPatternTest` carries a raw `PatternNode`; the test is built at emit by `generateCondition`, which
+**fuses binding into the boolean** as side-effecting commas — a naïve consumer reading it as pure gets
+the bind-then-test ordering wrong (why arms need an else-chain). Model the test decomposition, binding
+set, and ordering; retire `patternTest`/`patternVars`. **Step 8 (R2 pattern half).** Core node.
 
-### A8 — Coroutines are modeled.
-`yield` is an opaque leaf → `YieldExpression`; generator/async-ness rides on `FunctionNode.generator`
-read at emit; `await` is opaque. The HIR carries **no** suspend/resume node and never marks a body as
-generator/async, so LLVM cannot even distinguish a generator body, let alone find suspend points for
-`llvm.coro.*`. Needs `HYield`/`HAwait` + generator/async marking in `HirModule`. **Step 8.** JS
-benefit: none (JS gets the protocol free, D29) — genuinely LLVM-only, gate behind the spec.
+### A8 — Coroutines: **defer entirely, then do it Rust-style** (Q5 ✔).
+`yield`/`await` are opaque; generator/async-ness rides on `FunctionNode.generator` at emit; no
+suspend/resume node. The review corrected the framing: A6 is **bigger** (broad + on the critical path —
+*mandatory*, no dynamic value runs on native without it), but A8 is **harder per-site** (the
+state-machine transform is the known tar-pit: Rust's two-await function is 360 lines of MIR vs 23; the
+live-across-suspend + storage-conflict analysis is still an active Rust project; `llvm.coro` carries
+sharp edges Swift had to work around). **A8 is optional and cleanly deferrable** — ship the native
+backend **refusing `:gen`/async with an honest diagnostic** (this project's LL0230/LL0234 lineage), most
+code never notices. When it's eventually built, do it the **Rust way — a state-machine transform at the
+HIR level, backend-neutral** (JS skips it via `function*`) — **not** `llvm.coro`, which locks you to
+LLVM's passes and edge cases. So: **A6 first (mandatory), A8 last (deferred behind a refusal).** `HYield`/
+`HAwait` are core *source* nodes (AST→HIR emits them; JS emits native; the LLVM coroutine pass *consumes*
+them → state-machine HIR — exactly how `match` is core-but-always-lowered today).
 
 ---
 
-## What already holds (no cut — state it so it isn't re-litigated)
+## What already holds (no cut)
+Control-flow core maps 1:1 onto LLVM: `HIf`/`HBlock` → blocks+branches; `HDeclTemp`/`HAssignTemp`/`HTemp`
+→ SSA locals; `HTernary` → `select`; `HReturn` → `ret`; `HWhile`/`HFor`/`HForEach` → loops; `HTry` →
+landing pads. Inverted collections model their structure (element copy is A5, element types A1). R1/R6 done.
 
-The control-flow core is backend-neutral and maps 1:1 onto LLVM: `HIf`/`HBlock` → basic blocks +
-branches; `HDeclTemp`/`HAssignTemp`/`HTemp` → SSA locals; `HTernary` → `select`; `HReturn` → `ret`;
-`HWhile`/`HFor`/`HForEach` → loop block structure; `HTry` → landing pads. The inverted collections
-(`HVector`/`HMatrix`/`HMap`/`HMember`/`HIndex`) model their structure directly (their *element copy*
-is A5's business, their *element types* A1's). R1 (ANF/position, tail return) and R6 (mechanical emit)
-are done.
-
-## The node family the standalone emitter consumes (target)
+## The node-family target — THREE-way (the frame's payoff)
 
 ```
-value:  HTemp  HLiteral*  HRef*  HNil  HTernary  HSeq
-        HVector  HMatrix  HMap  HMember  HIndex
-        HConstruct*  HCall-kinds*(free|method|extension|index)
-        HBox* HUnbox* HCast*        HYield* HAwait*
-        HMatchTest* (decomposition + binding-set)         (* = added by a cut)
-stmt:   HExprStmt  HDeclTemp  HAssignTemp  HIf  HBlockStmt  HReturn
-        HWhile  HFor  HForEach  HTry
-        HVarDecl  HUserAssign  HCopyStore*  HFieldInit*
-        (HOpaqueExpr / HOpaqueStmt / HHoist / HPatternTest retired)
-every node: { type: InferredType (non-undefined; Unknown => boxed) }   ← off the node, not nodeTypes
+1. CORE, emitted AND kept — both backends emit directly:
+   HTemp HLiteral* HRef* HNil HTernary HSeq  HVector HMatrix HMap HMember HIndex
+   HConstruct* HFieldInit*  HFreeCall* HExtCall* HVirtualCall* HOperator*  HCopyStore*  HMatchTest*
+   HIf HBlockStmt HDeclTemp HAssignTemp HReturn HWhile HFor HForEach HTry HVarDecl HUserAssign
+
+2. CORE, emitted but LOWERED-AWAY on LLVM — a source construct one backend rewrites:
+   HYield* HAwait*        (JS: native yield/await;  LLVM pipeline: coroutine pass -> state-machine HIR)
+
+3. NON-CORE, introduced only by an LLVM-PIPELINE PASS — no source construct:
+   HBox* HUnbox* HCast*   (produced by the LLVM coercion pass; base HIR never contains them)
+
+every core value node: { type: InferredType, non-undefined; Unknown => fat-pointer boxed }
+retired: HOpaqueExpr HOpaqueStmt HHoist HPatternTest        (* = added by a cut)
 ```
 
-## Gap table
+## Gap / sequencing table
 
-| # | Assumption | Today | Closed by | Pays on JS now? |
-|---|---|---|---|---|
-| A1 | value nodes typed; `Unknown` boxed | `type` write-only, in `nodeTypes` | Step 2+3 | via A2 |
-| A2 | atoms modeled | `HOpaqueExpr` + `leafExpr` | Step 3 | yes (self-contained) |
-| A3 | dispatch resolved | opaque + TY8 double-decide | Step 4 | yes (TY8) |
-| A4 | construction in HIR | `JSClassBuilder` ESTree | Step 5 | yes (real gap) |
-| A5 | stores/copies explicit | `storeValue`/`isStore` | Step 6 | uniformity only |
-| A6 | coercions explicit | **erased / absent** | Step 7 | no (LLVM-only) |
-| A7 | pattern tests as facts | `generateCondition` fuses | Step 8 | modest |
-| A8 | coroutines modeled | opaque + `FunctionNode.generator` | Step 8 | no (LLVM-only) |
+| # | Assumption | Today | Closed by | kind | JS now? |
+|---|---|---|---|---|---|
+| A1 | value nodes typed; `Unknown`=fat-ptr | `type` write-only | Step 2+3 | node type field | via A2 |
+| A2 | atoms modeled (`HRef` resolves) | `HOpaqueExpr`+`leafExpr` | Step 3 | nodes | yes |
+| A3 | dispatch: ext=static, iface=witness | opaque + TY8 | Step 4 | AST→HIR pass | yes (TY8) |
+| A4 | construction in HIR | `JSClassBuilder` ESTree | Step 5 | nodes | yes |
+| A5 | explicit copies | `storeValue`/`isStore` | Step 6 | nodes | uniformity |
+| A6 | coercions | erased/absent | Step 7 | **LLVM-pipeline pass** | no |
+| A7 | pattern facts | `generateCondition` fuses | Step 8 | nodes | modest |
+| A8 | coroutines (deferred) | opaque + `.generator` | Step 8/later | **core src node + LLVM pass** | no |
 
-Through-line: A2–A5 are justified on JS merits *now* and happen to serve LLVM (lose nothing doing
-them first); A6/A8 are LLVM-only and wait until this spec — or a real prototype — makes their shape
-concrete.
+Through-line unchanged: A2–A5 pay on JS *now* and happen to serve LLVM; A6/A8 are LLVM-pipeline work,
+gated behind this spec / a real prototype. New: A8 is **deferred behind a native-refusal**, not built.
 
 ## Measurement (Step 2, first pass — classify, don't count)
+Probe over 113 corpus files, value-position nodes classified vs `nodeTypes` (rough tool; a real verify
+pass is a later build):
+- **`Unknown` is a dispatch story:** ~70% of `Unknown` value nodes are **calls whose return type the
+  checker couldn't resolve** (~58% of typed calls); identifiers are the minority. Corrects the brief's
+  "~178 `Unknown` identifiers." → boxing is downstream of A3.
+- **Literals already well-typed** (Int/String/Real/Boolean); the numeric-tower-→`Unknown` hole is real
+  but **tiny (1 hex node)** — cheap fix, not a volume driver.
+- **Channel sparse for references** → `HRef` must resolve, not copy (A2).
+- *Caveat:* the raw "missing" fraction overstates the gap (can't cleanly exclude structural
+  lists/declaration-name identifiers). Trust the `Unknown` distribution + literal typing; treat missing
+  as directional.
 
-A probe over 113 corpus files walked value-position AST nodes and classified each against
-`context.nodeTypes`: **concrete** / **`Unknown`** (box) / **missing** (no channel entry). Rough tool
-(a re-usable *verify pass* is a later build); read the caveats, not just the totals.
-
-- **`Unknown` is a dispatch story, not an identifier story.** Of ~2,030 `Unknown` value nodes,
-  **70% (~1,428) are `list`s — calls/forms whose return type the checker could not determine** — vs
-  ~516 identifiers. Among *typed* calls, **~58% are `Unknown`.** This reframes A1: the box-me
-  population is created mostly by unresolved dispatch (A3/Step 4), so **resolving dispatch and deciding
-  the boxed-`Unknown` repr are the same conversation.** (Corrects the brief's "~178 `Unknown`
-  identifiers" framing: identifiers are the minority of `Unknown`; the estimate also undercounts.)
-- **Literals are already well-typed** — integer→`Int` (1105), string→`String` (912), real→`Real`,
-  boolean→`Boolean`. The numeric-tower-→`Unknown` hole is **real but tiny** (1 hex node in the whole
-  corpus): a cheap correctness fix, not a volume driver. So the A1 `undefined`-vs-`Unknown` split, in
-  practice, is *"a few genuinely-missing literal kinds to fix"* + *"a large, legitimately-dynamic
-  call-result population to box."*
-- **The channel is sparse for references.** Most identifier *uses* have no `nodeTypes` entry — the
-  checker resolves them through the symbol table without writing the type back. Consequence for Step 3:
-  **`HRef` cannot get its type by copying `nodeTypes`; it must resolve the binding's type** (symbol
-  table / declaration). This is a concrete design constraint the spec did not have before the measure.
-- *Caveat:* the raw "missing" fraction (~57% of walked nodes) **overstates** the true value-node gap —
-  the walk cannot cleanly exclude structural lists (blocks, special forms) and non-value identifiers
-  (declaration names, heads, property names), which legitimately carry no type. Trust the *`Unknown`
-  distribution* and the *literal typing* (both are over typed nodes); treat *missing* as directional.
-
-## Open questions this spec surfaces (for the strategy lane)
-
-1. **Boxed-`Unknown` repr** on native — tagged 64-bit (Grift `Dyn`), or a fat pointer? Decides A6.
-2. **Where types live** — on every `HExpr`, or only atoms with combinators typed from children? Decides A1/A3 mechanics.
-3. **Coercion insertion** — a dedicated pass over the typed HIR, or emitted at lowering off the channel?
-4. **Extension dispatch** — devirtualized to a direct `ext_total` symbol at lowering (SIL-style), or left as a runtime vtable/registry lookup the native runtime provides?
-5. **Is A6 (coercions) really bigger than A8 (coroutines)?** — the spec claims so; the type-channel measurement (Step 2) is the first datapoint.
+## Still genuinely open (only one)
+The exact `box`/`unbox` instruction sequences — and that is **downstream of picking fat-pointer (Q1)**,
+so it resolves itself the moment that's committed. Everything else (Q2 ANF, Q3 Grift phase-order + the
+neutral-core frame, Q4 l-lang's own dispatch rulings) is settled above; Q5 is a corrected framing, not
+an open choice.
