@@ -2,6 +2,7 @@ import type { DiagnosticDef } from "./Diagnostic";
 import { TypeDiagnostics } from "./TypeDiagnostics";
 import { SyntaxDiagnostics } from "./SyntaxDiagnostics";
 import { CodegenDiagnostics } from "./CodegenDiagnostics";
+import { CBackendDiagnostics } from "./CBackendDiagnostics";
 import { ModuleDiagnostics } from "./ModuleDiagnostics";
 import { ComptimeDiagnostics } from "./ComptimeDiagnostics";
 
@@ -10,6 +11,7 @@ export type { DiagnosticDef } from "./Diagnostic";
 export { TypeDiagnostics } from "./TypeDiagnostics";
 export { SyntaxDiagnostics } from "./SyntaxDiagnostics";
 export { CodegenDiagnostics } from "./CodegenDiagnostics";
+export { CBackendDiagnostics } from "./CBackendDiagnostics";
 export { ModuleDiagnostics } from "./ModuleDiagnostics";
 export { ComptimeDiagnostics } from "./ComptimeDiagnostics";
 
@@ -32,6 +34,7 @@ export const DIAGNOSTIC_CATEGORIES: Record<
   type: TypeDiagnostics,
   syntax: SyntaxDiagnostics,
   codegen: CodegenDiagnostics,
+  cCodegen: CBackendDiagnostics,
   module: ModuleDiagnostics,
   comptime: ComptimeDiagnostics,
 };

@@ -151,6 +151,8 @@ function checkRegistry(): { failures: string[] } {
  */
 const RETIRED_CODES: ReadonlySet<string> = new Set([
   "LL0004", // ImportHasSymbols -- deleted in Sc3: dead, and it encoded a false invariant.
+  "LL0103", // ReturnInExpressionPosition -- retired with the HIR cut (D45); the tombstone lived only
+            // in a CodegenDiagnostics comment, so the allocator kept offering it as next-free.
 ]);
 
 /** First unused LLxxNN in a band (e.g. band "LL02" -> LL0200..LL0299). */
