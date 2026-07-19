@@ -15,6 +15,7 @@
 import * as ast from "../frontend/ast";
 import { classifyList, isDottedMemberIndexer } from "../analysis/listForm";
 import { RuntimeProvider } from "../runtime";
+import { buildExtensionTable, conformingExtensionFn, memberKindOn, receiverType } from "./extensionResolution";
 
 /** The minimal channel the classifier reads (a structural subset of Context, to avoid an import cycle). */
 export interface CallClassCtx {
@@ -24,6 +25,7 @@ export interface CallClassCtx {
 
 export type CallDispatch =
   | { kind: "free"; callee: ast.ASTNode; args: ast.ASTNode[] }
+  | { kind: "ext"; head: ast.ASTNode; objectName: string; member: string; fnName: string; args: ast.ASTNode[] }
   | { kind: "opaque" };
 
 // -- the same channel-based predicates JSTransformer uses, re-expressed against a bare Context --------
@@ -75,7 +77,23 @@ export function classifyCall(node: ast.ListNode, ctx: CallClassCtx): CallDispatc
   const args = nodes.slice(1);
 
   if (isDottedMemberIndexer(head)) return { kind: "opaque" };        // (gs[0].hi ...) -- a call, not yet modeled
-  if (head?._type !== "simple-identifier") return { kind: "opaque" }; // composite head -> ext-call (later)
+
+  // ext-call: a 2-part `obj.method` whose receiver TYPE lacks a native `method`, but an `:extension`
+  // conforms to it -- lowers to the direct free call `method(obj, ...)`. (3+-part chains stay opaque
+  // for now; the receiver-of-a-chain resolution differs.)
+  if (head?._type === "composite-identifier") {
+    const parts = String((head as ast.IdentifierNode).id ?? "").split(".").filter(Boolean);
+    if (parts.length !== 2) return { kind: "opaque" };
+    const [objectName, member] = parts;
+    if (memberKindOn(ctx, objectName, member, head) !== undefined) return { kind: "opaque" }; // native method/field
+    const rtype = receiverType(ctx, objectName, head);
+    if (!rtype) return { kind: "opaque" };
+    const fnName = conformingExtensionFn(ctx, buildExtensionTable(ctx), rtype, member);
+    if (!fnName) return { kind: "opaque" };
+    return { kind: "ext", head, objectName, member, fnName, args };
+  }
+
+  if (head?._type !== "simple-identifier") return { kind: "opaque" };
 
   const id = (head as ast.SimpleIdentifierNode).id;
   if (id === "||" || id === "&&") return { kind: "opaque" };         // short-circuit LogicalExpression
