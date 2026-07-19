@@ -19,10 +19,13 @@ Every count below is reproducible with:
 npm run test:c -- --gap-ledger /tmp/ledger.json     # dumps the full census + a summary table
 ```
 
-Status: **final** (Phase E). The numbers are the post-sweep census — Phase E ran a breadth sweep
-(field mutation, enums, `:extension` devirtualization, a native, a global-store correctness fix) that
-drained most of the mechanical refusal frontier into evidence, so the residual frontier in §6 is the
-*genuinely hard* remainder, not low-hanging fruit.
+Status: **living** (Phase E + dev-sync). Two things have happened since the first census: (1) a
+breadth sweep (field mutation, enums, `:extension` devirtualization, a native, a global-store
+correctness fix) drained the *mechanical* refusal frontier into evidence, so the residual frontier in
+§6 is the genuinely hard remainder; (2) **dev caught up on the two biggest holes** — `HRef` and
+`HFreeCall` — and the C backend chased them, draining ~680 dips. §5.1 records that drain as a measured
+before→after, and §5.2 adds a 1-to-1 JS↔C parity audit. The counts below are the current (post-chase)
+census.
 
 ---
 
@@ -64,25 +67,26 @@ load-bearing, not cosmetic.
 | 📚 Library / 🧪 Fixture / ⏳ XFail / ⚠️ Skip | 37 | not executable as standalone `node` programs by design |
 | **Total** | **130** | |
 
-**Total recorded dips: 8 209**, distributed:
+**Total recorded dips: 7 530** (was 8 209 before dev modeled `HRef`/`HFreeCall` — see §5.1),
+distributed:
 
 | Assumption | Dips | One-line |
 |---|--:|---|
-| A3 — calls modeled | 2 728 | the biggest hole: no call node exists in the HIR at all |
-| A2 — atoms modeled | 2 386 | every variable read and decl is an opaque leaf |
-| A5 — copy/coerce decided | 809 | the D11 value-copy decision lives nowhere in the HIR |
+| A3 — calls modeled | 2 510 | still the biggest hole; `HFreeCall` drained the free-call slice, method/operator/construct calls remain |
+| A2 — atoms modeled | 1 924 | `HRef` drained a third of variable reads; decl-structure / composite reads remain |
+| A5 — copy/coerce decided | 810 | the D11 value-copy decision lives nowhere in the HIR |
 | A1 — types on every node | 753 | `nodeTypes` misses identifier *uses*; fall back to symbols |
 | A9-extern — the extern boundary | 642 | **new**: unmodeled by the spec; every program preludes `std/js` |
 | A4 — construction modeled | 457 | constructors, field layout, **enums** reconstructed off the HIR |
-| A6 — coercions inserted | 174 | the P2 pass's own traffic (backend pipeline, not a core cut) |
+| A6 — coercions inserted | 175 | the P2 pass's own traffic (backend pipeline, not a core cut) |
 | A7 — pattern tests modeled | 144 | match decomposed from the raw `PatternNode` |
-| "new" bucket | 92 | findings with no A-row: see §4 |
+| "new" bucket | 91 | findings with no A-row: see §4 |
 | A8 — coroutines / native machinery | 24 | refused (coroutines) or lowered to native (try/throw) |
 
-The shape is the headline: **A3 + A2 = 62% of all dips.** The HIR's two largest holes are the two
-most fundamental things a backend does — *name a value* and *call something*. Everything else is a
-rounding error against those two. That is the empirical case for prioritizing the atom/call node
-families (spec Steps 3–4) above all other cuts.
+The shape is still the headline: **A3 + A2 = 59% of all dips** (was 63% before the drain). The HIR's
+two largest holes are the two most fundamental things a backend does — *name a value* and *call
+something* — and dev is now closing them incrementally, exactly the order the ledger argued for.
+Everything else is a rounding error against those two.
 
 ---
 
@@ -117,24 +121,26 @@ is not a subtlety; it is a bug the moment a target believes it.
 
 | construct | dips | files | via | note |
 |---|--:|--:|---|---|
-| `atom-ref` | 1 465 | 86 | AST | a variable read is an `HOpaqueExpr` leaf |
+| `atom-ref` | 1 003 | 76 | AST | a variable read still lowered opaquely (was 1 465; `HRef` drained −462, §5.1) |
 | `decl-structure` | 447 | 75 | AST | binding name/mutability read from the raw `VariableNode` |
 | `assign-target` | 169 | 38 | AST | assignment target from raw AST (the `emitAssign` legacy seam) |
 | `formatted-string` | 146 | 47 | AST | interpolation segments from raw AST |
 | `decl-type` / `binding-type` | 115 | 30 | symbols | declaration/binding type through the symbol table |
 | `foreach-variable` | 44 | 21 | AST | loop binding from the raw `ForEachNode` (`emitForEach` seam) |
 
-**Workaround:** `resolveAstExpr`/`resolveAstStmt` re-drive off `h.src`. **`atom-ref` at 1 465 dips
-across 86 of ~90 executable files is the single most-hit construct in the entire corpus** — literally
-every program reads a variable, and every read is opaque. This is Step 3's mandate (`HRef`) stated as
-a number. `HLiteral` already landed on `dev` mid-probe and was chased here (the exhaustive CIR switch
-flagged it at compile time); the ref half is what remains.
+**Workaround:** `resolveAstExpr`/`resolveAstStmt` re-drive off `h.src`. `atom-ref` *was* the single
+most-hit construct in the corpus (1 465 dips / 86 files — every program reads a variable); **`HRef`
+landed on `dev` and drained it to 1 003 (−32%)**, the chase measured in §5.1. The residual 1 003 are
+reads in positions dev hasn't modeled yet — composite/dotted heads, `for-each` variables, assignment
+targets, and reads inside subtrees that still bail to opaque. `decl-structure` (447) is now the
+largest A2 row: the *declaration* half of the atom story (name + mutability), still read from the raw
+`VariableNode`.
 
 ### A3 — Calls are modeled (kind + callee identity on the node)
 
 | construct | dips | files | via | note |
 |---|--:|--:|---|---|
-| `call-dispatch` | 1 960 | 95 | AST | call kind/callee resolved below the HIR — **there is no call node** |
+| `call-dispatch` | 1 742 | 91 | AST | non-free calls still opaque (was 1 960; `HFreeCall` drained −218, §5.1) |
 | `function-signature` | 239 | 61 | symbols | signature through the symbol table |
 | `callee-identity` | 121 | 38 | symbols | callee resolved through symbols (spec wants it *on* the call node) |
 | `member-dyn` / `method-dyn` | 182 | 34 | — | boxed receiver → runtime member/method dispatch |
@@ -143,13 +149,15 @@ flagged it at compile time); the ref half is what remains.
 | `closure-call` / `closure-lift` / `function-as-value` | 53 | 21 | symbols | first-class function → boxed calling convention |
 
 **Workaround:** `resolveConstruct`/`resolveObjMethod`/`binopMode` reconstruct the call shape from the
-raw call AST plus symbol lookups. **`call-dispatch` at 1 960 dips / 95 files is the largest single
-number in the ledger.** The HIR has no `HCall` — every call is an opaque expression whose kind (free
-function / method / intrinsic / closure / operator / **extension**) the backend must re-derive. The
-sweep added the `extension-devirt` row: an `:extension` is a free function that `(recv.m args)`
-statically rewrites to `m(recv, ...)` on its first parameter (Dove's easy Q4 case, D34) — one more
-callee *kind* the HIR doesn't distinguish. This is the strongest evidence in the document for Step 4,
-and the sub-rows are a ready-made taxonomy for the `HCall` kind field.
+raw call AST plus symbol lookups. `call-dispatch` *was* the largest single number in the ledger (1 960
+/ 95 files); **`HFreeCall` landed on `dev` and drained the free-call slice to 1 742 (§5.1)**. It is
+still the largest — because `HFreeCall` models only the *free* call kind; every method / operator /
+constructor / dotted call remains opaque. The sub-rows are the taxonomy for the rest of the `HCall`
+kind field: `method-devirt`/`operator-*`/`extension-devirt` (the statically-resolved kinds — the
+sweep added `extension-devirt`, Dove's easy Q4 case), `member-dyn`/`method-dyn` (the boxed-receiver
+dynamic kinds), `closure-call` (call through a value). `callee-identity` (121) survived the drain
+intact — `HFreeCall` carries the callee *name* but not yet *which declaration*, so imported-ness is
+still a symbol lookup (dev's node comment flags this as a follow-up increment).
 
 ### A4 — Construction is modeled (constructors, field layout, `super`, enums)
 
@@ -263,7 +271,7 @@ first-class assumption**, with intrinsic-vs-stdlib-body-vs-refuse as its three r
 
 ---
 
-## 4. "New" findings — dips with no A-row (92 total)
+## 4. "New" findings — dips with no A-row (91 total)
 
 These are things the C backend had to decide that the spec's A1–A8 frame doesn't name. The
 `unhandled:*` rows are the residual refusal frontier (§6); the rest are genuine semantic findings:
@@ -284,7 +292,9 @@ forced box. **These deserve to be tracked as first-class HIR-contract questions*
 
 ---
 
-## 5. What the breadth sweep proved (Phase E)
+## 5. What the probe proved
+
+### 5.0 The breadth sweep (Phase E)
 
 The sweep implemented five things. Each was chosen because it converts a *refusal* into either a green
 (proving what construct the backend needed) or a sharper dip — turning "the backend can't do X" into
@@ -317,6 +327,70 @@ The sweep did **not** chase the genuinely hard remainder (§6). Where a construc
 — cross-module class registration, a captured-mut that is *also* a module global, field-chain index
 assignment — it was left refused/not-yet and root-caused here. That is the probe working as intended:
 a refusal that resists a breadth sweep *is itself* a high-value finding.
+
+### 5.1 Dev sync: the drain, measured
+
+The point of this probe was always the feedback loop — measure the holes, hand `dev` an ordered cut
+list, watch the dips drain as the HIR models them. That loop closed, on the exact two items §7 ranked
+first. `dev` landed `HRef` (a modeled reference atom — Step 3) and `HFreeCall` (a resolved free call —
+A3). The C backend's exhaustive CIR switch flagged both at compile time; the chase consumes them off
+the HIR node instead of dipping to raw AST, and **records no dip for the modeled construct**:
+
+| dip | before | after | drain | why it didn't go to zero |
+|---|--:|--:|--:|---|
+| `atom-ref` (A2) | 1 465 | 1 003 | **−462 (−32%)** | `HRef` is produced only in operand positions dev has modeled; composite/dotted heads, `for-each` vars, assign targets still lower opaquely |
+| `call-dispatch` (A3) | 1 960 | 1 742 | **−218 (−11%)** | `HFreeCall` models only the *free* call kind; method / operator / constructor / dotted calls stay opaque |
+| **total** | **8 209** | **7 530** | **−679** | the drain is ~entirely these two — nothing else moved |
+
+Two details make this a *clean* measurement rather than a vibe. First, the drain equals the modeled
+amount to within a rounding error (462 + 218 = 680 ≈ 679 total) — the chase didn't perturb anything
+else. Second, the **satellites held steady exactly as dev's node comments predicted**:
+`ref-type-via-symbols` (A1, 396) and `callee-identity` (A3, 121) did *not* drain, because `HRef`/
+`HFreeCall` carry the *name* but not yet the resolved *type* or *which-declaration* — those move onto
+the node in a follow-up increment. So the ledger now reads as a burn-down chart: it says precisely
+which sub-problem `dev` solved, and which adjacent ones it deferred. All of this with **53 green / 0
+regressions / JS baseline 108 intact** — the chase changed how the answer is *derived*, never the
+answer.
+
+### 5.2 The 1-to-1 JS↔C parity audit
+
+The goldens were generated from the JS backend, so "C matches golden" is *usually* "C matches JS" —
+but not provably, and a stale golden would hide a real JS↔C divergence. So this pass compares all
+three outputs live: `golden` (the `.expect` sidecar), `js` (`ts-node index.ts run`, the current JS
+backend), and `c` (transform → `cc` → run), over all **93 executable examples** (those with a golden).
+
+| category | count | reading |
+|---|--:|---|
+| **parity** (`js == c == golden`) | 53 | the entire C-green set is *true* byte-for-byte JS parity — not just golden-matching |
+| **golden-stale** (`js != golden`) | **0** | every golden still tracks live JS; the oracle is sound, the whole corpus over |
+| **C-behind, but ran** (`js == golden`, `c` ran and differs) | 7 | C compiles and runs but prints a *wrong* answer — §5.2's payload |
+| C could not produce output (cc error / refused / trap) | 33 | the §6 frontier; no comparable output |
+| JS failed to run | 0 | every executable example runs under JS |
+
+The 7 "C ran but diverged" files are the most valuable finding of the audit — the **silent
+wrong-answer** class, where C output looks plausible but disagrees with JS. All 7 have `js == golden`,
+so JS is the correct reference and the divergence is a pure C bug. They cluster into four precise root
+causes (each now also a §6c row):
+
+1. **Reflection metadata depth** — `07-types/01_type_reflection`, `08-generics/00_generics_basic`.
+   JS `type`/`type-by-name` return a *full* metadata object (`{name, kind, params:[{name,type}],
+   returns, nullable}` for a function; `properties`/`methods` for a class); the C runtime returns a
+   shallow stub. An A9-extern reflection-depth gap.
+2. **Modifier decorators drop their side effects** — `10-modifiers/02_logging`, `03_timing`,
+   `05_multiple`. The wrapped function's *result* is correct, but the decorator's `[log]`/`[timed]`
+   output never appears: C runs the raw function, not the wrapper. `defmodifier` is being treated as
+   pass-through where it is actually a real runtime decorator.
+3. **`print` positional format** — `16-stdlib/01_main`. `(print "Hello, {0}!" "World")` → JS
+   `Hello, World!`, C `Hello, {0}! World`: the C `print` intrinsic maps to `console.log`
+   (space-join) instead of `std/io`'s `{0}` substitution. A semantic A9 divergence, not a crash.
+4. **Array-in-interpolation format** — `20-algorithms/03_functional`. An array spliced into a string
+   (`{squares}`) renders as node's `[ 1, 4, 9 ]` under JS but a bare `1,4,9` under C — the C
+   string-interp path doesn't reproduce `util.inspect` for a nested container.
+
+None of these is on the HIR-contract axis — they are runtime/stdlib fidelity gaps — which is itself
+the finding: **the 53 green files establish that the HIR-consumption story is sound to parity; the
+remaining divergences are all below the HIR, in the runtime and stdlib the probe stubbed.** That is a
+clean separation of concerns for whoever picks up the C backend as a real target.
 
 ---
 
@@ -351,12 +425,12 @@ Each is root-caused; several are the same underlying HIR/backend gap.
 | `15-modules/01_main` | undeclared `u_secret_2dnumber_2da` | a cross-module hyphenated binding referenced but not declared (cross-module scope). |
 | `30-applications/05_snake_tick` | `ll_value` vs `ll_map*` | a map op receives a boxed value where the runtime wants a concrete `ll_map*`. |
 
-### 6c. Runtime divergences (10) — compiled, ran, diverged
+### 6c. Runtime divergences (16) — compiled, ran, diverged
 
 | kind | files | note |
 |---|---|---|
 | trap (exit 70) | `09-oop/01_interfaces`, `02_classes`, `03_dispatch_and_type_patterns`, `20-algorithms/07_tokenizer`, `08_state_machine`, `09_memoization_intro` | interface/witness dispatch and a map-key stringification path trap at runtime — the honest "I don't have this yet." |
-| output mismatch | `07-types/01_type_reflection`, `08-generics/00_generics_basic`, `10-modifiers/02_logging`/`03_timing`/`05_multiple`, `16-stdlib/01_main`, `20-algorithms/03_functional` | stdlib breadth (`std/io` `print` positional `{0}` format vs `console.log`, reflection formatting) and generic-erasure display. |
+| output mismatch (7, the §5.2 silent-wrong-answer set — exact JS↔C diffs captured) | `07-types/01_type_reflection` + `08-generics/00_generics_basic` (reflection metadata depth); `10-modifiers/02_logging`/`03_timing`/`05_multiple` (modifier decorator side-effects dropped); `16-stdlib/01_main` (`print` `{0}` format vs `console.log`); `20-algorithms/03_functional` (array-in-interpolation `[ 1, 4 ]` vs `1,4`) | all four causes are runtime/stdlib fidelity, **below** the HIR axis (§5.2) — the C-green set proves HIR-consumption parity; these are the stubbed runtime showing through. |
 | segfault (exit null) | `18-error-handling/02_rpn_error_paths`, `10-modifiers/06_extension_methods` | stdlib bodies lowered on-demand (`filter`/`map`/`join`/`split`) that the C runtime doesn't fully support. |
 | P1 crash | `16-stdlib/test_stdlib` | a null `_type` during resolution — a lowering path only ever exercised behind the JS legacy emitter. |
 
@@ -369,10 +443,14 @@ that is a *real runtime decorator* stresses closure capture + `std/io` formattin
 
 Ordered by measured dip weight — this is the empirical argument for sequencing the HIR modeling work:
 
-1. **`HRef` + `HCall` family first (Steps 3–4).** `atom-ref` (1 465) + `call-dispatch` (1 960) +
-   their symbol-table satellites = **~5 000 dips, 62% of the total.** Nothing else moves the needle
-   comparably. The A3 sub-rows (`method-devirt`, `closure-call`, `operator-call`, `extension-devirt`,
-   `member-dyn`) are a ready-made taxonomy for `HCall`'s kind field. Do these two and the ledger halves.
+1. **`HRef` + `HCall` family first (Steps 3–4) — IN PROGRESS.** This was the #1 recommendation and
+   `dev` acted on it: `HRef` and `HFreeCall` (the free-call slice) landed and drained −680 dips (§5.1).
+   The work remaining is the rest of `HRef`'s positions (`atom-ref` residual 1 003, plus the
+   `decl-structure` 447 declaration half) and the rest of the `HCall` kinds (`call-dispatch` residual
+   1 742). The A3 sub-rows (`method-devirt`, `closure-call`, `operator-call`, `extension-devirt`,
+   `member-dyn`) are the ready-made taxonomy for the remaining `HCall` kind variants. Then move
+   `HRef`'s *type* and *which-declaration* onto the node to drain the `ref-type-via-symbols` (396) and
+   `callee-identity` (121) satellites that §5.1 measured surviving the first increment.
 
 2. **Types on every node, drain `nodeTypes` (Step 3, A1).** 753 dips, and **two independent bugs**
    now cite the same root cause — `mut-decl-narrowed` (109) reads the narrowed type where the layout
