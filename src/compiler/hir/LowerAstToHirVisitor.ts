@@ -283,6 +283,7 @@ export class LowerAstToHirVisitor {
         if (dispatch.kind === "free") return this.lowerFreeCall(node, dispatch.callee, dispatch.args, dest);
         if (dispatch.kind === "ext") return this.lowerExtCall(node, dispatch.head, dispatch.fnName, dispatch.args, dest);
         if (dispatch.kind === "method") return this.lowerMethodCall(node, dispatch.head, dispatch.args, dest);
+        if (dispatch.kind === "operator") return this.lowerOperator(node, dispatch.op, dispatch.head, dispatch.args, dest);
         return this.lowerCallLike(node, dest);
       }
       case "apply":
@@ -385,6 +386,23 @@ export class LowerAstToHirVisitor {
   }
 
   /**
+   * The `src` for a modeled call node (ext/method/operator) whose operands HOISTED. The JS emitter reads
+   * the modeled `head` + `args` and never looks at `src`'s operands, but a backend that RE-DRIVES `src`
+   * from raw AST -- the C backend's `resolveAstExpr` -- would otherwise see the un-lowered originals (a
+   * hoisted `(match ...)` operand still raw, which it can't resolve in value position). So rebuild `src`
+   * with the lowered operands substituted (temps for the hoisted ones), exactly as `lowerCallLike` does
+   * for the opaque path -- keeping any `src`-re-driver byte-identical to that path. Only when something
+   * hoisted (`prelude.length > 0`); otherwise the original node's operands are already re-drivable.
+   */
+  private callSrcWithLoweredOperands(node: ast.ListNode, headNode: ast.ASTNode, atoms: HExpr[], origArgs: ast.ASTNode[]): ast.ListNode {
+    const children = atoms.map((a, i) => this.hexprToAst(a, origArgs[i]));
+    const rebuilt = { ...node, nodes: [headNode, ...children] } as ast.ListNode;
+    const t = this.context.nodeTypes.get(node);
+    if (t) this.context.recordSynthesizedNodeType(rebuilt, t);
+    return rebuilt;
+  }
+
+  /**
    * A resolved free call (`classifyCall` said `free`). Lower the args as HExprs (same binding as the
    * opaque path), model the callee as a reference, and let the emitter build the `CallExpression` --
    * the call is no longer an opaque leaf re-dispatched by `visitList`. (A3.)
@@ -405,7 +423,8 @@ export class LowerAstToHirVisitor {
   private lowerExtCall(node: ast.ListNode, head: ast.ASTNode, fnName: string, args: ast.ASTNode[], dest: Dest): Lowered {
     const { prelude, atoms, diverged } = this.lowerCallArgs(args);
     if (diverged) return { stmts: prelude, value: null };
-    const call: HExpr = { ...this.base(node), kind: "ext-call", head, fnName, args: atoms };
+    const src = prelude.length > 0 ? this.callSrcWithLoweredOperands(node, head, atoms, args) : node;
+    const call: HExpr = { ...this.base(src), kind: "ext-call", head, fnName, args: atoms };
     return this.placeValue(call, prelude, dest);
   }
 
@@ -417,7 +436,21 @@ export class LowerAstToHirVisitor {
   private lowerMethodCall(node: ast.ListNode, head: ast.ASTNode, args: ast.ASTNode[], dest: Dest): Lowered {
     const { prelude, atoms, diverged } = this.lowerCallArgs(args);
     if (diverged) return { stmts: prelude, value: null };
-    const call: HExpr = { ...this.base(node), kind: "method-call", head, args: atoms };
+    const src = prelude.length > 0 ? this.callSrcWithLoweredOperands(node, head, atoms, args) : node;
+    const call: HExpr = { ...this.base(src), kind: "method-call", head, args: atoms };
+    return this.placeValue(call, prelude, dest);
+  }
+
+  /**
+   * A resolved operator call (`classifyCall` said `operator`). Lower the operands as HExprs (same binding
+   * as the opaque path); the callee stays the `leafExpr(head)` hook -- so `(op a b)` emits the JS shim
+   * call `_op(a, b)` -- and `op` is carried for the native backend. (A3 / TY8.)
+   */
+  private lowerOperator(node: ast.ListNode, op: string, head: ast.ASTNode, args: ast.ASTNode[], dest: Dest): Lowered {
+    const { prelude, atoms, diverged } = this.lowerCallArgs(args);
+    if (diverged) return { stmts: prelude, value: null };
+    const src = prelude.length > 0 ? this.callSrcWithLoweredOperands(node, head, atoms, args) : node;
+    const call: HExpr = { ...this.base(src), kind: "operator", op, head, args: atoms };
     return this.placeValue(call, prelude, dest);
   }
 
@@ -479,7 +512,8 @@ export class LowerAstToHirVisitor {
       h.kind === "ref" ||
       h.kind === "free-call" ||
       h.kind === "ext-call" ||
-      h.kind === "method-call"
+      h.kind === "method-call" ||
+      h.kind === "operator"
     );
   }
 
@@ -1006,11 +1040,11 @@ export class LowerAstToHirVisitor {
       if (t) this.context.recordSynthesizedNodeType(id, t);
       return id;
     }
-    if (h.kind === "free-call" || h.kind === "ext-call" || h.kind === "method-call") {
+    if (h.kind === "free-call" || h.kind === "ext-call" || h.kind === "method-call" || h.kind === "operator") {
       // Rebuild the call AST with the LOWERED args (temps substituted) so a resolved call handed to a
       // legacy-parent operand re-emits with its hoisted operands, not its originals. The head is the
-      // free callee's src / the ext|method receiver's composite-identifier -- the legacy emitter
-      // re-classifies it (and re-takes the ext/method branch), byte-identical to the direct HIR emission.
+      // free callee's src / the ext|method|operator head -- the legacy emitter re-classifies it (and
+      // re-takes the ext/method/operator branch), byte-identical to the direct HIR emission.
       const head = h.kind === "free-call" ? h.callee.src : h.head;
       const rebuilt = {
         ...(h.src as ast.ListNode),

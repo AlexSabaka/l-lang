@@ -41,6 +41,7 @@ export type HExpr =
   | HFreeCall
   | HExtCall
   | HMethodCall
+  | HOperator
   | HOpaqueExpr
   | HNil
   | HTernary
@@ -119,6 +120,23 @@ export interface HExtCall extends HBase {
  */
 export interface HMethodCall extends HBase {
   kind: "method-call";
+  head: ast.ASTNode;
+  args: HExpr[];
+}
+
+/**
+ * A resolved OPERATOR call `(op a ...)` -- the fourth modeled dispatch kind (A3, TY8), and a DISTINCT
+ * one on purpose: an operator is not a free call to a shim. `op` is the SOURCE symbol (`+`, `==`, `<`,
+ * ...), backend-neutral -- a native backend reads it plus the operand types and emits a machine op
+ * (static, D43) or a boxed runtime dispatch (an `Unknown` operand). On JS it routes through the runtime
+ * shim: the member callee is the encoded operator identifier (`+` -> `_2b`) and the shim gets registered,
+ * both done by the existing `leafExpr(head)` hook (`visitExpr(head)`), so no new seam. `args` are the
+ * lowered operands. Excludes `||`/`&&` (short-circuit LogicalExpression, kept opaque). Falls back to
+ * legacy emission of the rebuilt call only when substituted into a legacy-parent operand (hexprToAst).
+ */
+export interface HOperator extends HBase {
+  kind: "operator";
+  op: string;
   head: ast.ASTNode;
   args: HExpr[];
 }

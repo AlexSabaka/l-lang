@@ -307,6 +307,19 @@ export class EmitHirToEstree {
           loc: loc(h.src),
         } as ESTree.CallExpression;
 
+      case "operator":
+        // Resolved operator dispatch (classifyCall). On JS an operator IS a shim call: `leafExpr(head)`
+        // (visitExpr) encodes the operator to its shim identifier (`+` -> `_2b`) AND registers the shim,
+        // exactly as the emitter's callee did; args are HIR-emitted. Byte-identical to the emitter's
+        // callExpression(visitExpr(head), args). `h.op` rides the node for the native backend, unused here.
+        return {
+          type: "CallExpression",
+          callee: this.legacy.leafExpr(h.head),
+          arguments: h.args.map((a) => this.emitExpr(a)),
+          optional: false,
+          loc: loc(h.src),
+        } as ESTree.CallExpression;
+
       case "nil":
         return this.legacy.nilLiteral(h.src);
 

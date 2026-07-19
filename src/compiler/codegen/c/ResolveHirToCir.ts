@@ -973,6 +973,16 @@ export class ResolveHirToCir {
         // dip). Chasing HMethodCall proper -- consuming `h.head`/`h.args` -- is the follow-up increment.
         return this.resolveAstExpr(h.src);
 
+      case "operator":
+        // A3, operator step 2 (dev): `(op a b)` is now MODELED as HOperator. The C backend already
+        // resolves operators off the raw AST (`binopMode` / the `:operator` devirtualization table --
+        // static native op when the operand types are known, boxed runtime dispatch otherwise) via
+        // `resolveCall`, and `h.src` is that original call node -- so routing through it reproduces the
+        // pre-model behavior byte-for-byte (an operator was an opaque leaf here before, recording the
+        // same operator-devirt / boxed-arith dip). Chasing HOperator proper -- consuming `h.op`/`h.args`
+        // to emit the machine op directly -- is the follow-up increment.
+        return this.resolveAstExpr(h.src);
+
       case "nil":
         return { src: h.src, ctype: C_VALUE, kind: "c-nil" };
 
