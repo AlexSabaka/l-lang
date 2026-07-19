@@ -1834,6 +1834,12 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       const legacy: LegacyLeafEmitter = {
         leafExpr: (n) => this.visitExpr(n),
         emitRef: (n) => this.visitExpr(n),
+        emitExtCall: (head, fnName) => {
+          // The emitter's ext branch takes `callee.object` off the visited member head as the receiver,
+          // and `emittedExtensionName` (import-inlining) as the callee. Same two, here as the HIR hook.
+          const callee = this.visitExpr(head);
+          return { name: this.emittedExtensionName(fnName, head), receiver: (callee as any).object };
+        },
         leafStmt: (n) => this.asStatement(this.visit(n) as ESTree.Node, n),
         storeValue: (e, src) => this.asValue(e, src),
         nilLiteral: (src) => this.nilLiteral(src),

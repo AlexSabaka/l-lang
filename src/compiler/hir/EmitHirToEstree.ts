@@ -22,6 +22,10 @@ export interface LegacyLeafEmitter {
   /** Materialize a reference atom (HRef) -- the JS identifier policy: encoding, import-inlining, and
    *  runtime-shim registration. A per-backend seam (an LLVM backend would mangle a symbol instead). */
   emitRef(node: ast.ASTNode): ESTree.Expression;
+  /** Materialize a resolved `:extension` call (HExtCall): re-visit the `obj.method` head for the
+   *  RECEIVER expression, and map the SOURCE `fnName` to the EMITTED name (import-inlining / encoding).
+   *  A per-backend seam -- the JS `emittedExtensionName` / member-object emission. */
+  emitExtCall(head: ast.ASTNode, fnName: string): { name: string; receiver: ESTree.Expression };
   /** Emit an AST subtree as an ESTree statement (JSTransformer.asStatement over visit). */
   leafStmt(node: ast.ASTNode): ESTree.Statement;
   /** Wrap a stored expression in the D11 value-copy when it may be a struct (JSTransformer.asValue). */
@@ -275,6 +279,20 @@ export class EmitHirToEstree {
           optional: false,
           loc: loc(h.src),
         } as ESTree.CallExpression;
+
+      case "ext-call": {
+        // Resolved `:extension` dispatch (classifyCall): `obj.method(a)` -> `extFn(obj, a)`. The JS hook
+        // supplies the receiver + the emitted extension name (import-inlining); args are HIR-emitted.
+        // Byte-identical to the emitter's ext branch: callExpression(identifier(extFn), [recv, ...args]).
+        const ext = this.legacy.emitExtCall(h.head, h.fnName);
+        return {
+          type: "CallExpression",
+          callee: { type: "Identifier", name: ext.name, loc: loc(h.src) } as ESTree.Identifier,
+          arguments: [ext.receiver, ...h.args.map((a) => this.emitExpr(a))],
+          optional: false,
+          loc: loc(h.src),
+        } as ESTree.CallExpression;
+      }
 
       case "nil":
         return this.legacy.nilLiteral(h.src);

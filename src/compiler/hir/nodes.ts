@@ -39,6 +39,7 @@ export type HExpr =
   | HLiteral
   | HRef
   | HFreeCall
+  | HExtCall
   | HOpaqueExpr
   | HNil
   | HTernary
@@ -85,6 +86,23 @@ export interface HRef extends HBase {
 export interface HFreeCall extends HBase {
   kind: "free-call";
   callee: HExpr;
+  args: HExpr[];
+}
+
+/**
+ * A resolved `:extension` CALL `obj.method(a ...)` -- the second modeled dispatch kind (A3, TY8). The
+ * shared `classifyCall` decided at lowering that the receiver's type lacks a native `method` but an
+ * `:extension method` conforms nominally, so this lowers to the direct free call `extFn(obj, a ...)`.
+ * `fnName` is the SOURCE extension name (backend-neutral); `args` are the lowered operands (the receiver
+ * is NOT among them -- it is synthesized from `head`). The JS materialization is a per-backend hook
+ * (`emitExtCall`): it re-visits `head` for the receiver expression and maps `fnName` to the EMITTED name
+ * (import-inlining / encoding), exactly the `emitRef` contract. Falls back to legacy emission of the
+ * rebuilt call only when substituted into a legacy-parent operand (hexprToAst), same as a free call.
+ */
+export interface HExtCall extends HBase {
+  kind: "ext-call";
+  head: ast.ASTNode;
+  fnName: string;
   args: HExpr[];
 }
 
