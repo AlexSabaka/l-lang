@@ -254,6 +254,10 @@ export class EmitHirToEstree {
       case "opaque-expr":
         return this.legacy.leafExpr(h.src);
 
+      case "literal":
+        // Modeled atom: build the Literal directly -- byte-identical to ESTreeBuilder.literal, no leaf.
+        return { type: "Literal", value: h.value, loc: loc(h.src) } as ESTree.Literal;
+
       case "nil":
         return this.legacy.nilLiteral(h.src);
 

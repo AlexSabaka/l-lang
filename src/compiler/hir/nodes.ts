@@ -36,6 +36,7 @@ export interface HBase {
 
 export type HExpr =
   | HTemp
+  | HLiteral
   | HOpaqueExpr
   | HNil
   | HTernary
@@ -46,6 +47,18 @@ export type HExpr =
   | HMap
   | HMember
   | HIndex;
+
+/**
+ * A modeled literal ATOM -- integer/float/string/boolean (A2). The value is on the node, so the emitter
+ * builds `{ type: "Literal", value }` DIRECTLY (no legacy leaf), and `type` is the checker's ground
+ * truth -- the first opaque atom drained toward the "consume core HIR" bar. (The numeric tower --
+ * hex/oct/bin/fraction/complex -- and char/formatted-string stay opaque until they carry their own
+ * repr + emission.)
+ */
+export interface HLiteral extends HBase {
+  kind: "literal";
+  value: string | number | boolean;
+}
 
 /** A lowering-introduced name (`__ll_hir_<n>`), declared by an HDeclTemp and read here. */
 export interface HTemp extends HBase {
