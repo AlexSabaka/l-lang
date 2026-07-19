@@ -10,8 +10,9 @@
 // other shape returns `opaque`, and the emitter's existing branches handle those unchanged.
 //
 // Modeled now: FREE-CALL (simple-identifier head), EXT-CALL (`obj.method` -> conforming `:extension`),
-// METHOD-CALL (`obj.method` on a native/user method), OPERATOR (`(+ a b)`), and VIRTUAL (`obj.method`
-// on an untyped receiver, args -> runtime dispatch). construct stays `opaque` until modeled.
+// METHOD-CALL (`obj.method` on a native/user method), OPERATOR (`(+ a b)`), VIRTUAL (`obj.method` on an
+// untyped receiver, args -> runtime dispatch), and CONSTRUCT (`(Dog ...)` -> `new Dog(...)`). Every
+// call SHAPE is now classified; only 0-arg dynamic member access + dotted chains stay `opaque`.
 
 import * as ast from "../frontend/ast";
 import { classifyList, isDottedMemberIndexer } from "../analysis/listForm";
@@ -30,6 +31,7 @@ export type CallDispatch =
   | { kind: "virtual"; head: ast.ASTNode; objectName: string; member: string; args: ast.ASTNode[] }
   | { kind: "ext"; head: ast.ASTNode; objectName: string; member: string; fnName: string; args: ast.ASTNode[] }
   | { kind: "operator"; op: string; head: ast.ASTNode; args: ast.ASTNode[] }
+  | { kind: "construct"; callee: ast.ASTNode; args: ast.ASTNode[] }
   | { kind: "opaque" };
 
 // -- the same channel-based predicates JSTransformer uses, re-expressed against a bare Context --------
@@ -128,7 +130,10 @@ export function classifyCall(node: ast.ListNode, ctx: CallClassCtx): CallDispatc
     return { kind: "operator", op: id, head, args };
   }
   if (isPrimitiveTypeFold(node, head, args, ctx)) return { kind: "opaque" };
-  if (isConstructor(head, ctx)) return { kind: "opaque" };           // NewExpression
+  // `(Dog "rex")` where `Dog` is a class/struct -> a CONSTRUCTION (`new Dog("rex")`). The callee is the
+  // class name; a native backend allocates + runs the constructor (A4). Args are never copied at the
+  // call site (the emitter's constructor branch returns before the push/unshift copy).
+  if (isConstructor(head, ctx)) return { kind: "construct", callee: head, args };
 
   // The general free-call: `(f a ...)` with args, or a zero-arg `(f)` where f names a function (D1).
   if (args.length > 0 || isFunction(head, ctx)) return { kind: "free", callee: head, args };
