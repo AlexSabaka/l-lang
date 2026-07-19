@@ -79,4 +79,8 @@ export const C_PASSING: readonly string[] = [
   "30-applications/01_vec2_operators.lisp",
   // Phase E broad sweep -- enum match + str.trimEnd native (tetromino spin states + board rendering).
   "30-applications/06_tetromino_rotation.lisp",
+  // Cross-module class registration -- imported classes (std/math Vector3/Complex) registered +
+  // methods lowered on demand, with the implicit-return desugar the symbol-table AST lacked.
+  "16-stdlib/complex_math_test/main.lisp",
+  "30-applications/08_vector_toolkit.lisp",
 ];

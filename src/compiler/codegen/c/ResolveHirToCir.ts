@@ -14,6 +14,7 @@ import * as ast from "../../frontend/ast";
 import type { Context } from "../../Context";
 import type { InferredType, SymbolEntry } from "../../analysis/SymbolTable";
 import { classifyList } from "../../analysis/listForm";
+import { DesugarAstVisitor } from "../../transformation/visitors/DesugarAstVisitor";
 import type { HirModule } from "../../hir";
 import { LowerAstToHirVisitor } from "../../hir";
 import type { HBlock, HExpr, HStmt } from "../../hir/nodes";
@@ -478,7 +479,12 @@ export class ResolveHirToCir {
     const prim: Record<string, CType> = {
       Int: C_INT, Real: C_REAL, Boolean: C_BOOL, Bool: C_BOOL, String: C_STR, Char: { k: "char" }, Void: C_VOID,
     };
-    return prim[nm];
+    if (prim[nm]) return prim[nm];
+    // An imported class used as a TYPE annotation (`v <- Vector3`): register its descriptor on demand
+    // so the param/field/return stays typed as obj. Checked after primitives so `Int`/`Real`/... never
+    // hit the symbol table.
+    if (this.ensureClassRegistered(nm, t)) return { k: "obj", className: nm };
+    return undefined;
   }
 
   // -- cell analysis: which mut-locals of a scope are captured by nested closures ------------------
@@ -1701,7 +1707,7 @@ export class ResolveHirToCir {
           const cls = form.args[0];
           const clsName = cls._type === "simple-identifier" ? (cls as ast.SimpleIdentifierNode).id
             : cls._type === "type-name" ? (cls as any).name : undefined;
-          if (clsName && this.classes.has(clsName)) return this.resolveConstruct(node, clsName, form.args.slice(1));
+          if (clsName && this.ensureClassRegistered(clsName, node)) return this.resolveConstruct(node, clsName, form.args.slice(1));
         }
         // `(throw x)` -> ll_throw(box(x)); diverges (void).
         if (form.name === "throw" && form.args.length === 1) {
@@ -1791,8 +1797,9 @@ export class ResolveHirToCir {
         if (args.length === 0) return this.resolveIdentifier(callee as ast.IdentifierNode);
         return this.closureCall(node, this.resolveIdentifier(callee as ast.IdentifierNode), args);
       }
-      // (2) A struct/class name -> construction (spec A4: the HIR models no construction).
-      if (this.classes.has(name)) {
+      // (2) A struct/class name -> construction (spec A4: the HIR models no construction). Registers
+      // an imported class on demand (the class-level analog of imported-body lowering).
+      if (this.ensureClassRegistered(name, node)) {
         return this.resolveConstruct(node, name, args);
       }
       // (3) A top-level function defined in this module -> a direct typed C call.
@@ -1836,6 +1843,8 @@ export class ResolveHirToCir {
   private lowerImportedFunction(name: string, fn: ast.FunctionNode): void {
     if (this.importedLowered.has(name)) return;
     this.importedLowered.add(name);
+    // `fn` is the symbol table's PRE-desugar node -- give it the implicit return the main module got.
+    fn = this.desugaredCopyOf(fn);
     if (this.refuseCoroutine(fn, name)) return;
     this.ledger.record("A9-extern", "imported-body", fn, `imported l-lang function '${name}' lowered on demand (C analog of ensureSymbolInlined)`);
     this.registerTopLevel(fn, name);
@@ -2112,6 +2121,45 @@ export class ResolveHirToCir {
       if (fn.modifiers?.some((mod) => mod.modifier === "operator")) { this.collectOperatorFn(fn, className); continue; }
       this.collectMethod(fn, className);
     }
+  }
+
+  /** Ensure a class NAME has a C descriptor + lowered methods, registering it ON DEMAND if it was
+   *  defined in an IMPORTED module (`(new Vector3 ...)` where Vector3 lives in std/math). The
+   *  class-level analog of lowerImportedFunction (A9's imported-body): the symbol table carries the
+   *  imported class's AST node on `entry.value`, so collectClassMembers builds the descriptor and
+   *  lowers its methods/operators the same way a local class's are. Returns whether `name` is now a
+   *  known class. Idempotent: once registered, later calls short-circuit (no duplicate lowering). */
+  private ensureClassRegistered(name: string, node: ast.ASTNode): boolean {
+    if (this.classes.has(name)) return true;
+    const entry = (() => { try { return this.context.symbolTable.resolveSymbol(name as any, node as any); } catch { return undefined; } })();
+    const val = entry?.value as ast.ASTNode | undefined;
+    if (val && (val._type === "struct" || val._type === "class") && !this.isExtern(entry)) {
+      this.ledger.record("A9-extern", "imported-class", node, `imported class '${name}' registered + methods lowered on demand (class analog of imported-body)`);
+      this.collectClassMembers(this.desugaredCopyOf(val) as ast.StructNode | ast.ClassNode);
+      return this.classes.has(name);
+    }
+    return false;
+  }
+
+  /** A DESUGARED clone of a node pulled from the symbol table. `symbol.value` is the PRE-desugar parse
+   *  tree (the symbol table is built before the desugar stage), so an imported function/method body has
+   *  NO implicit return -- `(fn sqr [x] (* x x))` would lower to `(* x x); return nil`. Clone (never
+   *  mutate the shared tree; `_parent` stays by reference to keep the lexical walk working) then run the
+   *  implicit-return desugaring, exactly as the JS backend's `desugaredCopyOf` does for the same reason.
+   *  Applies to classes too: their methods are function bodies like any other. */
+  private desugaredCopyOf<T extends ast.ASTNode>(node: T): T {
+    return new DesugarAstVisitor(this.context, true).visit(this.cloneNode(node)) as unknown as T;
+  }
+
+  private cloneNode<T extends ast.ASTNode>(n: T): T {
+    const clone = (v: any): any => {
+      if (Array.isArray(v)) return v.map(clone);
+      if (!v || typeof v !== "object") return v;
+      const out: any = {};
+      for (const k of Object.keys(v)) out[k] = k === "_parent" ? v[k] : clone(v[k]);
+      return out;
+    };
+    return clone(n) as T;
   }
 
   private collectMethod(fn: ast.FunctionNode, className: string): void {
