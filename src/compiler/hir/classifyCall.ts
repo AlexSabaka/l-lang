@@ -9,7 +9,8 @@
 // exists. It mirrors `JSTransformer.visitList`'s decision ORDER for the kinds modeled so far; every
 // other shape returns `opaque`, and the emitter's existing branches handle those unchanged.
 //
-// Modeled now: FREE-CALL (simple-identifier head). ext / virtual / operator / construct stay `opaque`
+// Modeled now: FREE-CALL (simple-identifier head), EXT-CALL (`obj.method` -> conforming `:extension`),
+// and METHOD-CALL (`obj.method` on a native/user method). virtual / operator / construct stay `opaque`
 // until their kinds are modeled.
 
 import * as ast from "../frontend/ast";
@@ -25,6 +26,7 @@ export interface CallClassCtx {
 
 export type CallDispatch =
   | { kind: "free"; callee: ast.ASTNode; args: ast.ASTNode[] }
+  | { kind: "method"; head: ast.ASTNode; objectName: string; member: string; args: ast.ASTNode[] }
   | { kind: "ext"; head: ast.ASTNode; objectName: string; member: string; fnName: string; args: ast.ASTNode[] }
   | { kind: "opaque" };
 
@@ -78,14 +80,23 @@ export function classifyCall(node: ast.ListNode, ctx: CallClassCtx): CallDispatc
 
   if (isDottedMemberIndexer(head)) return { kind: "opaque" };        // (gs[0].hi ...) -- a call, not yet modeled
 
-  // ext-call: a 2-part `obj.method` whose receiver TYPE lacks a native `method`, but an `:extension`
-  // conforms to it -- lowers to the direct free call `method(obj, ...)`. (3+-part chains stay opaque
-  // for now; the receiver-of-a-chain resolution differs.)
+  // A 2-part `obj.method` call. Its dispatch is decided by the receiver TYPE:
+  //  - a native/user METHOD  -> `method-call` (emits `obj.method(args)` -- the direct member call);
+  //  - a native FIELD        -> opaque (a field is a READ, handled by the emitter's field branch);
+  //  - neither, but an `:extension` conforms -> `ext-call` (devirtualized to `method(obj, ...)`).
+  // (3+-part chains stay opaque for now; the receiver-of-a-chain resolution differs.)
   if (head?._type === "composite-identifier") {
     const parts = String((head as ast.IdentifierNode).id ?? "").split(".").filter(Boolean);
     if (parts.length !== 2) return { kind: "opaque" };
     const [objectName, member] = parts;
-    if (memberKindOn(ctx, objectName, member, head) !== undefined) return { kind: "opaque" }; // native method/field
+    const mk = memberKindOn(ctx, objectName, member, head);
+    if (mk === "method") {
+      // The storing mutators take a D11 struct arg-copy in the emitter (asValue) BEFORE the call is
+      // built (CP2 / A5) -- that copy is not modeled on the HIR yet, so leave them opaque to keep it.
+      if (member === "push" || member === "unshift") return { kind: "opaque" };
+      return { kind: "method", head, objectName, member, args };
+    }
+    if (mk !== undefined) return { kind: "opaque" }; // a native FIELD -- a read, not a call
     const rtype = receiverType(ctx, objectName, head);
     if (!rtype) return { kind: "opaque" };
     const fnName = conformingExtensionFn(ctx, buildExtensionTable(ctx), rtype, member);
