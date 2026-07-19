@@ -127,6 +127,11 @@ export class LowerAstToHirVisitor {
     return { ...this.base(src), kind: "opaque-expr" };
   }
 
+  /** A modeled literal atom (A2) -- value on the node, emitted directly, typed from the channel. */
+  private literal(src: ast.ASTNode): HExpr {
+    return { ...this.base(src), kind: "literal", value: (src as any).value };
+  }
+
   private temp(name: string, src: ast.ASTNode): HExpr {
     return { ...this.base(src), kind: "temp", name };
   }
@@ -220,6 +225,12 @@ export class LowerAstToHirVisitor {
         return this.lowerAssignment(node as any, dest);
       case "list":
         return this.lowerList(node as ast.ListNode, dest);
+      case "integer-number":
+      case "float-number":
+      case "string":
+      case "boolean":
+        // Modeled literal atoms (A2). The numeric tower, char, and formatted-string stay opaque.
+        return this.placeValue(this.literal(node), [], dest);
       default:
         return this.leaf(node, dest);
     }
@@ -390,7 +401,7 @@ export class LowerAstToHirVisitor {
   }
 
   private isSubstitutable(h: HExpr): boolean {
-    return h.kind === "temp" || h.kind === "opaque-expr";
+    return h.kind === "temp" || h.kind === "opaque-expr" || h.kind === "literal";
   }
 
   private lowerFormattedString(node: ast.FormattedStringNode, dest: Dest): Lowered {
@@ -563,7 +574,7 @@ export class LowerAstToHirVisitor {
   }
 
   private isImmovable(h: HExpr): boolean {
-    if (h.kind === "temp" || h.kind === "nil") return true;
+    if (h.kind === "temp" || h.kind === "nil" || h.kind === "literal") return true;
     if (h.kind === "opaque-expr") return LITERAL_TYPES.has(h.src._type);
     return false;
   }
@@ -916,7 +927,7 @@ export class LowerAstToHirVisitor {
       if (t) this.context.recordSynthesizedNodeType(id, t);
       return id;
     }
-    if (h.kind === "opaque-expr") return h.src;
+    if (h.kind === "opaque-expr" || h.kind === "literal") return h.src;
     return srcForLoc; // nil/ternary/seq don't reach here (pure -> no prelude -> opaque path)
   }
 

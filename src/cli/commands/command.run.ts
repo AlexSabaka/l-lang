@@ -7,13 +7,23 @@ import { Context, LogLevel, logCompilationMessages } from "../../compiler/Contex
 
 import { getCompilerOptions } from "../getCompilerOptions";
 import evalInScope from "../../compiler/runtime/evalInScope";
+import { getTemporaryStdinFile } from "../getStdinTempFile";
 
 const { stdout } = process;
 
-export function evalFile(
-  file: string,
-  command: Command) {
+export function run(file: string, command: Command) {
   const options = getCompilerOptions(command);
+
+  if (options.stdin) {
+    // Read from stdin and write to a temporary file
+    file = getTemporaryStdinFile();
+  }
+
+  if (!file) {
+    console.error("No input file specified. Please provide a l-lang file to transform.");
+    process.exit(1);
+  }
+
   const context = new Context(file, options);
 
   const { code } = context.process(file, "codegen");

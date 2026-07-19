@@ -13,6 +13,7 @@ import {
 import { Scope } from "../../compiler/analysis/SymbolTable";
 import { symbolName } from "../../compiler/frontend/ast";
 import { getCompilerOptions } from "../getCompilerOptions";
+import { getTemporaryStdinFile } from "../getStdinTempFile";
 
 const { stdout } = process;
 
@@ -191,6 +192,17 @@ function getRootScope(symbolTable: any): Scope | undefined {
 
 export function transform(file: string, command: Command) {
   const options = getCompilerOptions(command);
+
+  if (options.stdin) {
+    // Read from stdin and write to a temporary file
+    file = getTemporaryStdinFile();
+  }
+
+  if (!file) {
+    console.error("No input file specified. Please provide a l-lang file to transform.");
+    process.exit(1);
+  }
+
   const context = new Context(file, options);
   
   // Validate stage
@@ -232,10 +244,14 @@ export function transform(file: string, command: Command) {
       console.log(chalk.strikethrough.dim(" ".repeat(stdout.columns)));
     }
     if (isC) {
+      // The C backend emits a single self-contained translation unit and no source map.
       fs.writeFileSync(file.replace(".lisp", ".c"), code);
     } else {
       fs.writeFileSync(file.replace(".lisp", ".js"), code);
-      fs.writeFileSync(file.replace(".lisp", ".js.map"), map.toString());
+      // Write source map if available and not disabled
+      if (!options.noMap && map) {
+        fs.writeFileSync(file.replace(".lisp", ".js.map"), map.toString());
+      }
     }
   } else {
     // Intermediate stage: output AST with unified symbol table (with type info)

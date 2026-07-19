@@ -50,8 +50,10 @@ export interface CompilerOptions {
   minimumLogLevel: LogLevel;
   includeRuntimeShim: boolean;
   stdout: boolean;
+  stdin?: boolean;
   stage: CompilationStage;
   language: CompilationLanguage;
+  noMap?: boolean; // Disable source map generation
   noIIFE?: boolean; // For REPL and other use cases
   /** Extra roots for `(import "std/…")`, after the importer's own directory. `-I`. Defaults to the shipped `lib/`. */
   libPaths?: string[];

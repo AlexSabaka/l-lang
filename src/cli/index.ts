@@ -3,7 +3,7 @@
 import { Command } from "commander";
 import { VERSION as COMPILER_VERSION } from "../compiler";
 import { transform } from "./commands/command.transform";
-import { evalFile } from "./commands/command.run";
+import { run } from "./commands/command.run";
 import { repl } from "./commands/command.repl";
 import { clean } from "./commands/command.clean";
 import { parseV2 } from "./commands/command.parseV2";
@@ -26,6 +26,8 @@ program
     (dir: string, acc: string[]) => acc.concat(dir),
     [] as string[]
   )
+  .option("--no-map", "disable source map generation")
+  .option("--stdin", "read input from stdin (or pipe) instead of a file")
   .option("--stdout", "output compiled JavaScript to stdout")
   .option("--runtime-shim", "include runtime shim in compiled output")
   .option("--stage <stage>", "compilation stage to stop at (parse, syntax, symbols, desugar, types, codegen)")
@@ -43,13 +45,7 @@ program
 program
   .command("transform")
   .description("transform a l-lang file (parse, compile, or intermediate stages)")
-  .argument("<file>", "l-lang file to transform")
-  .action((file) => transform(file, program));
-
-program
-  .command("compile")
-  .description("compile a l-lang file to JavaScript (alias for 'transform')")
-  .argument("<file>", "l-lang file to compile")
+  .argument("[file]", "l-lang file to transform")
   .action((file) => transform(file, program));
 
 program
@@ -65,8 +61,8 @@ program
 program
   .command("run")
   .description("run a l-lang file")
-  .argument("<file>", "the l-lang file to run")
-  .action((file) => evalFile(file, program));
+  .argument("[file]", "the l-lang file to run")
+  .action((file) => run(file, program));
 
 program
   .command("parse-v2")
