@@ -63,7 +63,7 @@ FIXED**, verified by re-running the exact minimal repros from the game reports:
 | **CP1** | `[x ...xs]` spread in array literal | dropped all but first → `[0,1]` | `[0,1,2,3]` | ✅ fixed |
 | **PR3** | `"\x1b[2J"` hex escape | degraded to bare `x1b` | decodes to U+001B | ✅ fixed |
 
-All five are pinned as **green regression guards** in `examples/90-adversarial/`, so the backend
+All five are pinned as **green regression guards** in `examples/80-adversarial/`, so the backend
 split cannot silently reintroduce them. Also fixed and confirmed by the existing inline
 `test:type-errors` suite: **TY1** (nil into a user type's `T?`), **TY7** (`Int[][]` 2D annotation),
 **TY8** (`:extension` on a structural conformer refused, not a runtime crash).
@@ -75,7 +75,7 @@ split cannot silently reintroduce them. Also fixed and confirmed by the existing
 Each is quarantined (xfail / documented), never blessed with a wrong-output golden.
 
 ### 1. `:comptime` inliner regression — duplicate inlined `const` (xfail)
-`examples/04-data-types/11_comptime_table.lisp` was **10/10 green under the audit's
+`examples/11-comptime/01_comptime_table.lisp` was **10/10 green under the audit's
 `bin/verify-examples` at `23a24cd`; it is broken at HEAD.** A `:comptime` helper (`deg-to-rad`)
 called by another `:comptime` fn (`cos2`), where `cosines` folds `cos2` **five times**, re-inlines
 `deg-to-rad` into the same comptime-eval scope each fold and emits a duplicate
@@ -92,7 +92,7 @@ lookup-square 99 -> -1
 ```
 
 ### 2. Hyphenated map field: dot-access mangles the hyphen (xfail — finding PR4, STILL LIVE)
-`examples/90-adversarial/hyphen_field_encoding.lisp`. The `:next-dir` map key stays literal, but
+`examples/80-adversarial/hyphen_field_encoding.lisp`. The `:next-dir` map key stays literal, but
 dot access mangles `.next-dir` → `.next2ddir`, so the two spellings address different fields:
 ```
 read-only half: undefined                              ← w.next-dir reads a key never written
@@ -157,10 +157,10 @@ async, operator overloading); their *runnable* bug repros live in `90-adversaria
 `doodle-jump-p5/`. Each terminal game's manifest reason lists the FINDINGS it exposed.
 
 ### C. probes → 6 adversarial repros + 13 negatives
-- **`examples/90-adversarial/`** — the p5-friction silent-bug repros, rewritten clean with headers
+- **`examples/80-adversarial/`** — the p5-friction silent-bug repros, rewritten clean with headers
   documenting expected-vs-actual. 5 green guards (spread, return-in-`\|\|`, hex escape, cond
   dangling-else, match-arm-if) + 1 green paren-grouping guard + 1 xfail (hyphen, still live).
-- **`examples/02-errors/diagnostics/`** — 13 `negative` tests from `p1-matrix/ll*`, filling the
+- **`examples/90-diagnostics/`** — 13 `negative` tests from `p1-matrix/ll*`, filling the
   coverage hole COVERAGE-MATRIX flagged (21 codes with zero asserting test).
 
 ---

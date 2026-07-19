@@ -284,7 +284,7 @@ keys (`keyValue := Colon key`) in exactly the PEG's shape. Both rules were there
 
 The 13 hardcoded `*ModKw` tokens were a workaround, and one that cannot work even in principle:
 `defmodifier` lets users define modifier names *in l-lang source* (`:identity`, `:logged`,
-`:timed`, `:retry` in `examples/06-modifiers/`). A fixed token list can never enumerate them.
+`:timed`, `:retry` in `examples/10-modifiers/`). A fixed token list can never enumerate them.
 Generic `Colon Identifier` is the only design that works — which is presumably why the parser was
 written that way in the first place. The `*ModKw` tokens survive only for the names the grammar
 genuinely reserves for structural slots.
@@ -326,7 +326,7 @@ place where "just use a real lexer" costs something the scannerless grammar got 
 ## Open: `defstruct :implements` is an unimplemented feature, not a parser gap
 
 `StructNode` has no `implements`/`extends` field at all (`ClassNode` does), and no pass downstream
-consumes one. `examples/05-oop/01_interfacses.lisp` is aspirational and passes under neither
+consumes one. `examples/09-oop/01_interfaces.lisp` is aspirational and passes under neither
 frontend: the PEG misparses it into junk and emits wrong output (FAIL); grammar_v2 rejects it at
 parse time (ERROR). Belongs with whatever settles `defstruct` value-type semantics (**D11**).
 
@@ -359,7 +359,7 @@ examples pass under both. `l-lang.pegjs`, `l-lang.js`, `peggy` and the `parser` 
 ```
 
 This was a genuine **spec gap**: destructuring appears in the corpus
-(`examples/01-basics/18_destructuring.lisp`, `20_scope.lisp`) and in the docs, but no ruling
+(`examples/04-pattern-matching/04_destructuring.lisp`, `20_scope.lisp`) and in the docs, but no ruling
 D1–D15 covered it, and neither frontend parsed it. Written down now because it is implemented.
 
 **Semantics.** JavaScript has all of it natively, so a binding pattern lowers directly to an
@@ -2219,7 +2219,7 @@ Until then, a **three-name shim is the honest answer, and a thirty-seven-name al
 
 ## Sf — the stdlib RUNS, and running it found three bugs in one afternoon
 
-`examples/20-stdlib/test_stdlib.lisp` has a **golden**. It compiles, **executes**, and its output is
+`examples/16-stdlib/test_stdlib.lisp` has a **golden**. It compiles, **executes**, and its output is
 asserted on every `npm test`, **in both frontends**. That is the first time any of this code has ever
 run.
 

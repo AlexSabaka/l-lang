@@ -20,7 +20,7 @@ Implemented comprehensive generics and interface support with proper runtime typ
 **Key Implementation Files**:
 - [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - Fixed generics serialization and added interface tracking in `serializeTypeMetadata()`
 - [src/compiler/analysis/SymbolTable.ts](../../src/compiler/analysis/SymbolTable.ts) - InferredType structure with generics metadata
-- [examples/08-types/](../../examples/08-types/) - Complete test suite: 10_generics_basic, 11_interface_basic, 12-17 (advanced generics features)
+- [examples/08-generics/](../../examples/08-generics/) - Complete test suite: 10_generics_basic, 11_interface_basic, 12-17 (advanced generics features)
 
 **Example**:
 ```lisp
@@ -68,13 +68,13 @@ Implemented comprehensive performance measurement system for the L-Lang compiler
 **Example Usage**:
 ```bash
 # Performance metrics for compilation
-ts-node src/index.ts transform --perf examples/01-basics/00_vars.lisp
+ts-node src/index.ts transform --perf examples/00-basics/00_vars.lisp
 
 # Performance metrics with intermediate stage
-ts-node src/index.ts transform --perf --stage types examples/05-oop/00_inheritance.lisp
+ts-node src/index.ts transform --perf --stage types examples/09-oop/00_inheritance.lisp
 
 # Performance metrics while running code
-ts-node src/index.ts run --perf examples/01-basics/08_pipelines.lisp
+ts-node src/index.ts run --perf examples/01-functions/04_pipelines.lisp
 ```
 
 **Sample Report Output**:
@@ -123,8 +123,8 @@ Implemented proper support for spread/rest parameters in function definitions:
 
 **Key Implementation Files**:
 - [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - RestElement generation for spread parameters
-- [examples/20-stdlib/std/io.lisp](../../examples/20-stdlib/std/io.lisp) - Template string function using spread parameters
-- [examples/20-stdlib/01_main.lisp](../../examples/20-stdlib/01_main.lisp) - Test cases demonstrating spread parameter usage
+- [lib/std/io/io.lisp](../../lib/std/io/io.lisp) - Template string function using spread parameters
+- [examples/16-stdlib/01_main.lisp](../../examples/16-stdlib/01_main.lisp) - Test cases demonstrating spread parameter usage
 
 **Example**:
 ```lisp
@@ -145,7 +145,7 @@ Implemented proper support for spread/rest parameters in function definitions:
 (print "Format: {0} = {1} + {2}" "result" 2 3)  ;; "Format: result = 2 + 3"
 ```
 
-**Test Results**: ✅ `examples/20-stdlib/01_main.lisp` now passes with correct spread parameter handling
+**Test Results**: ✅ `examples/16-stdlib/01_main.lisp` now passes with correct spread parameter handling
 
 ---
 
@@ -165,7 +165,7 @@ Implemented a complete compile-time metaprogramming system for user-defined func
 - [src/compiler/analysis/visitors/BuildSymbolTableAstVisitor.ts](../../src/compiler/analysis/visitors/BuildSymbolTableAstVisitor.ts) - Symbol registration and resolution
 - [src/compiler/types/visitors/InferTypesAstVisitor.ts](../../src/compiler/types/visitors/InferTypesAstVisitor.ts) - Type inference for modifier scopes  
 - [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - Code generation and function wrapping
-- [examples/06-modifiers/](../../examples/06-modifiers/) - Complete example suite with .expect files
+- [examples/10-modifiers/](../../examples/10-modifiers/) - Complete example suite with .expect files
 
 **Example**:
 ```lisp
@@ -202,7 +202,7 @@ Implemented Zig-style compile-time evaluation for functions and constants:
 **Key Implementation Files**:
 - [src/compiler/transformation/visitors/ComptimeEvaluationAstVisitor.ts](../../src/compiler/transformation/visitors/ComptimeEvaluationAstVisitor.ts) - VM-based evaluation and AST node removal
 - [src/compiler/analysis/SymbolTable.ts](../../src/compiler/analysis/SymbolTable.ts) - Comptime metadata tracking
-- [examples/04-data-types/10_comptime.lisp](../../examples/04-data-types/10_comptime.lisp) - Test case with recursive factorial and addition
+- [examples/11-comptime/00_comptime.lisp](../../examples/11-comptime/00_comptime.lisp) - Test case with recursive factorial and addition
 
 **Example**:
 ```lisp
@@ -307,9 +307,9 @@ Critical bug fixes for parameter type binding and complex expression type infere
    - Solution: Implemented proper `case "indexer"` type inference
 
 **Test Results**:
-- ✅ [02_fn_types.lisp](../../examples/01-basics/02_fn_types.lisp) - Type annotations and parameter resolution
-- ✅ [06_flow_control.lisp](../../examples/01-basics/06_flow_control.lisp) - Flow control with typed parameters
-- ✅ [07_memoization.lisp](../../examples/01-basics/07_memoization.lisp) - Map literals and indexer operations
+- ✅ [02_fn_types.lisp](../../examples/07-types/01_type_reflection.lisp) - Type annotations and parameter resolution
+- ✅ [06_flow_control.lisp](../../examples/02-control-flow/04_flow_control.lisp) - Flow control with typed parameters
+- ✅ [07_memoization.lisp](../../examples/20-algorithms/09_memoization_intro.lisp) - Map literals and indexer operations
 
 ---
 
@@ -325,7 +325,7 @@ Proper class inheritance with constructor parameter passing:
 - Implicit return statements in function bodies
 - Complete cleanup of legacy string-based compiler
 
-**Test Example**: [examples/05-oop/00_inheritance.lisp](../../examples/05-oop/00_inheritance.lisp)
+**Test Example**: [examples/09-oop/00_inheritance.lisp](../../examples/09-oop/00_inheritance.lisp)
 
 ---
 
