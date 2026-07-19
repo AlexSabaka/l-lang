@@ -21,9 +21,11 @@ import { report, CBackendDiagnostics } from "../../rules/diagnostics";
 import { GapLedger, Assumption } from "./GapLedger";
 import {
   CBlock, CExpr, CStmt, CModule, CFunction, CParam, CLValue, CCallee, BinopMode, CMapEntry,
+  CLifted, CCapture,
 } from "./cir";
 import { CType, C_BOOL, C_INT, C_REAL, C_STR, C_VALUE, C_VOID, mapType, ctypeEquals } from "./ctype";
 import { INTRINSIC_CALLS, NATIVE_METHODS, NATIVE_FIELDS } from "./intrinsics";
+import { freeVariables } from "./freevars";
 
 const BINARY_OPS = new Set(["+", "-", "*", "/", "%", "==", "!=", "≠", "<", ">", "<=", ">=", "&&", "||"]);
 const NUMERIC = (t: CType) => t.k === "int" || t.k === "real";
@@ -39,10 +41,31 @@ export function mangleC(name: string): string {
 
 class Refusal extends Error {}
 
+/** What the resolver knows about a local binding (a param, a let/mut, or a captured var). */
+interface VarInfo {
+  ctype: CType;
+  mutable: boolean;
+  /** A mutable-captured binding: stored as a heap `ll_value*` shared with escaping closures. */
+  cell: boolean;
+}
+
 export class ResolveHirToCir {
   private readonly functions: CFunction[] = [];
-  /** Declared CTypes of lowering temps and user locals, by C name (P1-scoped truth for reads). */
-  private readonly declTypes = new Map<string, CType>();
+  private readonly lifted: CLifted[] = [];
+  private readonly adapters = new Map<string, { forCName: string; params: CType[]; ret: CType; arity: number }>();
+  /** Top-level user function signatures, by SOURCE name -- direct-call targets. */
+  private readonly topLevelFns = new Map<string, { params: CType[]; ret: CType; arity: number }>();
+  /** Imported (non-intrinsic) l-lang bodies lowered on demand, by source name (dedup). */
+  private readonly importedLowered = new Set<string>();
+  /** Lexical scope stack of local bindings (by C name). scope[0] is the module/main body. */
+  private readonly scopes: Map<string, VarInfo>[] = [new Map()];
+  /** Names (C names) that must be heap cells in the CURRENT function scope (mutable-captured). */
+  private cellVars: Set<string> = new Set();
+  private liftCounter = 0;
+  /** True while resolving a FUNCTION body (top-level or lifted). A `function` statement seen when
+   *  false is a module-level declaration; when true it is a nested closure. (Scope depth cannot tell
+   *  them apart because each function resolves on an isolated scope stack.) */
+  private inFunctionBody = false;
   private refused = false;
 
   constructor(
@@ -50,6 +73,34 @@ export class ResolveHirToCir {
     private readonly hir: HirModule,
     readonly ledger: GapLedger
   ) {}
+
+  // -- lexical scope (correct per-function locals; captures read enclosing scopes) ------------------
+
+  private pushScope(): void { this.scopes.push(new Map()); }
+  private popScope(): void { this.scopes.pop(); }
+
+  private declareLocal(cName: string, ctype: CType, mutable = false, cell = false): void {
+    this.scopes[this.scopes.length - 1].set(cName, { ctype, mutable, cell });
+  }
+
+  private localInfo(cName: string): VarInfo | undefined {
+    for (let i = this.scopes.length - 1; i >= 0; i--) {
+      const v = this.scopes[i].get(cName);
+      if (v) return v;
+    }
+    return undefined;
+  }
+
+  private localCType(cName: string): CType | undefined { return this.localInfo(cName)?.ctype; }
+  private hasLocal(cName: string): boolean { return this.localInfo(cName) !== undefined; }
+  /** Bound in an ENCLOSING scope (not the current top scope) -- a capture candidate. */
+  private inEnclosingScope(cName: string): VarInfo | undefined {
+    for (let i = this.scopes.length - 2; i >= 0; i--) {
+      const v = this.scopes[i].get(cName);
+      if (v) return v;
+    }
+    return undefined;
+  }
 
   // -- the three sanctioned dips (each records before answering) -----------------------------------
 
@@ -90,10 +141,64 @@ export class ResolveHirToCir {
 
   resolveModule(root: ast.ASTNode): CModule | null {
     this.rootSource = root._location?.source;
+    const items = root._type === "program" ? (root as ast.ProgramNode).program ?? [] : [];
+    // Register every top-level function first, so forward references (call before declaration, or a
+    // function used as a value) resolve regardless of order.
+    this.registerModuleFunctions(items);
     const body = this.hir.bodyFor(root);
+    // The module body is itself a scope for capture purposes (a top-level lambda still captures
+    // module locals). Compute its cell set from nested closures before resolving.
+    this.cellVars = this.computeCellVars(items);
     const main = body ? this.resolveBlock(body) : { stmts: [] };
     if (this.refused) return null;
-    return { functions: this.functions, main };
+    return {
+      functions: this.functions,
+      lifted: this.lifted,
+      adapters: [...this.adapters.values()],
+      main,
+    };
+  }
+
+  // -- cell analysis: which mut-locals of a scope are captured by nested closures ------------------
+
+  /** The mutable locals of THIS statement sequence that some nested closure captures -> heap cells. */
+  private computeCellVars(items: ast.ASTNode[]): Set<string> {
+    const muts = new Set<string>();
+    for (const it of items) this.collectMutDecls(it, muts);
+    if (muts.size === 0) return new Set();
+    const captured = new Set<string>();
+    for (const it of items) this.collectNestedFreeVars(it, captured);
+    const cells = new Set<string>();
+    for (const m of muts) if (captured.has(m)) cells.add(mangleC(m));
+    return cells;
+  }
+
+  private collectMutDecls(node: any, into: Set<string>): void {
+    if (!node || typeof node !== "object") return;
+    if (node._type === "variable" && (node as ast.VariableNode).mutable) {
+      const n = (node as ast.VariableNode).name;
+      if (n._type === "simple-identifier" || n._type === "composite-identifier") into.add(ast.symbolName(n as ast.IdentifierNode));
+    }
+    // Only the immediate sequence's own muts (a nested fn's muts are ITS scope's problem).
+    if (node._type === "function") return;
+    if (node._type === "list") {
+      const form = classifyList(node as ast.ListNode);
+      if (form.kind === "block") for (const it of form.items) this.collectMutDecls(it, into);
+      else if (form.kind === "grouping") this.collectMutDecls(form.inner, into);
+    }
+  }
+
+  private collectNestedFreeVars(node: any, into: Set<string>): void {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { for (const c of node) this.collectNestedFreeVars(c, into); return; }
+    if (node._type === "function") {
+      for (const n of freeVariables(node as ast.FunctionNode)) into.add(n);
+      return;
+    }
+    for (const k of Object.keys(node)) {
+      if (k.startsWith("_")) continue;
+      this.collectNestedFreeVars(node[k], into);
+    }
   }
 
   // -- types ----------------------------------------------------------------------------------------
@@ -139,7 +244,7 @@ export class ResolveHirToCir {
         case "decl-temp": {
           const t = h.init ? this.resolveExpr(h.init) : null;
           const declCType = t ? t.ctype : this.ctypeOf(h, "decl-temp");
-          this.declTypes.set(h.name, declCType);
+          this.declareLocal(h.name, declCType);
           return [{ src: h.src, ctype: C_VOID, kind: "c-decl", cName: h.name, declCType, init: t }];
         }
 
@@ -150,7 +255,7 @@ export class ResolveHirToCir {
             this.ledger.record("A5", "assign-temp-store", h.src, "isStore flag stands in for an explicit copy node");
             value = { src: h.src, ctype: value.ctype, kind: "c-copy", inner: value };
           }
-          const target: CLValue = { kind: "name", cName: h.name, ctype: this.declTypes.get(h.name) ?? value.ctype };
+          const target: CLValue = { kind: "name", cName: h.name, ctype: this.localCType(h.name) ?? value.ctype };
           return [{ src: h.src, ctype: C_VOID, kind: "c-assign", target, value }];
         }
 
@@ -259,18 +364,26 @@ export class ResolveHirToCir {
         t = this.dipSymbols("A2", "decl-type", node, "declaration type resolved through the symbol table", srcName)?.inferredType;
       }
     }
-    const declCType = t !== undefined ? mapType(t) : init ? init.ctype : C_VALUE;
+    let declCType = t !== undefined ? mapType(t) : init ? init.ctype : C_VALUE;
     if (t === undefined && !init) this.ledger.record("A1", "decl-untyped", node, "no channel or symbol type for binding; boxed");
-    this.declTypes.set(cName, declCType);
-    return [{ src: node, ctype: C_VOID, kind: "c-decl", cName, declCType, init }];
+    // A mutable binding captured by an escaping closure becomes a heap cell (boxed) so the closure
+    // and the origin share the mutation -- the env the HIR does not model (spec A3/A5).
+    const cell = this.cellVars.has(cName);
+    if (cell) {
+      this.ledger.record("A5", "mut-capture-cell", node, "mut binding captured by a closure; boxed into a shared heap cell");
+      declCType = C_VALUE;
+    }
+    this.declareLocal(cName, declCType, node.mutable, cell);
+    return [{ src: node, ctype: C_VOID, kind: "c-decl", cName, declCType, init, cell }];
   }
 
   private resolveUserAssign(node: ast.SimpleAssignmentNode | ast.CompoundAssignmentNode, rhs: CExpr): CStmt[] {
     const target = this.dipAst("A2", "assign-target", node, "assignment target read from raw AST (legacy emitAssign seam)", () => node.assignable);
     if (target._type === "simple-identifier" || target._type === "composite-identifier") {
       const cName = mangleC(ast.symbolName(target));
-      const ctype = this.declTypes.get(cName) ?? this.bindingCType(target as ast.IdentifierNode);
-      return [{ src: node, ctype: C_VOID, kind: "c-assign", target: { kind: "name", cName, ctype }, value: rhs }];
+      const info = this.localInfo(cName);
+      const ctype = info?.ctype ?? this.bindingCType(target as ast.IdentifierNode);
+      return [{ src: node, ctype: C_VOID, kind: "c-assign", target: { kind: "name", cName, ctype, cell: info?.cell }, value: rhs }];
     }
     throw this.refuse(node, `assign-to-${target._type}`, "resolveUserAssign");
   }
@@ -290,7 +403,7 @@ export class ResolveHirToCir {
     // emitForEach seam does (A5).
     this.ledger.record("A5", "foreach-copy", node, "per-iteration element copy decided below the HIR");
     const cName = mangleC(ast.symbolName(variable as ast.IdentifierNode));
-    this.declTypes.set(cName, varCType);
+    this.declareLocal(cName, varCType);
     return [{
       src: node, ctype: C_VOID, kind: "c-foreach",
       varCName: cName, varCType, collection,
@@ -310,7 +423,7 @@ export class ResolveHirToCir {
         return { src: h.src, ctype: C_VALUE, kind: "c-nil" };
 
       case "temp": {
-        const ctype = this.declTypes.get(h.name) ?? this.ctypeOf(h, "temp-read");
+        const ctype = this.localCType(h.name) ?? this.ctypeOf(h, "temp-read");
         return { src: h.src, ctype, kind: "c-temp", name: h.name };
       }
 
@@ -413,7 +526,7 @@ export class ResolveHirToCir {
     const pattern = this.dipAst("A7", "pattern-test", h.src, "pattern decomposed from raw PatternNode (legacy generateCondition seam)", () => h.pattern);
     const scrut: CExpr = {
       src: h.src,
-      ctype: this.declTypes.get(h.scrutName) ?? C_VALUE,
+      ctype: this.localCType(h.scrutName) ?? C_VALUE,
       kind: "c-temp",
       name: h.scrutName,
     };
@@ -451,9 +564,13 @@ export class ResolveHirToCir {
         return [];
       case "type-def":
         return []; // compile-time only
-      case "function":
-        this.collectFunction(node as ast.FunctionNode);
-        return [];
+      case "function": {
+        const f = node as ast.FunctionNode;
+        // A module-level declaration is a top-level C function; a declaration inside a function body
+        // is a nested closure bound to a local.
+        if (!this.inFunctionBody) { this.collectFunction(f); return []; }
+        return this.resolveNestedFnDecl(f);
+      }
       case "variable": {
         // A declaration inside a RAW subtree (or a bodyless `(mut x)` / `:extern`).
         const v = node as ast.VariableNode;
@@ -539,7 +656,7 @@ export class ResolveHirToCir {
         const collection = this.resolveAstExpr(n.collection);
         const varCType: CType = collection.ctype.k === "vec" ? collection.ctype.elem : C_VALUE;
         const cName = mangleC(ast.symbolName(n.variable as ast.IdentifierNode));
-        this.declTypes.set(cName, varCType);
+        this.declareLocal(cName, varCType);
         return [{
           src: node, ctype: C_VOID, kind: "c-foreach",
           varCName: cName, varCType, collection,
@@ -635,9 +752,87 @@ export class ResolveHirToCir {
         this.ledger.record("A2", "raw-indexer", node, "indexer reached codegen as a raw leaf (not HIndex)");
         return this.resolveRawIndexer(node as ast.IndexerNode);
       }
+      case "function":
+        // A lambda literal in value position -> a closure.
+        return this.resolveLambda(node as ast.FunctionNode);
+      case "call": {
+        // A desugarer CORE call node (pipelines): the callee is any expression, not just a name.
+        const c = node as ast.CallNode;
+        return this.resolveCoreCall(c, c.callee, c.arguments ?? []);
+      }
+      case "member": {
+        // A desugarer CORE member node (pipelines: `x |> .length`): member of a computed value.
+        const m = node as ast.MemberNode;
+        const object = this.resolveAstExpr(m.object);
+        const field = this.memberName(m.property);
+        if (field === null) throw this.refuse(node, "computed-member", "resolveAstExpr");
+        return this.memberRead(node, object, field);
+      }
+      case "type-guard": {
+        // `(x :of T)` -- a runtime type test yielding Boolean (D41, spec A7's guard half).
+        const g = node as ast.TypeGuardNode;
+        return this.resolveTypeTest(node, this.resolveAstExpr(g.value), g.type);
+      }
       default:
         throw this.refuse(node, node._type, "resolveAstExpr");
     }
+  }
+
+  /** The field name of a member `property` node (an identifier or a string key). */
+  private memberName(property: ast.ASTNode): string | null {
+    if (property._type === "simple-identifier") return (property as ast.SimpleIdentifierNode).id;
+    if (property._type === "composite-identifier") {
+      const parts = (property as ast.CompositeIdentifierNode).parts;
+      return parts[parts.length - 1];
+    }
+    if (property._type === "string") return (property as ast.StringNode).value;
+    return null;
+  }
+
+  /** A core `call` node whose callee is an arbitrary expression (operator, name, lambda, or value). */
+  private resolveCoreCall(node: ast.ASTNode, callee: ast.ASTNode, args: ast.ASTNode[]): CExpr {
+    if (callee._type === "simple-identifier" || callee._type === "composite-identifier") {
+      // Reuse the full callee-resolution path (operators, top-level, intrinsics, closures).
+      return this.resolveCall(node as ast.ListNode, callee, args);
+    }
+    if (callee._type === "function") {
+      return this.closureCall(node, this.resolveLambda(callee as ast.FunctionNode), args);
+    }
+    // Any other computed callee: evaluate it to a closure value and call through it.
+    return this.closureCall(node, this.resolveAstExpr(callee), args);
+  }
+
+  /** `(x :of T)` / a match type-pattern: a runtime tag or nominal test (D41). */
+  private resolveTypeTest(node: ast.ASTNode, operand: CExpr, typeNode: ast.TypeNode): CExpr {
+    const info = this.typeTestName(typeNode);
+    if (!info) throw this.refuse(node, "type-test-shape", "resolveTypeTest");
+    this.ledger.record("A7", "type-test", node, "runtime type test lowered to ll_is_type (D41)");
+    return {
+      src: node, ctype: C_BOOL, kind: "c-type-test",
+      operand, typeName: info.name, primitive: info.primitive,
+    };
+  }
+
+  /** Reduce a TypeNode to a runtime-testable name. Generic ARGUMENTS are erased (D24): `Int[]` tests
+   *  "is an array", not "array of Int" -- matching the JS `__ll_is_type` the goldens encode. The AST
+   *  wraps a `type` around a `simple-type` whose `name` is a `type-name`; unwrap both. */
+  private typeTestName(t: any, arrayFromOuter = false): { name: string; primitive: boolean } | null {
+    if (!t || typeof t !== "object") return null;
+    const isArray = arrayFromOuter || t.array === true || t.isArray === true;
+    if (t._type === "type") return this.typeTestName(t.type, isArray);
+    if (isArray) return { name: "Array", primitive: false };
+    if (t._type === "simple-type" || t._type === "type-name" || t._type === "generic-type") {
+      const nm = typeof t.name === "string" ? t.name : t.name?.name;
+      if (typeof nm !== "string") return null;
+      if (nm === "Array") return { name: "Array", primitive: false };
+      const PRIMS = new Set(["Int", "Real", "String", "Boolean", "Bool", "Char", "Void"]);
+      return { name: nm, primitive: PRIMS.has(nm) };
+    }
+    if (typeof t.name === "string") {
+      const PRIMS = new Set(["Int", "Real", "String", "Boolean", "Bool", "Char", "Void"]);
+      return { name: t.name, primitive: PRIMS.has(t.name) };
+    }
+    return null;
   }
 
   private resolveRawIndexer(node: ast.IndexerNode): CExpr {
@@ -661,25 +856,55 @@ export class ResolveHirToCir {
     const name = ast.symbolName(node);
     // Lowering temps: synthesized identifiers whose type was re-registered on the channel.
     if (name.startsWith("__ll_hir")) {
-      const ctype = this.declTypes.get(name) ?? this.ctypeOfAst(node, "temp-substituted");
+      const ctype = this.localCType(name) ?? this.ctypeOfAst(node, "temp-substituted");
       return { src: node, ctype, kind: "c-temp", name };
     }
     if (node._type === "composite-identifier") {
       return this.resolveCompositeRead(node as ast.CompositeIdentifierNode);
+    }
+    const cName = mangleC(name);
+    const info = this.localInfo(cName);
+    // A TOP-LEVEL function referenced as a VALUE (not called): becomes a closure via an adapter --
+    // the "functions are values" gap the HIR does not model (spec A3). Only when it is NOT a local
+    // (a local of the same name shadows).
+    if (!info && this.topLevelFns.has(name)) {
+      return this.functionValue(node, name);
     }
     this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
     let t = this.context.nodeTypes.get(node);
     if (t === undefined) {
       const entry = this.dipSymbols("A1", "ref-type-via-symbols", node, "identifier use missing from channel; binding type from symbol table", name);
       if (this.isExtern(entry)) throw this.refuseExtern(node, name);
+      // An imported/top-level function referenced as a value but not yet registered: treat as a value.
+      if (entry?.inferredType?.kind === "function" && this.isLocalDef(entry)) {
+        this.registerTopLevel(entry.value as ast.FunctionNode, name);
+        return this.functionValue(node, name);
+      }
       t = entry?.inferredType;
     }
-    const cName = mangleC(name);
-    const ctype = this.declTypes.get(cName) ?? (t !== undefined ? mapType(t) : C_VALUE);
-    if (t === undefined && !this.declTypes.has(cName)) {
+    const ctype = info?.ctype ?? (t !== undefined ? mapType(t) : C_VALUE);
+    if (t === undefined && !info) {
       this.ledger.record("A1", "ref-untyped", node, "no channel or symbol type for identifier use; boxed");
     }
-    return { src: node, ctype, kind: "c-ref", cName };
+    return { src: node, ctype, kind: "c-ref", cName, cell: info?.cell };
+  }
+
+  /** A top-level function used as a value -> a closure over a boxed-convention adapter (no captures). */
+  private functionValue(node: ast.ASTNode, name: string): CExpr {
+    this.ledger.record("A3", "function-as-value", node, "function used as a first-class value; boxed-convention adapter synthesized");
+    const sig = this.topLevelFns.get(name)!;
+    const cName = mangleC(name);
+    this.adapters.set(cName, { forCName: cName, params: sig.params, ret: sig.ret, arity: sig.arity });
+    return {
+      src: node,
+      ctype: { k: "closure", params: sig.params, ret: sig.ret },
+      kind: "c-closure-make",
+      liftedName: `__ll_adapter_${cName}`,
+      envStruct: null,
+      captures: [],
+      arity: sig.arity,
+      name,
+    };
   }
 
   private bindingCType(node: ast.IdentifierNode): CType {
@@ -692,14 +917,16 @@ export class ResolveHirToCir {
     const parts = node.parts;
     const headName = parts[0];
     const local = (() => { try { return this.context.symbolTable.resolveSymbol(headName, node); } catch { return undefined; } })();
-    const isLocal = !this.isExtern(local) && (local?.inferredType !== undefined || this.declTypes.has(mangleC(headName)));
+    const info = this.localInfo(mangleC(headName));
+    const isLocal = !this.isExtern(local) && (local?.inferredType !== undefined || info !== undefined);
     if (isLocal) {
       // A member read off a local binding.
       let expr: CExpr = {
         src: node,
-        ctype: this.declTypes.get(mangleC(headName)) ?? mapType(local?.inferredType),
+        ctype: info?.ctype ?? mapType(local?.inferredType),
         kind: "c-ref",
         cName: mangleC(headName),
+        cell: info?.cell,
       };
       this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
       for (const field of parts.slice(1)) expr = this.memberRead(node, expr, field);
@@ -770,37 +997,57 @@ export class ResolveHirToCir {
 
     // Dotted callee: `(x.m ...)` native method, or `(Math.log ...)` host intrinsic.
     if (callee._type === "composite-identifier") {
+      // A local binding of a compound name (a captured closure `a.b`?) is rare; the dotted path
+      // handles a local receiver's method. A local CLOSURE named plainly is handled below.
       return this.resolveDottedCall(node, callee as ast.CompositeIdentifierNode, args);
+    }
+    if (callee._type === "function") {
+      // An applied lambda literal: `((fn [x] ...) 3)`.
+      return this.closureCall(node, this.resolveLambda(callee as ast.FunctionNode), args);
+    }
+    if (callee._type === "call" || callee._type === "member") {
+      // A computed callee (a pipeline stage producing a function): call through the value.
+      return this.closureCall(node, this.resolveAstExpr(callee), args);
     }
     if (ast.isListNode(callee) || callee._type === "indexer") {
       throw this.refuse(node, "computed-callee", "resolveCall");
     }
 
-    // A plain named callee: a user function, a runtime builtin, or (zero-arg, non-function) a grouped value.
+    // A plain named callee.
     if (callee._type === "simple-identifier") {
       const name = (callee as ast.SimpleIdentifierNode).id;
+      const cName = mangleC(name);
+      // (1) A LOCAL binding used as a callee. With ARGS -> a call through a closure VALUE (a param
+      // `f`, a let-bound closure `times-3`); the "callee is a value" gap (spec A3). With ZERO args
+      // it is a D1 READ (`(counter)` reads the binding -- invoking a zero-arg closure is `(call c)`).
+      const local = this.localInfo(cName);
+      if (local) {
+        if (args.length === 0) return this.resolveIdentifier(callee as ast.IdentifierNode);
+        return this.closureCall(node, this.resolveIdentifier(callee as ast.IdentifierNode), args);
+      }
+      // (2) A top-level function defined in this module -> a direct typed C call.
+      if (this.topLevelFns.has(name)) {
+        const sig = this.topLevelFns.get(name)!;
+        const cArgs = args.map((a) => this.resolveAstExpr(a));
+        return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: cArgs };
+      }
       const entry = this.dipSymbols("A3", "callee-identity", node, "callee resolved through the symbol table (spec wants it on the call node)", name);
       const symT = entry?.inferredType;
-      // A function DEFINED IN THIS MODULE wins (the JS shadowing rule: library names are shadowable).
-      if (symT?.kind === "function" && this.isLocalDef(entry) && !this.isExtern(entry)) {
-        const params = (symT.params ?? []).map((p) => mapType(p));
-        const ret = this.userFnRet(symT, node);
-        const cArgs = args.map((a) => this.resolveAstExpr(a));
-        const calleeC: CCallee = { kind: "free", cName: mangleC(name), params, ret };
-        return { src: node, ctype: ret, kind: "c-call", callee: calleeC, args: cArgs };
-      }
       const builtin = INTRINSIC_CALLS.get(name);
       if (builtin) {
-        if (entry !== undefined) {
-          // The name resolves to an imported l-lang stdlib body the intrinsic shadows (v0 strategy).
+        if (entry !== undefined && !this.isExtern(entry)) {
           this.ledger.record("A9-extern", "stdlib-intrinsic", node, `'${name}' stdlib body shadowed by a C intrinsic`);
         }
         const cArgs = args.map((a) => this.resolveAstExpr(a));
         return { src: node, ctype: builtin.ret, kind: "c-call", callee: { kind: "intrinsic", ...builtin }, args: cArgs };
       }
-      if (symT?.kind === "function") {
-        // Imported (non-intrinsic) l-lang function: on-demand body compilation is Phase B.
-        throw this.refuse(node, `imported-function:${name}`, "resolveCall");
+      // (3) An IMPORTED (non-intrinsic) l-lang function -> lower its body on demand (the C analog of
+      // the JS backend's ensureSymbolInlined) and call it directly.
+      if (symT?.kind === "function" && !this.isExtern(entry) && (entry?.value as any)?._type === "function") {
+        this.lowerImportedFunction(name, entry!.value as ast.FunctionNode);
+        const sig = this.topLevelFns.get(name)!;
+        const cArgs = args.map((a) => this.resolveAstExpr(a));
+        return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: cArgs };
       }
       if (args.length === 0) {
         // `(x)` where x is not a function: redundant parens around a value (D1).
@@ -812,21 +1059,48 @@ export class ResolveHirToCir {
     throw this.refuse(node, `callee:${callee._type}`, "resolveCall");
   }
 
+  /** Lower an imported l-lang function's body on demand, isolating its scope (dedup by source name). */
+  private lowerImportedFunction(name: string, fn: ast.FunctionNode): void {
+    if (this.importedLowered.has(name)) return;
+    this.importedLowered.add(name);
+    if (this.refuseCoroutine(fn, name)) return;
+    this.ledger.record("A9-extern", "imported-body", fn, `imported l-lang function '${name}' lowered on demand (C analog of ensureSymbolInlined)`);
+    this.registerTopLevel(fn, name);
+    const sig = this.topLevelFns.get(name)!;
+    const savedScopes = this.scopes.slice();
+    const savedCells = this.cellVars;
+    const savedInFn = this.inFunctionBody;
+    (this as any).scopes = [new Map<string, VarInfo>()];
+    this.inFunctionBody = true;
+    try {
+      this.cellVars = this.computeCellVars(fn.body ?? []);
+      const params: CParam[] = fn.params.map((p, i) => this.declareParam(p, sig.params[i]));
+      const prologue = this.paramCopyPrologue(fn, params);
+      const body = this.resolveFunctionBody(fn);
+      this.functions.push({ src: fn, cName: mangleC(name), params, ret: sig.ret, body: { stmts: [...prologue, ...body.stmts] } });
+    } finally {
+      (this as any).scopes = savedScopes;
+      this.cellVars = savedCells;
+      this.inFunctionBody = savedInFn;
+    }
+  }
+
   private resolveDottedCall(node: ast.ListNode, callee: ast.CompositeIdentifierNode, args: ast.ASTNode[]): CExpr {
     const whole = callee.id;
     const intrinsic = INTRINSIC_CALLS.get(whole);
     const headName = callee.parts[0];
     const localEntry = (() => { try { return this.context.symbolTable.resolveSymbol(headName, callee); } catch { return undefined; } })();
-    const localCType = this.declTypes.get(mangleC(headName));
+    const localVar = this.localInfo(mangleC(headName));
 
     // A local binding wins over a host global of the same spelling -- but an `:extern` entry IS the
     // host global (the std/js prelude declares `console`, `Math`, ... into the symbol table).
-    if (!this.isExtern(localEntry) && (localEntry?.inferredType !== undefined || localCType !== undefined)) {
+    if (!this.isExtern(localEntry) && (localEntry?.inferredType !== undefined || localVar !== undefined)) {
       let recv: CExpr = {
         src: callee,
-        ctype: localCType ?? mapType(localEntry?.inferredType),
+        ctype: localVar?.ctype ?? mapType(localEntry?.inferredType),
         kind: "c-ref",
         cName: mangleC(headName),
+        cell: localVar?.cell,
       };
       // Intermediate `.a.b` parts are member reads; the LAST part is the method.
       for (const mid of callee.parts.slice(1, -1)) recv = this.memberRead(node, recv, mid);
@@ -956,49 +1230,204 @@ export class ResolveHirToCir {
 
   // -- functions ------------------------------------------------------------------------------------
 
+  /** Refuse a coroutine (A8); returns true if refused. */
+  private refuseCoroutine(fn: ast.FunctionNode, name: string): boolean {
+    if (!fn.generator && !fn.async) return false;
+    report(this.context, CBackendDiagnostics.CoroutineRefused, fn, {
+      form: fn.generator ? "a generator (:gen)" : "async (:async)",
+      name,
+    });
+    this.ledger.record("A8", fn.generator ? "generator" : "async", fn, "coroutine construct refused (no suspend/resume model in the HIR)");
+    this.refused = true;
+    return true;
+  }
+
+  /** Register a top-level (module-scope) function's signature so calls and value-uses resolve. */
+  private registerTopLevel(fn: ast.FunctionNode, name: string): void {
+    if (this.topLevelFns.has(name)) return;
+    const symT = this.dipSymbols("A3", "function-signature", fn, "signature resolved through the symbol table (not on the HIR)", name)?.inferredType;
+    const params = (symT?.kind === "function" ? symT.params ?? [] : fn.params.map(() => undefined)).map((p) => mapType(p));
+    const ret = this.userFnRet(symT, fn);
+    this.topLevelFns.set(name, { params, ret, arity: fn.params.length });
+  }
+
+  /** Pre-scan the module body: register every top-level function BEFORE resolving (forward refs). */
+  private registerModuleFunctions(items: ast.ASTNode[]): void {
+    for (const item of items) {
+      let n: ast.ASTNode | undefined = item;
+      if (n?._type === "list") {
+        const form = classifyList(n as ast.ListNode);
+        if (form.kind === "grouping") n = form.inner;
+      }
+      if (n?._type === "function" && (n as ast.FunctionNode).name && !(n as ast.FunctionNode).generator && !(n as ast.FunctionNode).async) {
+        this.registerTopLevel(n as ast.FunctionNode, ast.symbolName((n as ast.FunctionNode).name));
+      }
+    }
+  }
+
+  /** A TOP-LEVEL function declaration -> a typed C function. Isolated param scope + D11 copy prologue. */
   private collectFunction(fn: ast.FunctionNode): void {
     const name = fn.name ? ast.symbolName(fn.name) : "<anonymous>";
-    if (fn.generator || fn.async) {
-      report(this.context, CBackendDiagnostics.CoroutineRefused, fn, {
-        form: fn.generator ? "a generator (:gen)" : "async (:async)",
-        name,
+    if (this.refuseCoroutine(fn, name)) return;
+    if (!fn.name) { this.refuse(fn, "lambda", "collectFunction"); return; }
+    this.registerTopLevel(fn, name);
+    const sig = this.topLevelFns.get(name)!;
+
+    // A top-level C function is ISOLATED: it cannot see module-body (`main`) locals except through
+    // its parameters, so resolution runs on a fresh scope stack.
+    const savedScopes = this.scopes.slice();
+    const savedCells = this.cellVars;
+    const savedInFn = this.inFunctionBody;
+    (this as any).scopes = [new Map<string, VarInfo>()];
+    this.inFunctionBody = true;
+    try {
+      this.cellVars = this.computeCellVars(fn.body ?? []);
+      const params: CParam[] = fn.params.map((p, i) => this.declareParam(p, sig.params[i]));
+      const prologue = this.paramCopyPrologue(fn, params);
+      const body = this.resolveFunctionBody(fn);
+      this.functions.push({ src: fn, cName: mangleC(name), params, ret: sig.ret, body: { stmts: [...prologue, ...body.stmts] } });
+    } finally {
+      (this as any).scopes = savedScopes;
+      this.cellVars = savedCells;
+      this.inFunctionBody = savedInFn;
+    }
+  }
+
+  private declareParam(p: ast.ParameterNode, sigT: CType | undefined): CParam {
+    if (p.name._type !== "simple-identifier" && p.name._type !== "composite-identifier") {
+      this.refuse(p, "param-destructuring", "declareParam");
+      return { cName: `p_bad`, ctype: C_VALUE };
+    }
+    const ctype = sigT ?? C_VALUE;
+    if (sigT === undefined) this.ledger.record("A1", "param-untyped", p, "parameter type unavailable; boxed");
+    const cName = mangleC(ast.symbolName(p.name as ast.IdentifierNode));
+    // A param captured mutably by a nested closure must be a cell (the mut-capture channel again).
+    const cell = this.cellVars.has(cName);
+    this.declareLocal(cName, cell ? C_VALUE : ctype, false, cell);
+    return { cName, ctype };
+  }
+
+  /** D11 copy-on-entry (A5): a boxed param may hold a struct; copy it. Native primitives are skipped. */
+  private paramCopyPrologue(fn: ast.FunctionNode, params: CParam[]): CStmt[] {
+    const out: CStmt[] = [];
+    for (const p of params) {
+      if (p.ctype.k !== "value") continue; // only a boxed param can be a struct value
+      this.ledger.record("A5", "param-copy", fn, "callee-side D11 copy-on-entry (a boxed param may be a struct)");
+      out.push({
+        src: fn, ctype: C_VOID, kind: "c-assign",
+        target: { kind: "name", cName: p.cName, ctype: p.ctype },
+        value: { src: fn, ctype: p.ctype, kind: "c-copy", inner: { src: fn, ctype: p.ctype, kind: "c-ref", cName: p.cName } },
       });
-      this.ledger.record("A8", fn.generator ? "generator" : "async", fn, "coroutine construct refused (no suspend/resume model in the HIR)");
-      this.refused = true;
-      return;
     }
-    if (!fn.name) {
-      this.refuse(fn, "lambda", "collectFunction");
-      return;
-    }
+    return out;
+  }
 
-    // The signature is NOT on any HIR node -- the HirModule maps the FunctionNode to a body and
-    // nothing else (A3: callee identity/signature live below the HIR).
-    const symT = this.dipSymbols("A3", "function-signature", fn, "signature resolved through the symbol table (not on the HIR)", name)?.inferredType;
-    const paramTs: (InferredType | undefined)[] =
-      symT?.kind === "function" && symT.params ? symT.params : fn.params.map(() => undefined);
-    const ret = this.userFnRet(symT, fn);
-
-    const params: CParam[] = fn.params.map((p, i) => {
-      if (p.name._type !== "simple-identifier" && p.name._type !== "composite-identifier") {
-        this.refuse(p, "param-destructuring", "collectFunction");
-        return { cName: `p${i}`, ctype: C_VALUE };
-      }
-      const t = paramTs[i];
-      if (t === undefined) this.ledger.record("A1", "param-untyped", p, "parameter type unavailable; boxed");
-      const cName = mangleC(ast.symbolName(p.name as ast.IdentifierNode));
-      const ctype = t !== undefined ? mapType(t) : C_VALUE;
-      this.declTypes.set(cName, ctype);
-      return { cName, ctype };
-    });
-
+  /** Resolve a function's body from the HIR (or lower on demand if it was not pre-lowered). */
+  private resolveFunctionBody(fn: ast.FunctionNode): CBlock {
     let body = this.hir.bodyFor(fn);
     if (!body) {
-      // The on-demand path the JS emitter also has (imported/inlined bodies not pre-lowered).
       this.ledger.record("A3", "on-demand-lower", fn, "function body not pre-lowered; lowered on demand");
-      body = new LowerAstToHirVisitor(this.context, "__ll_hir_i").lowerBody(fn.body ?? []);
+      body = new LowerAstToHirVisitor(this.context, `__ll_hir_i${this.liftCounter}`).lowerBody(fn.body ?? []);
     }
-    this.functions.push({ src: fn, cName: mangleC(name), params, ret, body: this.resolveBlock(body) });
+    return this.resolveBlock(body);
+  }
+
+  // -- closures / lambda lifting -------------------------------------------------------------------
+
+  /** A lambda literal used as a VALUE -> lift it and build a closure. */
+  private resolveLambda(fn: ast.FunctionNode): CExpr {
+    if (this.refuseCoroutine(fn, "<lambda>")) return { src: fn, ctype: C_VALUE, kind: "c-nil" };
+    return this.lift(fn);
+  }
+
+  /** A nested NAMED function declaration statement -> lift it and bind a local closure value. */
+  private resolveNestedFnDecl(fn: ast.FunctionNode): CStmt[] {
+    const name = ast.symbolName(fn.name);
+    if (this.refuseCoroutine(fn, name)) return [];
+    const closure = this.lift(fn);
+    const cName = mangleC(name);
+    this.declareLocal(cName, closure.ctype, false, false);
+    return [{ src: fn, ctype: C_VOID, kind: "c-decl", cName, declCType: closure.ctype, init: closure }];
+  }
+
+  /**
+   * Lift a function (lambda or nested named): compute its captures against the CURRENT scopes, build
+   * a top-level `ll_value fn(void* env, int argc, ll_value* argv)`, and return the closure-make. This
+   * is the env the HIR does not model (spec A3 -- callee identity and closed-over state as a value).
+   */
+  private lift(fn: ast.FunctionNode): CExpr {
+    this.ledger.record("A3", "closure-lift", fn, "nested function lifted with an explicit captured environment (not in the HIR)");
+    const id = this.liftCounter++;
+    const baseName = fn.name ? mangleC(ast.symbolName(fn.name)) : "lam";
+    const liftedName = `__ll_lam_${baseName}_${id}`;
+
+    // Captures: free vars bound in an ENCLOSING (or the current) scope. Computed BEFORE we isolate.
+    const captures: CCapture[] = [];
+    const capType = new Map<string, { ctype: CType; cell: boolean }>();
+    for (const srcName of freeVariables(fn)) {
+      const cName = mangleC(srcName);
+      const info = this.localInfo(cName);
+      if (!info) continue; // a global / top-level fn / intrinsic -- resolved without capture
+      // For a cell, capture the POINTER (c-ref with cell:false emits the bare `ll_value*` variable).
+      const value: CExpr = { src: fn, ctype: info.cell ? C_VALUE : info.ctype, kind: "c-ref", cName, cell: false };
+      captures.push({ field: cName, ctype: info.cell ? C_VALUE : info.ctype, value, cell: info.cell });
+      capType.set(cName, { ctype: info.cell ? C_VALUE : info.ctype, cell: info.cell });
+    }
+
+    // Build the lifted params (typed) from the signature.
+    const symT = this.dipSymbols("A3", "lambda-signature", fn, "lambda signature resolved through the symbol table", fn.name ? ast.symbolName(fn.name) : "<lambda>")?.inferredType;
+    const paramTs = symT?.kind === "function" && symT.params ? symT.params : fn.params.map(() => undefined);
+
+    // Resolve the lifted body in an ISOLATED scope (params + captures only -- a C function cannot see
+    // the enclosing frame except through its env).
+    const savedScopes = this.scopes.slice();
+    const savedCells = this.cellVars;
+    const savedInFn = this.inFunctionBody;
+    (this as any).scopes = [new Map<string, VarInfo>()];
+    this.inFunctionBody = true;
+    const liftedParams: CParam[] = [];
+    try {
+      this.cellVars = this.computeCellVars(fn.body ?? []);
+      fn.params.forEach((p, i) => {
+        const cp = this.declareParam(p, paramTs[i] !== undefined ? mapType(paramTs[i]) : undefined);
+        liftedParams.push(cp);
+      });
+      // Declare captures in the lifted scope (cells stay cells so reads deref).
+      for (const [cName, info] of capType) this.declareLocal(cName, info.ctype, info.cell, info.cell);
+      const body = this.resolveFunctionBody(fn);
+      this.lifted.push({
+        liftedName,
+        envStruct: captures.length ? `__ll_env_${liftedName}` : null,
+        captures: captures.map((c) => ({ field: c.field, ctype: c.ctype, cell: c.cell })),
+        params: liftedParams,
+        body,
+      });
+    } finally {
+      (this as any).scopes = savedScopes;
+      this.cellVars = savedCells;
+      this.inFunctionBody = savedInFn;
+    }
+
+    const paramCTypes = liftedParams.map((p) => p.ctype);
+    const ret = this.userFnRet(symT, fn);
+    return {
+      src: fn,
+      ctype: { k: "closure", params: paramCTypes, ret },
+      kind: "c-closure-make",
+      liftedName,
+      envStruct: captures.length ? `__ll_env_${liftedName}` : null,
+      captures,
+      arity: fn.params.length,
+      name: fn.name ? ast.symbolName(fn.name) : "",
+    };
+  }
+
+  /** A call through a closure VALUE (uniform boxed convention). */
+  private closureCall(node: ast.ASTNode, fnv: CExpr, args: ast.ASTNode[]): CExpr {
+    this.ledger.record("A3", "closure-call", node, "call through a closure value (boxed calling convention; JS gets this free)");
+    const cArgs = args.map((a) => this.resolveAstExpr(a));
+    const ret = fnv.ctype.k === "closure" ? fnv.ctype.ret : C_VALUE;
+    return { src: node, ctype: ret, kind: "c-call", callee: { kind: "closure", fn: fnv }, args: cArgs };
   }
 
   // -- refusals -------------------------------------------------------------------------------------

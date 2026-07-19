@@ -38,11 +38,43 @@ export type CExpr = CBase & (
   | CMapLit
   | CIndex
   | CMember
+  | CClosureMake
+  | CTypeTest
   | CBox
   | CUnbox
   | CCast
   | CCopy
 );
+
+/** One captured free variable of a lifted closure. `value` is computed in the ENCLOSING scope; for a
+ *  mutable-captured (cell) binding it is the `ll_value*` pointer itself, shared with the origin. */
+export interface CCapture {
+  field: string;
+  ctype: CType;
+  value: CExpr;
+  cell: boolean;
+}
+
+/** Build a closure value: a lifted function + its captured environment (spec A3 -- callee identity
+ *  as a first-class value, which the HIR does not model). */
+export interface CClosureMake {
+  kind: "c-closure-make";
+  liftedName: string;
+  envStruct: string | null; // null = no captures (env is NULL)
+  captures: CCapture[];
+  arity: number;
+  /** The source function name, for node's `[Function: name]` inspect format ("" = anonymous). */
+  name: string;
+}
+
+/** `(x :of T)` -- a runtime type test (D41), and a `match` type-pattern half (spec A7). */
+export interface CTypeTest {
+  kind: "c-type-test";
+  operand: CExpr;
+  typeName: string;
+  /** true -> a primitive tag test (Int/Real/String/...); false -> nominal (__ll_name walk / Array). */
+  primitive: boolean;
+}
 
 export interface CLit {
   kind: "c-lit";
@@ -51,10 +83,12 @@ export interface CLit {
   value: string;
 }
 
-/** A resolved user binding read. `cName` is the mangled C identifier. (A2 evidence.) */
+/** A resolved user binding read. `cName` is the mangled C identifier. (A2 evidence.)
+ *  `cell` = a mutable-captured binding, stored as a heap `ll_value*`; reads deref it. */
 export interface CRef {
   kind: "c-ref";
   cName: string;
+  cell?: boolean;
 }
 
 /** A lowering temp (`__ll_hir_N`) -- already C-safe. */
@@ -82,7 +116,8 @@ export type CCallee =
    * A native METHOD call has its receiver prepended as arg 0 by P1 (dispatch fully resolved).
    */
   | { kind: "intrinsic"; runtimeFn: string; variadic: boolean; params: CType[]; ret: CType }
-  /** A call through a closure value (uniform boxed convention). Phase B. */
+  /** A call through a closure VALUE (uniform boxed convention): unbox `fn` to ll_closure*, box each
+   *  arg, call fn->fn(fn->env, argc, argv); the result is boxed. `fn` is the closure-valued expr. */
   | { kind: "closure"; fn: CExpr };
 
 export interface CCall {
@@ -213,16 +248,18 @@ export interface CExprStmt {
   expr: CExpr;
 }
 
-/** A declaration. Covers both lowering temps and user lets/muts (structure resolved from src -- A2/A5 dip). */
+/** A declaration. Covers both lowering temps and user lets/muts (structure resolved from src -- A2/A5 dip).
+ *  `cell` = a mutable-captured binding, stored as a heap `ll_value*` shared with escaping closures. */
 export interface CDecl {
   kind: "c-decl";
   cName: string;
   declCType: CType;
   init: CExpr | null;
+  cell?: boolean;
 }
 
 export type CLValue =
-  | { kind: "name"; cName: string; ctype: CType }
+  | { kind: "name"; cName: string; ctype: CType; cell?: boolean }
   | { kind: "index"; base: CExpr; index: CExpr; mode: IndexMode };
 
 export interface CAssign {
@@ -291,8 +328,21 @@ export interface CFunction {
   body: CBlock;
 }
 
+/** A lifted lambda/closure: `ll_value fn(void* env, int argc, ll_value* argv)`. Params are unboxed
+ *  from argv, captures read from the env struct. Always returns boxed (the uniform convention). */
+export interface CLifted {
+  liftedName: string;
+  envStruct: string | null; // the C struct name for captures, or null (no captures -> env unused)
+  captures: { field: string; ctype: CType; cell: boolean }[];
+  params: CParam[];
+  body: CBlock;
+}
+
 export interface CModule {
   functions: CFunction[];
+  lifted: CLifted[];
+  /** Top-level functions used as VALUES need a boxed-convention adapter; keyed by cName. */
+  adapters: { forCName: string; params: CType[]; ret: CType; arity: number }[];
   /** Top-level statements, in order -- the body of `int main(void)`. */
   main: CBlock;
 }

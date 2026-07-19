@@ -2,7 +2,7 @@
 // default. Consumes ONLY the CIR -- no AST, no nodeTypes, no symbol table. If a case here would need
 // a judgment call, that judgment belongs in P1/P2.
 
-import { CBlock, CExpr, CStmt, CFunction, CModule, CLValue } from "./cir";
+import { CBlock, CExpr, CStmt, CFunction, CModule, CLValue, CLifted, CParam } from "./cir";
 import { CType } from "./ctype";
 
 function cType(t: CType): string {
@@ -80,10 +80,24 @@ export class EmitCirToC {
 
   emitModule(m: CModule): string {
     this.out = [];
+    // Env struct definitions for lifted closures that capture.
+    for (const l of m.lifted) {
+      if (!l.envStruct) continue;
+      this.line(`typedef struct ${l.envStruct} {`);
+      this.indent++;
+      for (const c of l.captures) this.line(`${c.cell ? "ll_value*" : cType(c.ctype)} ${c.field};`);
+      this.indent--;
+      this.line(`} ${l.envStruct};`);
+    }
+    if (m.lifted.some((l) => l.envStruct)) this.line("");
     // Forward declarations, so definition order never matters.
     for (const f of m.functions) this.line(this.signature(f) + ";");
-    if (m.functions.length) this.line("");
+    for (const l of m.lifted) this.line(`static ll_value ${l.liftedName}(void* __env, int __argc, ll_value* __argv);`);
+    for (const a of m.adapters) this.line(`static ll_value __ll_adapter_${a.forCName}(void* __env, int __argc, ll_value* __argv);`);
+    if (m.functions.length || m.lifted.length || m.adapters.length) this.line("");
     for (const f of m.functions) this.emitFunction(f);
+    for (const l of m.lifted) this.emitLifted(l);
+    for (const a of m.adapters) this.emitAdapter(a);
     this.line("int main(void) {");
     this.indent++;
     this.emitBlockStmts(m.main);
@@ -91,6 +105,42 @@ export class EmitCirToC {
     this.indent--;
     this.line("}");
     return this.out.join("\n") + "\n";
+  }
+
+  /** A lifted closure body: unpack params from argv, captures from env, then the resolved body. */
+  private emitLifted(l: CLifted): void {
+    this.line(`static ll_value ${l.liftedName}(void* __env, int __argc, ll_value* __argv) {`);
+    this.indent++;
+    this.line("(void)__argc;");
+    if (l.envStruct) this.line(`${l.envStruct}* __e = (${l.envStruct}*)__env; (void)__e;`);
+    else this.line("(void)__env;");
+    l.params.forEach((p, i) => {
+      if (p.ctype.k === "value") this.line(`ll_value ${p.cName} = __argv[${i}];`);
+      else this.line(`${cType(p.ctype)} ${p.cName} = ${UNBOX_FN[p.ctype.k]}(__argv[${i}]);`);
+    });
+    for (const c of l.captures) {
+      this.line(`${c.cell ? "ll_value*" : cType(c.ctype)} ${c.field} = __e->${c.field};`);
+    }
+    this.emitBlockStmts(l.body);
+    this.line("return ll_nil();"); // closures always return boxed; unreachable when the body returned
+    this.indent--;
+    this.line("}");
+    this.line("");
+  }
+
+  /** A boxed-convention adapter for a top-level function used as a value: unbox, call, box. */
+  private emitAdapter(a: { forCName: string; params: CType[]; ret: CType; arity: number }): void {
+    this.line(`static ll_value __ll_adapter_${a.forCName}(void* __env, int __argc, ll_value* __argv) {`);
+    this.indent++;
+    this.line("(void)__env; (void)__argc;");
+    const callArgs = a.params.map((t, i) => (t.k === "value" ? `__argv[${i}]` : `${UNBOX_FN[t.k]}(__argv[${i}])`));
+    const call = `${a.forCName}(${callArgs.join(", ")})`;
+    if (a.ret.k === "void") this.line(`${call}; return ll_nil();`);
+    else if (a.ret.k === "value") this.line(`return ${call};`);
+    else this.line(`return ${BOX_FN[a.ret.k]}(${call});`);
+    this.indent--;
+    this.line("}");
+    this.line("");
   }
 
   private signature(f: CFunction): string {
@@ -125,7 +175,12 @@ export class EmitCirToC {
         return;
       }
       case "c-decl":
-        this.line(`${cType(s.declCType)} ${s.cName} = ${s.init ? this.expr(s.init) : defaultInit(s.declCType)};`);
+        if (s.cell) {
+          // A mutable-captured binding: a heap cell shared with escaping closures.
+          this.line(`ll_value* ${s.cName} = ll_cell(${s.init ? this.expr(s.init) : "ll_nil()"});`);
+        } else {
+          this.line(`${cType(s.declCType)} ${s.cName} = ${s.init ? this.expr(s.init) : defaultInit(s.declCType)};`);
+        }
         return;
       case "c-assign":
         this.line(`${this.lvalue(s.target)} = ${this.expr(s.value)};`);
@@ -216,7 +271,7 @@ export class EmitCirToC {
   }
 
   private lvalue(l: CLValue): string {
-    if (l.kind === "name") return l.cName;
+    if (l.kind === "name") return l.cell ? `(*${l.cName})` : l.cName;
     throw new Error("C emit: index lvalue not implemented (Phase C)");
   }
 
@@ -233,8 +288,9 @@ export class EmitCirToC {
         }
         break;
       case "c-ref":
+        return e.cell ? `(*${e.cName})` : e.cName;
       case "c-temp":
-        return e.kind === "c-ref" ? e.cName : e.name;
+        return e.name;
       case "c-nil":
         return "ll_nil()";
       case "c-interp": {
@@ -255,8 +311,14 @@ export class EmitCirToC {
                 : `${e.callee.runtimeFn}(0, (ll_value*)0)`;
             }
             return `${e.callee.runtimeFn}(${args.join(", ")})`;
-          case "closure":
-            throw new Error("C emit: closure calls not implemented (Phase B)");
+          case "closure": {
+            // The uniform boxed convention: unbox the value to a closure, pass boxed args. P2 has
+            // coerced `fn` to a boxed value and every arg to `value`.
+            const fn = this.expr(e.callee.fn);
+            return args.length
+              ? `ll_call(${fn}, ${args.length}, (ll_value[]){${args.join(", ")}})`
+              : `ll_call(${fn}, 0, (ll_value*)0)`;
+          }
         }
         break;
       }
@@ -350,6 +412,20 @@ export class EmitCirToC {
       }
       case "c-copy":
         return e.inner.ctype.k === "value" ? `ll_copy(${this.expr(e.inner)})` : this.expr(e.inner);
+      case "c-closure-make": {
+        const nm = `"${cEscape(e.name)}"`;
+        if (!e.envStruct) {
+          // No captures -> a NULL env.
+          return `ll_closure_make(${e.liftedName}, (void*)0, ${e.arity}, ${nm})`;
+        }
+        // Allocate and fill the env, then build the closure. Uses a GNU statement-expression so a
+        // closure-make is a single C expression (portable across gcc/clang; the corpus target).
+        const alloc = `${e.envStruct}* __e = (${e.envStruct}*)ll_alloc(sizeof(${e.envStruct}))`;
+        const fills = e.captures.map((c) => `__e->${c.field} = ${this.expr(c.value)}`).join("; ");
+        return `({ ${alloc}; ${fills}; ll_closure_make(${e.liftedName}, __e, ${e.arity}, ${nm}); })`;
+      }
+      case "c-type-test":
+        return `ll_is_type(${this.expr(e.operand)}, "${e.typeName}", ${e.primitive ? 1 : 0})`;
       default: {
         const never: never = e;
         throw new Error(`C emit: unhandled expression kind '${(never as any).kind}'`);

@@ -32,6 +32,12 @@ export const INTRINSIC_CALLS: ReadonlyMap<string, IntrinsicDef> = new Map<string
   // -- lib/std/io (l-lang bodies shadowed in v0; A9) --
   ["print", def("ll_console_log", [], C_VOID, true)],
   ["prn", def("ll_console_log", [], C_VOID, true)],
+  // -- number parsing / predicates (host globals, A9) --
+  ["Number", def("ll_number", [C_VALUE], C_VALUE)],
+  ["parseInt", def("ll_parse_int", [C_VALUE], C_VALUE)],
+  ["parseFloat", def("ll_parse_float", [C_VALUE], C_VALUE)],
+  ["isNaN", def("ll_is_nan", [C_VALUE], C_BOOL)],
+  ["isFinite", def("ll_is_finite", [C_VALUE], C_BOOL)],
   // -- Math.* host globals (A9) --
   ["Math.sqrt", def("ll_math_sqrt", [C_REAL], C_REAL)],
   ["Math.log", def("ll_math_log", [C_REAL], C_REAL)],

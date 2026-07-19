@@ -147,6 +147,47 @@ static ll_map *ll_map_of(size_t n, ll_str **keys, ll_value *vals) {
   return m;
 }
 
+/* -- closures (the env the HIR does not model -- spec A3) ----------------------------------------- */
+
+struct ll_closure {
+  ll_value (*fn)(void *env, int argc, ll_value *argv);
+  void *env;
+  int arity;
+  const char *name; /* source name, for node's `[Function: name]` inspect format */
+};
+
+static ll_value ll_box_closure(ll_closure *c) { ll_value v; v.tag = LL_CLOSURE; v.as.fn = c; return v; }
+
+/* Returns the RAW pointer (the "closure" ctype). P2 boxes it (ll_box_closure) at value boundaries. */
+static ll_closure *ll_closure_make(ll_value (*fn)(void *, int, ll_value *), void *env, int arity, const char *name) {
+  ll_closure *c = (ll_closure *)ll_alloc(sizeof(ll_closure));
+  c->fn = fn;
+  c->env = env;
+  c->arity = arity;
+  c->name = name;
+  return c;
+}
+
+static ll_closure *ll_unbox_closure(ll_value v) {
+  if (v.tag == LL_CLOSURE) return v.as.fn;
+  ll_trap("TypeError", "value is not callable");
+  return NULL;
+}
+
+/** Call a boxed closure value with boxed args (the uniform boxed calling convention). */
+static ll_value ll_call(ll_value fn, int argc, ll_value *argv) {
+  ll_closure *c = ll_unbox_closure(fn);
+  return c->fn(c->env, argc, argv);
+}
+
+/* A heap cell for a mutable-captured binding, shared between the origin frame and every closure that
+ * captured it (spec A5 -- the shared mutable state the HIR does not express). */
+static ll_value *ll_cell(ll_value initial) {
+  ll_value *cell = (ll_value *)ll_alloc(sizeof(ll_value));
+  *cell = initial;
+  return cell;
+}
+
 /* -- unboxing (the A6 boundary made executable: wrong tag = trap, not coercion-by-accident) ------ */
 
 static ll_value ll_copy(ll_value v); /* fwd */
@@ -348,6 +389,18 @@ static void ll_inspect_sb(ll_sb *sb, ll_value v) {
         ll_inspect_sb(sb, m->vals[i]);
       }
       ll_sb_puts(sb, " }");
+      return;
+    }
+    case LL_CLOSURE: {
+      /* node util.inspect of a function: `[Function: name]`, or `[Function (anonymous)]`. */
+      const char *nm = v.as.fn->name;
+      if (nm && nm[0]) {
+        ll_sb_puts(sb, "[Function: ");
+        ll_sb_puts(sb, nm);
+        ll_sb_puts(sb, "]");
+      } else {
+        ll_sb_puts(sb, "[Function (anonymous)]");
+      }
       return;
     }
     default: ll_sb_puts(sb, "[object]"); return;
@@ -913,3 +966,81 @@ static double ll_math_round(double x) { return floor(x + 0.5); } /* JS Math.roun
 static double ll_math_pow(double a, double b) { return pow(a, b); }
 static double ll_math_min(double a, double b) { return a < b ? a : b; }
 static double ll_math_max(double a, double b) { return a > b ? a : b; }
+
+/* -- runtime type tests (D41 / spec A7). Mirrors JS __ll_is_type: Int/Real are one "number", and a
+ *    generic's arguments are erased (`Int[]` tests "is an array"). Nominal class tags are Phase D. -- */
+static bool ll_is_type(ll_value v, const char *name, int primitive) {
+  if (primitive) {
+    if (strcmp(name, "Int") == 0 || strcmp(name, "Real") == 0) return v.tag == LL_INT || v.tag == LL_REAL;
+    if (strcmp(name, "String") == 0) return v.tag == LL_STR;
+    if (strcmp(name, "Boolean") == 0 || strcmp(name, "Bool") == 0) return v.tag == LL_BOOL;
+    if (strcmp(name, "Char") == 0) return v.tag == LL_CHAR;
+    if (strcmp(name, "Void") == 0) return v.tag == LL_NIL;
+    return false;
+  }
+  if (strcmp(name, "Array") == 0) return v.tag == LL_VEC;
+  if (strcmp(name, "Map") == 0) return v.tag == LL_MAP;
+  /* Nominal class identity (structs/classes) arrives with Phase D; nothing carries a tag yet. */
+  return false;
+}
+
+/* -- number parsing / predicates (host globals: Number/parseInt/parseFloat/isNaN/isFinite) -------- */
+
+static double ll_str_to_double(const ll_str *s, bool *ok) {
+  char *buf = (char *)ll_alloc(s->len + 1);
+  memcpy(buf, s->data, s->len);
+  buf[s->len] = '\0';
+  char *end = NULL;
+  double d = strtod(buf, &end);
+  /* JS Number(): leading/trailing spaces allowed; otherwise the WHOLE string must parse. */
+  while (end && (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')) end++;
+  *ok = end && *end == '\0' && s->len > 0;
+  return d;
+}
+
+static ll_value ll_number(ll_value v) {
+  if (v.tag == LL_INT || v.tag == LL_REAL) return v;
+  if (v.tag == LL_BOOL) return ll_box_real(v.as.b ? 1.0 : 0.0);
+  if (v.tag == LL_NIL) return ll_box_real(0.0);
+  if (v.tag == LL_STR) {
+    bool ok = false;
+    double d = ll_str_to_double(v.as.s, &ok);
+    if (!ok) return ll_box_real(NAN);
+    return d == (double)(int64_t)d ? ll_box_int((int64_t)d) : ll_box_real(d);
+  }
+  return ll_box_real(NAN);
+}
+
+static ll_value ll_parse_int(ll_value v) {
+  ll_str *s = v.tag == LL_STR ? v.as.s : ll_to_str(v);
+  char *buf = (char *)ll_alloc(s->len + 1);
+  memcpy(buf, s->data, s->len);
+  buf[s->len] = '\0';
+  char *end = NULL;
+  long long n = strtoll(buf, &end, 10);
+  if (end == buf) return ll_box_real(NAN);
+  return ll_box_int((int64_t)n);
+}
+
+static ll_value ll_parse_float(ll_value v) {
+  ll_str *s = v.tag == LL_STR ? v.as.s : ll_to_str(v);
+  char *buf = (char *)ll_alloc(s->len + 1);
+  memcpy(buf, s->data, s->len);
+  buf[s->len] = '\0';
+  char *end = NULL;
+  double d = strtod(buf, &end);
+  if (end == buf) return ll_box_real(NAN);
+  return ll_box_real(d);
+}
+
+static bool ll_is_nan(ll_value v) {
+  if (v.tag == LL_REAL) return isnan(v.as.d);
+  if (v.tag == LL_INT) return false;
+  return true; /* JS isNaN coerces non-numbers via Number(); a non-numeric string -> NaN -> true */
+}
+
+static bool ll_is_finite(ll_value v) {
+  if (v.tag == LL_REAL) return isfinite(v.as.d);
+  if (v.tag == LL_INT) return true;
+  return false;
+}

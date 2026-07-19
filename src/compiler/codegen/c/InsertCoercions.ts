@@ -9,7 +9,7 @@
 // gradual boundary generate on a typed target? (JS shows none of it -- that is A6's whole point.)
 
 import type { GapLedger } from "./GapLedger";
-import { CBlock, CExpr, CStmt, CModule, CFunction } from "./cir";
+import { CBlock, CExpr, CStmt, CModule, CFunction, CLifted } from "./cir";
 import { CType, C_BOOL, C_INT, C_REAL, C_STR, C_VALUE, ctypeEquals } from "./ctype";
 
 export class InsertCoercions {
@@ -19,11 +19,13 @@ export class InsertCoercions {
 
   run(m: CModule): CModule {
     const functions = m.functions.map((f) => this.runFunction(f));
+    // A lifted closure body always returns boxed `ll_value` (the uniform convention).
+    const lifted: CLifted[] = m.lifted.map((l) => ({ ...l, body: this.block(l.body, C_VALUE) }));
     const main = this.block(m.main, { k: "void" });
     if (this.inserted > 0) {
       this.ledger.record("A6", "coercions-inserted", undefined as any, `${this.inserted} box/unbox/cast nodes inserted by the coercion pass`);
     }
-    return { functions, main };
+    return { functions, lifted, adapters: m.adapters, main };
   }
 
   private runFunction(f: CFunction): CFunction {
@@ -102,12 +104,17 @@ export class InsertCoercions {
         let args = e.args.map((a) => this.expr(a));
         if (callee.kind === "free") {
           args = args.map((a, i) => this.coerce(a, callee.params[i] ?? C_VALUE));
-        } else if (callee.kind === "intrinsic") {
+          return { ...e, args };
+        }
+        if (callee.kind === "intrinsic") {
           args = callee.variadic
             ? args.map((a) => this.coerce(a, C_VALUE))
             : args.map((a, i) => this.coerce(a, callee.params[i] ?? C_VALUE));
+          return { ...e, args };
         }
-        return { ...e, args };
+        // closure: the uniform boxed convention -- fn boxed to an ll_value, every arg boxed.
+        args = args.map((a) => this.coerce(a, C_VALUE));
+        return { ...e, callee: { kind: "closure", fn: this.coerce(this.expr(callee.fn), C_VALUE) }, args };
       }
 
       case "c-binop": {
@@ -173,6 +180,15 @@ export class InsertCoercions {
 
       case "c-member":
         return { ...e, object: this.expr(e.object) };
+
+      case "c-closure-make":
+        // Capture values are already-typed reads of enclosing bindings; no edge to coerce. The env
+        // field types match by construction.
+        return e;
+
+      case "c-type-test":
+        // The runtime test takes a boxed value.
+        return { ...e, operand: this.coerce(this.expr(e.operand), C_VALUE) };
 
       case "c-copy":
         return { ...e, inner: this.expr(e.inner) };
