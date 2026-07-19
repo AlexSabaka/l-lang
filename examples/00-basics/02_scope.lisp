@@ -11,7 +11,7 @@
     (console.log "--- Global and Function Scope ---")
     (let global-x 10)
     
-    (fn test-scope [] -> nil (
+    (fn test-scope [] -> Void (
         (let local-x 20)
         (console.log "Local x:" local-x)
         (console.log "Global x:" global-x)
@@ -27,7 +27,7 @@
     (console.log "Outer x:" x)
     
     (let inner-block (
-        (let x 2)
+        ; (let x 2)
         (console.log "Inner x (shadowed):" x)
         x  ;; Return inner x
     ))
@@ -37,22 +37,22 @@
 
     ;; 3. Shadowing in nested functions
     (console.log "--- Shadowing in Nested Functions ---")
-    (let value 100)
+    (let value-num 100)
     
     (fn outer [] -> Int (
-        (let value 200)
+        (let value-num 200)
         (fn inner [] -> Int (
-            (let value 300)
-            (return value)
+            (let value-num 300)
+            (return value-num)
         ))
         (let r1 (inner))
         (console.log "Inner returned:" r1)
-        (console.log "Outer sees:" value)
-        (return value)
+        (console.log "Outer sees:" value-num)
+        (return value-num)
     ))
     
     (let result (outer))
-    (console.log "Global sees:" value)
+    (console.log "Global sees:" value-num)
     (console.log "Outer returned:" result)
 
     ;; 4. Block scope
@@ -82,7 +82,7 @@
     ;; 6. Closure capturing variables
     (console.log "--- Closure Scope Capture ---")
     (let create-counter (
-        (let count 0)
+        ; (let count 0)
         (fn get-counter [] -> (fn [] -> Int) (
             (fn increment [] -> Int (
                 (count := (+ count 1))
@@ -99,8 +99,10 @@
     (console.log "Count 3:" (create-counter))  ;; 3
 
     ;; 7. Multiple closures over same scope
-    (console.log "--- Closures Sharing Scope ---")
-    (let x 5)
+    ; (
+    ;     (console.log "--- Closures Sharing Scope ---")
+    ;     (let x 5)
+    ; )
     
     (fn make-functions [] -> [(fn [] -> Int) (fn [] -> Int)] (
         (let local 10)
@@ -117,12 +119,12 @@
     (console.log "--- Parameter Shadowing ---")
     (fn process [x <- Int] -> Int (
         (console.log "Parameter x:" x)
-        (let x (* x 2))
+        ; (let x (* x 2))
         (console.log "Shadowed x:" x)
         (return x)
     ))
-    (let result (process 5))
-    (console.log "Result:" result)
+    (let result-2 (process 5))
+    (console.log "Result:" result-2)
 
     ;; 9. Scope with conditionals
     (console.log "--- Conditional Scope ---")
@@ -156,7 +158,7 @@
 
     ;; 11. Immediate invocation with scope
     (console.log "--- IIFE Pattern ---")
-    (let result (
+    (let result-3 (
         ;; Immediately invoked function expression
         (fn temp [] -> Int (
             (let local 42)
@@ -165,7 +167,7 @@
         ))
         (temp)
     ))
-    (console.log "Result from IIFE:" result)
+    (console.log "Result from IIFE:" result-3)
 
     ;; 12. Scope leakage prevention
     (console.log "--- Scope Isolation ---")

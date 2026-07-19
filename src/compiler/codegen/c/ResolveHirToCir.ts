@@ -729,6 +729,11 @@ export class ResolveHirToCir {
       case "opaque-expr":
         return this.resolveAstExpr(h.src);
 
+      case "literal":
+        // Step 3 (HLiteral) landed on dev: the atom is MODELED -- its value and type ride the node
+        // itself, so no dip below the HIR (the A2/A1 drain the probe was measuring). No ledger entry.
+        return this.resolveHLiteral(h);
+
       case "nil":
         return { src: h.src, ctype: C_VALUE, kind: "c-nil" };
 
@@ -795,13 +800,16 @@ export class ResolveHirToCir {
     let expr = this.resolveExpr(h.base);
     for (const step of h.steps) {
       if (step.isMember) {
-        // A `.name` step: a native-member READ (D1 read form).
+        // A `.name` step: a native-member READ (D1 read form). The name arrives as a modeled HLiteral
+        // (Step 3) or, for the not-yet-drained kinds, still an opaque identifier/string leaf.
         const nameNode = step.index;
-        const name = nameNode.kind === "opaque-expr" && (nameNode.src as any).id !== undefined
-          ? String((nameNode.src as any).id)
-          : nameNode.kind === "opaque-expr" && (nameNode.src as any).value !== undefined
-            ? String((nameNode.src as any).value)
-            : null;
+        const name = nameNode.kind === "literal"
+          ? String(nameNode.value)
+          : nameNode.kind === "opaque-expr" && (nameNode.src as any).id !== undefined
+            ? String((nameNode.src as any).id)
+            : nameNode.kind === "opaque-expr" && (nameNode.src as any).value !== undefined
+              ? String((nameNode.src as any).value)
+              : null;
         if (name === null) throw this.refuse(h.src, "computed-member-step", "resolveIndexChain");
         expr = this.memberRead(h.src, expr, name);
       } else {
@@ -1166,6 +1174,23 @@ export class ResolveHirToCir {
   }
 
   // -- struct/class construction, fields, methods (spec A4) ----------------------------------------
+
+  /** A modeled HIR literal (Step 3): value + checker type ride the node -- no dip below the HIR. */
+  private resolveHLiteral(h: Extract<HExpr, { kind: "literal" }>): CExpr {
+    const v = h.value;
+    if (typeof v === "boolean") {
+      return { src: h.src, ctype: C_BOOL, kind: "c-lit", lit: "bool", value: v ? "true" : "false" };
+    }
+    if (typeof v === "string") {
+      return { src: h.src, ctype: C_STR, kind: "c-lit", lit: "str", value: v };
+    }
+    // A number: Int vs Real from the node's own type (the A1 win -- type on the node, not nodeTypes),
+    // falling back to the value's integrality.
+    const isReal = h.type?.kind === "primitive" ? h.type.name === "Real" : !Number.isInteger(v);
+    return isReal
+      ? { src: h.src, ctype: C_REAL, kind: "c-lit", lit: "real", value: String(v) }
+      : { src: h.src, ctype: C_INT, kind: "c-lit", lit: "int", value: String(v) };
+  }
 
   /** The common concrete element type of a vector literal, or undefined if the elements disagree. */
   private commonElemType(elements: CExpr[]): CType | undefined {
