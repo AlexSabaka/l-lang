@@ -132,6 +132,11 @@ export class LowerAstToHirVisitor {
     return { ...this.base(src), kind: "literal", value: (src as any).value };
   }
 
+  /** A modeled reference atom (A2) -- source name on the node; JS materialization stays a per-backend hook. */
+  private ref(src: ast.ASTNode): HExpr {
+    return { ...this.base(src), kind: "ref", name: ast.symbolName(src as ast.IdentifierNode) };
+  }
+
   private temp(name: string, src: ast.ASTNode): HExpr {
     return { ...this.base(src), kind: "temp", name };
   }
@@ -231,6 +236,10 @@ export class LowerAstToHirVisitor {
       case "boolean":
         // Modeled literal atoms (A2). The numeric tower, char, and formatted-string stay opaque.
         return this.placeValue(this.literal(node), [], dest);
+      case "simple-identifier":
+      case "composite-identifier":
+        // Modeled reference atoms (A2). Value-position identifiers only -- a callee stays legacy.
+        return this.placeValue(this.ref(node), [], dest);
       default:
         return this.leaf(node, dest);
     }
@@ -401,7 +410,7 @@ export class LowerAstToHirVisitor {
   }
 
   private isSubstitutable(h: HExpr): boolean {
-    return h.kind === "temp" || h.kind === "opaque-expr" || h.kind === "literal";
+    return h.kind === "temp" || h.kind === "opaque-expr" || h.kind === "literal" || h.kind === "ref";
   }
 
   private lowerFormattedString(node: ast.FormattedStringNode, dest: Dest): Lowered {
@@ -927,7 +936,7 @@ export class LowerAstToHirVisitor {
       if (t) this.context.recordSynthesizedNodeType(id, t);
       return id;
     }
-    if (h.kind === "opaque-expr" || h.kind === "literal") return h.src;
+    if (h.kind === "opaque-expr" || h.kind === "literal" || h.kind === "ref") return h.src;
     return srcForLoc; // nil/ternary/seq don't reach here (pure -> no prelude -> opaque path)
   }
 

@@ -19,6 +19,9 @@ import type { HBlock, HExpr, HStmt } from "./nodes";
 export interface LegacyLeafEmitter {
   /** Emit an AST subtree as an ESTree expression (JSTransformer.visitExpr). */
   leafExpr(node: ast.ASTNode): ESTree.Expression;
+  /** Materialize a reference atom (HRef) -- the JS identifier policy: encoding, import-inlining, and
+   *  runtime-shim registration. A per-backend seam (an LLVM backend would mangle a symbol instead). */
+  emitRef(node: ast.ASTNode): ESTree.Expression;
   /** Emit an AST subtree as an ESTree statement (JSTransformer.asStatement over visit). */
   leafStmt(node: ast.ASTNode): ESTree.Statement;
   /** Wrap a stored expression in the D11 value-copy when it may be a struct (JSTransformer.asValue). */
@@ -257,6 +260,10 @@ export class EmitHirToEstree {
       case "literal":
         // Modeled atom: build the Literal directly -- byte-identical to ESTreeBuilder.literal, no leaf.
         return { type: "Literal", value: h.value, loc: loc(h.src) } as ESTree.Literal;
+
+      case "ref":
+        // Modeled atom: JS materializes the reference (its identifier policy) via the per-backend hook.
+        return this.legacy.emitRef(h.src);
 
       case "nil":
         return this.legacy.nilLiteral(h.src);

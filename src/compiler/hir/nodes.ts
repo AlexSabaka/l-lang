@@ -37,6 +37,7 @@ export interface HBase {
 export type HExpr =
   | HTemp
   | HLiteral
+  | HRef
   | HOpaqueExpr
   | HNil
   | HTernary
@@ -58,6 +59,19 @@ export type HExpr =
 export interface HLiteral extends HBase {
   kind: "literal";
   value: string | number | boolean;
+}
+
+/**
+ * A modeled reference ATOM -- a simple/composite identifier (A2). `name` is the SOURCE name
+ * (backend-neutral): the IR carries it, and each backend owns its identifier policy (Dove) -- the JS
+ * materialization hook (`emitRef`) does encoding / import-inlining / runtime-shim registration; an LLVM
+ * backend would mangle a symbol. `type` is the resolved binding's type. First slice of the
+ * resolved-atom contract the dispatch cuts (A3) reuse. (Fuller resolution -- which declaration,
+ * imported-ness -- moves onto the node in a follow-up; the JS hook re-resolves for now.)
+ */
+export interface HRef extends HBase {
+  kind: "ref";
+  name: string;
 }
 
 /** A lowering-introduced name (`__ll_hir_<n>`), declared by an HDeclTemp and read here. */

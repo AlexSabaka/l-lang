@@ -1833,6 +1833,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     if (!this.hirEmitter) {
       const legacy: LegacyLeafEmitter = {
         leafExpr: (n) => this.visitExpr(n),
+        emitRef: (n) => this.visitExpr(n),
         leafStmt: (n) => this.asStatement(this.visit(n) as ESTree.Node, n),
         storeValue: (e, src) => this.asValue(e, src),
         nilLiteral: (src) => this.nilLiteral(src),
