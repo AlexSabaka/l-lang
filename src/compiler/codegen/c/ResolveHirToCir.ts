@@ -88,6 +88,10 @@ export class ResolveHirToCir {
    *  reference `HttpMethod:GET` is a simple-identifier whose id IS that string (D: enums are not
    *  symbols); a match arm `HttpMethod:GET =>` is an equality test, not a binding. */
   private readonly enumValues = new Map<string, { valueNode: ast.ASTNode | null; ordinal: number }>();
+  /** `:extension` methods, keyed `method:ReceiverType`. An extension is a free function (also in
+   *  topLevelFns, callable directly / by pipeline) that `(recv.method args)` devirtualizes to a
+   *  direct call `method(recv, ...args)` on its first parameter -- Dove's Q4 static case (D34). */
+  private readonly extensions = new Map<string, string>();
   /** The class whose method body is being resolved (so `this` binds to `__self`). */
   private selfClass: string | undefined;
   /** Module-level binding names that top-level functions reference -> hoisted to C globals (a C
@@ -265,8 +269,33 @@ export class ResolveHirToCir {
       if (!n) continue;
       if (n._type === "struct" || n._type === "class") this.registerClass(n as ast.StructNode | ast.ClassNode);
       if (n._type === "enum") this.registerEnum(n as ast.EnumNode);
-      // A top-level `:operator` function -- collected for static devirtualization.
-      if (n._type === "function") this.maybeRegisterOperator(n as ast.FunctionNode);
+      // A top-level `:operator` / `:extension` function -- collected for static devirtualization.
+      if (n._type === "function") { this.maybeRegisterOperator(n as ast.FunctionNode); this.registerExtension(n as ast.FunctionNode); }
+    }
+  }
+
+  /** `(fn :extension manhattan [self <- Vec2 o] ...)` -- register the method-call surface. The body
+   *  is an ordinary top-level function (also in topLevelFns); `:extension` only makes `(recv.manhattan
+   *  o)` devirtualize to `manhattan(recv, o)`, keyed by the receiver (first-param) type (D34, Q4). */
+  private registerExtension(fn: ast.FunctionNode): void {
+    if (!fn.modifiers?.some((m) => m.modifier === "extension") || !fn.name) return;
+    const method = ast.symbolName(fn.name);
+    const recvType = this.paramTypeName(fn.params?.[0]);
+    if (!recvType) return;
+    this.extensions.set(`${method}:${recvType}`, method);
+  }
+
+  /** The l-lang type NAME of a receiver's CType (for extension-method lookup): a struct/class by its
+   *  class name, a primitive by its spelling. Arrays/maps/closures have no simple receiver name. */
+  private ctypeName(ct: CType): string | undefined {
+    switch (ct.k) {
+      case "obj": return ct.className;
+      case "str": return "String";
+      case "int": return "Int";
+      case "real": return "Real";
+      case "bool": return "Boolean";
+      case "char": return "Char";
+      default: return undefined;
     }
   }
 
@@ -947,6 +976,8 @@ export class ResolveHirToCir {
       // A zero-arg method invoked in `{(v.str)}` form: `(v.str)` is a call. Reached here only as a
       // value read of a method -> invoke it (the D1 dotted-call rule); the method takes only self.
       if (desc?.methods.has(fieldName)) return this.resolveObjMethod(src, object, fieldName, []);
+      const ext = this.tryExtensionCall(src, object, fieldName, []);
+      if (ext) return ext;
     }
     const baseKey = object.ctype.k === "str" ? "str" : object.ctype.k === "vec" ? "vec" : "dyn";
     const field = NATIVE_FIELDS.get(`${baseKey}.${fieldName}`) ?? NATIVE_FIELDS.get(`dyn.${fieldName}`);
@@ -957,7 +988,12 @@ export class ResolveHirToCir {
         return { src, ctype: C_VALUE, kind: "c-member", object, fieldName, runtimeFn: "ll_dyn_member", needsName: true };
       }
     }
-    if (!field) throw this.refuse(src, `member-read:${fieldName}`, "memberRead");
+    if (!field) {
+      // A zero-arg `:extension` on a primitive receiver used as a dotted-call value `(s.titlecase)`.
+      const ext = this.tryExtensionCall(src, object, fieldName, []);
+      if (ext) return ext;
+      throw this.refuse(src, `member-read:${fieldName}`, "memberRead");
+    }
     return { src, ctype: field.ret, kind: "c-member", object, fieldName, runtimeFn: field.runtimeFn };
   }
 
@@ -1466,7 +1502,23 @@ export class ResolveHirToCir {
       const field = this.fieldGet(node, recv, method);
       return args.length === 0 ? field : this.closureCall(node, field, args);
     }
+    const ext = this.tryExtensionCall(node, recv, method, args);
+    if (ext) return ext;
     throw this.refuse(node, `method:${className}.${method}`, "resolveObjMethod");
+  }
+
+  /** `(recv.method args)` where `method` is a registered `:extension` for the receiver's type ->
+   *  a direct call `method(recv, ...args)`. The devirtualization the HIR does not model (A3, Q4). */
+  private tryExtensionCall(node: ast.ASTNode, recv: CExpr, method: string, args: ast.ASTNode[]): CExpr | undefined {
+    const recvType = this.ctypeName(recv.ctype);
+    if (!recvType) return undefined;
+    const extName = this.extensions.get(`${method}:${recvType}`);
+    if (!extName) return undefined;
+    const sig = this.topLevelFns.get(extName);
+    if (!sig) return undefined;
+    this.ledger.record("A3", "extension-devirt", node, "extension method devirtualized to a free call on its first parameter (Q4 static case)");
+    const cArgs = args.map((a) => this.resolveAstExpr(a));
+    return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName: mangleC(extName), params: sig.params, ret: sig.ret }, args: [recv, ...cArgs] };
   }
 
   private resolveRawIndexer(node: ast.IndexerNode): CExpr {
@@ -1687,7 +1739,16 @@ export class ResolveHirToCir {
       // An applied lambda literal: `((fn [x] ...) 3)`.
       return this.closureCall(node, this.resolveLambda(callee as ast.FunctionNode), args);
     }
-    if (callee._type === "call" || callee._type === "member") {
+    if (callee._type === "member") {
+      // A method call on a COMPUTED receiver: `((s.reversewords).titlecase)` -- method chaining. Route
+      // through the method dispatcher (user method / :extension / native / field-closure), not a blind
+      // closure call, so a chained extension devirtualizes the same as `(s.titlecase)` does.
+      const m = callee as ast.MemberNode;
+      const fieldName = this.memberName(m.property);
+      if (fieldName !== null) return this.resolveNativeMethod(node, this.resolveAstExpr(m.object), fieldName, args);
+      return this.closureCall(node, this.resolveAstExpr(callee), args);
+    }
+    if (callee._type === "call") {
       // A computed callee (a pipeline stage producing a function): call through the value.
       return this.closureCall(node, this.resolveAstExpr(callee), args);
     }
@@ -1826,6 +1887,14 @@ export class ResolveHirToCir {
         const dyn = NATIVE_METHODS.get("dyn.method")!;
         const nameLit: CExpr = { src: node, ctype: C_STR, kind: "c-lit", lit: "str", value: method };
         return { src: node, ctype: dyn.ret, kind: "c-call", callee: { kind: "intrinsic", ...dyn }, args: [recv, nameLit, ...cArgs] };
+      }
+      // A registered `:extension` on this primitive receiver (`(s.words)` on a String) -> free call.
+      const recvType = this.ctypeName(recv.ctype);
+      const extName = recvType ? this.extensions.get(`${method}:${recvType}`) : undefined;
+      const sig = extName ? this.topLevelFns.get(extName) : undefined;
+      if (extName && sig) {
+        this.ledger.record("A3", "extension-devirt", node, "extension method devirtualized to a free call on its first parameter (Q4 static case)");
+        return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName: mangleC(extName), params: sig.params, ret: sig.ret }, args: [recv, ...cArgs] };
       }
       throw this.refuse(node, `method:${baseKey}.${method}`, "resolveNativeMethod");
     }
