@@ -73,4 +73,6 @@ export const C_PASSING: readonly string[] = [
   "20-algorithms/01_evaluator.lisp",    // unlocked by match binding patterns
   // Phase E broad sweep -- field mutation on boxed receivers (dyn-field store).
   "30-applications/04_flood_fill.lisp", // (c.mine := v) on an array-element struct -> ll_member_slot
+  // Phase E broad sweep -- enums: members fold to compile-time constants, match arms are equality tests.
+  "05-data-structures/04_enums.lisp",
 ];

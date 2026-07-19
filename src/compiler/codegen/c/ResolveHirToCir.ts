@@ -83,6 +83,11 @@ export class ResolveHirToCir {
   /** Operator overloads: key `<op>:<leftOperandTypeName>` -> the operator's C function. `isMethod`
    *  = an in-struct operator whose LEFT operand is the implicit `this`; `unary` = a one-operand op. */
   private readonly operators = new Map<string, { cName: string; ret: CType; isMethod: boolean; unary: boolean }>();
+  /** Enum members, keyed by the full `EnumName:Key` string (exactly the JS `enumKeys` key). A member
+   *  is a compile-time constant -- the value is an explicit AST node or, by default, the ordinal. The
+   *  reference `HttpMethod:GET` is a simple-identifier whose id IS that string (D: enums are not
+   *  symbols); a match arm `HttpMethod:GET =>` is an equality test, not a binding. */
+  private readonly enumValues = new Map<string, { valueNode: ast.ASTNode | null; ordinal: number }>();
   /** The class whose method body is being resolved (so `this` binds to `__self`). */
   private selfClass: string | undefined;
   /** Module-level binding names that top-level functions reference -> hoisted to C globals (a C
@@ -259,9 +264,29 @@ export class ResolveHirToCir {
     for (const n of items) {
       if (!n) continue;
       if (n._type === "struct" || n._type === "class") this.registerClass(n as ast.StructNode | ast.ClassNode);
+      if (n._type === "enum") this.registerEnum(n as ast.EnumNode);
       // A top-level `:operator` function -- collected for static devirtualization.
       if (n._type === "function") this.maybeRegisterOperator(n as ast.FunctionNode);
     }
+  }
+
+  /** `(defenum HttpMethod :GET :POST ...)` -- each member is a compile-time constant `EnumName:Key`.
+   *  Mirrors JS `visitEnum` exactly: the value is the explicit `=> v` or, absent one, the ordinal.
+   *  Nothing is emitted at runtime; references and match arms read the constant back (A4-adjacent:
+   *  the HIR keeps no enum node, and enums were never even given symbols). */
+  private registerEnum(node: ast.EnumNode): void {
+    const enumName = node.name.name;
+    (node.body ?? []).forEach((k, i) => {
+      const key = `${enumName}:${ast.keyName((k as ast.EnumKeyNode).key)}`;
+      this.enumValues.set(key, { valueNode: (k as ast.EnumKeyNode).value ?? null, ordinal: i });
+      this.ledger.record("A4", "enum-member", node, "enum member is a compile-time constant resolved below the HIR (enums are not even symbols)");
+    });
+  }
+
+  /** The value expression of an enum member: the explicit value, or the ordinal as an Int literal. */
+  private enumValueExpr(entry: { valueNode: ast.ASTNode | null; ordinal: number }, src: ast.ASTNode): CExpr {
+    if (entry.valueNode) return this.resolveAstExpr(entry.valueNode);
+    return { src, ctype: C_INT, kind: "c-lit", lit: "int", value: String(entry.ordinal) };
   }
 
   private registerClass(node: ast.StructNode | ast.ClassNode): void {
@@ -988,8 +1013,16 @@ export class ResolveHirToCir {
         return { src, ctype: C_BOOL, kind: "c-binop", op: "==", mode: "eq-deep", lhs: scrut, rhs: lit };
       }
       case "identifier-pattern": {
+        // An enum member `HttpMethod:GET =>` is an equality TEST, not a binding (mirrors JS, which
+        // special-cases `pattern.id.id in enumKeys`).
+        const idName = ast.symbolName((p as ast.IdentifierPatternNode).id);
+        const enumEntry = this.enumValues.get(idName);
+        if (enumEntry) {
+          const lit = this.enumValueExpr(enumEntry, src);
+          return { src, ctype: C_BOOL, kind: "c-binop", op: "==", mode: "eq-deep", lhs: scrut, rhs: lit };
+        }
         // A bare name binds the whole scrutinee and always matches.
-        const cName = mangleC(ast.symbolName((p as ast.IdentifierPatternNode).id));
+        const cName = mangleC(idName);
         return this.bindThen(cName, scrut, this.TRUE(src), src);
       }
       case "type-pattern": {
@@ -1057,7 +1090,11 @@ export class ResolveHirToCir {
   private patternBindNames(p: ast.PatternNode | undefined, into: Set<string>): void {
     if (!p) return;
     switch (p._type) {
-      case "identifier-pattern": into.add(ast.symbolName((p as ast.IdentifierPatternNode).id)); return;
+      case "identifier-pattern": {
+        const nm = ast.symbolName((p as ast.IdentifierPatternNode).id);
+        if (!this.enumValues.has(nm)) into.add(nm); // an enum-member arm binds nothing
+        return;
+      }
       case "type-pattern": into.add(ast.symbolName((p as ast.TypePatternNode).id)); return;
       case "vector-pattern":
       case "list-pattern":
@@ -1085,7 +1122,8 @@ export class ResolveHirToCir {
       case "interface":
       case "modifier-def":
       case "macro-def":
-        return []; // compile-time / erased declarations (interfaces are erased per D24)
+      case "enum":
+        return []; // compile-time / erased declarations (interfaces are erased per D24; enums are constants)
       case "struct":
       case "class":
         this.collectClassMembers(node as ast.StructNode | ast.ClassNode);
@@ -1458,6 +1496,12 @@ export class ResolveHirToCir {
     // `this` inside a method body binds to the self object.
     if (name === "this" && this.selfClass) {
       return { src: node, ctype: { k: "obj", className: this.selfClass }, kind: "c-ref", cName: "__self" };
+    }
+    // An enum member reference `HttpMethod:GET` -- a compile-time constant, not a binding.
+    const enumEntry = this.enumValues.get(name);
+    if (enumEntry) {
+      this.ledger.record("A4", "enum-ref", node, "enum member reference folded to its constant value (not the HIR)");
+      return this.enumValueExpr(enumEntry, node);
     }
     // Host numeric constants (std/js externs) with a direct C equivalent.
     if ((name === "NaN" || name === "Infinity") && !this.localInfo(mangleC(name))) {
