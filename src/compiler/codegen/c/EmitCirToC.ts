@@ -92,13 +92,25 @@ export class EmitCirToC {
 
   emitModule(m: CModule): string {
     this.out = [];
-    // Struct/class descriptors (ll_class): field names in slot order, is_struct, and `:extends` parent.
+    // Forward declarations FIRST: the class method-table adapters (below) call the method functions,
+    // so those must be declared before the class descriptors.
+    for (const f of m.functions) this.line(this.signature(f) + ";");
+    for (const l of m.lifted) this.line(`static ll_value ${l.liftedName}(void* __env, int __argc, ll_value* __argv);`);
+    for (const a of m.adapters) this.line(`static ll_value __ll_adapter_${a.forCName}(void* __env, int __argc, ll_value* __argv);`);
+    if (m.functions.length || m.lifted.length || m.adapters.length) this.line("");
+    // Struct/class descriptors (ll_class): field names in slot order, is_struct, `:extends` parent, and
+    // a dynamic-dispatch method table (boxed adapters) for statically-unknown receivers.
     for (const c of m.classes) {
       const fieldsArr = c.fields.length
         ? `static const char* __ll_fields_${c.name}[] = {${c.fields.map((f) => `"${f.name}"`).join(", ")}};`
         : `static const char** __ll_fields_${c.name} = 0;`;
       this.line(fieldsArr);
-      this.line(`static ll_class __ll_class_${c.name} = {"${c.name}", ${c.isStruct ? "true" : "false"}, ${c.fields.length}, __ll_fields_${c.name}, ${c.parent ? `"${c.parent}"` : "0"}};`);
+      for (const mm of c.methods) this.emitMethodAdapter(mm);
+      if (c.methods.length) {
+        this.line(`static const ll_method_entry __ll_methods_${c.name}[] = {${c.methods.map((mm) => `{${JSON.stringify(mm.name)}, ${mm.cName}_dyn}`).join(", ")}};`);
+      }
+      const methodsPtr = c.methods.length ? `__ll_methods_${c.name}` : "0";
+      this.line(`static ll_class __ll_class_${c.name} = {"${c.name}", ${c.isStruct ? "true" : "false"}, ${c.fields.length}, __ll_fields_${c.name}, ${c.parent ? `"${c.parent}"` : "0"}, ${c.methods.length}, ${methodsPtr}};`);
     }
     // A registry of every class, for `type-by-name` reflection. External linkage so the prepended
     // runtime's reflection helpers (which forward-declare it `extern`) can reach it in this one TU.
@@ -121,11 +133,6 @@ export class EmitCirToC {
       this.line(`} ${l.envStruct};`);
     }
     if (m.lifted.some((l) => l.envStruct)) this.line("");
-    // Forward declarations, so definition order never matters.
-    for (const f of m.functions) this.line(this.signature(f) + ";");
-    for (const l of m.lifted) this.line(`static ll_value ${l.liftedName}(void* __env, int __argc, ll_value* __argv);`);
-    for (const a of m.adapters) this.line(`static ll_value __ll_adapter_${a.forCName}(void* __env, int __argc, ll_value* __argv);`);
-    if (m.functions.length || m.lifted.length || m.adapters.length) this.line("");
     for (const f of m.functions) this.emitFunction(f);
     for (const l of m.lifted) this.emitLifted(l);
     for (const a of m.adapters) this.emitAdapter(a);
@@ -157,6 +164,21 @@ export class EmitCirToC {
     this.indent--;
     this.line("}");
     this.line("");
+  }
+
+  /** A boxed-convention method adapter for the dynamic-dispatch table: unbox self + args, call the
+   *  typed method, box the result. The witness/vtable entry a statically-unknown receiver dispatches to. */
+  private emitMethodAdapter(m: { name: string; cName: string; params: CType[]; ret: CType }): void {
+    this.line(`static ll_value ${m.cName}_dyn(ll_value __self, int __argc, ll_value* __argv) {`);
+    this.indent++;
+    this.line(`(void)__argc;${m.params.length ? "" : " (void)__argv;"}`);
+    const argParts = m.params.map((t, i) => (t.k === "value" ? `__argv[${i}]` : `${UNBOX_FN[t.k]}(__argv[${i}])`));
+    const call = `${m.cName}(ll_unbox_obj(__self)${argParts.length ? ", " + argParts.join(", ") : ""})`;
+    if (m.ret.k === "void") this.line(`${call}; return ll_nil();`);
+    else if (m.ret.k === "value") this.line(`return ${call};`);
+    else this.line(`return ${BOX_FN[m.ret.k]}(${call});`);
+    this.indent--;
+    this.line("}");
   }
 
   /** A boxed-convention adapter for a top-level function used as a value: unbox, call, box. */

@@ -87,4 +87,9 @@ export const C_PASSING: readonly string[] = [
   "09-oop/02_classes.lisp",
   // Generic construction: ANF-hoisted class-name temp resolved back + Void method stays boxed.
   "30-applications/00_generic_inventory.lisp",
+  // Dynamic method dispatch on statically-unknown receivers (runtime vtable/witness) + higher-order
+  // vec methods (reduce/map/filter/forEach) that drive a closure per element.
+  "15-modules/02_packages/main.lisp",
+  "20-algorithms/07_tokenizer.lisp",
+  "20-algorithms/08_state_machine.lisp",
 ];

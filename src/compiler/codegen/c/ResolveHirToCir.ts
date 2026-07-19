@@ -212,9 +212,15 @@ export class ResolveHirToCir {
     this.cellVars = this.computeCellVars(items);
     const main = body ? this.resolveBlock(body) : { stmts: [] };
     if (this.refused) return null;
-    const classes: CClass[] = [...this.classes.values()].map((c) => ({
-      name: c.name, isStruct: c.isStruct, parent: c.parent, fields: c.fields,
-    }));
+    const classes: CClass[] = [...this.classes.values()].map((c) => {
+      // OWN methods only (inherited ones carry the parent's cName and are found via the runtime parent
+      // walk): a method is this class's own iff its cName was built with this class's mangled name.
+      const ownPrefix = `__ll_method_${mangleBare(c.name)}_`;
+      const methods = [...c.methods.entries()]
+        .filter(([, m]) => m.cName.startsWith(ownPrefix))
+        .map(([name, m]) => ({ name, cName: m.cName, params: m.params, ret: m.ret }));
+      return { name: c.name, isStruct: c.isStruct, parent: c.parent, fields: c.fields, methods };
+    });
     return {
       functions: this.functions,
       lifted: this.lifted,

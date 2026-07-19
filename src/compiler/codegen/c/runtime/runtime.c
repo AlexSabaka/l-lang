@@ -150,12 +150,22 @@ static ll_map *ll_map_of(size_t n, ll_str **keys, ll_value *vals) {
 
 /* -- structs / classes (spec A4: the whole layer is absent from the HIR) ------------------------- */
 
+/* A named method in a class's dynamic-dispatch table: the source name -> a BOXED-convention adapter
+ * `(self, argc, argv)` that unboxes to the typed method and boxes the result. The vtable the JS
+ * backend never needs (it dispatches on the JS object); a typed target must carry it explicitly. */
+typedef struct ll_method_entry {
+  const char *name;
+  ll_value (*fn)(ll_value self, int argc, ll_value *argv);
+} ll_method_entry;
+
 typedef struct ll_class {
   const char *name;
   bool is_struct;          /* true = value semantics (copied); false = reference (shared) */
   size_t field_count;
   const char **field_names;
   const char *parent;      /* `:extends` base name, or NULL (for reflection) */
+  size_t method_count;     /* dynamic-dispatch table (statically-unknown receivers) */
+  const ll_method_entry *methods;
 } ll_class;
 
 struct ll_obj {
@@ -181,6 +191,7 @@ static ll_obj *ll_obj_new(const ll_class *cls, size_t argc, ll_value *args) {
 /* The class registry (defined by the emitted module) -- reflection walks it by name. */
 extern ll_class *__ll_class_registry[];
 extern size_t __ll_class_count;
+static const ll_class *ll_class_by_name(const char *name); /* fwd: used by dynamic dispatch below */
 
 /* -- exceptions: try/catch/throw via a setjmp/longjmp handler stack (native-only; JS gets this free).
  * `throw` sets the current frame's error and longjmps; the emitted try block installs a frame. ---- */
@@ -1007,6 +1018,40 @@ static ll_value *ll_member_slot(ll_value recv, const char *name) {
   return (ll_value *)0;
 }
 
+/* JS-like truthiness (for a predicate's boxed result): nil/false/0/0.0 are falsy, everything else true. */
+static bool ll_truthy(ll_value v) {
+  switch (v.tag) {
+    case LL_NIL: return false;
+    case LL_BOOL: return v.as.b;
+    case LL_INT: return v.as.i != 0;
+    case LL_REAL: return v.as.d != 0.0;
+    default: return true;
+  }
+}
+
+/* Higher-order vector methods: each drives a boxed op/predicate closure per element (ll_call). The
+ * corpus reaches these through std/seq (`(coll.reduce op init)` etc.) -- a native vec method the JS
+ * runtime gets from Array.prototype but a typed target must provide. */
+static ll_value ll_vec_reduce(ll_vec *v, ll_value op, ll_value init) {
+  ll_value acc = init;
+  for (size_t i = 0; i < v->len; i++) { ll_value a[2] = {acc, v->items[i]}; acc = ll_call(op, 2, a); }
+  return acc;
+}
+static ll_vec *ll_vec_map(ll_vec *v, ll_value fn) {
+  ll_vec *out = ll_vec_new(v->len);
+  for (size_t i = 0; i < v->len; i++) { ll_value a[1] = {v->items[i]}; ll_vec_push(out, ll_call(fn, 1, a)); }
+  return out;
+}
+static ll_vec *ll_vec_filter(ll_vec *v, ll_value pred) {
+  ll_vec *out = ll_vec_new(0);
+  for (size_t i = 0; i < v->len; i++) { ll_value a[1] = {v->items[i]}; if (ll_truthy(ll_call(pred, 1, a))) ll_vec_push(out, v->items[i]); }
+  return out;
+}
+static ll_value ll_vec_for_each(ll_vec *v, ll_value fn) {
+  for (size_t i = 0; i < v->len; i++) { ll_value a[1] = {v->items[i]}; ll_call(fn, 1, a); }
+  return ll_nil();
+}
+
 static ll_value ll_dyn_method(int n, ll_value *vals) {
   if (n < 2) ll_trap("TypeError", "dynamic dispatch needs a receiver and a name");
   ll_value recv = vals[0], name = vals[1];
@@ -1049,6 +1094,21 @@ static ll_value ll_dyn_method(int n, ll_value *vals) {
     if (ll_dyn_name_is(name, "join")) return ll_box_str(ll_vec_join(v, argc > 0 ? ll_unbox_str(args[0]) : ll_str_lit(",")));
     if (ll_dyn_name_is(name, "indexOf")) return ll_box_int(ll_vec_index_of(v, args[0]));
     if (ll_dyn_name_is(name, "includes")) return ll_box_bool(ll_vec_includes(v, args[0]));
+    if (ll_dyn_name_is(name, "reduce")) return ll_vec_reduce(v, args[0], argc > 1 ? args[1] : ll_nil());
+    if (ll_dyn_name_is(name, "map")) return ll_box_vec(ll_vec_map(v, args[0]));
+    if (ll_dyn_name_is(name, "filter")) return ll_box_vec(ll_vec_filter(v, args[0]));
+    if (ll_dyn_name_is(name, "forEach")) return ll_vec_for_each(v, args[0]);
+  }
+  /* A user method on a statically-UNKNOWN object receiver (an interface value, an `Any` param): walk
+   * the runtime class + its :extends chain for a method table entry, and call its boxed adapter. This
+   * is the dispatch the C backend cannot devirtualize -- the witness/vtable the probe measured as A3
+   * member-dyn. A child's table is checked before its parent's, so an override wins. */
+  if (recv.tag == LL_OBJ && name.tag == LL_STR) {
+    for (const ll_class *c = recv.as.o->cls; c; c = c->parent ? ll_class_by_name(c->parent) : (const ll_class *)0) {
+      for (size_t i = 0; i < c->method_count; i++) {
+        if (strcmp(c->methods[i].name, name.as.s->data) == 0) return c->methods[i].fn(recv, argc, args);
+      }
+    }
   }
   /* Not a known method: the __ll_member rule -- a non-function member is a field/property READ
    * (a struct field like `err.message`, a map key, `length`). Fall back to a member read. */

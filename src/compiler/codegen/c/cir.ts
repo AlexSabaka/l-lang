@@ -390,6 +390,9 @@ export interface CClass {
   isStruct: boolean;
   parent?: string; // `:extends` base name, for reflection
   fields: { name: string; ctype: CType }[]; // slot order
+  /** OWN methods (not inherited), for the runtime dynamic-dispatch table: each gets a boxed adapter.
+   *  `params` excludes self; the emitter unboxes argv to these, calls cName, boxes ret. */
+  methods: { name: string; cName: string; params: CType[]; ret: CType }[];
 }
 
 export interface CModule {
