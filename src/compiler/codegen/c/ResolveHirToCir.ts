@@ -964,6 +964,15 @@ export class ResolveHirToCir {
         // dips, the way `resolveFreeCall` chased HFreeCall -- is the follow-up increment (§5.1 pattern).
         return this.resolveAstExpr(h.src);
 
+      case "method-call":
+        // A3, method step 2 (dev): `(obj.method a)` on a native/user method is now MODELED as
+        // HMethodCall. The C backend already resolves method calls off the raw AST (`resolveObjMethod`
+        // devirtualizes a typed receiver's method; boxed receivers go dynamic) via `resolveCall`, and
+        // `h.src` is that original call node -- so routing through it reproduces the pre-model behavior
+        // byte-for-byte (it was an opaque leaf here before, recording the same method-devirt/method-dyn
+        // dip). Chasing HMethodCall proper -- consuming `h.head`/`h.args` -- is the follow-up increment.
+        return this.resolveAstExpr(h.src);
+
       case "nil":
         return { src: h.src, ctype: C_VALUE, kind: "c-nil" };
 

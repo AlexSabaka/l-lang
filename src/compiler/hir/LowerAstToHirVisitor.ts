@@ -282,6 +282,7 @@ export class LowerAstToHirVisitor {
         const dispatch = classifyCall(node, this.context);
         if (dispatch.kind === "free") return this.lowerFreeCall(node, dispatch.callee, dispatch.args, dest);
         if (dispatch.kind === "ext") return this.lowerExtCall(node, dispatch.head, dispatch.fnName, dispatch.args, dest);
+        if (dispatch.kind === "method") return this.lowerMethodCall(node, dispatch.head, dispatch.args, dest);
         return this.lowerCallLike(node, dest);
       }
       case "apply":
@@ -408,6 +409,18 @@ export class LowerAstToHirVisitor {
     return this.placeValue(call, prelude, dest);
   }
 
+  /**
+   * A resolved method call (`classifyCall` said `method`). Lower the args as HExprs (same binding as the
+   * opaque path); the member callee stays the `leafExpr(head)` hook -- so `obj.method(a)` is emitted as
+   * the direct `obj.method(a)` without the emitter re-dispatching. (A3 / TY8.)
+   */
+  private lowerMethodCall(node: ast.ListNode, head: ast.ASTNode, args: ast.ASTNode[], dest: Dest): Lowered {
+    const { prelude, atoms, diverged } = this.lowerCallArgs(args);
+    if (diverged) return { stmts: prelude, value: null };
+    const call: HExpr = { ...this.base(node), kind: "method-call", head, args: atoms };
+    return this.placeValue(call, prelude, dest);
+  }
+
   private lowerCallLike(node: ast.ListNode, dest: Dest): Lowered {
     const ops = this.lowerOperands(node.nodes.slice(1));
     if (ops.diverged) return { stmts: ops.prelude, value: null };
@@ -456,16 +469,17 @@ export class LowerAstToHirVisitor {
   }
 
   private isSubstitutable(h: HExpr): boolean {
-    // "free-call"/"ext-call" are substitutable like the opaque call they replace (inline-able, and
-    // rebuilt with their lowered args when handed to a legacy-parent -- see hexprToAst), so a nested
-    // resolved call stays inline.
+    // "free-call"/"ext-call"/"method-call" are substitutable like the opaque call they replace
+    // (inline-able, and rebuilt with their lowered args when handed to a legacy-parent -- see
+    // hexprToAst), so a nested resolved call stays inline.
     return (
       h.kind === "temp" ||
       h.kind === "opaque-expr" ||
       h.kind === "literal" ||
       h.kind === "ref" ||
       h.kind === "free-call" ||
-      h.kind === "ext-call"
+      h.kind === "ext-call" ||
+      h.kind === "method-call"
     );
   }
 
@@ -992,11 +1006,11 @@ export class LowerAstToHirVisitor {
       if (t) this.context.recordSynthesizedNodeType(id, t);
       return id;
     }
-    if (h.kind === "free-call" || h.kind === "ext-call") {
+    if (h.kind === "free-call" || h.kind === "ext-call" || h.kind === "method-call") {
       // Rebuild the call AST with the LOWERED args (temps substituted) so a resolved call handed to a
       // legacy-parent operand re-emits with its hoisted operands, not its originals. The head is the
-      // free callee's src / the ext receiver's composite-identifier -- the legacy emitter re-classifies
-      // it (and re-takes the ext branch for an ext-call), byte-identical to the direct HIR emission.
+      // free callee's src / the ext|method receiver's composite-identifier -- the legacy emitter
+      // re-classifies it (and re-takes the ext/method branch), byte-identical to the direct HIR emission.
       const head = h.kind === "free-call" ? h.callee.src : h.head;
       const rebuilt = {
         ...(h.src as ast.ListNode),

@@ -40,6 +40,7 @@ export type HExpr =
   | HRef
   | HFreeCall
   | HExtCall
+  | HMethodCall
   | HOpaqueExpr
   | HNil
   | HTernary
@@ -103,6 +104,22 @@ export interface HExtCall extends HBase {
   kind: "ext-call";
   head: ast.ASTNode;
   fnName: string;
+  args: HExpr[];
+}
+
+/**
+ * A resolved METHOD CALL `obj.method(a ...)` -- the third modeled dispatch kind (A3, TY8). The shared
+ * `classifyCall` decided at lowering that the receiver's type carries a native/user `method`, so this
+ * stays a direct member call `obj.method(args)` (no devirtualization -- that is ext's job). `head` is the
+ * `obj.method` composite-identifier; the MEMBER CALLEE is materialized by the existing `leafExpr` hook
+ * (`visitExpr(head)` -- the JS receiver/member policy: encoding, `this`, import-inlining), so no new seam
+ * is needed. `args` are the lowered operands. Falls back to legacy emission of the rebuilt call only when
+ * substituted into a legacy-parent operand (hexprToAst), same as free/ext. (The storing mutators
+ * push/unshift are NOT modeled here -- their D11 arg-copy is A5 / HCopyStore, still opaque.)
+ */
+export interface HMethodCall extends HBase {
+  kind: "method-call";
+  head: ast.ASTNode;
   args: HExpr[];
 }
 

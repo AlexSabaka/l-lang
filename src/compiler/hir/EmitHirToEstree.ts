@@ -294,6 +294,19 @@ export class EmitHirToEstree {
         } as ESTree.CallExpression;
       }
 
+      case "method-call":
+        // Resolved method dispatch (classifyCall): `obj.method(a)` stays the direct member call. The
+        // member callee is the legacy `leafExpr` of the head (visitExpr -- the JS receiver/member policy:
+        // `this`, encoding, import-inlining); args are HIR-emitted. Byte-identical to the emitter's
+        // callExpression(visitExpr(head), args), with no re-dispatch back through the legacy call path.
+        return {
+          type: "CallExpression",
+          callee: this.legacy.leafExpr(h.head),
+          arguments: h.args.map((a) => this.emitExpr(a)),
+          optional: false,
+          loc: loc(h.src),
+        } as ESTree.CallExpression;
+
       case "nil":
         return this.legacy.nilLiteral(h.src);
 
