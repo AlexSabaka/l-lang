@@ -25,7 +25,7 @@ export class InsertCoercions {
     if (this.inserted > 0) {
       this.ledger.record("A6", "coercions-inserted", undefined as any, `${this.inserted} box/unbox/cast nodes inserted by the coercion pass`);
     }
-    return { functions, lifted, classes: m.classes, adapters: m.adapters, main };
+    return { functions, lifted, classes: m.classes, globals: m.globals, adapters: m.adapters, main };
   }
 
   private runFunction(f: CFunction): CFunction {
@@ -51,8 +51,12 @@ export class InsertCoercions {
         return { ...s, init: s.init ? this.coerce(this.expr(s.init), s.declCType) : null };
       case "c-assign": {
         let target = s.target;
-        if (s.target.kind === "index") target = { ...s.target, base: this.expr(s.target.base), index: this.expr(s.target.index) };
-        else if (s.target.kind === "field") target = { ...s.target, object: this.expr(s.target.object) };
+        if (s.target.kind === "index") {
+          // The store index is coerced to the container's key type: a map slot takes a boxed value
+          // (ll_map_slot stringifies), a vector slot takes an int.
+          const idxT: CType = s.target.mode === "vec" ? C_INT : s.target.mode === "str" ? C_INT : C_VALUE;
+          target = { ...s.target, base: this.expr(s.target.base), index: this.coerce(this.expr(s.target.index), idxT) };
+        } else if (s.target.kind === "field") target = { ...s.target, object: this.expr(s.target.object) };
         // A name target keeps its native type; a field/index slot stores boxed (ll_value).
         const expected = s.target.kind === "name" ? s.target.ctype : C_VALUE;
         return { ...s, target, value: this.coerce(this.expr(s.value), expected) };
@@ -179,8 +183,12 @@ export class InsertCoercions {
         return { ...e, base, index };
       }
 
-      case "c-member":
-        return { ...e, object: this.expr(e.object) };
+      case "c-member": {
+        // A dynamic member read (`ll_dyn_member`) takes a boxed receiver; a typed native accessor
+        // takes its concrete receiver.
+        const object = this.expr(e.object);
+        return { ...e, object: e.needsName ? this.coerce(object, C_VALUE) : object };
+      }
 
       case "c-construct":
         // Fields are stored boxed (ll_value); each constructor arg is coerced to value.

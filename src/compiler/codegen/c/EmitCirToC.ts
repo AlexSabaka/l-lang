@@ -33,6 +33,18 @@ function defaultInit(t: CType): string {
   }
 }
 
+/** A compile-time-constant zero initializer for a file-scope global (no function calls allowed). */
+function staticZero(t: CType): string {
+  switch (t.k) {
+    case "int": return "0";
+    case "real": return "0.0";
+    case "bool": return "false";
+    case "char": return "0";
+    case "value": return "{0}"; // LL_NIL == 0
+    default: return "0"; // pointer types -> NULL
+  }
+}
+
 /** Escape a raw string for a C string literal (UTF-8 bytes pass through). */
 function cEscape(s: string): string {
   let out = "";
@@ -89,6 +101,11 @@ export class EmitCirToC {
       this.line(`static ll_class __ll_class_${c.name} = {"${c.name}", ${c.isStruct ? "true" : "false"}, ${c.fields.length}, __ll_fields_${c.name}};`);
     }
     if (m.classes.length) this.line("");
+    // Module-level bindings referenced by functions -> file-scope globals. A file-scope initializer
+    // must be a compile-time constant, so use a zero-init (ll_value {0} == LL_NIL); the real value is
+    // assigned in main at the binding's original position.
+    for (const g of m.globals) this.line(`static ${cType(g.ctype)} ${g.cName} = ${staticZero(g.ctype)};`);
+    if (m.globals.length) this.line("");
     // Env struct definitions for lifted closures that capture.
     for (const l of m.lifted) {
       if (!l.envStruct) continue;

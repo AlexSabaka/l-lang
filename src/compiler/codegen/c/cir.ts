@@ -371,6 +371,8 @@ export interface CModule {
   functions: CFunction[];
   lifted: CLifted[];
   classes: CClass[];
+  /** Module-level bindings referenced by top-level functions -> file-scope C globals. */
+  globals: { cName: string; ctype: CType }[];
   /** Top-level functions used as VALUES need a boxed-convention adapter; keyed by cName. */
   adapters: { forCName: string; params: CType[]; ret: CType; arity: number }[];
   /** Top-level statements, in order -- the body of `int main(void)`. */

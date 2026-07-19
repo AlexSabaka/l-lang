@@ -84,6 +84,11 @@ export class ResolveHirToCir {
   private readonly operators = new Map<string, { cName: string; ret: CType; isMethod: boolean; unary: boolean }>();
   /** The class whose method body is being resolved (so `this` binds to `__self`). */
   private selfClass: string | undefined;
+  /** Module-level binding names that top-level functions reference -> hoisted to C globals (a C
+   *  function cannot see `main`'s locals; this is the module-scope analog of closure capture). */
+  private readonly globalNames = new Set<string>();
+  private readonly globalDecls: { cName: string; ctype: CType }[] = [];
+  private readonly globalDeclared = new Set<string>();
   /** Lexical scope stack of local bindings (by C name). scope[0] is the module/main body. */
   private readonly scopes: Map<string, VarInfo>[] = [new Map()];
   /** Names (C names) that must be heap cells in the CURRENT function scope (mutable-captured). */
@@ -179,6 +184,8 @@ export class ResolveHirToCir {
     // Register every top-level function first, so forward references (call before declaration, or a
     // function used as a value) resolve regardless of order.
     this.registerModuleFunctions(items);
+    // A module-level binding referenced by any top-level function must be a C global.
+    this.computeGlobals(items);
     // The module body is itself a scope for capture purposes (a top-level lambda still captures
     // module locals). Compute its cell set from nested closures before resolving.
     this.cellVars = this.computeCellVars(items);
@@ -191,9 +198,31 @@ export class ResolveHirToCir {
       functions: this.functions,
       lifted: this.lifted,
       classes,
+      globals: this.globalDecls,
       adapters: [...this.adapters.values()],
       main,
     };
+  }
+
+  /** Module-level bindings referenced by a top-level function -> C globals (the module-scope analog
+   *  of closure capture: a C function cannot reach `main`'s locals). A finding in itself (the JS
+   *  backend gets module-scope closure for free; a C target must hoist). */
+  private computeGlobals(items: ast.ASTNode[]): void {
+    const moduleBindings = new Set<string>();
+    for (const n of items) {
+      if (n?._type === "variable") {
+        const nm = (n as ast.VariableNode).name;
+        if (nm?._type === "simple-identifier" || nm?._type === "composite-identifier") moduleBindings.add(ast.symbolName(nm as ast.IdentifierNode));
+      }
+    }
+    if (moduleBindings.size === 0) return;
+    for (const n of items) {
+      if (n?._type !== "function") continue;
+      for (const fv of freeVariables(n as ast.FunctionNode)) {
+        if (moduleBindings.has(fv)) this.globalNames.add(fv);
+      }
+    }
+    if (this.globalNames.size) this.ledger.record("new", "module-global", items[0], "module-level binding referenced by a top-level function; hoisted to a C global (JS closes over module scope for free)");
   }
 
   // -- struct/class collection (spec A4: the whole layer is absent from the HIR) -------------------
@@ -203,7 +232,7 @@ export class ResolveHirToCir {
     const out: ast.ASTNode[] = [];
     const walk = (b: HBlock | undefined): void => {
       for (const s of b?.stmts ?? []) {
-        if (s.kind === "opaque-stmt" || s.kind === "expr-stmt") out.push(s.src);
+        if (s.kind === "opaque-stmt" || s.kind === "expr-stmt" || s.kind === "var-decl") out.push(s.src);
         else if (s.kind === "block") walk(s.body);
       }
     };
@@ -564,9 +593,20 @@ export class ResolveHirToCir {
       this.ledger.record("A5", "mut-capture-cell", node, "mut binding captured by a closure; boxed into a shared heap cell");
       declCType = C_VALUE;
     }
-    this.declareLocal(cName, declCType, node.mutable, cell);
     // A `let`/`mut` is a store site: a struct initializer is COPIED (D11).
     const storedInit = init ? this.copyStore(init, node, "let-decl") : null;
+    // A module-level binding referenced by a function is a C GLOBAL: declare it once at file scope
+    // and emit an ASSIGNMENT here (the global is visible to the functions that close over it).
+    if (!this.inFunctionBody && this.globalNames.has(srcName)) {
+      if (!this.globalDeclared.has(cName)) {
+        this.globalDeclared.add(cName);
+        this.globalDecls.push({ cName, ctype: declCType });
+      }
+      this.declareLocal(cName, declCType, node.mutable, cell); // still in module scope for local reads
+      if (!storedInit) return [];
+      return [{ src: node, ctype: C_VOID, kind: "c-assign", target: { kind: "name", cName, ctype: declCType }, value: storedInit }];
+    }
+    this.declareLocal(cName, declCType, node.mutable, cell);
     return [{ src: node, ctype: C_VOID, kind: "c-decl", cName, declCType, init: storedInit, cell }];
   }
 
@@ -1211,6 +1251,12 @@ export class ResolveHirToCir {
     }
     const cName = mangleC(name);
     const info = this.localInfo(cName);
+    // A module-level GLOBAL referenced from inside a function (not shadowed by a local).
+    if (!info && this.globalNames.has(name)) {
+      const g = this.globalDecls.find((d) => d.cName === cName);
+      this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
+      return { src: node, ctype: g?.ctype ?? C_VALUE, kind: "c-ref", cName };
+    }
     // A TOP-LEVEL function referenced as a VALUE (not called): becomes a closure via an adapter --
     // the "functions are values" gap the HIR does not model (spec A3). Only when it is NOT a local
     // (a local of the same name shadows).

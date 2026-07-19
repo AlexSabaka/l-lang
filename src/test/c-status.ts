@@ -59,6 +59,8 @@ export const C_PASSING: readonly string[] = [
   "08-generics/03_generic_constraints.lisp",
   "08-generics/04_generic_interface.lisp",
   "10-modifiers/01_basic_modifier.lisp",  // defmodifier desugars before codegen
+  "05-data-structures/00_data.lisp",       // maps, dynamic member access
   "20-algorithms/04_mutual_recursion.lisp",
   "20-algorithms/05_memoization.lisp",
+  "20-algorithms/06_memoization_manual.lisp", // module-global memo cache + index assignment
 ];
