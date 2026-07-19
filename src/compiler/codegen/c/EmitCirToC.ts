@@ -294,11 +294,56 @@ export class EmitCirToC {
         this.line("}");
         return;
       }
+      case "c-try": {
+        const f = `__t${this.fresh++}`;
+        this.line("{");
+        this.indent++;
+        this.line(`ll_try_frame ${f}; ${f}.prev = ll_handler_top; ll_handler_top = &${f};`);
+        this.line(`if (setjmp(${f}.buf) == 0) {`);
+        this.indent++;
+        this.emitBlockStmts(s.tryBlock);
+        this.line(`ll_handler_top = ${f}.prev;`);
+        this.indent--;
+        this.line("} else {");
+        this.indent++;
+        this.line(`ll_handler_top = ${f}.prev;`);
+        this.line(`ll_value ${s.errVar} = ${f}.err;`);
+        this.emitCatchChain(s, s.catches, 0);
+        this.indent--;
+        this.line("}");
+        if (s.finalizer) this.emitBlockStmts(s.finalizer);
+        this.indent--;
+        this.line("}");
+        return;
+      }
       default: {
         const never: never = s;
         throw new Error(`C emit: unhandled statement kind '${(never as any).kind}'`);
       }
     }
+  }
+
+  /** The catch filter chain: try each filtered catch by type, then the default; no match rethrows. */
+  private emitCatchChain(s: Extract<CStmt, { kind: "c-try" }>, catches: Extract<CStmt, { kind: "c-try" }>["catches"], i: number): void {
+    if (i >= catches.length) {
+      this.line(`ll_throw(${s.errVar});`); // no arm matched -> rethrow
+      return;
+    }
+    const c = catches[i];
+    const bindAndBody = () => {
+      if (c.errorCName) this.line(`ll_value ${c.errorCName} = ${s.errVar};`);
+      this.emitBlockStmts(c.body);
+    };
+    if (!c.filterTypeName) { bindAndBody(); return; } // the default catch
+    this.line(`if (ll_is_type(${s.errVar}, "${c.filterTypeName}", 0)) {`);
+    this.indent++;
+    bindAndBody();
+    this.indent--;
+    this.line("} else {");
+    this.indent++;
+    this.emitCatchChain(s, catches, i + 1);
+    this.indent--;
+    this.line("}");
   }
 
   private lvalue(l: CLValue): string {
@@ -314,7 +359,9 @@ export class EmitCirToC {
       case "c-lit":
         switch (e.lit) {
           case "int": return e.value === "LL_END" ? "LL_END" : `INT64_C(${e.value})`;
-          case "real": return /[.eE]/.test(e.value) ? e.value : `${e.value}.0`;
+          case "real":
+            if (e.value === "NAN" || e.value === "INFINITY") return e.value; // math.h macros
+            return /[.eE]/.test(e.value) ? e.value : `${e.value}.0`;
           case "bool": return e.value;
           case "char": return e.value;
           case "str": return `ll_str_lit("${cEscape(e.value)}")`;

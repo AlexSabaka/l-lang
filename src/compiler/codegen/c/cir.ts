@@ -271,7 +271,18 @@ export type CStmt = CBase & (
   | CWhile
   | CFor
   | CForEach
+  | CTry
 );
+
+/** A try/catch/finally, lowered to a setjmp/longjmp handler frame. Each catch may filter on an
+ *  error class name (`catch e :of T`); an unfiltered catch is the default; no match rethrows. */
+export interface CTry {
+  kind: "c-try";
+  tryBlock: CBlock;
+  errVar: string; // the boxed `ll_value` holding the thrown error in the catch arm
+  catches: { errorCName?: string; filterTypeName?: string; body: CBlock }[];
+  finalizer: CBlock | null;
+}
 
 export interface CExprStmt {
   kind: "c-expr-stmt";

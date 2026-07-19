@@ -175,6 +175,9 @@ export class ResolveHirToCir {
   resolveModule(root: ast.ASTNode): CModule | null {
     this.rootSource = root._location?.source;
     const body = this.hir.bodyFor(root);
+    // Built-in Error classes (host globals in JS) modeled as classes with a `message` field, so
+    // `(Error "msg")` constructs, `throw` throws them, and `catch :of Error` matches via the chain.
+    this.registerBuiltinClasses();
     // The top-level declarations, flattened out of the HIR body (the whole program is one block, so
     // each declaration arrives as an opaque-stmt whose `src` is the desugared StructNode / ClassNode
     // / FunctionNode). Drive the pre-pass off these, not the raw program (which is still list-wrapped).
@@ -224,6 +227,17 @@ export class ResolveHirToCir {
       }
     }
     if (this.globalNames.size) this.ledger.record("new", "module-global", items[0], "module-level binding referenced by a top-level function; hoisted to a C global (JS closes over module scope for free)");
+  }
+
+  /** Built-in Error classes: `message`-carrying classes, so error handling has concrete types. */
+  private registerBuiltinClasses(): void {
+    const errors = ["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError"];
+    for (const name of errors) {
+      if (this.classes.has(name)) continue;
+      const fields = [{ name: "message", ctype: C_STR }];
+      const fieldSlot = new Map([["message", 0]]);
+      this.classes.set(name, { name, isStruct: false, parent: name === "Error" ? undefined : "Error", fields, fieldSlot, methods: new Map() });
+    }
   }
 
   // -- struct/class collection (spec A4: the whole layer is absent from the HIR) -------------------
@@ -281,9 +295,15 @@ export class ResolveHirToCir {
     const parent = this.extendsName(node) ?? (typeof t?.parentClass === "string" ? t.parentClass : undefined);
     const parentDesc = parent ? this.classes.get(parent) : undefined;
     if (parent && parentDesc) this.ledger.record("A4", "inherit", node, `'${name}' inherits '${parent}' fields/methods (hierarchy walked below the HIR)`);
-    const fields = parentDesc ? [...parentDesc.fields, ...ownFields] : ownFields;
+    // Parent fields first, then own -- but a field that RE-declares a parent's keeps the parent slot
+    // (a child that also declares `message` shadows, it does not add a second slot).
+    const fields: { name: string; ctype: CType }[] = parentDesc ? [...parentDesc.fields] : [];
     const fieldSlot = new Map<string, number>();
     fields.forEach((f, i) => fieldSlot.set(f.name, i));
+    for (const f of ownFields) {
+      if (fieldSlot.has(f.name)) fields[fieldSlot.get(f.name)!] = f; // override in place
+      else { fieldSlot.set(f.name, fields.length); fields.push(f); }
+    }
     // Inherited methods (own override): copy the parent's method table, then this class's methods
     // shadow by name below.
     const methods = new Map<string, { cName: string; params: CType[]; ret: CType }>();
@@ -577,7 +597,7 @@ export class ResolveHirToCir {
         }
 
         case "try":
-          throw this.refuse(h.src, "try-catch", "resolveStmt");
+          return this.resolveTry(h);
 
         default: {
           const never: never = h;
@@ -741,6 +761,29 @@ export class ResolveHirToCir {
       }
     }
     throw this.refuse(node, `field-store:${fieldName}`, "fieldLValue");
+  }
+
+  /** HTry -> a setjmp/longjmp handler frame (spec: try/catch is native-pipeline machinery). The
+   *  catch filter chain and the error binding are rebuilt here, the same shape the JS emitter makes. */
+  private resolveTry(h: Extract<HStmt, { kind: "try" }>): CStmt[] {
+    this.ledger.record("A8", "try-catch", h.src, "try/catch lowered to setjmp/longjmp (native-only machinery; JS gets it free)");
+    const errVar = mangleC(h.catchVar);
+    this.declareLocal(errVar, C_VALUE);
+    const catches = (h.catches ?? []).map((c) => {
+      let errorCName: string | undefined;
+      if (c.errorName) {
+        errorCName = mangleC(ast.symbolName(c.errorName as ast.IdentifierNode));
+        this.declareLocal(errorCName, C_VALUE);
+      }
+      return { errorCName, filterTypeName: c.filterTypeName, body: this.resolveBlock(c.body) };
+    });
+    return [{
+      src: h.src, ctype: C_VOID, kind: "c-try",
+      tryBlock: this.resolveBlock(h.tryBlock),
+      errVar,
+      catches,
+      finalizer: h.finalizer ? this.resolveBlock(h.finalizer) : null,
+    }];
   }
 
   private resolveForEach(h: Extract<HStmt, { kind: "for-each" }>): CStmt[] {
@@ -1411,6 +1454,11 @@ export class ResolveHirToCir {
     if (name === "this" && this.selfClass) {
       return { src: node, ctype: { k: "obj", className: this.selfClass }, kind: "c-ref", cName: "__self" };
     }
+    // Host numeric constants (std/js externs) with a direct C equivalent.
+    if ((name === "NaN" || name === "Infinity") && !this.localInfo(mangleC(name))) {
+      this.ledger.record("A9-extern", "host-constant", node, `'${name}' host constant mapped to a C value`);
+      return { src: node, ctype: C_REAL, kind: "c-lit", lit: "real", value: name === "NaN" ? "NAN" : "INFINITY" };
+    }
     if (node._type === "composite-identifier") {
       return this.resolveCompositeRead(node as ast.CompositeIdentifierNode);
     }
@@ -1530,6 +1578,12 @@ export class ResolveHirToCir {
           const clsName = cls._type === "simple-identifier" ? (cls as ast.SimpleIdentifierNode).id
             : cls._type === "type-name" ? (cls as any).name : undefined;
           if (clsName && this.classes.has(clsName)) return this.resolveConstruct(node, clsName, form.args.slice(1));
+        }
+        // `(throw x)` -> ll_throw(box(x)); diverges (void).
+        if (form.name === "throw" && form.args.length === 1) {
+          this.ledger.record("A8", "throw", node, "throw lowered to a longjmp (native error machinery)");
+          const err = this.resolveAstExpr(form.args[0]);
+          return { src: node, ctype: C_VOID, kind: "c-call", callee: { kind: "intrinsic", runtimeFn: "ll_throw", variadic: false, params: [C_VALUE], ret: C_VOID }, args: [err] };
         }
         throw this.refuse(node, `special:${form.name}`, "resolveList");
       case "apply":
@@ -1713,7 +1767,10 @@ export class ResolveHirToCir {
     }
     if (!def) {
       if (baseKey === "dyn") {
-        this.ledger.record("A3", "method-dyn", node, "boxed receiver forces runtime method dispatch");
+        // `(recv.name)` on a BOXED receiver: the runtime decides method-vs-field (the __ll_member
+        // rule -- a function member is called, a non-function is read). ll_dyn_method dispatches on
+        // the actual tag and falls back to a field read for a non-method name (e.g. `err.message`).
+        this.ledger.record("A3", "method-dyn", node, "boxed receiver forces runtime dispatch (method or field read)");
         const dyn = NATIVE_METHODS.get("dyn.method")!;
         const nameLit: CExpr = { src: node, ctype: C_STR, kind: "c-lit", lit: "str", value: method };
         return { src: node, ctype: dyn.ret, kind: "c-call", callee: { kind: "intrinsic", ...dyn }, args: [recv, nameLit, ...cArgs] };
@@ -1845,8 +1902,12 @@ export class ResolveHirToCir {
       return (sigT && sigT.k !== "value" ? sigT : undefined) ?? this.ctypeFromAnnotation(p) ?? sigT ?? C_VALUE;
     });
     const ret = this.userFnRet(symT, fn) ;
+    // Prefer a CONCRETE annotated return over a boxed symbol type -- but NEVER downgrade to `void`:
+    // a `-> Void` (or inferred-Void) function may still return values the checker missed, so it stays
+    // boxed `ll_value` (userFnRet already yielded that). A void C return would reject `return <v>`.
     const annotatedRet = this.typeNodeToCType(fn.returns);
-    this.topLevelFns.set(name, { params, ret: ret.k === "value" && annotatedRet ? annotatedRet : ret, arity: fn.params.length });
+    const useAnnotated = ret.k === "value" && annotatedRet && annotatedRet.k !== "void";
+    this.topLevelFns.set(name, { params, ret: useAnnotated ? annotatedRet! : ret, arity: fn.params.length });
   }
 
   /** Pre-scan the module body: register every top-level function BEFORE resolving (forward refs). */

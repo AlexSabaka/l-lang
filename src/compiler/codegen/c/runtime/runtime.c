@@ -20,6 +20,7 @@
 #include <string.h>
 #include <math.h>
 #include <inttypes.h>
+#include <setjmp.h>
 
 #define LL_END INT64_MIN /* "argument omitted" sentinel for optional trailing int args (slice end) */
 
@@ -180,6 +181,40 @@ static ll_obj *ll_obj_new(const ll_class *cls, size_t argc, ll_value *args) {
 /* The class registry (defined by the emitted module) -- reflection walks it by name. */
 extern ll_class *__ll_class_registry[];
 extern size_t __ll_class_count;
+
+/* -- exceptions: try/catch/throw via a setjmp/longjmp handler stack (native-only; JS gets this free).
+ * `throw` sets the current frame's error and longjmps; the emitted try block installs a frame. ---- */
+
+typedef struct ll_try_frame {
+  jmp_buf buf;
+  ll_value err;
+  struct ll_try_frame *prev;
+} ll_try_frame;
+
+static ll_try_frame *ll_handler_top = 0;
+
+static void ll_throw(ll_value err) {
+  if (!ll_handler_top) {
+    /* Uncaught: mirror node's "Uncaught <message>" then exit non-zero. */
+    const char *msg = "exception";
+    if (err.tag == LL_OBJ) {
+      const ll_class *cls = err.as.o->cls;
+      for (size_t i = 0; i < cls->field_count; i++) {
+        if (strcmp(cls->field_names[i], "message") == 0 && err.as.o->fields[i].tag == LL_STR) {
+          msg = err.as.o->fields[i].as.s->data;
+        }
+      }
+      fprintf(stderr, "Uncaught %s: %s\n", cls->name, msg);
+    } else if (err.tag == LL_STR) {
+      fprintf(stderr, "Uncaught %s\n", err.as.s->data);
+    } else {
+      fprintf(stderr, "Uncaught exception\n");
+    }
+    exit(70);
+  }
+  ll_handler_top->err = err;
+  longjmp(ll_handler_top->buf, 1);
+}
 
 /* -- closures (the env the HIR does not model -- spec A3) ----------------------------------------- */
 
@@ -992,6 +1027,9 @@ static ll_value ll_dyn_method(int n, ll_value *vals) {
     if (ll_dyn_name_is(name, "indexOf")) return ll_box_int(ll_vec_index_of(v, args[0]));
     if (ll_dyn_name_is(name, "includes")) return ll_box_bool(ll_vec_includes(v, args[0]));
   }
+  /* Not a known method: the __ll_member rule -- a non-function member is a field/property READ
+   * (a struct field like `err.message`, a map key, `length`). Fall back to a member read. */
+  if (argc == 0 && name.tag == LL_STR) return ll_dyn_member(recv, name.as.s);
   ll_trap("TypeError", "no such method on this value");
   return ll_nil();
 }
@@ -1070,8 +1108,16 @@ static double ll_math_random(void) { return (double)rand() / ((double)RAND_MAX +
 static double ll_math_sign(double x) { return x > 0 ? 1.0 : x < 0 ? -1.0 : x; }
 static double ll_math_trunc(double x) { return trunc(x); }
 
+/* Look up a class descriptor by name in the module registry (for the :extends chain walk). */
+static const ll_class *ll_class_by_name(const char *name) {
+  for (size_t i = 0; i < __ll_class_count; i++) {
+    if (strcmp(__ll_class_registry[i]->name, name) == 0) return __ll_class_registry[i];
+  }
+  return (const ll_class *)0;
+}
+
 /* -- runtime type tests (D41 / spec A7). Mirrors JS __ll_is_type: Int/Real are one "number", and a
- *    generic's arguments are erased (`Int[]` tests "is an array"). Nominal class tags are Phase D. -- */
+ *    generic's arguments are erased (`Int[]` tests "is an array"). Nominal walks the :extends chain. */
 static bool ll_is_type(ll_value v, const char *name, int primitive) {
   if (primitive) {
     if (strcmp(name, "Int") == 0 || strcmp(name, "Real") == 0) return v.tag == LL_INT || v.tag == LL_REAL;
@@ -1083,8 +1129,13 @@ static bool ll_is_type(ll_value v, const char *name, int primitive) {
   }
   if (strcmp(name, "Array") == 0) return v.tag == LL_VEC;
   if (strcmp(name, "Map") == 0) return v.tag == LL_MAP;
-  /* Nominal struct/class identity: the descriptor carries the source name. */
-  if (v.tag == LL_OBJ) return strcmp(v.as.o->cls->name, name) == 0;
+  /* Nominal struct/class identity: match the class OR any ancestor (walk the :extends chain). */
+  if (v.tag == LL_OBJ) {
+    for (const ll_class *c = v.as.o->cls; c; ) {
+      if (strcmp(c->name, name) == 0) return true;
+      c = c->parent ? ll_class_by_name(c->parent) : (const ll_class *)0;
+    }
+  }
   return false;
 }
 

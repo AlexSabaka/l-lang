@@ -82,6 +82,14 @@ export class InsertCoercions {
           update: s.update ? this.stmt(s.update, ret) : null,
           body: this.block(s.body, ret),
         };
+      case "c-try":
+        return {
+          ...s,
+          tryBlock: this.block(s.tryBlock, ret),
+          catches: s.catches.map((c) => ({ ...c, body: this.block(c.body, ret) })),
+          finalizer: s.finalizer ? this.block(s.finalizer, ret) : null,
+        };
+
       case "c-foreach": {
         // The collection must be a runtime vector; a boxed one is unboxed here. The per-element
         // unbox (varCType concrete) is emitted mechanically by P3 from varCType.
