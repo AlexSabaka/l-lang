@@ -60,15 +60,20 @@ load-bearing, not cosmetic.
 
 | Outcome | Count | Meaning |
 |---|--:|---|
-| ✅ Pass | 53 | C output == golden, byte-for-byte |
+| ✅ Pass | 55 | C output == golden, byte-for-byte |
 | ❌ Fail / 💥 Error | 0 | no regressions, no emitter crashes on the green set |
-| 🚧 Not-yet | 24 | unlisted-failing (cc error, output mismatch, or runtime trap) — the frontier (§6) |
-| 🚫 Refused | 16 | honest LL0105/06/07 diagnostics (coroutine / no-lowering / host-global) |
+| 🚧 Not-yet | 25 | unlisted-failing (cc error, output mismatch, or runtime trap) — the frontier (§6) |
+| 🚫 Refused | 13 | honest LL0105/06/07 diagnostics (coroutine / no-lowering / host-global) |
 | 📚 Library / 🧪 Fixture / ⏳ XFail / ⚠️ Skip | 37 | not executable as standalone `node` programs by design |
 | **Total** | **130** | |
 
-**Total recorded dips: 7 530** (was 8 209 before dev modeled `HRef`/`HFreeCall` — see §5.1),
-distributed:
+**Total recorded dips: 8 051.** The count is not monotone, and that is a feature: dev's `HRef`/
+`HFreeCall` *drained* it 8 209 → 7 530 (§5.1), then cross-module class registration (§5.3) *raised* it
+7 530 → 8 051 by resolving imported classes' method/operator bodies that previously never lowered at
+all. The ledger measures *resolved-code surface*, not just unmet need — draining a construct lowers
+the count, reaching new code raises it. The per-assumption table below is the post-`HRef`/`HFreeCall`
+baseline; cross-module registration added ~520 dips of newly-reachable imported-body evidence (mostly
+A2/A3/A4 inside the imported methods, plus the new `A9-extern:imported-class` row). Distribution:
 
 | Assumption | Dips | One-line |
 |---|--:|---|
@@ -253,8 +258,9 @@ the host, so like coercions they are pipeline additions, not holes in the neutra
 
 | construct | dips | files | note |
 |---|--:|--:|---|
-| `host-intrinsic` | 523 | 85 | `console.log`/`Math.*`/etc. resolved against the C runtime, not `std/js` |
-| `imported-body` | 54 | 9 | imported l-lang function lowered on demand (C analog of `ensureSymbolInlined`) |
+| `host-intrinsic` | 525 | 85 | `console.log`/`Math.*`/etc. resolved against the C runtime, not `std/js` |
+| `imported-body` | 58 | 10 | imported l-lang function lowered on demand (C analog of `ensureSymbolInlined`) |
+| `imported-class` | 5 | 3 | **imported class registered + methods lowered on demand** (the class analog; §5.3) |
 | `import` | 33 | 19 | module import skipped (v0 intrinsics stand in for the stdlib) |
 | `stdlib-intrinsic` | 21 | 5 | an l-lang stdlib body shadowed by a C intrinsic |
 | `unresolvable` | 8 | 3 | e.g. `JSON.stringify` has no C representation → LL0107 |
@@ -392,6 +398,32 @@ the finding: **the 53 green files establish that the HIR-consumption story is so
 remaining divergences are all below the HIR, in the runtime and stdlib the probe stubbed.** That is a
 clean separation of concerns for whoever picks up the C backend as a real target.
 
+### 5.3 Cross-module class registration
+
+The `special:new` frontier (§6a) was construction of a class defined in an *imported* module —
+`(new Vector3 …)` where `Vector3` lives in `std/math`. The C backend only registered *this* module's
+classes; the fix is the class-level analog of the on-demand `imported-body` function lowering already
+in place. `SymbolEntry.value` carries the imported class's AST node, so a lazy `ensureClassRegistered`,
+routed through the three class-name gates (`new`, plain-name construction, and type annotations),
+registers the descriptor and lowers the methods/operators on first reference. Greened
+`16-stdlib/complex_math_test/main` and `30-applications/08_vector_toolkit` (53 → 55); the new
+`A9-extern:imported-class` row records it.
+
+The sharper finding is the **bug it surfaced**: `SymbolEntry.value` is the *pre-desugar* parse tree
+(the symbol table is built before the desugar stage), so an imported `(fn sqr [x] (* x x))` reached the
+backend with **no implicit return** — it lowered to `(* x x); return nil`, `sqr` returned nil, `mag`
+returned garbage, and `ll_as_num` trapped. This is a general defect in *all* imported-body lowering,
+not just classes; the JS backend documents the identical bug and fix (`desugaredCopyOf` — clone the
+node and run the implicit-return desugar). The C backend now does the same in both import paths. It is
+a clean example of the probe's value even *inside* a feature: reaching imported code for the first time
+exposed a latent soundness bug that the golden corpus had never exercised.
+
+Two `special:new` files stay off the ratchet, and neither is a cross-module gap: `02_packages/main`
+additionally needs **non-ctor field defaults** (`(let :private tag <- String "rect")` is left nil by
+construction — the same gap that blocks `09-oop/02_classes`), and `00_generic_inventory`'s `new`
+class-argument arrives as a lowering temp (a separate generic-construction bug). Both were kept out of
+scope on purpose.
+
 ---
 
 ## 6. The frontier — every non-green file, root-caused
@@ -404,7 +436,7 @@ why" — the raw material for prioritizing HIR work.
 | construct | files | disposition |
 |---|--:|---|
 | LL0105 coroutine | 5 | `00_async`, `01_async_pipeline`, `00_generators`, `02_linq_pipeline`, `07_line_clear` — correct refusal, kept by design (A8) |
-| `special:new` (cross-module) | 4 | `00_generic_inventory`, `08_vector_toolkit`, `02_packages/main`, `complex_math_test/main` — the class is defined in an *imported* module (`std/math`, a user package); the C backend only registers *this* module's classes. **Cross-module class registration** is the real cut — a class-level analog of the on-demand `imported-body` lowering already done for functions. |
+| `special:new` (cross-module) | 1 | **RESOLVED for 3 of 4 (§5.3).** `08_vector_toolkit` + `complex_math_test/main` are now green via cross-module class registration; `02_packages/main` moved to §6c (needs non-ctor field defaults); only `00_generic_inventory` still refuses here (its `new` class-arg is a lowering temp — a separate generic bug). |
 | `export` | 4 | `00_lib`, `01_lib_a/b/c` — bare library files whose top-level `export` P1 doesn't model (they lower fine *on demand* when imported by a main). |
 | interface `passable` | 1 | `02_interface_conformance` — a method dispatched through an *interface*, not a concrete class: the statically-**unknown** receiver, i.e. the witness-table case (Dove's genuine Q4 answer, deferred). |
 | `spread` + host global | 1 | `spread_in_literals` — spread in collection literals + a `std/js` global. |
@@ -425,11 +457,11 @@ Each is root-caused; several are the same underlying HIR/backend gap.
 | `15-modules/01_main` | undeclared `u_secret_2dnumber_2da` | a cross-module hyphenated binding referenced but not declared (cross-module scope). |
 | `30-applications/05_snake_tick` | `ll_value` vs `ll_map*` | a map op receives a boxed value where the runtime wants a concrete `ll_map*`. |
 
-### 6c. Runtime divergences (16) — compiled, ran, diverged
+### 6c. Runtime divergences (17) — compiled, ran, diverged
 
 | kind | files | note |
 |---|---|---|
-| trap (exit 70) | `09-oop/01_interfaces`, `02_classes`, `03_dispatch_and_type_patterns`, `20-algorithms/07_tokenizer`, `08_state_machine`, `09_memoization_intro` | interface/witness dispatch and a map-key stringification path trap at runtime — the honest "I don't have this yet." |
+| trap (exit 70) | `09-oop/01_interfaces`, `02_classes`, `03_dispatch_and_type_patterns`, `20-algorithms/07_tokenizer`, `08_state_machine`, `09_memoization_intro`, `15-modules/02_packages/main` | interface/witness dispatch, a map-key stringification path, and **non-ctor field defaults** (`02_classes` + `02_packages/main`: `(let :private tag "rect")` left nil by construction → `ll_unbox_str(nil)` traps) trap at runtime — the honest "I don't have this yet." |
 | output mismatch (7, the §5.2 silent-wrong-answer set — exact JS↔C diffs captured) | `07-types/01_type_reflection` + `08-generics/00_generics_basic` (reflection metadata depth); `10-modifiers/02_logging`/`03_timing`/`05_multiple` (modifier decorator side-effects dropped); `16-stdlib/01_main` (`print` `{0}` format vs `console.log`); `20-algorithms/03_functional` (array-in-interpolation `[ 1, 4 ]` vs `1,4`) | all four causes are runtime/stdlib fidelity, **below** the HIR axis (§5.2) — the C-green set proves HIR-consumption parity; these are the stubbed runtime showing through. |
 | segfault (exit null) | `18-error-handling/02_rpn_error_paths`, `10-modifiers/06_extension_methods` | stdlib bodies lowered on-demand (`filter`/`map`/`join`/`split`) that the C runtime doesn't fully support. |
 | P1 crash | `16-stdlib/test_stdlib` | a null `_type` during resolution — a lowering path only ever exercised behind the JS legacy emitter. |
@@ -471,10 +503,10 @@ Ordered by measured dip weight — this is the empirical argument for sequencing
    (bind-then-test, with the enum-arm equality-test variant) — this is lifting known structure onto
    the node.
 
-6. **Add A9-extern to the spec (new).** 642 dips. Not a node cut — a *boundary* the spec must name.
-   The three resolutions (intrinsic / on-demand stdlib body / refuse) are already implemented; lift
-   them into the contract. **Cross-module class registration** (the `special:new` frontier, §6a) is
-   the natural next increment: a class-level analog of the on-demand function lowering.
+6. **Add A9-extern to the spec (new).** ~650 dips. Not a node cut — a *boundary* the spec must name.
+   The resolutions (intrinsic / on-demand stdlib body / **on-demand imported class** / refuse) are
+   all implemented now — including cross-module class registration (§5.3, `A9-extern:imported-class`),
+   which was the natural next increment and is done. Lift the whole boundary into the contract.
 
 7. **Track `void-fn-boxed`, `int-division`, and `HFor`-with-statement-step as contract questions.**
    Low volume, high signal: the checker's type is not always the value's type, and `HFor` structurally
