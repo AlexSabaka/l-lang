@@ -60,10 +60,10 @@ load-bearing, not cosmetic.
 
 | Outcome | Count | Meaning |
 |---|--:|---|
-| ✅ Pass | 55 | C output == golden, byte-for-byte |
+| ✅ Pass | 57 | C output == golden, byte-for-byte |
 | ❌ Fail / 💥 Error | 0 | no regressions, no emitter crashes on the green set |
-| 🚧 Not-yet | 25 | unlisted-failing (cc error, output mismatch, or runtime trap) — the frontier (§6) |
-| 🚫 Refused | 13 | honest LL0105/06/07 diagnostics (coroutine / no-lowering / host-global) |
+| 🚧 Not-yet | 24 | unlisted-failing (cc error, output mismatch, or runtime trap) — the frontier (§6) |
+| 🚫 Refused | 12 | honest LL0105/06/07 diagnostics (coroutine / no-lowering / host-global) |
 | 📚 Library / 🧪 Fixture / ⏳ XFail / ⚠️ Skip | 37 | not executable as standalone `node` programs by design |
 | **Total** | **130** | |
 
@@ -418,11 +418,33 @@ node and run the implicit-return desugar). The C backend now does the same in bo
 a clean example of the probe's value even *inside* a feature: reaching imported code for the first time
 exposed a latent soundness bug that the golden corpus had never exercised.
 
-Two `special:new` files stay off the ratchet, and neither is a cross-module gap: `02_packages/main`
-additionally needs **non-ctor field defaults** (`(let :private tag <- String "rect")` is left nil by
-construction — the same gap that blocks `09-oop/02_classes`), and `00_generic_inventory`'s `new`
-class-argument arrives as a lowering temp (a separate generic-construction bug). Both were kept out of
-scope on purpose.
+Two `special:new` files stayed off the ratchet initially (neither a cross-module gap): `02_packages/
+main` needed non-ctor field defaults, and `00_generic_inventory`'s `new` class-argument arrives as a
+lowering temp — both closed out in §5.4.
+
+### 5.4 Closing the deferred construction gaps
+
+The deferred items from §5.3 were construction-layout gaps the HIR models nowhere (A4); closing them
+greened two more files (55 → 57):
+
+- **Non-ctor field defaults + `:ctor` initializer methods** (greened `09-oop/02_classes`).
+  `(new Rect 3 4)` left the non-ctor `(let :private tag "rect")` field nil (`ll_obj_new` zero-fills);
+  construction now fills *every* slot from a positional arg, else the field's declared default, else
+  nil — which also fixes an omitted ctor arg like `(new Vector3)`. And `:ctor` methods
+  (`(fn :ctor initialize-age [] (this.age := …))`) that derive fields at construction now run: the
+  descriptor tracks them in order and a construct with any emits a statement-expression
+  `({ o = make; init1(o); …; o; })`.
+- **Generic construction** (greened `00_generic_inventory`). ANF hoists the `new` class *head* into a
+  temp (`__ll_hir_N = Inventory`); since a class is not a runtime value, a class-name-valued temp is
+  now recorded (no decl emitted) and `new` reads the name back. It also surfaced that a `-> Void`
+  *method* whose body returns a value (the implicit-return desugar wraps every tail) needs the same
+  never-downgrade-to-`void` treatment free functions get — a Void method stays boxed `ll_value`.
+
+One `special:new` file remains not-yet: **`15-modules/02_packages/main`** compiles and runs past the
+field-default trap but needs **dynamic method dispatch on a boxed receiver** — `(fn area-of [s] …
+(s.area))` with `s` untyped, so `s.area` is a runtime dispatch the C backend has no vtable for. That
+is the same statically-unknown-receiver machinery (witness tables) the interface case needs (§6a), and
+is left as the honest remaining gap.
 
 ---
 
@@ -436,7 +458,7 @@ why" — the raw material for prioritizing HIR work.
 | construct | files | disposition |
 |---|--:|---|
 | LL0105 coroutine | 5 | `00_async`, `01_async_pipeline`, `00_generators`, `02_linq_pipeline`, `07_line_clear` — correct refusal, kept by design (A8) |
-| `special:new` (cross-module) | 1 | **RESOLVED for 3 of 4 (§5.3).** `08_vector_toolkit` + `complex_math_test/main` are now green via cross-module class registration; `02_packages/main` moved to §6c (needs non-ctor field defaults); only `00_generic_inventory` still refuses here (its `new` class-arg is a lowering temp — a separate generic bug). |
+| `special:new` | 0 | **FULLY RESOLVED (§5.3 + §5.4).** All four construction sites now lower: `08_vector_toolkit` + `complex_math_test/main` (cross-module registration), `00_generic_inventory` (ANF class-name temp), and `02_packages/main` compiles (now a §6c dynamic-dispatch trap, not a `new` refusal). |
 | `export` | 4 | `00_lib`, `01_lib_a/b/c` — bare library files whose top-level `export` P1 doesn't model (they lower fine *on demand* when imported by a main). |
 | interface `passable` | 1 | `02_interface_conformance` — a method dispatched through an *interface*, not a concrete class: the statically-**unknown** receiver, i.e. the witness-table case (Dove's genuine Q4 answer, deferred). |
 | `spread` + host global | 1 | `spread_in_literals` — spread in collection literals + a `std/js` global. |
@@ -457,11 +479,11 @@ Each is root-caused; several are the same underlying HIR/backend gap.
 | `15-modules/01_main` | undeclared `u_secret_2dnumber_2da` | a cross-module hyphenated binding referenced but not declared (cross-module scope). |
 | `30-applications/05_snake_tick` | `ll_value` vs `ll_map*` | a map op receives a boxed value where the runtime wants a concrete `ll_map*`. |
 
-### 6c. Runtime divergences (17) — compiled, ran, diverged
+### 6c. Runtime divergences (16) — compiled, ran, diverged
 
 | kind | files | note |
 |---|---|---|
-| trap (exit 70) | `09-oop/01_interfaces`, `02_classes`, `03_dispatch_and_type_patterns`, `20-algorithms/07_tokenizer`, `08_state_machine`, `09_memoization_intro`, `15-modules/02_packages/main` | interface/witness dispatch, a map-key stringification path, and **non-ctor field defaults** (`02_classes` + `02_packages/main`: `(let :private tag "rect")` left nil by construction → `ll_unbox_str(nil)` traps) trap at runtime — the honest "I don't have this yet." |
+| trap (exit 70) | `09-oop/01_interfaces`, `03_dispatch_and_type_patterns`, `20-algorithms/07_tokenizer`, `08_state_machine`, `09_memoization_intro`, `15-modules/02_packages/main` | **dynamic method dispatch on a boxed/interface receiver** (`01_interfaces`, `03_dispatch`, `02_packages/main`'s `area-of [s]`) and a map-key stringification path — the statically-unknown-receiver machinery (witness tables) the C backend has no vtable for. (`09-oop/02_classes` left this list — greened by §5.4.) |
 | output mismatch (7, the §5.2 silent-wrong-answer set — exact JS↔C diffs captured) | `07-types/01_type_reflection` + `08-generics/00_generics_basic` (reflection metadata depth); `10-modifiers/02_logging`/`03_timing`/`05_multiple` (modifier decorator side-effects dropped); `16-stdlib/01_main` (`print` `{0}` format vs `console.log`); `20-algorithms/03_functional` (array-in-interpolation `[ 1, 4 ]` vs `1,4`) | all four causes are runtime/stdlib fidelity, **below** the HIR axis (§5.2) — the C-green set proves HIR-consumption parity; these are the stubbed runtime showing through. |
 | segfault (exit null) | `18-error-handling/02_rpn_error_paths`, `10-modifiers/06_extension_methods` | stdlib bodies lowered on-demand (`filter`/`map`/`join`/`split`) that the C runtime doesn't fully support. |
 | P1 crash | `16-stdlib/test_stdlib` | a null `_type` during resolution — a lowering path only ever exercised behind the JS legacy emitter. |
