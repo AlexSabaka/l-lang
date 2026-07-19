@@ -38,4 +38,12 @@ export const C_PASSING: readonly string[] = [
   "80-adversarial/cond_dangling_else.lisp",
   "80-adversarial/paren_absorption.lisp",
   "80-adversarial/return_in_logical_operand.lisp",
+  // Phase B -- functions, closures (env capture + mutable cells), higher-order, pipelines,
+  // recursion, type guards, on-demand lowering of imported l-lang bodies.
+  "01-functions/00_function_types.lisp",
+  "01-functions/01_closures.lisp",
+  "01-functions/02_recursion.lisp",
+  // 01-functions/03_higher_order_functions.lisp is an xfail (parse failure, form layer).
+  "01-functions/04_pipelines.lisp",
+  "15-modules/00_main.lisp", // unlocked by on-demand imported-body lowering (a real multi-module program)
 ];
