@@ -734,6 +734,12 @@ static ll_str *ll_str_trim(ll_str *s) {
   return ll_str_from(s->data + a, b - a);
 }
 
+static ll_str *ll_str_trim_end(ll_str *s) {
+  size_t b = s->len;
+  while (b > 0 && (s->data[b - 1] == ' ' || s->data[b - 1] == '\t' || s->data[b - 1] == '\n' || s->data[b - 1] == '\r')) b--;
+  return ll_str_from(s->data, b);
+}
+
 static int64_t ll_slice_clamp(int64_t i, size_t len) {
   if (i == LL_END) return (int64_t)len;
   if (i < 0) i += (int64_t)len;
@@ -1015,6 +1021,7 @@ static ll_value ll_dyn_method(int n, ll_value *vals) {
     if (ll_dyn_name_is(name, "toUpperCase")) return ll_box_str(ll_str_upper(s));
     if (ll_dyn_name_is(name, "toLowerCase")) return ll_box_str(ll_str_lower(s));
     if (ll_dyn_name_is(name, "trim")) return ll_box_str(ll_str_trim(s));
+    if (ll_dyn_name_is(name, "trimEnd")) return ll_box_str(ll_str_trim_end(s));
     if (ll_dyn_name_is(name, "length")) return ll_box_int((int64_t)s->len);
     if (ll_dyn_name_is(name, "slice"))
       return ll_box_str(ll_str_slice(s, argc > 0 ? ll_unbox_int(args[0]) : 0, argc > 1 ? ll_unbox_int(args[1]) : LL_END));

@@ -82,6 +82,7 @@ export const NATIVE_METHODS: ReadonlyMap<string, IntrinsicDef> = new Map<string,
   ["str.toUpperCase", def("ll_str_upper", [C_STR], C_STR)],
   ["str.toLowerCase", def("ll_str_lower", [C_STR], C_STR)],
   ["str.trim", def("ll_str_trim", [C_STR], C_STR)],
+  ["str.trimEnd", def("ll_str_trim_end", [C_STR], C_STR)],
   ["str.slice", def("ll_str_slice", [C_STR, C_INT, C_INT], C_STR)], // 1-arg form: P1 pads end with INT64_MAX sentinel
   ["str.substring", def("ll_str_slice", [C_STR, C_INT, C_INT], C_STR)],
   ["str.indexOf", def("ll_str_index_of", [C_STR, C_STR], C_INT)],

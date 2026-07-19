@@ -77,4 +77,6 @@ export const C_PASSING: readonly string[] = [
   "05-data-structures/04_enums.lisp",
   // Phase E broad sweep -- :extension methods devirtualized to free calls on the receiver (Q4 static case).
   "30-applications/01_vec2_operators.lisp",
+  // Phase E broad sweep -- enum match + str.trimEnd native (tetromino spin states + board rendering).
+  "30-applications/06_tetromino_rotation.lisp",
 ];
