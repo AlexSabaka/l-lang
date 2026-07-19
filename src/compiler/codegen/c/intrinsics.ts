@@ -68,6 +68,9 @@ export const INTRINSIC_CALLS: ReadonlyMap<string, IntrinsicDef> = new Map<string
   ["empty", def("ll_empty", [C_VALUE], C_BOOL)],
   ["elem", def("ll_elem", [C_VALUE, C_VALUE], C_VALUE)],
   ["list", def("ll_list", [], VEC_VALUE, true)],
+  // Reflection (the __ll_type_metadata mirror): a class's metadata map (name, extends), boxed.
+  ["type", def("ll_type", [C_VALUE], C_VALUE)],
+  ["type-by-name", def("ll_type_by_name", [C_VALUE], C_VALUE)],
 ]);
 
 /**

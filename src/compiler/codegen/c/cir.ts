@@ -373,6 +373,7 @@ export interface CLifted {
 export interface CClass {
   name: string;
   isStruct: boolean;
+  parent?: string; // `:extends` base name, for reflection
   fields: { name: string; ctype: CType }[]; // slot order
 }
 

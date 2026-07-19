@@ -92,15 +92,20 @@ export class EmitCirToC {
 
   emitModule(m: CModule): string {
     this.out = [];
-    // Struct/class descriptors (ll_class): field names in slot order + the is_struct flag.
+    // Struct/class descriptors (ll_class): field names in slot order, is_struct, and `:extends` parent.
     for (const c of m.classes) {
       const fieldsArr = c.fields.length
         ? `static const char* __ll_fields_${c.name}[] = {${c.fields.map((f) => `"${f.name}"`).join(", ")}};`
         : `static const char** __ll_fields_${c.name} = 0;`;
       this.line(fieldsArr);
-      this.line(`static ll_class __ll_class_${c.name} = {"${c.name}", ${c.isStruct ? "true" : "false"}, ${c.fields.length}, __ll_fields_${c.name}};`);
+      this.line(`static ll_class __ll_class_${c.name} = {"${c.name}", ${c.isStruct ? "true" : "false"}, ${c.fields.length}, __ll_fields_${c.name}, ${c.parent ? `"${c.parent}"` : "0"}};`);
     }
-    if (m.classes.length) this.line("");
+    // A registry of every class, for `type-by-name` reflection. External linkage so the prepended
+    // runtime's reflection helpers (which forward-declare it `extern`) can reach it in this one TU.
+    const regEntries = m.classes.length ? m.classes.map((c) => `&__ll_class_${c.name}`).join(", ") : "0";
+    this.line(`ll_class* __ll_class_registry[] = {${regEntries}};`);
+    this.line(`size_t __ll_class_count = ${m.classes.length};`);
+    this.line("");
     // Module-level bindings referenced by functions -> file-scope globals. A file-scope initializer
     // must be a compile-time constant, so use a zero-init (ll_value {0} == LL_NIL); the real value is
     // assigned in main at the binding's original position.

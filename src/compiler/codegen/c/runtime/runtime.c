@@ -154,6 +154,7 @@ typedef struct ll_class {
   bool is_struct;          /* true = value semantics (copied); false = reference (shared) */
   size_t field_count;
   const char **field_names;
+  const char *parent;      /* `:extends` base name, or NULL (for reflection) */
 } ll_class;
 
 struct ll_obj {
@@ -175,6 +176,10 @@ static ll_obj *ll_obj_new(const ll_class *cls, size_t argc, ll_value *args) {
   for (size_t i = 0; i < cls->field_count; i++) o->fields[i] = i < argc ? args[i] : ll_nil();
   return o;
 }
+
+/* The class registry (defined by the emitted module) -- reflection walks it by name. */
+extern ll_class *__ll_class_registry[];
+extern size_t __ll_class_count;
 
 /* -- closures (the env the HIR does not model -- spec A3) ----------------------------------------- */
 
@@ -1142,4 +1147,34 @@ static bool ll_is_finite(ll_value v) {
   if (v.tag == LL_REAL) return isfinite(v.as.d);
   if (v.tag == LL_INT) return true;
   return false;
+}
+
+/* -- reflection: `type` and `type-by-name` -- the metadata graph the JS backend emits as
+ *    __ll_type_metadata. A class's metadata map carries "name" and "extends" (a NAME edge). -------- */
+
+static ll_value ll_class_meta(const ll_class *cls) {
+  ll_str *keys[2]; ll_value vals[2];
+  keys[0] = ll_str_lit("name");    vals[0] = ll_box_str(ll_str_lit(cls->name));
+  keys[1] = ll_str_lit("extends"); vals[1] = cls->parent ? ll_box_str(ll_str_lit(cls->parent)) : ll_nil();
+  return ll_box_map(ll_map_of(2, keys, vals));
+}
+
+static ll_value ll_type(ll_value v) {
+  if (v.tag == LL_OBJ) return ll_class_meta(v.as.o->cls);
+  /* A primitive: a metadata map with just its type name. */
+  const char *nm = v.tag == LL_INT ? "Int" : v.tag == LL_REAL ? "Real" : v.tag == LL_STR ? "String"
+                 : v.tag == LL_BOOL ? "Boolean" : v.tag == LL_VEC ? "Array" : v.tag == LL_MAP ? "Map"
+                 : v.tag == LL_CLOSURE ? "Function" : "Nil";
+  ll_str *keys[2]; ll_value vals[2];
+  keys[0] = ll_str_lit("name");    vals[0] = ll_box_str(ll_str_lit(nm));
+  keys[1] = ll_str_lit("extends"); vals[1] = ll_nil();
+  return ll_box_map(ll_map_of(2, keys, vals));
+}
+
+static ll_value ll_type_by_name(ll_value name) {
+  ll_str *nm = name.tag == LL_STR ? name.as.s : ll_to_str(name);
+  for (size_t i = 0; i < __ll_class_count; i++) {
+    if (strcmp(__ll_class_registry[i]->name, nm->data) == 0) return ll_class_meta(__ll_class_registry[i]);
+  }
+  return ll_nil();
 }

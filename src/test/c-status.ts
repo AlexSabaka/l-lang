@@ -67,4 +67,6 @@ export const C_PASSING: readonly string[] = [
   "04-pattern-matching/00_guards.lisp",
   "04-pattern-matching/01_vector_patterns.lisp",
   "80-adversarial/match_arm_bare_if.lisp",
+  "09-oop/00_inheritance.lisp",   // :extends field/method flattening + type/type-by-name reflection
+  "07-types/02_runtime_type_info.lisp", // unlocked by type/type-by-name reflection
 ];

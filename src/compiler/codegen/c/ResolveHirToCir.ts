@@ -64,6 +64,7 @@ interface VarInfo {
 interface ClassDesc {
   name: string;
   isStruct: boolean;
+  parent?: string; // `:extends` base class name (for inheritance + reflection)
   fields: { name: string; ctype: CType }[];
   fieldSlot: Map<string, number>;
   methods: Map<string, { cName: string; params: CType[]; ret: CType }>;
@@ -192,7 +193,7 @@ export class ResolveHirToCir {
     const main = body ? this.resolveBlock(body) : { stmts: [] };
     if (this.refused) return null;
     const classes: CClass[] = [...this.classes.values()].map((c) => ({
-      name: c.name, isStruct: c.isStruct, fields: c.fields,
+      name: c.name, isStruct: c.isStruct, parent: c.parent, fields: c.fields,
     }));
     return {
       functions: this.functions,
@@ -264,16 +265,32 @@ export class ResolveHirToCir {
       const m = (t?.members ?? []).find((mm: any) => mm.name === fname && mm.type?.kind !== "function");
       return m?.type ? mapType(m.type) : C_VALUE;
     };
-    const fields = ctorParams.map((p: any) => ({
+    // Own fields = the constructor params (in ctor order) PLUS any non-ctor fields declared in the
+    // body (`:public width 0`), which the ctorInfo omits. The JS ClassBuilder lays out both.
+    const ownFields: { name: string; ctype: CType }[] = ctorParams.map((p: any) => ({
       name: p.name,
       ctype: astFieldTypes.get(p.name) ?? (p.type ? mapType(p.type) : memberType(p.name)),
     }));
+    const seen = new Set(ownFields.map((f) => f.name));
+    for (const [fname, ct] of astFieldTypes) {
+      if (!seen.has(fname)) { ownFields.push({ name: fname, ctype: ct }); seen.add(fname); }
+    }
+    // Inheritance (`:extends`): the parent's fields come FIRST (lower slots), then this class's own --
+    // the layout the JS ClassBuilder also produces. The whole hierarchy is a symbol-table walk the
+    // HIR does not model (spec A4).
+    const parent = this.extendsName(node) ?? (typeof t?.parentClass === "string" ? t.parentClass : undefined);
+    const parentDesc = parent ? this.classes.get(parent) : undefined;
+    if (parent && parentDesc) this.ledger.record("A4", "inherit", node, `'${name}' inherits '${parent}' fields/methods (hierarchy walked below the HIR)`);
+    const fields = parentDesc ? [...parentDesc.fields, ...ownFields] : ownFields;
     const fieldSlot = new Map<string, number>();
     fields.forEach((f, i) => fieldSlot.set(f.name, i));
+    // Inherited methods (own override): copy the parent's method table, then this class's methods
+    // shadow by name below.
     const methods = new Map<string, { cName: string; params: CType[]; ret: CType }>();
+    if (parentDesc) for (const [mn, m] of parentDesc.methods) methods.set(mn, m);
     // Register the descriptor NOW (before processing members) so a self-referential member type --
     // an operator returning its own class, a method taking the same struct -- resolves to obj.
-    this.classes.set(name, { name, isStruct, fields, fieldSlot, methods });
+    this.classes.set(name, { name, isStruct, parent: parentDesc ? parent : undefined, fields, fieldSlot, methods });
     for (const m of this.memberFunctions(node)) {
       if (!m.name) continue;
       const mn = ast.symbolName(m.name);
@@ -289,14 +306,22 @@ export class ResolveHirToCir {
     }
   }
 
-  /** Field type annotations from the struct/class body (`(let :ctor x <- Real 0)` -> {x: real}). */
+  /** The `:extends` base class name of a struct/class, if any. */
+  private extendsName(node: ast.StructNode | ast.ClassNode): string | undefined {
+    const ext = (node.extends ?? [])[0] as any;
+    if (!ext) return undefined;
+    return this.typeNodeName(ext.type ?? ext) ?? (typeof ext.name === "string" ? ext.name : undefined);
+  }
+
+  /** Every field of a struct/class body in declaration order, with its CType from the annotation or
+   *  (for an unannotated `:public` field) inferred from its default value. */
   private memberFieldTypes(node: ast.StructNode | ast.ClassNode): Map<string, CType> {
     const out = new Map<string, CType>();
     const consider = (v: ast.VariableNode): void => {
       const nm = v.name;
       if (nm?._type !== "simple-identifier" && nm?._type !== "composite-identifier") return;
-      const ct = this.typeNodeToCType(v.type);
-      if (ct) out.set(ast.symbolName(nm as ast.IdentifierNode), ct);
+      const ct = this.typeNodeToCType(v.type) ?? this.ctypeFromLiteral(v.value) ?? C_VALUE;
+      out.set(ast.symbolName(nm as ast.IdentifierNode), ct);
     };
     for (const item of node.body ?? []) {
       if (item._type === "variable") { consider(item as ast.VariableNode); continue; }
@@ -306,6 +331,17 @@ export class ResolveHirToCir {
       }
     }
     return out;
+  }
+
+  /** Best-effort CType from a literal default value (an unannotated field's type). */
+  private ctypeFromLiteral(v: ast.ASTNode | undefined): CType | undefined {
+    switch (v?._type) {
+      case "integer-number": return C_INT;
+      case "float-number": return C_REAL;
+      case "string": return C_STR;
+      case "boolean": return C_BOOL;
+      default: return undefined;
+    }
   }
 
   /** The member functions (methods + operators) of a struct/class. Each body member is a `list`
