@@ -235,16 +235,23 @@ export function transform(file: string, command: Command) {
 
   // Output based on stage
   if (options.stage === "codegen") {
-    // Final stage: output JavaScript
+    // Final stage: output the target language. The C backend emits a single self-contained
+    // translation unit and produces no source map.
+    const isC = options.language === "c";
     if (options.stdout) {
       console.log(chalk.strikethrough.dim(" ".repeat(stdout.columns)));
-      console.log(highlight(code, { language: "javascript" }));
+      console.log(highlight(code, { language: isC ? "c" : "javascript" }));
       console.log(chalk.strikethrough.dim(" ".repeat(stdout.columns)));
     }
-    fs.writeFileSync(file.replace(".lisp", ".js"), code);
-    // Write source map if available and not disabled
-    if (!options.noMap && map) {
-      fs.writeFileSync(file.replace(".lisp", ".js.map"), map.toString());
+    if (isC) {
+      // The C backend emits a single self-contained translation unit and no source map.
+      fs.writeFileSync(file.replace(".lisp", ".c"), code);
+    } else {
+      fs.writeFileSync(file.replace(".lisp", ".js"), code);
+      // Write source map if available and not disabled
+      if (!options.noMap && map) {
+        fs.writeFileSync(file.replace(".lisp", ".js.map"), map.toString());
+      }
     }
   } else {
     // Intermediate stage: output AST with unified symbol table (with type info)

@@ -439,5 +439,25 @@
   {
     "probe": "silent: JS globals",
     "diagnostics": []
+  },
+  {
+    "probe": "LL0105 C backend refuses a generator",
+    "diagnostics": [
+      {
+        "code": "LL0105",
+        "severity": "error",
+        "text": "'count-up' is a generator (:gen) -- the C backend does not support coroutines. Generators and async functions need a state-machine lowering the HIR does not model yet (spec A8); the backend records the gap and refuses."
+      }
+    ]
+  },
+  {
+    "probe": "LL0107 C backend refuses an unresolvable host global",
+    "diagnostics": [
+      {
+        "code": "LL0107",
+        "severity": "error",
+        "text": "'Symbol' resolves to a JavaScript host global; the C backend has no representation for it. (The std/js extern boundary -- spec gap A9.)"
+      }
+    ]
   }
 ]

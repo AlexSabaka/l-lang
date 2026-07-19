@@ -19,7 +19,7 @@ program
   .option("-w, --watch", "watch for changes and recompile")
   .option("-d, --debug", "debug mode")
   .option("-s, --silent", "silent mode")
-  .option("--language <lang>", "target backend: js (default), llang")
+  .option("--language <lang>", "target backend: js (default), llang, c")
   .option(
     "-I, --lib <dir>",
     "add a library search root for `(import \"std/...\")` (repeatable). The shipped lib/ is always searched.",

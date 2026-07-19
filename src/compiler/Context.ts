@@ -16,7 +16,8 @@ import {
 
 import {
   JSTransformerAstVisitorEstree,
-  LlangTransformerAstVisitor
+  LlangTransformerAstVisitor,
+  CTransformer
 } from "./codegen";
 
 import { ASTNode } from "./frontend/ast";
@@ -42,7 +43,7 @@ export enum LogLevel {
 
 export type CompilationStage = "parse" | "syntax" | "symbols" | "desugar" | "types" | "codegen";
 
-export type CompilationLanguage = "llang" | "js";
+export type CompilationLanguage = "llang" | "js" | "c";
 
 export interface CompilerOptions {
   logger?: (msg: any, ...args: any[]) => void;
@@ -622,6 +623,11 @@ export class Context {
     } else if (this.options.language === "llang") {
       // Use l-lang to l-lang transformer
       transformer = new LlangTransformerAstVisitor(this);
+    } else if (this.options.language === "c") {
+      // The C backend consumes the same HIR the JS emitter does -- that is the point (the adversarial
+      // probe of the HIR contract). The lowering is backend-neutral; only the pipelines differ.
+      this.hir = new LowerAstToHirVisitor(this).lower(ast as ASTNode);
+      transformer = new CTransformer(this);
     } else {
       throw new Error(`Unknown compilation target language: '${this.options.language}'`);
     }

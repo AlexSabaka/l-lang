@@ -27,7 +27,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
+import { Context, CompilerOptions, LogLevel, CompilationLanguage } from "../compiler/Context";
 import { RuleSeverity } from "../compiler/rules/RuleBuilder";
 import { DIAGNOSTIC_CATEGORIES } from "../compiler/rules/diagnostics";
 import { Rules } from "../compiler/rules";
@@ -151,6 +151,8 @@ function checkRegistry(): { failures: string[] } {
  */
 const RETIRED_CODES: ReadonlySet<string> = new Set([
   "LL0004", // ImportHasSymbols -- deleted in Sc3: dead, and it encoded a false invariant.
+  "LL0103", // ReturnInExpressionPosition -- retired with the HIR cut (D45); the tombstone lived only
+            // in a CodegenDiagnostics comment, so the allocator kept offering it as next-free.
 ]);
 
 /** First unused LLxxNN in a band (e.g. band "LL02" -> LL0200..LL0299). */
@@ -176,6 +178,8 @@ interface Probe {
   source: string;
   /** Stage to compile to. Defaults to "types"; codegen diagnostics (LL01xx) need "codegen". */
   stage?: "types" | "codegen";
+  /** Backend, for a backend-specific codegen diagnostic (the C backend's LL0105-07). Defaults to js. */
+  language?: CompilationLanguage;
 }
 
 /**
@@ -315,9 +319,23 @@ const PROBES: Probe[] = [
   { name: "silent: annotated arithmetic", source: "(let a <- Int 1)\n(let b <- Int 2)\n(console.log (+ a b))" },
   { name: "silent: a parameter resolves", source: "(fn f [n <- Int] -> Int (return (+ n 1)))\n(console.log (f 1))" },
   { name: "silent: JS globals", source: '(console.log (Math.max 1 2) (JSON.stringify [1]))' },
+
+  // --- C backend refusals (LL0105 / LL0107): the probe's honest "not modeled" answers. These
+  //     type-check clean (and compile on JS) but refuse on the C backend, so they run language:"c"
+  //     at codegen. The generator needs std/iter for Iterator<T>/yield to type-check. ---
+  {
+    name: "LL0105 C backend refuses a generator",
+    source: '(import "std/iter")\n(fn :gen count-up [n <- Int] -> Iterator<Int> (mut i 1) (while (<= i n) (yield i) (i := (+ i 1))))\n(console.log 0)',
+    stage: "codegen", language: "c",
+  },
+  {
+    name: "LL0107 C backend refuses an unresolvable host global",
+    source: "(console.log (Symbol))",
+    stage: "codegen", language: "c",
+  },
 ];
 
-function baseOptions(stage: "types" | "codegen"): CompilerOptions {
+function baseOptions(stage: "types" | "codegen", language: CompilationLanguage = "js"): CompilerOptions {
   return {
     minimumLogLevel: LogLevel.Warning,
     logger: () => {},
@@ -326,7 +344,7 @@ function baseOptions(stage: "types" | "codegen"): CompilerOptions {
     // Most diagnostics are produced by the type stage; codegen diagnostics (LL01xx) need the backend
     // to actually run, so those probes ask for "codegen".
     stage,
-    language: "js",
+    language,
   };
 }
 
@@ -341,7 +359,7 @@ let TMP_DIR: string;
 function diagnosticsOf(probe: Probe, idx: number): Emitted[] {
   const file = path.join(TMP_DIR, `probe_${idx}.lisp`);
   fs.writeFileSync(file, probe.source, "utf8");
-  const context = new Context(file, baseOptions(probe.stage ?? "types"));
+  const context = new Context(file, baseOptions(probe.stage ?? "types", probe.language ?? "js"));
   try {
     context.process(file);
   } catch {
