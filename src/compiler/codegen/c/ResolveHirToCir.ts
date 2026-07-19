@@ -891,6 +891,16 @@ export class ResolveHirToCir {
         // itself, so no dip below the HIR (the A2/A1 drain the probe was measuring). No ledger entry.
         return this.resolveHLiteral(h);
 
+      case "ref":
+        // Step 3 (HRef) landed on dev: a reference ATOM is MODELED -- its source name rides the node,
+        // so the read is no longer an opaque leaf and records NO A2 atom-ref dip (the drain the probe
+        // measured). The binding RESOLUTION (local/global/fn/enum) still runs, and the type still
+        // falls to the channel/symbols where dev has not yet moved full resolution onto the node.
+        return this.resolveIdentifier(h.src as ast.IdentifierNode, true);
+
+      case "free-call":
+        return this.resolveFreeCall(h);
+
       case "nil":
         return { src: h.src, ctype: C_VALUE, kind: "c-nil" };
 
@@ -1548,7 +1558,10 @@ export class ResolveHirToCir {
   }
 
   /** A variable read (A2's `HRef`): resolved via channel, then symbol table -- the measured-sparse path. */
-  private resolveIdentifier(node: ast.IdentifierNode): CExpr {
+  /** `modeled` = the read arrived as an HRef (the name rides the HIR node), so the A2 atom-ref dip is
+   *  DRAINED -- the read is no longer an opaque leaf. Binding resolution and the A1 type fallback still
+   *  run (those channels haven't fully moved onto the node yet); only the atom-ref record is skipped. */
+  private resolveIdentifier(node: ast.IdentifierNode, modeled = false): CExpr {
     const name = ast.symbolName(node);
     // Lowering temps: synthesized identifiers whose type was re-registered on the channel.
     if (name.startsWith("__ll_hir")) {
@@ -1571,14 +1584,14 @@ export class ResolveHirToCir {
       return { src: node, ctype: C_REAL, kind: "c-lit", lit: "real", value: name === "NaN" ? "NAN" : "INFINITY" };
     }
     if (node._type === "composite-identifier") {
-      return this.resolveCompositeRead(node as ast.CompositeIdentifierNode);
+      return this.resolveCompositeRead(node as ast.CompositeIdentifierNode, modeled);
     }
     const cName = mangleC(name);
     const info = this.localInfo(cName);
     // A module-level GLOBAL referenced from inside a function (not shadowed by a local).
     if (!info && this.globalNames.has(name)) {
       const g = this.globalDecls.find((d) => d.cName === cName);
-      this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
+      if (!modeled) this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
       return { src: node, ctype: g?.ctype ?? C_VALUE, kind: "c-ref", cName };
     }
     // A TOP-LEVEL function referenced as a VALUE (not called): becomes a closure via an adapter --
@@ -1587,7 +1600,7 @@ export class ResolveHirToCir {
     if (!info && this.topLevelFns.has(name)) {
       return this.functionValue(node, name);
     }
-    this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
+    if (!modeled) this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
     let t = this.context.nodeTypes.get(node);
     if (t === undefined) {
       const entry = this.dipSymbols("A1", "ref-type-via-symbols", node, "identifier use missing from channel; binding type from symbol table", name);
@@ -1630,7 +1643,7 @@ export class ResolveHirToCir {
   }
 
   /** `a.b` as a VALUE: `this.field`, a local's struct field / native member, or a host global (A9). */
-  private resolveCompositeRead(node: ast.CompositeIdentifierNode): CExpr {
+  private resolveCompositeRead(node: ast.CompositeIdentifierNode, modeled = false): CExpr {
     const parts = node.parts;
     const headName = parts[0];
     // `this.x` inside a method.
@@ -1651,7 +1664,7 @@ export class ResolveHirToCir {
         cName: mangleC(headName),
         cell: info?.cell,
       };
-      this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
+      if (!modeled) this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
       for (const field of parts.slice(1)) expr = this.memberRead(node, expr, field);
       return expr;
     }
@@ -2287,10 +2300,57 @@ export class ResolveHirToCir {
 
   /** A call through a closure VALUE (uniform boxed convention). */
   private closureCall(node: ast.ASTNode, fnv: CExpr, args: ast.ASTNode[]): CExpr {
+    return this.closureCallResolved(node, fnv, args.map((a) => this.resolveAstExpr(a)));
+  }
+
+  private closureCallResolved(node: ast.ASTNode, fnv: CExpr, cArgs: CExpr[]): CExpr {
     this.ledger.record("A3", "closure-call", node, "call through a closure value (boxed calling convention; JS gets this free)");
-    const cArgs = args.map((a) => this.resolveAstExpr(a));
     const ret = fnv.ctype.k === "closure" ? fnv.ctype.ret : C_VALUE;
     return { src: node, ctype: ret, kind: "c-call", callee: { kind: "closure", fn: fnv }, args: cArgs };
+  }
+
+  /** HFreeCall (dev A3, step 2): a resolved FREE call `(f a ...)` -- classifyCall already decided the
+   *  dispatch kind, so NO A2 call-dispatch dip is recorded here (the drain the probe measured). The
+   *  callee is a modeled HRef; the args are lowered HExprs (temp-hoisted at lowering, so resolved via
+   *  resolveExpr, NOT re-read from raw AST). classifyCall excludes operators/constructors/dotted, so
+   *  the callee is only a local closure, a top-level fn, an intrinsic, or an imported l-lang fn. The
+   *  `callee-identity` satellite dip stays where imported-ness is still read from symbols (not yet on
+   *  the node). */
+  private resolveFreeCall(h: Extract<HExpr, { kind: "free-call" }>): CExpr {
+    const node = h.src as ast.ListNode;
+    if (h.callee.kind !== "ref") return this.resolveAstExpr(node); // not a modeled name -> legacy path
+    const name = h.callee.name;
+    const cName = mangleC(name);
+    const cArgs = h.args.map((a) => this.resolveExpr(a));
+
+    // (1) A local binding used as a callee -> a call through a closure value (spec A3).
+    if (this.localInfo(cName)) {
+      return this.closureCallResolved(node, this.resolveIdentifier(h.callee.src as ast.IdentifierNode, true), cArgs);
+    }
+    // (2) A top-level function in this module -> a direct typed C call.
+    if (this.topLevelFns.has(name)) {
+      const sig = this.topLevelFns.get(name)!;
+      return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: cArgs };
+    }
+    // (3) An intrinsic (a std/js host global with a simple name, e.g. `print`) or an imported l-lang
+    // function whose body is lowered on demand. Which of the two is still a symbol-table question --
+    // the callee-identity satellite the node does not yet answer.
+    const entry = this.dipSymbols("A3", "callee-identity", node, "callee resolved through the symbol table (spec wants it on the call node)", name);
+    const builtin = INTRINSIC_CALLS.get(name);
+    if (builtin) {
+      if (entry !== undefined && !this.isExtern(entry)) {
+        this.ledger.record("A9-extern", "stdlib-intrinsic", node, `'${name}' stdlib body shadowed by a C intrinsic`);
+      }
+      return { src: node, ctype: builtin.ret, kind: "c-call", callee: { kind: "intrinsic", ...builtin }, args: cArgs };
+    }
+    const symT = entry?.inferredType;
+    if (symT?.kind === "function" && !this.isExtern(entry) && (entry?.value as any)?._type === "function") {
+      this.lowerImportedFunction(name, entry!.value as ast.FunctionNode);
+      const sig = this.topLevelFns.get(name);
+      if (!sig) return { src: node, ctype: C_VALUE, kind: "c-nil" };
+      return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: cArgs };
+    }
+    throw this.refuseExtern(node, name);
   }
 
   // -- refusals -------------------------------------------------------------------------------------
