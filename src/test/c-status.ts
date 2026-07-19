@@ -1,0 +1,41 @@
+/**
+ * The C backend's ratchet allowlist.
+ *
+ * Paths (relative to examples/) that MUST pass under `npm run test:c`. Semantics enforced by the
+ * runner's C mode:
+ *   - listed and failing        -> red (a regression)
+ *   - unlisted and failing      -> `not-yet` (dim; expected -- the backend is phased)
+ *   - unlisted and PASSING      -> red, "RATCHET" (add it here; a ratchet without teeth decays)
+ *   - refused (LL0105-LL0107)   -> `refused` (informational; the backend said so on purpose)
+ *
+ * A separate file rather than a manifest field: manifest.ts classifies the corpus
+ * backend-independently, while this list is per-backend and churns every phase.
+ */
+export const C_PASSING: readonly string[] = [
+  // Phase A -- core imperative: literals, vars, calls, control flow, loops, strings, print parity.
+  "00-basics/00_vars.lisp",
+  "00-basics/01_calls.lisp",
+  "00-basics/03_optional_and_mutability.lisp",
+  "00-basics/04_nil_handling.lisp",
+  "00-basics/05_whitespace.lisp",
+  "00-basics/06_grouping.lisp",
+  "02-control-flow/00_if_else.lisp",
+  "02-control-flow/01_when.lisp",
+  "02-control-flow/02_flow_if_when.lisp",
+  "02-control-flow/03_flow_cond.lisp",
+  "02-control-flow/04_flow_control.lisp",
+  "03-loops/00_for_loop.lisp",
+  // 03-loops/01_for.lisp needs closures + the `call` builtin -- Phase B.
+  "03-loops/03_for_each.lisp",
+  "03-loops/04_foreach.lisp",
+  "03-loops/05_while.lisp",
+  "17-strings/00_strings.lisp",
+  // Ratcheted in by the first full-corpus run (passed without being targeted):
+  "05-data-structures/03_matrices.lisp",
+  "07-types/00_primitives.lisp",
+  "10-modifiers/00_memoization.lisp", // :comptime folds to constants before codegen
+  "11-comptime/00_comptime.lisp",
+  "80-adversarial/cond_dangling_else.lisp",
+  "80-adversarial/paren_absorption.lisp",
+  "80-adversarial/return_in_logical_operand.lisp",
+];

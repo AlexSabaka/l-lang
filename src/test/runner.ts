@@ -18,10 +18,21 @@ import { spawnSync } from 'child_process';
 import { Context, CompilerOptions, LogLevel } from '../compiler/Context';
 import { MANIFEST, ExampleStatus } from './manifest';
 import { CHILD_ENV } from './childEnv';
+import { C_PASSING } from './c-status';
+
+// Backend under test. `--backend=c` compiles to C, builds with cc, runs the binary against the
+// SAME .expect goldens, with ratchet semantics from c-status.ts. Default `js` is byte-for-byte
+// the historical behavior.
+const BACKEND: 'js' | 'c' = process.argv.includes('--backend=c') ? 'c' : 'js';
+const GAP_LEDGER_ARG = (() => {
+  const i = process.argv.indexOf('--gap-ledger');
+  return i >= 0 ? process.argv[i + 1] : undefined;
+})();
 
 // Configuration
 const EXAMPLES_DIR = path.join(__dirname, '../../examples');
-const COMPILED_DIR = path.join(__dirname, '.compiled');
+const COMPILED_DIR = path.join(__dirname, BACKEND === 'c' ? '.compiled-c' : '.compiled');
+const LEDGER_DIR = path.join(COMPILED_DIR, '.ledgers');
 // node_modules is defense-in-depth only; nothing should ever place one under examples/.
 // (Previously also skipped any directory path containing "p5js" -- a substring match against
 // the FULL path, so checking the repo out under a path containing "p5js" anywhere would have
@@ -33,7 +44,8 @@ const RUN_TIMEOUT_MS = 5000;
 // Mirrors examples/'s directory structure under a gitignored scratch dir, instead of writing
 // generated .js/.js.map next to the .lisp source -- the suite must not dirty the tracked corpus.
 function compiledPathFor(lispPath: string): string {
-  const rel = path.relative(EXAMPLES_DIR, lispPath).replace(/\.lisp$/, '.js');
+  const ext = BACKEND === 'c' ? '.c' : '.js';
+  const rel = path.relative(EXAMPLES_DIR, lispPath).replace(/\.lisp$/, ext);
   return path.join(COMPILED_DIR, rel);
 }
 
@@ -46,12 +58,12 @@ const COMPILE_OPTIONS: CompilerOptions = {
   includeRuntimeShim: true,
   stdout: false,
   stage: 'codegen',
-  language: 'js',
+  language: BACKEND,
 };
 
 interface TestResult {
   name: string;
-  status: 'pass' | 'fail' | 'skip' | 'error' | ExampleStatus;
+  status: 'pass' | 'fail' | 'skip' | 'error' | 'not-yet' | 'refused' | ExampleStatus;
   message?: string;
   expected?: string;
   actual?: string;
@@ -158,6 +170,83 @@ function runNegativeTest(lispPath: string, codes: string[]): TestResult {
   }
 
   return { name: fileName, status: 'pass' };
+}
+
+/** The C-backend refusal codes: an HONEST "not modeled" answer, not a bug. */
+const C_REFUSAL_CODES = ['LL0105', 'LL0106', 'LL0107'];
+
+/**
+ * Compile-to-C -> cc -> run -> diff the SAME golden. Ratchet semantics: a listed file must pass;
+ * an unlisted failure is `not-yet` (the backend is phased); an unlisted PASS is red until the
+ * list is updated -- a ratchet without teeth decays.
+ */
+function runCTest(lispPath: string): TestResult {
+  const fileName = path.basename(lispPath);
+  const relPath = path.relative(EXAMPLES_DIR, lispPath).split(path.sep).join('/');
+  const listed = C_PASSING.includes(relPath);
+  const expectPath = lispPath.replace(/\.lisp$/, '.expect');
+  const cPath = compiledPathFor(lispPath);
+  const binPath = cPath.replace(/\.c$/, '.bin');
+  const softStatus = listed ? undefined : ('not-yet' as const);
+
+  if (!fs.existsSync(expectPath)) {
+    return { name: fileName, status: 'skip', message: 'No .expect file found' };
+  }
+
+  // Step 1: compile to C in-process. The per-file gap ledger lands in LEDGER_DIR for aggregation.
+  process.env.LL_GAP_LEDGER = path.join(LEDGER_DIR, relPath.replace(/\//g, '__') + '.json');
+  let code = '';
+  try {
+    const context = new Context(lispPath, COMPILE_OPTIONS);
+    const result = context.process(lispPath);
+    if (context.results.hasErrors) {
+      const codes = [...new Set(context.results.all.map((m: any) => String(m.code)).filter((c) => c.startsWith('LL')))];
+      const refusal = codes.find((c) => C_REFUSAL_CODES.includes(c));
+      if (refusal && !listed) {
+        return { name: fileName, status: 'refused', message: codes.join(', ') };
+      }
+      return { name: fileName, status: softStatus ?? 'error', message: `C compile refused: ${codes.join(', ')}` };
+    }
+    code = result.code || '';
+  } catch (e: any) {
+    return { name: fileName, status: softStatus ?? 'error', message: `C compile threw: ${String(e.message).split('\n')[0]}` };
+  } finally {
+    delete process.env.LL_GAP_LEDGER;
+  }
+
+  fs.mkdirSync(path.dirname(cPath), { recursive: true });
+  fs.writeFileSync(cPath, code);
+
+  // Step 2: cc. A cc failure is a FINDING (usually a missed coercion), surfaced not hidden.
+  const cc = spawnSync('cc', ['-std=c11', cPath, '-o', binPath, '-lm'], { encoding: 'utf-8', timeout: 30000 });
+  if (cc.status !== 0) {
+    const firstErr = (cc.stderr || '').split('\n').find((l) => l.includes('error')) ?? (cc.stderr || '').split('\n')[0];
+    return { name: fileName, status: softStatus ?? 'error', message: `cc failed: ${firstErr}`, stderr: cc.stderr };
+  }
+
+  // Step 3: run the binary against the same golden the JS suite uses.
+  const run = spawnSync(binPath, [], { encoding: 'utf-8', timeout: RUN_TIMEOUT_MS, env: CHILD_ENV });
+  if (run.error || run.status !== 0) {
+    const why = run.error
+      ? (run.error as any).code === 'ETIMEDOUT' ? `timeout after ${RUN_TIMEOUT_MS}ms` : run.error.message
+      : `exit code ${run.status}`;
+    return { name: fileName, status: softStatus ?? 'error', message: `runtime: ${why}`, actual: run.stdout, stderr: run.stderr };
+  }
+
+  const expected = normalizeOutput(fs.readFileSync(expectPath, 'utf-8'));
+  const actual = normalizeOutput(run.stdout);
+  if (actual !== expected) {
+    return {
+      name: fileName,
+      status: softStatus ?? 'fail',
+      message: 'Output mismatch',
+      expected, actual, stderr: run.stderr,
+    };
+  }
+  if (!listed) {
+    return { name: fileName, status: 'fail', message: `RATCHET: newly passing -- add "${relPath}" to src/test/c-status.ts` };
+  }
+  return { name: fileName, status: 'pass', stderr: run.stderr };
 }
 
 function runTest(lispPath: string): TestResult {
@@ -289,7 +378,7 @@ function printTestResult(result: TestResult, index: number, total: number) {
       }
       break;
     case 'fail':
-      console.log(chalk.red('❌ FAIL'));
+      console.log(chalk.red('❌ FAIL') + (result.message && !result.expected ? chalk.gray(`  (${result.message})`) : ''));
       if (VERBOSE && result.expected && result.actual) {
         console.log(chalk.gray('\n  Expected:'));
         console.log(chalk.yellow(result.expected.split('\n').map(l => `    ${l}`).join('\n')));
@@ -326,6 +415,41 @@ function printTestResult(result: TestResult, index: number, total: number) {
     case 'xfail':
       console.log(chalk.yellow('⏳ XFAIL') + (result.message ? chalk.gray(`  (${result.message})`) : ''));
       break;
+    case 'not-yet':
+      console.log(chalk.gray('🚧 NOT-YET') + (result.message ? chalk.gray(`  (${result.message.slice(0, 100)})`) : ''));
+      break;
+    case 'refused':
+      console.log(chalk.blue('🚫 REFUSED') + (result.message ? chalk.gray(`  (${result.message})`) : ''));
+      break;
+  }
+}
+
+/** Aggregate the per-file gap ledgers the C compiles dropped, print a summary, optionally save. */
+function summarizeGapLedgers() {
+  if (!fs.existsSync(LEDGER_DIR)) return;
+  const totals = new Map<string, number>();
+  const merged: any[] = [];
+  for (const f of fs.readdirSync(LEDGER_DIR)) {
+    try {
+      const rows = JSON.parse(fs.readFileSync(path.join(LEDGER_DIR, f), 'utf-8'));
+      for (const row of rows) {
+        merged.push(row);
+        const key = `${row.assumption}:${row.construct}`;
+        totals.set(key, (totals.get(key) ?? 0) + (row.count ?? 1));
+      }
+    } catch { /* a partial write is telemetry loss, not a failure */ }
+  }
+  if (totals.size === 0) return;
+  console.log(chalk.bold('\n  Gap ledger (spec-assumption evidence, corpus-wide)'));
+  console.log(chalk.bold('  --------------------------------------------------'));
+  const rows = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+  for (const [key, count] of rows.slice(0, 20)) {
+    console.log(`  ${String(count).padStart(6)}  ${key}`);
+  }
+  if (rows.length > 20) console.log(chalk.gray(`  ... and ${rows.length - 20} more rows`));
+  if (GAP_LEDGER_ARG) {
+    fs.writeFileSync(GAP_LEDGER_ARG, JSON.stringify(merged, null, 2));
+    console.log(chalk.gray(`\n  full ledger written to ${GAP_LEDGER_ARG}`));
   }
 }
 
@@ -371,9 +495,11 @@ function main() {
     // 'undeclared' already exited above -- everything reaching here is a real ExampleStatus.
     let result: TestResult;
     if (status === 'test') {
-      result = runTest(filePath);
+      result = BACKEND === 'c' ? runCTest(filePath) : runTest(filePath);
     } else if (status === 'negative') {
-      result = runNegativeTest(filePath, codes ?? []);
+      result = BACKEND === 'c'
+        ? { name: path.basename(filePath), status: 'skip', message: 'negative tests are frontend-only (JS suite covers them)' }
+        : runNegativeTest(filePath, codes ?? []);
     } else {
       result = { name: path.basename(filePath), status: status as ExampleStatus, message: reason };
     }
@@ -388,17 +514,25 @@ function main() {
   const library = results.filter(r => r.status === 'library').length;
   const fixture = results.filter(r => r.status === 'fixture').length;
   const xfail = results.filter(r => r.status === 'xfail').length;
+  const notYet = results.filter(r => r.status === 'not-yet').length;
+  const refused = results.filter(r => r.status === 'refused').length;
 
   console.log(chalk.bold('\n================================'));
-  console.log(chalk.bold('  Test Results'));
+  console.log(chalk.bold(BACKEND === 'c' ? '  Test Results (C backend)' : '  Test Results'));
   console.log(chalk.bold('================================'));
   console.log(chalk.green(`✅ Passed:   ${passed}`));
   console.log(chalk.red(`❌ Failed:   ${failed}`));
   console.log(chalk.red(`💥 Errors:   ${errors}`));
+  if (BACKEND === 'c') {
+    console.log(chalk.gray(`🚧 Not yet:  ${notYet}`));
+    console.log(chalk.blue(`🚫 Refused:  ${refused}`));
+  }
   console.log(chalk.cyan(`📚 Library:  ${library}`));
   console.log(chalk.magenta(`🧪 Fixture:  ${fixture}`));
   console.log(chalk.yellow(`⏳ XFail:    ${xfail}`));
   console.log(chalk.bold(`📊 Total:    ${total}\n`));
+
+  if (BACKEND === 'c') summarizeGapLedgers();
   
   if (failed === 0 && errors === 0) {
     console.log(chalk.green.bold('🎉 All tests passed!\n'));

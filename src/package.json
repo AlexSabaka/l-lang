@@ -11,6 +11,7 @@
     "build": "tsc",
     "test": "ts-node test/runner.ts",
     "test:verbose": "ts-node test/runner.ts --verbose",
+    "test:c": "ts-node test/runner.ts --backend=c",
     "test:grammar-v2-smoke": "ts-node test/smoke-grammar-v2.ts",
     "test:ast-invariants": "ts-node test/ast-invariants.ts",
     "test:type-errors": "ts-node test/type-errors.ts",
