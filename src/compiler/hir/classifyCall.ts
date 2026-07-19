@@ -10,8 +10,8 @@
 // other shape returns `opaque`, and the emitter's existing branches handle those unchanged.
 //
 // Modeled now: FREE-CALL (simple-identifier head), EXT-CALL (`obj.method` -> conforming `:extension`),
-// and METHOD-CALL (`obj.method` on a native/user method). virtual / operator / construct stay `opaque`
-// until their kinds are modeled.
+// METHOD-CALL (`obj.method` on a native/user method), OPERATOR (`(+ a b)`), and VIRTUAL (`obj.method`
+// on an untyped receiver, args -> runtime dispatch). construct stays `opaque` until modeled.
 
 import * as ast from "../frontend/ast";
 import { classifyList, isDottedMemberIndexer } from "../analysis/listForm";
@@ -27,6 +27,7 @@ export interface CallClassCtx {
 export type CallDispatch =
   | { kind: "free"; callee: ast.ASTNode; args: ast.ASTNode[] }
   | { kind: "method"; head: ast.ASTNode; objectName: string; member: string; args: ast.ASTNode[] }
+  | { kind: "virtual"; head: ast.ASTNode; objectName: string; member: string; args: ast.ASTNode[] }
   | { kind: "ext"; head: ast.ASTNode; objectName: string; member: string; fnName: string; args: ast.ASTNode[] }
   | { kind: "operator"; op: string; head: ast.ASTNode; args: ast.ASTNode[] }
   | { kind: "opaque" };
@@ -98,11 +99,19 @@ export function classifyCall(node: ast.ListNode, ctx: CallClassCtx): CallDispatc
       return { kind: "method", head, objectName, member, args };
     }
     if (mk !== undefined) return { kind: "opaque" }; // a native FIELD -- a read, not a call
+    // mk === undefined: the receiver TYPE is unknown here. Prefer a conforming `:extension`; else it is a
+    // DYNAMIC method call.
     const rtype = receiverType(ctx, objectName, head);
-    if (!rtype) return { kind: "opaque" };
-    const fnName = conformingExtensionFn(ctx, buildExtensionTable(ctx), rtype, member);
-    if (!fnName) return { kind: "opaque" };
-    return { kind: "ext", head, objectName, member, fnName, args };
+    if (rtype) {
+      const fnName = conformingExtensionFn(ctx, buildExtensionTable(ctx), rtype, member);
+      if (fnName) return { kind: "ext", head, objectName, member, fnName, args };
+    }
+    // No native member, no conforming extension -> a call on an untyped receiver dispatched at RUNTIME.
+    // With args it is a virtual method call `obj.method(args)` (the emitter's general member-call branch;
+    // JS lets the runtime resolve, a native backend needs a vtable). A 0-arg access falls to `__ll_member`
+    // or a field read -- a distinct emission (member-dyn), left opaque here.
+    if (args.length > 0) return { kind: "virtual", head, objectName, member, args };
+    return { kind: "opaque" };
   }
 
   if (head?._type !== "simple-identifier") return { kind: "opaque" };
