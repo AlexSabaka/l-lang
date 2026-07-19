@@ -302,7 +302,8 @@ export interface CDecl {
 export type CLValue =
   | { kind: "name"; cName: string; ctype: CType; cell?: boolean }
   | { kind: "index"; base: CExpr; index: CExpr; mode: IndexMode }
-  | { kind: "field"; object: CExpr; slot: number; fieldName: string };
+  | { kind: "field"; object: CExpr; slot: number; fieldName: string }
+  | { kind: "dyn-field"; object: CExpr; fieldName: string };
 
 export interface CAssign {
   kind: "c-assign";

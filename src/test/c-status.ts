@@ -71,4 +71,6 @@ export const C_PASSING: readonly string[] = [
   "07-types/02_runtime_type_info.lisp", // unlocked by type/type-by-name reflection
   "18-error-handling/00_errors.lisp",   // try/catch/throw via setjmp/longjmp + :of filter chain
   "20-algorithms/01_evaluator.lisp",    // unlocked by match binding patterns
+  // Phase E broad sweep -- field mutation on boxed receivers (dyn-field store).
+  "30-applications/04_flood_fill.lisp", // (c.mine := v) on an array-element struct -> ll_member_slot
 ];

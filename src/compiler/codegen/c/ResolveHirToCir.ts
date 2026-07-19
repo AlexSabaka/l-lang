@@ -760,7 +760,12 @@ export class ResolveHirToCir {
         return { kind: "field", object: obj, slot: desc.fieldSlot.get(fieldName)!, fieldName };
       }
     }
-    throw this.refuse(node, `field-store:${fieldName}`, "fieldLValue");
+    // A boxed receiver (an array element `(let c cells[i])`, a closure-captured struct cell, an
+    // Unknown slot): the field store cannot be a static slot -- it is a runtime member write by name
+    // (ll_member_slot), the store-side analog of A3's boxed member READ. Still an A4 field-store dip:
+    // the HIR carries no field-store node in either the typed or the boxed case.
+    this.ledger.record("A4", "field-store", node, "struct field store on a boxed receiver -> runtime member write by name (not the HIR)");
+    return { kind: "dyn-field", object: obj, fieldName };
   }
 
   /** HTry -> a setjmp/longjmp handler frame (spec: try/catch is native-pipeline machinery). The

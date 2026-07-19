@@ -57,7 +57,8 @@ export class InsertCoercions {
           const idxT: CType = s.target.mode === "vec" ? C_INT : s.target.mode === "str" ? C_INT : C_VALUE;
           target = { ...s.target, base: this.expr(s.target.base), index: this.coerce(this.expr(s.target.index), idxT) };
         } else if (s.target.kind === "field") target = { ...s.target, object: this.expr(s.target.object) };
-        // A name target keeps its native type; a field/index slot stores boxed (ll_value).
+        else if (s.target.kind === "dyn-field") target = { ...s.target, object: this.coerce(this.expr(s.target.object), C_VALUE) };
+        // A name target keeps its native type; a field/index/dyn-field slot stores boxed (ll_value).
         const expected = s.target.kind === "name" ? s.target.ctype : C_VALUE;
         return { ...s, target, value: this.coerce(this.expr(s.value), expected) };
       }

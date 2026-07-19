@@ -349,6 +349,7 @@ export class EmitCirToC {
   private lvalue(l: CLValue): string {
     if (l.kind === "name") return l.cell ? `(*${l.cName})` : l.cName;
     if (l.kind === "field") return `(${this.expr(l.object)})->fields[${l.slot}]`;
+    if (l.kind === "dyn-field") return `*ll_member_slot(${this.expr(l.object)}, ${JSON.stringify(l.fieldName)})`;
     // index store: a partial write into a vector or map.
     if (l.mode === "map") return `*ll_map_slot(${this.expr(l.base)}, ${this.expr(l.index)})`;
     return `(${this.expr(l.base)})->items[${this.expr(l.index)}]`;

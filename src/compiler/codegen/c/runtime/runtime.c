@@ -985,6 +985,22 @@ static ll_value ll_dyn_member(ll_value recv, ll_str *name) {
   return ll_nil();
 }
 
+/* Lvalue for a member STORE on a boxed receiver: `(c.mine := v)` where `c` is an array element or an
+ * Unknown slot (tag LL_OBJ), or a map field. Returns a pointer to the slot so the caller can write it
+ * -- the write-side analog of ll_dyn_member, mirroring ll_map_slot's pointer-return convention. */
+static ll_value *ll_member_slot(ll_value recv, const char *name) {
+  if (recv.tag == LL_OBJ) {
+    const ll_class *cls = recv.as.o->cls;
+    for (size_t i = 0; i < cls->field_count; i++) {
+      if (strcmp(cls->field_names[i], name) == 0) return &recv.as.o->fields[i];
+    }
+    ll_trap("TypeError", "object has no such field");
+  }
+  if (recv.tag == LL_MAP) return ll_map_slot(recv.as.m, ll_box_str(ll_str_lit(name)));
+  ll_trap("TypeError", "cannot assign a member of a non-object");
+  return (ll_value *)0;
+}
+
 static ll_value ll_dyn_method(int n, ll_value *vals) {
   if (n < 2) ll_trap("TypeError", "dynamic dispatch needs a receiver and a name");
   ll_value recv = vals[0], name = vals[1];
