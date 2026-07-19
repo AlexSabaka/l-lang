@@ -37,6 +37,8 @@ export interface HBase {
 export type HExpr =
   | HTemp
   | HLiteral
+  | HRef
+  | HFreeCall
   | HOpaqueExpr
   | HNil
   | HTernary
@@ -58,6 +60,32 @@ export type HExpr =
 export interface HLiteral extends HBase {
   kind: "literal";
   value: string | number | boolean;
+}
+
+/**
+ * A modeled reference ATOM -- a simple/composite identifier (A2). `name` is the SOURCE name
+ * (backend-neutral): the IR carries it, and each backend owns its identifier policy (Dove) -- the JS
+ * materialization hook (`emitRef`) does encoding / import-inlining / runtime-shim registration; an LLVM
+ * backend would mangle a symbol. `type` is the resolved binding's type. First slice of the
+ * resolved-atom contract the dispatch cuts (A3) reuse. (Fuller resolution -- which declaration,
+ * imported-ness -- moves onto the node in a follow-up; the JS hook re-resolves for now.)
+ */
+export interface HRef extends HBase {
+  kind: "ref";
+  name: string;
+}
+
+/**
+ * A resolved FREE CALL `(f a ...)` -- the first modeled dispatch kind (A3). The dispatch decision was
+ * made at lowering by the shared `classifyCall` (D1: `f` names a function, or the call carries args),
+ * so the emitter just builds the `CallExpression` -- no re-dispatch. `callee` is the modeled reference,
+ * `args` the lowered operands (with the same evaluation-order hoisting the opaque path used). Emitted
+ * directly; falls back to legacy emission of `src` only when substituted into a legacy-parent operand.
+ */
+export interface HFreeCall extends HBase {
+  kind: "free-call";
+  callee: HExpr;
+  args: HExpr[];
 }
 
 /** A lowering-introduced name (`__ll_hir_<n>`), declared by an HDeclTemp and read here. */

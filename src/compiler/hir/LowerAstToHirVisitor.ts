@@ -26,6 +26,7 @@ import type { Context } from "../Context";
 import * as ast from "../frontend/ast";
 import type { InferredType } from "../analysis/SymbolTable";
 import { classifyList } from "../analysis/listForm";
+import { classifyCall } from "./classifyCall";
 import { HirModule } from "./HirModule";
 import { TempAllocator } from "./TempAllocator";
 import {
@@ -132,6 +133,11 @@ export class LowerAstToHirVisitor {
     return { ...this.base(src), kind: "literal", value: (src as any).value };
   }
 
+  /** A modeled reference atom (A2) -- source name on the node; JS materialization stays a per-backend hook. */
+  private ref(src: ast.ASTNode): HExpr {
+    return { ...this.base(src), kind: "ref", name: ast.symbolName(src as ast.IdentifierNode) };
+  }
+
   private temp(name: string, src: ast.ASTNode): HExpr {
     return { ...this.base(src), kind: "temp", name };
   }
@@ -231,6 +237,10 @@ export class LowerAstToHirVisitor {
       case "boolean":
         // Modeled literal atoms (A2). The numeric tower, char, and formatted-string stay opaque.
         return this.placeValue(this.literal(node), [], dest);
+      case "simple-identifier":
+      case "composite-identifier":
+        // Modeled reference atoms (A2). Value-position identifiers only -- a callee stays legacy.
+        return this.placeValue(this.ref(node), [], dest);
       default:
         return this.leaf(node, dest);
     }
@@ -266,10 +276,13 @@ export class LowerAstToHirVisitor {
         // keep the special form legacy, atomize its operands through the HIR (the class name of a
         // `new` is a plain identifier, so it stays inline and constructor detection is unaffected).
         return this.lowerCallLike(node, dest);
-      case "call":
+      case "call": {
         // `||`/`&&` short-circuit, so a prelude-bearing right operand can't be hoisted eagerly.
         if (this.isLogicalHead(node)) return this.lowerLogical(node, dest);
+        const dispatch = classifyCall(node, this.context);
+        if (dispatch.kind === "free") return this.lowerFreeCall(node, dispatch.callee, dispatch.args, dest);
         return this.lowerCallLike(node, dest);
+      }
       case "apply":
         return this.lowerCallLike(node, dest);
       default:
@@ -328,7 +341,13 @@ export class LowerAstToHirVisitor {
    * the compound is force-bound to a temp below, and omitting it from `last` let an earlier impure
    * operand run after a later compound's prelude.
    */
-  private lowerOperands(children: ast.ASTNode[]): { prelude: HStmt[]; children: ast.ASTNode[]; diverged: boolean } {
+  /**
+   * Lower operands to ATOMS (HExprs), hoisting the ones that need statements into a shared prelude and
+   * binding compounds / earlier impure siblings to temps so left-to-right order survives. The core of
+   * both the legacy operand path (`lowerOperands`, which converts these to AST) and the modeled call
+   * (`lowerFreeCall`, which keeps them as HExprs) -- so both bind operands identically.
+   */
+  private lowerCallArgs(children: ast.ASTNode[]): { prelude: HStmt[]; atoms: HExpr[]; diverged: boolean } {
     const lowered = children.map((c) => this.lowerNode(c, VALUE));
     let last = -1;
     for (let i = 0; i < lowered.length; i++) {
@@ -336,21 +355,43 @@ export class LowerAstToHirVisitor {
       if (l.value === null || l.stmts.length > 0 || !this.isSubstitutable(l.value)) last = i;
     }
     const prelude: HStmt[] = [];
-    const out: ast.ASTNode[] = [];
+    const atoms: HExpr[] = [];
     for (let i = 0; i < lowered.length; i++) {
       const l = lowered[i];
       prelude.push(...l.stmts);
-      if (l.value === null) return { prelude, children: out, diverged: true };
+      if (l.value === null) return { prelude, atoms, diverged: true };
       const mustBind = !this.isSubstitutable(l.value) || (i < last && !this.isImmovable(l.value));
       if (mustBind) {
-        const atom = this.temps.fresh() as string;
-        prelude.push(this.declTempInit(atom, l.value, children[i]));
-        out.push(this.hexprToAst(this.temp(atom, children[i]), children[i]));
+        const t = this.temps.fresh() as string;
+        prelude.push(this.declTempInit(t, l.value, children[i]));
+        atoms.push(this.temp(t, children[i]));
       } else {
-        out.push(this.hexprToAst(l.value, children[i]));
+        atoms.push(l.value);
       }
     }
-    return { prelude, children: out, diverged: false };
+    return { prelude, atoms, diverged: false };
+  }
+
+  /** As `lowerCallArgs`, but hands the atoms back as AST for the LEGACY emitter (temps substituted in). */
+  private lowerOperands(children: ast.ASTNode[]): { prelude: HStmt[]; children: ast.ASTNode[]; diverged: boolean } {
+    const r = this.lowerCallArgs(children);
+    return {
+      prelude: r.prelude,
+      children: r.atoms.map((a, i) => this.hexprToAst(a, children[i])),
+      diverged: r.diverged,
+    };
+  }
+
+  /**
+   * A resolved free call (`classifyCall` said `free`). Lower the args as HExprs (same binding as the
+   * opaque path), model the callee as a reference, and let the emitter build the `CallExpression` --
+   * the call is no longer an opaque leaf re-dispatched by `visitList`. (A3.)
+   */
+  private lowerFreeCall(node: ast.ListNode, callee: ast.ASTNode, args: ast.ASTNode[], dest: Dest): Lowered {
+    const { prelude, atoms, diverged } = this.lowerCallArgs(args);
+    if (diverged) return { stmts: prelude, value: null };
+    const call: HExpr = { ...this.base(node), kind: "free-call", callee: this.ref(callee), args: atoms };
+    return this.placeValue(call, prelude, dest);
   }
 
   private lowerCallLike(node: ast.ListNode, dest: Dest): Lowered {
@@ -401,7 +442,9 @@ export class LowerAstToHirVisitor {
   }
 
   private isSubstitutable(h: HExpr): boolean {
-    return h.kind === "temp" || h.kind === "opaque-expr" || h.kind === "literal";
+    // "free-call" is substitutable like the opaque call it replaces (inline-able, and rebuilt with its
+    // lowered args when handed to a legacy-parent -- see hexprToAst), so nested free-calls stay inline.
+    return h.kind === "temp" || h.kind === "opaque-expr" || h.kind === "literal" || h.kind === "ref" || h.kind === "free-call";
   }
 
   private lowerFormattedString(node: ast.FormattedStringNode, dest: Dest): Lowered {
@@ -927,7 +970,17 @@ export class LowerAstToHirVisitor {
       if (t) this.context.recordSynthesizedNodeType(id, t);
       return id;
     }
-    if (h.kind === "opaque-expr" || h.kind === "literal") return h.src;
+    if (h.kind === "free-call") {
+      // Rebuild the call AST with the LOWERED args (temps substituted) so a free-call handed to a
+      // legacy-parent operand re-emits with its hoisted operands, not its originals.
+      const rebuilt = {
+        ...(h.src as ast.ListNode),
+        nodes: [h.callee.src, ...h.args.map((a) => this.hexprToAst(a, a.src))],
+      } as ast.ListNode;
+      if (h.type) this.context.recordSynthesizedNodeType(rebuilt, h.type);
+      return rebuilt;
+    }
+    if (h.kind === "opaque-expr" || h.kind === "literal" || h.kind === "ref") return h.src;
     return srcForLoc; // nil/ternary/seq don't reach here (pure -> no prelude -> opaque path)
   }
 
