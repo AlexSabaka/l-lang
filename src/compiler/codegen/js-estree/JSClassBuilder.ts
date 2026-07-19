@@ -289,34 +289,12 @@ export class ClassBuilder {
       });
     }
 
-    // Add field assignments (fields use encoded names)
+    // Add field assignments `this.<field> = <param>` (A4). Modeled as an HFieldInit and emitted through
+    // the single HIR-emit path (the store shape lives there now, not as raw ESTree here). Visibility is
+    // ERASED (D11) -- a plain `this.x`, never `this.#x`; see buildFields.
     for (const v of this.ctorVars) {
-      // fieldName should already be encoded via visitor
-      const fieldName = this.visitor.visit(v.name) as ESTree.Identifier;
-
-      // The parameter name matches the unencoded field name logic, so we must encode it too
-      // to match constructor params
       const paramNameRaw = (v.name as any).id ?? (v.name as any).name;
-      const paramRefName = encodeIdentifier(paramNameRaw);
-
-      // Visibility is ERASED (D11) -- a plain `this.x`, never `this.#x`. See buildFields.
-      const targetField: ESTree.MemberExpression = {
-        type: "MemberExpression",
-        object: { type: "ThisExpression" },
-        property: fieldName,
-        computed: false,
-        optional: false
-      };
-
-      bodyStatements.push({
-        type: "ExpressionStatement",
-        expression: {
-          type: "AssignmentExpression",
-          operator: "=",
-          left: targetField as any,
-          right: { type: "Identifier", name: paramRefName } // Use encoded param name
-        }
-      });
+      bodyStatements.push(this.visitor.buildFieldInit(v.name, paramNameRaw, v));
     }
 
     const ctorMethods = this.methods.filter(x => x.modifiers.some(m => m.modifier === "ctor"));

@@ -285,12 +285,27 @@ export type HStmt =
   | HForEach
   | HVarDecl
   | HUserAssign
+  | HFieldInit
   | HOpaqueStmt;
 
 /** An expression evaluated for effect; its value is discarded. */
 export interface HExprStmt extends HBase {
   kind: "expr-stmt";
   expr: HExpr;
+}
+
+/**
+ * A constructor field STORE `this.field = param` (A4 -- the spec's "per-field this.x = param"). The
+ * first modeled piece of the class DEFINITION: `field` is the field-name node (the JS emitter encodes it
+ * via `leafExpr`, an LLVM backend would resolve a slot); `paramName` the source constructor-param name
+ * (encoded to the RHS via the `encodeName` hook). Emitted directly by the HIR emitter -- so the store
+ * SHAPE has one home -- with `JSClassBuilder` building the nodes for now (the class is not yet lowered;
+ * when it is, the lowering produces these and JSClassBuilder becomes the thin consumer the spec wants).
+ */
+export interface HFieldInit extends HBase {
+  kind: "field-init";
+  field: ast.ASTNode;
+  paramName: string;
 }
 
 /** `let <name>;` (init null) or `const <name> = <init>;`. The up-front declaration a value-if assigns into. */

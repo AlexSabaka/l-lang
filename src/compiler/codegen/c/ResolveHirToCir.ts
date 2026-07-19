@@ -706,6 +706,13 @@ export class ResolveHirToCir {
         case "try":
           return this.resolveTry(h);
 
+        case "field-init":
+          // A4 (dev, JS-side): a constructor field store, built by JSClassBuilder at JS emit time -- it
+          // never reaches the C backend, which lowers classes through its own class-registration path
+          // (resolveConstruct / registerClass), not the shared body lowering. Unreachable here; refuse
+          // rather than guess. When the class is lowered to HIR proper, the C emitter consumes this.
+          throw this.refuse(h.src, "field-init", "resolveStmt");
+
         default: {
           const never: never = h;
           throw this.refuse((never as any).src, `hir:${(never as any).kind}`, "resolveStmt");

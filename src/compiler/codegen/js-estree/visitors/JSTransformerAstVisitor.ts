@@ -1802,7 +1802,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * this is a mechanical map; the leaf hooks below are the ONLY judgment left, and they defer to the
    * legacy visitor (an opaque leaf), to `asValue` for a D11 store, and to `nilLiteral` for D9 bottom.
    */
-  private emitHir(block: HBlock): ESTree.Statement[] {
+  private ensureHirEmitter(): EmitHirToEstree {
     if (!this.hirEmitter) {
       const legacy: LegacyLeafEmitter = {
         leafExpr: (n) => this.visitExpr(n),
@@ -1822,10 +1822,25 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           this.assembleForEach(node as ast.ForEachNode, collection, bodyStmt, elseFor),
         emitVarDecl: (node, initES) => this.emitVarDecl(node as ast.VariableNode, initES),
         emitAssign: (node, rhsES) => this.emitAssign(node as ast.SimpleAssignmentNode, rhsES),
+        encodeName: (n) => encodeIdentifier(n),
       };
       this.hirEmitter = new EmitHirToEstree(legacy);
     }
-    return this.hirEmitter.emitBlock(block);
+    return this.hirEmitter;
+  }
+
+  private emitHir(block: HBlock): ESTree.Statement[] {
+    return this.ensureHirEmitter().emitBlock(block);
+  }
+
+  /**
+   * A4: a constructor field store `this.<field> = <param>`, emitted through the ONE HIR-emit path (as an
+   * HFieldInit) rather than synthesized as raw ESTree in JSClassBuilder. The class is not yet lowered, so
+   * JSClassBuilder still BUILDS the node (passing the field node + source param name); this single-sources
+   * the store shape and is the first modeled piece of the class definition (A4).
+   */
+  public buildFieldInit(field: ast.ASTNode, paramName: string, src: ast.ASTNode): ESTree.Statement {
+    return this.ensureHirEmitter().emitStatement({ src, type: undefined, kind: "field-init", field, paramName } as any);
   }
 
   /**

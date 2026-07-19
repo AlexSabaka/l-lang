@@ -43,6 +43,9 @@ export interface LegacyLeafEmitter {
   emitVarDecl(node: ast.ASTNode, initES: ESTree.Expression | null): ESTree.Statement;
   /** A simple `target = <rhs>` (write target + D11 copy) over the HIR-emitted rhs. */
   emitAssign(node: ast.ASTNode, rhsES: ESTree.Expression): ESTree.Expression;
+  /** Encode a source name to its emitted JS identifier (encodeIdentifier). A per-backend seam -- the JS
+   *  identifier policy for a constructor param's RHS in a field store (HFieldInit). */
+  encodeName(name: string): string;
 }
 
 /** Mirrors ESTreeBuilder.loc: a located source range, or null when the node has no location. */
@@ -66,6 +69,12 @@ export class EmitHirToEstree {
   emitBlock(block: HBlock): ESTree.Statement[] {
     // Drop EmptyStatements -- an empty pattern-hoist (a match that binds no variables) emits one.
     return block.stmts.map((s) => this.emitStmt(s)).filter((s) => s.type !== "EmptyStatement");
+  }
+
+  /** Emit a single HIR statement. The entry a non-body caller (JSClassBuilder, building a constructor)
+   *  uses to emit a modeled class-body node -- an HFieldInit -- through the one HIR-emit path. */
+  emitStatement(h: HStmt): ESTree.Statement {
+    return this.emitStmt(h);
   }
 
   private emitStmt(h: HStmt): ESTree.Statement {
@@ -248,6 +257,27 @@ export class EmitHirToEstree {
           loc: loc(h.src),
         } as ESTree.TryStatement;
       }
+
+      case "field-init":
+        // A4: a constructor field store `this.<field> = <param>`. The field name is materialized by the
+        // JS `leafExpr` (encoding); the RHS param name by the `encodeName` hook. Byte-identical to the
+        // raw store JSClassBuilder built. No `loc` -- matching the synthesized constructor body, which
+        // carries none (the constructor is not a source function).
+        return {
+          type: "ExpressionStatement",
+          expression: {
+            type: "AssignmentExpression",
+            operator: "=",
+            left: {
+              type: "MemberExpression",
+              object: { type: "ThisExpression" } as ESTree.ThisExpression,
+              property: this.legacy.leafExpr(h.field),
+              computed: false,
+              optional: false,
+            } as ESTree.MemberExpression,
+            right: { type: "Identifier", name: this.legacy.encodeName(h.paramName) } as ESTree.Identifier,
+          } as ESTree.AssignmentExpression,
+        } as ESTree.ExpressionStatement;
 
       default: {
         const never: never = h;
