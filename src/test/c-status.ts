@@ -63,4 +63,8 @@ export const C_PASSING: readonly string[] = [
   "20-algorithms/04_mutual_recursion.lisp",
   "20-algorithms/05_memoization.lisp",
   "20-algorithms/06_memoization_manual.lisp", // module-global memo cache + index assignment
+  // Phase D -- match binding patterns (A7 decomposition): identifier/type/vector patterns, guards.
+  "04-pattern-matching/00_guards.lisp",
+  "04-pattern-matching/01_vector_patterns.lisp",
+  "80-adversarial/match_arm_bare_if.lisp",
 ];

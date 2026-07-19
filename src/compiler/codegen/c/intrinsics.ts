@@ -57,6 +57,9 @@ export const INTRINSIC_CALLS: ReadonlyMap<string, IntrinsicDef> = new Map<string
   ["Math.pow", def("ll_math_pow", [C_REAL, C_REAL], C_REAL)],
   ["Math.min", def("ll_math_min", [C_REAL, C_REAL], C_REAL)],
   ["Math.max", def("ll_math_max", [C_REAL, C_REAL], C_REAL)],
+  ["Math.random", def("ll_math_random", [], C_REAL)],
+  ["Math.sign", def("ll_math_sign", [C_REAL], C_REAL)],
+  ["Math.trunc", def("ll_math_trunc", [C_REAL], C_REAL)],
   // -- runtime builtins (the SYMBOL_MAP surface; the runtime is the backend's own contract, but the
   //    callee-identity-by-name resolution is A3 evidence) --
   ["get", def("ll_get", [C_VALUE, C_VALUE], C_VALUE)],

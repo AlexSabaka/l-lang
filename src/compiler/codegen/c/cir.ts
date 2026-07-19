@@ -42,11 +42,20 @@ export type CExpr = CBase & (
   | CFieldGet
   | CClosureMake
   | CTypeTest
+  | CBind
   | CBox
   | CUnbox
   | CCast
   | CCopy
 );
+
+/** A pattern binding as an EXPRESSION: `(cName = value)`. Used inside a match pattern test's
+ *  bind-then-test sequence (spec A7 -- the bind-then-test ordering the JS emitter fuses with commas). */
+export interface CBind {
+  kind: "c-bind";
+  cName: string;
+  value: CExpr;
+}
 
 /** Construct a struct/class instance (spec A4 -- construction is NOT in the HIR; resolved from the
  *  symbol table). Fields are stored boxed in slot order; `args` are the positional constructor args. */

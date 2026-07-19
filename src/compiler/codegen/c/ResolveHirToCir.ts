@@ -525,10 +525,19 @@ export class ResolveHirToCir {
           return this.resolveForEach(h);
 
         case "hoist": {
-          // Phase A supports only non-binding patterns (any/constant/nil); a binding match refuses in
-          // pattern-test resolution, so the hoist has nothing to declare.
-          this.ledger.record("A7", "hoist", h.src, "pattern variable set computed below the HIR (legacy patternVars seam)");
-          return [];
+          // Declare the match's pattern variables (all arm bindings) at the top of its block scope,
+          // boxed -- the A7 hoist. The name SET is computed here from the raw MatchNode (the legacy
+          // patternVars seam), which is itself a dip below the HIR.
+          const match = this.dipAst("A7", "hoist", h.src, "pattern variable set computed from the raw MatchNode (legacy patternVars seam)", () => h.src as ast.MatchNode);
+          const names = new Set<string>();
+          for (const c of match.cases ?? []) this.patternBindNames(c.pattern, names);
+          const out: CStmt[] = [];
+          for (const n of names) {
+            const cName = mangleC(n);
+            this.declareLocal(cName, C_VALUE);
+            out.push({ src: h.src, ctype: C_VOID, kind: "c-decl", cName, declCType: C_VALUE, init: null });
+          }
+          return out;
         }
 
         case "try":
@@ -861,7 +870,8 @@ export class ResolveHirToCir {
       kind: "c-temp",
       name: h.scrutName,
     };
-    let test = this.patternCondition(pattern, scrut, h.src);
+    // Pattern tests operate on a BOXED scrutinee (type test, dynamic length/index all take ll_value).
+    let test = this.patternCondition(pattern, this.boxed(scrut), h.src);
     if (h.guard) {
       const guard = this.dipAst("A7", "pattern-guard", h.src, "guard expression read from raw AST", () => h.guard!);
       test = {
@@ -872,17 +882,111 @@ export class ResolveHirToCir {
     return test;
   }
 
+  private readonly TRUE = (src: ast.ASTNode): CExpr => ({ src, ctype: C_BOOL, kind: "c-lit", lit: "bool", value: "true" });
+
+  /** Explicitly box a value (a P1-inserted c-box that P2 passes through). Identity if already boxed. */
+  private boxed(e: CExpr): CExpr {
+    if (e.ctype.k === "value") return e;
+    return { src: e.src, ctype: C_VALUE, kind: "c-box", inner: e, from: e.ctype };
+  }
+
+  /** Decompose a match pattern into a boolean test that may BIND pattern variables as a side effect,
+   *  in bind-then-test order (spec A7). A binding is `(name = value)` sequenced before the test. */
   private patternCondition(p: ast.PatternNode, scrut: CExpr, src: ast.ASTNode): CExpr {
     switch (p._type) {
       case "any-pattern":
-        return { src, ctype: C_BOOL, kind: "c-lit", lit: "bool", value: "true" };
+        return this.TRUE(src);
+      case "functional-pattern":
+        // A closure-shape pattern -- untestable at run time (D: functional-pattern is dead). Refuse.
+        throw this.refuse(src, "pattern:functional", "patternCondition");
       case "constant-pattern": {
-        const c = (p as ast.ConstantPatternNode).constant;
-        const lit = this.resolveAstExpr(c);
+        const lit = this.resolveAstExpr((p as ast.ConstantPatternNode).constant);
         return { src, ctype: C_BOOL, kind: "c-binop", op: "==", mode: "eq-deep", lhs: scrut, rhs: lit };
       }
+      case "identifier-pattern": {
+        // A bare name binds the whole scrutinee and always matches.
+        const cName = mangleC(ast.symbolName((p as ast.IdentifierPatternNode).id));
+        return this.bindThen(cName, scrut, this.TRUE(src), src);
+      }
+      case "type-pattern": {
+        // `v :of T`: bind v = scrut, then test the runtime type (D41).
+        const tp = p as ast.TypePatternNode;
+        const cName = mangleC(ast.symbolName(tp.id));
+        const info = this.typeTestName(tp.type) ?? { name: "?", primitive: false };
+        const test: CExpr = { src, ctype: C_BOOL, kind: "c-type-test", operand: scrut, typeName: info.name, primitive: info.primitive };
+        return this.bindThen(cName, scrut, test, src);
+      }
+      case "vector-pattern":
+      case "list-pattern": {
+        const elements = (p as ast.VectorPatternNode).elements ?? [];
+        return this.vectorPattern(elements, scrut, src);
+      }
+      case "map-pattern":
+        return this.mapPattern(p as ast.MapPatternNode, scrut, src);
       default:
         throw this.refuse(src, `pattern:${p._type}`, "patternCondition");
+    }
+  }
+
+  /** `(cName = value, test)` -- a bind sequenced before a boolean test (the A7 comma fusion). */
+  private bindThen(cName: string, value: CExpr, test: CExpr, src: ast.ASTNode): CExpr {
+    const bind: CExpr = { src, ctype: value.ctype, kind: "c-bind", cName, value };
+    return { src, ctype: C_BOOL, kind: "c-seq", exprs: [bind, test] };
+  }
+
+  /** `[p0 p1 ...]` -- is-array && length-match && each element sub-pattern (against the boxed elem). */
+  private vectorPattern(elements: ast.PatternNode[], scrut: CExpr, src: ast.ASTNode): CExpr {
+    const hasRest = elements.some((e) => e._type === "rest-pattern");
+    const fixed = elements.filter((e) => e._type !== "rest-pattern");
+    let test: CExpr = { src, ctype: C_BOOL, kind: "c-type-test", operand: scrut, typeName: "Array", primitive: false };
+    const lenExpr: CExpr = { src, ctype: C_INT, kind: "c-member", object: scrut, fieldName: "length", runtimeFn: "ll_dyn_length" };
+    const lenLit: CExpr = { src, ctype: C_INT, kind: "c-lit", lit: "int", value: String(fixed.length) };
+    const lenCmp: CExpr = { src, ctype: C_BOOL, kind: "c-binop", op: hasRest ? ">=" : "==", mode: "int", lhs: lenExpr, rhs: lenLit };
+    test = this.and(test, lenCmp, src);
+    fixed.forEach((el, i) => {
+      // The scrutinee is boxed, and the length check already guaranteed the index is in range.
+      const idx: CExpr = { src, ctype: C_INT, kind: "c-lit", lit: "int", value: String(i) };
+      const elem: CExpr = { src, ctype: C_VALUE, kind: "c-index", base: scrut, index: idx, mode: "boxed", checked: false };
+      test = this.and(test, this.patternCondition(el, elem, src), src);
+    });
+    return test;
+  }
+
+  /** `{:k pat ...}` -- is-map && each key's value matches its sub-pattern (total lookup, no trap). */
+  private mapPattern(p: ast.MapPatternNode, scrut: CExpr, src: ast.ASTNode): CExpr {
+    let test: CExpr = { src, ctype: C_BOOL, kind: "c-type-test", operand: scrut, typeName: "Map", primitive: false };
+    for (const pair of p.pairs ?? []) {
+      const key = ast.keyName(pair.key as any);
+      const keyLit: CExpr = { src, ctype: C_STR, kind: "c-lit", lit: "str", value: key };
+      // Total map access (`ll_get`): an absent key is nil, not a trap.
+      const val: CExpr = { src, ctype: C_VALUE, kind: "c-call", callee: { kind: "intrinsic", runtimeFn: "ll_get", variadic: false, params: [C_VALUE, C_VALUE], ret: C_VALUE }, args: [scrut, keyLit] };
+      test = this.and(test, this.patternCondition(pair.pattern, val, src), src);
+    }
+    return test;
+  }
+
+  private and(a: CExpr, b: CExpr, src: ast.ASTNode): CExpr {
+    return { src, ctype: C_BOOL, kind: "c-binop", op: "&&", mode: "bool", lhs: a, rhs: b };
+  }
+
+  /** The names a match pattern binds (identifier / type / destructuring binders). */
+  private patternBindNames(p: ast.PatternNode | undefined, into: Set<string>): void {
+    if (!p) return;
+    switch (p._type) {
+      case "identifier-pattern": into.add(ast.symbolName((p as ast.IdentifierPatternNode).id)); return;
+      case "type-pattern": into.add(ast.symbolName((p as ast.TypePatternNode).id)); return;
+      case "vector-pattern":
+      case "list-pattern":
+        for (const el of (p as ast.VectorPatternNode).elements ?? []) this.patternBindNames(el, into);
+        return;
+      case "map-pattern":
+        for (const pr of (p as ast.MapPatternNode).pairs ?? []) this.patternBindNames(pr.pattern, into);
+        return;
+      case "rest-pattern":
+        this.patternBindNames((p as any).pattern, into);
+        return;
+      default:
+        return;
     }
   }
 
@@ -1625,15 +1729,12 @@ export class ResolveHirToCir {
       }
       if (lt.k === "int" && rt.k === "int") return "int";
       if (NUMERIC(lt) && NUMERIC(rt)) return "real";
-      // A boxed operand with a numeric partner (or a numeric checker result): the narrowing case.
-      const resultT = this.ctypeOfAst(src, "binop-result");
-      if ((lt.k === "value" || rt.k === "value") && (NUMERIC(lt) || NUMERIC(rt) || NUMERIC(resultT))) {
-        this.ledger.record("A6", "narrowed-arith", src, "boxed operand in numeric arithmetic; unbox inserted (JS erases this coercion)");
-        return resultT.k === "int" && op !== "/" ? "int" : NUMERIC(resultT) ? (resultT.k as "int" | "real") : "real";
-      }
+      // A boxed operand CANNOT be narrowed to a native type here -- its runtime Int/Real is unknown,
+      // so unboxing it as the guessed type would trap. Use the generic runtime op (the JS shim's
+      // native tail), which dispatches on the actual tag and preserves int-ness; the RESULT is boxed
+      // and unboxed at its use site off the checker's type (the A6 coercion the boxing forces).
       if (lt.k === "value" || rt.k === "value") {
-        // Fully-dynamic arithmetic: the JS operator shim's native tail (registry dispatch is Phase C).
-        this.ledger.record("A3", "boxed-op", src, "operands untyped; runtime generic operator (JS shim's native tail)");
+        this.ledger.record("A6", "boxed-arith", src, "boxed operand in arithmetic; runtime tag dispatch (cannot narrow an Unknown)");
         return "boxed";
       }
       throw this.refuse(src, `arith-on-${lt.k}/${rt.k}`, "binopMode");
@@ -1649,12 +1750,11 @@ export class ResolveHirToCir {
       if (lt.k === "str" && rt.k === "str") return "str-cmp";
       if (lt.k === "int" && rt.k === "int") return "int";
       if (NUMERIC(lt) && NUMERIC(rt)) return "real";
-      if ((lt.k === "value" || rt.k === "value") && (NUMERIC(lt) || NUMERIC(rt))) {
-        this.ledger.record("A6", "narrowed-compare", src, "boxed operand in ordered comparison; unbox inserted");
-        return lt.k === "real" || rt.k === "real" ? "real" : "int";
-      }
+      // A boxed operand CANNOT be safely narrowed here: its runtime type (Int vs Real) is unknown, so
+      // guessing from the partner would unbox a Real as an Int and trap. Dispatch on the actual tag
+      // at run time (the JS operator-shim's native tail) -- the coercion the boxing forces (A6/A3).
       if (lt.k === "value" || rt.k === "value") {
-        this.ledger.record("A3", "boxed-op", src, "operands untyped; runtime generic comparison");
+        this.ledger.record("A6", "boxed-compare", src, "boxed operand in comparison; runtime tag dispatch (cannot narrow an Unknown)");
         return "boxed";
       }
       throw this.refuse(src, `compare-on-${lt.k}/${rt.k}`, "binopMode");

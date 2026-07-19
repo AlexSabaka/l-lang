@@ -333,13 +333,17 @@ export class EmitCirToC {
         switch (e.callee.kind) {
           case "free":
             return `${e.callee.cName}(${args.join(", ")})`;
-          case "intrinsic":
+          case "intrinsic": {
             if (e.callee.variadic) {
               return args.length
                 ? `${e.callee.runtimeFn}(${args.length}, (ll_value[]){${args.join(", ")}})`
                 : `${e.callee.runtimeFn}(0, (ll_value*)0)`;
             }
-            return `${e.callee.runtimeFn}(${args.join(", ")})`;
+            // A host intrinsic ignores EXTRA args (JS semantics: `Math.random(0,100)` is valid and
+            // returns [0,1)). Truncate to the declared arity so the C call type-checks.
+            const fixed = args.slice(0, e.callee.params.length);
+            return `${e.callee.runtimeFn}(${fixed.join(", ")})`;
+          }
           case "closure": {
             // The uniform boxed convention: unbox the value to a closure, pass boxed args. P2 has
             // coerced `fn` to a boxed value and every arg to `value`.
@@ -468,6 +472,8 @@ export class EmitCirToC {
       }
       case "c-type-test":
         return `ll_is_type(${this.expr(e.operand)}, "${e.typeName}", ${e.primitive ? 1 : 0})`;
+      case "c-bind":
+        return `(${e.cName} = ${this.expr(e.value)})`;
       default: {
         const never: never = e;
         throw new Error(`C emit: unhandled expression kind '${(never as any).kind}'`);

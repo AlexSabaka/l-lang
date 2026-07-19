@@ -934,6 +934,13 @@ static ll_value ll_dyn_member(ll_value recv, ll_str *name) {
     return ll_box_int(ll_dyn_length(recv));
   }
   if (recv.tag == LL_MAP) return ll_get_map(recv.as.m, name);
+  /* A struct/class field on a boxed receiver (a pattern-bound `v`, an Unknown slot): slot by name. */
+  if (recv.tag == LL_OBJ) {
+    const ll_class *cls = recv.as.o->cls;
+    for (size_t i = 0; i < cls->field_count; i++) {
+      if (strcmp(cls->field_names[i], name->data) == 0) return recv.as.o->fields[i];
+    }
+  }
   ll_trap("TypeError", "value has no such member");
   return ll_nil();
 }
@@ -1054,6 +1061,9 @@ static double ll_math_round(double x) { return floor(x + 0.5); } /* JS Math.roun
 static double ll_math_pow(double a, double b) { return pow(a, b); }
 static double ll_math_min(double a, double b) { return a < b ? a : b; }
 static double ll_math_max(double a, double b) { return a > b ? a : b; }
+static double ll_math_random(void) { return (double)rand() / ((double)RAND_MAX + 1.0); }
+static double ll_math_sign(double x) { return x > 0 ? 1.0 : x < 0 ? -1.0 : x; }
+static double ll_math_trunc(double x) { return trunc(x); }
 
 /* -- runtime type tests (D41 / spec A7). Mirrors JS __ll_is_type: Int/Real are one "number", and a
  *    generic's arguments are erased (`Int[]` tests "is an array"). Nominal class tags are Phase D. -- */

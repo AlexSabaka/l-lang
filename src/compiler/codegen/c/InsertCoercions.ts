@@ -211,6 +211,10 @@ export class InsertCoercions {
         // The runtime test takes a boxed value.
         return { ...e, operand: this.coerce(this.expr(e.operand), C_VALUE) };
 
+      case "c-bind":
+        // A pattern binding stores into a boxed (ll_value) pattern variable.
+        return { ...e, value: this.coerce(this.expr(e.value), C_VALUE) };
+
       case "c-copy":
         return { ...e, inner: this.expr(e.inner) };
 
