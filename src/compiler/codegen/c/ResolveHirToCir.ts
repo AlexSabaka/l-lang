@@ -1682,7 +1682,10 @@ export class ResolveHirToCir {
       // the JS backend's ensureSymbolInlined) and call it directly.
       if (symT?.kind === "function" && !this.isExtern(entry) && (entry?.value as any)?._type === "function") {
         this.lowerImportedFunction(name, entry!.value as ast.FunctionNode);
-        const sig = this.topLevelFns.get(name)!;
+        const sig = this.topLevelFns.get(name);
+        // A refused import (e.g. an imported `:gen` generator) registered nothing; the compilation is
+        // already refused, so return a placeholder rather than crash on a missing signature.
+        if (!sig) return { src: node, ctype: C_VALUE, kind: "c-nil" };
         const cArgs = args.map((a) => this.resolveAstExpr(a));
         return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: cArgs };
       }
@@ -1910,10 +1913,12 @@ export class ResolveHirToCir {
     this.topLevelFns.set(name, { params, ret: useAnnotated ? annotatedRet! : ret, arity: fn.params.length });
   }
 
-  /** Pre-scan the module body: register every top-level function BEFORE resolving (forward refs). */
+  /** Pre-scan the module body: register every top-level function BEFORE resolving (forward refs).
+   *  A generator/async function is registered too (with a stub signature) so its call sites resolve
+   *  without crashing -- the whole compilation is refused (LL0105) and the output nulled regardless. */
   private registerModuleFunctions(items: ast.ASTNode[]): void {
     for (const n of items) {
-      if (n?._type === "function" && (n as ast.FunctionNode).name && !(n as ast.FunctionNode).generator && !(n as ast.FunctionNode).async
+      if (n?._type === "function" && (n as ast.FunctionNode).name
           && !(n as ast.FunctionNode).modifiers?.some((m) => m.modifier === "operator")) {
         this.registerTopLevel(n as ast.FunctionNode, ast.symbolName((n as ast.FunctionNode).name));
       }
