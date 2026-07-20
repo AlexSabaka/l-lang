@@ -170,6 +170,12 @@ export class ResolveHirToCir {
 
   private dipSymbols(a: Assumption, construct: string, src: ast.ASTNode, note: string, name: string): SymbolEntry | undefined {
     this.ledger.record(a, construct, src, note);
+    return this.resolveSymbolSafe(name, src);
+  }
+
+  /** Resolve a symbol without recording a ledger dip -- for a lookup whose RESULT is not a below-HIR type
+   *  read (e.g. a local ref's binding-KIND classification, whose type already rides the binding). */
+  private resolveSymbolSafe(name: string, src: ast.ASTNode): SymbolEntry | undefined {
     try {
       return this.context.symbolTable.resolveSymbol(name, src);
     } catch {
@@ -1829,7 +1835,14 @@ export class ResolveHirToCir {
     if (!modeled) this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
     let t = this.context.nodeTypes.get(node);
     if (t === undefined) {
-      const entry = this.dipSymbols("A1", "ref-type-via-symbols", node, "identifier use missing from channel; binding type from symbol table", name);
+      // A LOCAL binding already carries its type from its DEFINITION SITE (declareLocal recorded the
+      // declaration / combinator-result CType, read below as info.ctype) -- so a local ref is NOT a
+      // ref-type-via-symbols dip (its type is on the binding, spec A1's "type at the definition"). The
+      // symbol entry is still resolved for the extern / function-as-value classification (a binding-KIND
+      // question, not a type one), but WITHOUT recording the type dip; only a non-local ref records it.
+      const entry = info
+        ? this.resolveSymbolSafe(name, node)
+        : this.dipSymbols("A1", "ref-type-via-symbols", node, "identifier use missing from channel; binding type from symbol table", name);
       if (this.isExtern(entry)) throw this.refuseExtern(node, name);
       // An imported/top-level function referenced as a value but not yet registered: treat as a value.
       if (entry?.inferredType?.kind === "function" && this.isLocalDef(entry)) {
