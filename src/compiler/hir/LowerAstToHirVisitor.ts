@@ -159,7 +159,10 @@ export class LowerAstToHirVisitor {
   }
 
   private hReturn(value: HExpr | null, isStore: boolean, src: ast.ASTNode): HReturn {
-    return { ...this.base(src), kind: "return", value, isStore };
+    // The D11 copy decision for the returned value, resolved ONCE (A5) so both backends consume it, not
+    // re-derive it. `isStore` marked a value return; the fine decision is `shouldCopyOnStore` on its node.
+    const copies = isStore && value !== null ? shouldCopyOnStore(src, this.context) : false;
+    return { ...this.base(src), kind: "return", value, copies };
   }
 
   private hIf(test: HExpr, then: HBlock, els: HBlock | null, src: ast.ASTNode): HIf {

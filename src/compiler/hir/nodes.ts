@@ -393,11 +393,12 @@ export interface HBlockStmt extends HBase {
   body: HBlock;
 }
 
-/** `return <value>;`. `isStore` as for HAssignTemp -- a returned struct value is copied (D11). */
+/** `return <value>;`. `copies` is the resolved D11 copy decision for the returned value (A5) --
+ *  computed once at lowering (`shouldCopyOnStore`), consumed by both backends, never re-derived. */
 export interface HReturn extends HBase {
   kind: "return";
   value: HExpr | null;
-  isStore: boolean;
+  copies: boolean;
 }
 
 /**

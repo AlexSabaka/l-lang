@@ -683,10 +683,8 @@ export class ResolveHirToCir {
 
         case "return": {
           let value = h.value ? this.resolveExpr(h.value) : null;
-          if (value && h.isStore) {
-            this.ledger.record("A5", "return-store", h.src, "isStore flag stands in for an explicit copy node");
-            value = { src: h.src, ctype: value.ctype, kind: "c-copy", inner: value };
-          }
+          // The copy decision rode the HIR node (A5) -- consume it, no re-derive, no dip.
+          if (value) value = this.copyDecided(value, h.src, h.copies);
           return [{ src: h.src, ctype: C_VOID, kind: "c-return", value }];
         }
 

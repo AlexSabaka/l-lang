@@ -260,7 +260,7 @@ export class EmitHirToEstree {
 
       case "return": {
         let arg: ESTree.Expression | null = h.value ? this.emitExpr(h.value) : null;
-        if (arg && h.isStore) arg = this.legacy.storeValue(arg, h.src);
+        if (arg && h.copies) arg = this.legacy.storeValue(arg, h.src);
         return { type: "ReturnStatement", argument: arg, loc: loc(h.src) } as ESTree.ReturnStatement;
       }
 
