@@ -76,6 +76,31 @@ export function typeProvablyNotAStruct(type: InferredType, ctx: CopyDecisionCtx)
   );
 }
 
+// The primitives a parameter annotation can name -- a value of one of these can never be a struct.
+const PRIMITIVE_PARAM_NAMES = new Set(["Int", "Real", "String", "Char", "Boolean", "Bool", "Void"]);
+
+/**
+ * Does a parameter of this DECLARED type need a D11 copy on entry (the callee-side pass-by-value copy)?
+ *
+ * Copy UNLESS the annotation proves not-a-struct: a known primitive name, or a resolved class/array/map.
+ * An `interface` does NOT prove it (a struct behind an interface is still a value -- D48/Q1); an
+ * unannotated param keeps its copy (gradual typing is not permission to assume not-a-struct). This is
+ * the single source the param-copy prologue (JS `isDeclaredPrimitive`) and the HIR lowering (which
+ * caches the per-param decision for the native backend) both read, so they cannot disagree.
+ */
+export function shouldCopyParam(type: ast.TypeNode | undefined, ctx: CopyDecisionCtx): boolean {
+  if (!type) return true;
+  const inner: any = (type as any).type;
+  // An array or optional annotation keeps the copy (a reference / nilable -- the runtime no-ops it).
+  if ((type as any).array || inner?.array) return true;
+  if ((type as any).optional || inner?.optional) return true;
+  const name = typeof inner?.name === "string" ? inner.name : inner?.name?.name;
+  if (typeof name !== "string") return true;
+  if (PRIMITIVE_PARAM_NAMES.has(name)) return false;
+  const declared = ctx.symbolTable?.resolveSymbol?.(name)?.inferredType;
+  return declared ? !typeProvablyNotAStruct(declared, ctx) : true;
+}
+
 /** Does the value stored by `node` need a D11 copy? (A missing copy aliases; a redundant one is a no-op.) */
 export function shouldCopyOnStore(node: ast.ASTNode | undefined | null, ctx: CopyDecisionCtx): boolean {
   if (!node) return false;

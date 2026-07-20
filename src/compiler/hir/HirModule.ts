@@ -13,6 +13,10 @@ import type { HBlock } from "./nodes";
  */
 export class HirModule {
   private readonly bodies = new Map<ast.ASTNode, HBlock>();
+  // The per-parameter D11 copy-on-entry decision (A5), keyed by the FunctionNode, indexed in param
+  // order. Resolved once at lowering (shouldCopyParam) so both backends' param-copy prologues consume
+  // it instead of re-deriving the copy on their own representation. A MISSING entry -> re-derive.
+  private readonly paramCopies = new Map<ast.ASTNode, boolean[]>();
 
   set(owner: ast.ASTNode, body: HBlock): void {
     this.bodies.set(owner, body);
@@ -21,6 +25,15 @@ export class HirModule {
   /** The lowered body for `owner`, or undefined -- undefined means "emit the legacy way". */
   bodyFor(owner: ast.ASTNode): HBlock | undefined {
     return this.bodies.get(owner);
+  }
+
+  setParamCopies(owner: ast.ASTNode, copies: boolean[]): void {
+    this.paramCopies.set(owner, copies);
+  }
+
+  /** The per-param copy decisions for `owner`, or undefined -- undefined means "re-derive". */
+  paramCopiesFor(owner: ast.ASTNode): boolean[] | undefined {
+    return this.paramCopies.get(owner);
   }
 
   get size(): number {

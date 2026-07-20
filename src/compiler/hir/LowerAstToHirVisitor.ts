@@ -27,7 +27,7 @@ import * as ast from "../frontend/ast";
 import type { InferredType } from "../analysis/SymbolTable";
 import { classifyList } from "../analysis/listForm";
 import { classifyCall } from "./classifyCall";
-import { shouldCopyOnStore } from "./valueCopy";
+import { shouldCopyOnStore, shouldCopyParam } from "./valueCopy";
 import { HirModule } from "./HirModule";
 import { TempAllocator } from "./TempAllocator";
 import {
@@ -97,6 +97,8 @@ export class LowerAstToHirVisitor {
     }
     this.walkFunctions(root, (fn) => {
       module.set(fn, { stmts: this.lowerSeq(fn.body ?? [], EFFECT).stmts });
+      // The per-param D11 copy-on-entry decision, resolved ONCE (A5) so both backends consume it.
+      module.setParamCopies(fn, (fn.params ?? []).map((p) => shouldCopyParam(p.type, this.context)));
     });
     return module;
   }

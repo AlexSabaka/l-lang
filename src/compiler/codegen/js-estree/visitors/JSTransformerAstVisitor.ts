@@ -13,7 +13,7 @@ import {
 } from "../../../utils";
 import { CodegenDiagnostics as CD } from "../../../rules/diagnostics";
 import { TypeChecker } from "../../../types/TypeChecker";
-import { shouldCopyOnStore, typeProvablyNotAStruct } from "../../../hir/valueCopy";
+import { shouldCopyOnStore, shouldCopyParam } from "../../../hir/valueCopy";
 import { isBuiltinModifier, hasModifier } from "../../../helpers/modifiers";
 import * as acorn from "acorn";
 import { ClassBuilder } from "../JSClassBuilder";
@@ -3738,16 +3738,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * Public because JSClassBuilder needs it too -- field initializers are emitted there, and the
    * builder reaches the visitor through an `any` to dodge a circular import.
    */
-  /**
-   * Does this inferred type PROVE the value is not a struct? Delegates to the SHARED, corrected
-   * type-predicate (compiler/hir/valueCopy.ts) so the param-copy prologue and the store-copy decide
-   * `interface` the same way (a struct behind an interface is still a value -- D48/Q1). This is the
-   * one remaining caller: needsValueCopy now routes through `shouldCopyOnStore`.
-   */
-  private provablyNotAStruct(type: InferredType): boolean {
-    return typeProvablyNotAStruct(type, this.context);
-  }
-
   public asValue(
     emitted: ESTree.Expression,
     source: ast.ASTNode | undefined | null
@@ -3840,7 +3830,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       //
       // An UNANNOTATED parameter is still wrapped. Gradual typing cuts the same way here as everywhere
       // else: not knowing the type is not permission to assume it is not a struct.
-      if (this.isDeclaredPrimitive(types?.[i])) return;
+      if (!shouldCopyParam(types?.[i], this.context)) return;
 
       prologue.push({
         type: "ExpressionStatement",
@@ -3861,33 +3851,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     return prologue;
   }
 
-  /** The primitives. A value of one of these can never be a struct. */
-  private static readonly PRIMITIVE_TYPE_NAMES = new Set([
-    "Int", "Real", "String", "Char", "Boolean", "Bool", "Void",
-  ]);
-
-  /** Is this annotation a known primitive -- and NOT an array of one? `Int[]` is an array. */
-  private isDeclaredPrimitive(type: ast.TypeNode | undefined): boolean {
-    if (!type) return false;
-
-    const inner: any = (type as any).type;
-    // The array flag can sit on either node -- the same shape bug the type converter has to handle.
-    if ((type as any).array || inner?.array) return false;
-    // An optional `T?` is still a T (or nil), and nil is not a struct either -- but keep it simple and
-    // let the runtime decide; the marker check is a single property read.
-    if ((type as any).optional || inner?.optional) return false;
-
-    const name = typeof inner?.name === "string" ? inner.name : inner?.name?.name;
-    if (typeof name !== "string") return false;
-    if (JSTransformerAstVisitor.PRIMITIVE_TYPE_NAMES.has(name)) return true;
-
-    // Not just the PRIMITIVES. A parameter annotated with a CLASS cannot hold a struct either -- and
-    // the symbol table has known which is which since the types stage ran. This used to consult a
-    // hardcoded list of primitive NAMES and nothing else, so every class-typed parameter in the corpus
-    // got a copy that provably could not do anything.
-    const declared = this.context.symbolTable?.resolveSymbol(name)?.inferredType;
-    return declared ? this.provablyNotAStruct(declared) : false;
-  }
 
   /** A plain JS value -> the ESTree expression that reconstructs it. */
   private dataToESTree(value: any, at: ast.ASTNode): ESTree.Expression {

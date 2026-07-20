@@ -2502,9 +2502,19 @@ export class ResolveHirToCir {
    *  primitive, array or class-reference param is not (it is already a value or a shared reference). */
   private paramCopyPrologue(fn: ast.FunctionNode, params: CParam[]): CStmt[] {
     const out: CStmt[] = [];
-    for (const p of params) {
+    // The per-param copy decision rode the HIR node (A5, keyed by fn, in param order) -- consume it, no
+    // re-derive, no dip. Guard on length so a mismatched param list (a synthetic prologue) falls back to
+    // the raw ctype rule + the dip. The ctype guard stays either way (never c-copy a non-obj/value).
+    const raw = this.hir.paramCopiesFor(fn);
+    const copies = raw && raw.length === params.length ? raw : undefined;
+    for (let i = 0; i < params.length; i++) {
+      const p = params[i];
       if (p.ctype.k !== "value" && p.ctype.k !== "obj") continue;
-      this.ledger.record("A5", "param-copy", fn, "callee-side D11 copy-on-entry (a struct/boxed param passes by value)");
+      if (copies) {
+        if (!copies[i]) continue; // node decision: no copy (e.g. a class param -- ll_copy would no-op)
+      } else {
+        this.ledger.record("A5", "param-copy", fn, "callee-side D11 copy-on-entry (a struct/boxed param passes by value)");
+      }
       out.push({
         src: fn, ctype: C_VOID, kind: "c-assign",
         target: { kind: "name", cName: p.cName, ctype: p.ctype },
