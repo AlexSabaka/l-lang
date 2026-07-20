@@ -33,6 +33,7 @@ import {
   HBase,
   HBlock,
   HCatch,
+  HCtor,
   HExpr,
   HFieldDecl,
   HIf,
@@ -269,7 +270,8 @@ export class LowerAstToHirVisitor {
       const sourceName = (cls as any).__ll_source_name ?? cls.name?.name ?? null;
       const isStruct = node._type === "struct";
       const fields = this.classFields(cls);
-      return { stmts: [{ ...this.base(node), kind: "class", name, superName, sourceName, isStruct, fields }], value: null };
+      const ctor = this.lowerCtor(cls);
+      return { stmts: [{ ...this.base(node), kind: "class", name, superName, sourceName, isStruct, fields, ctor }], value: null };
     }
     return this.leaf(node, dest);
   }
@@ -298,6 +300,98 @@ export class LowerAstToHirVisitor {
       });
     }
     return fields;
+  }
+
+  /** The flattened body nodes of a class/struct (a grouped form carries its children in `.nodes`). */
+  private classBodyNodes(cls: ast.ClassNode): ast.ASTNode[] {
+    return (cls.body ?? []).map((x: any) => (x.nodes ? x.nodes : [x])).flat(2);
+  }
+
+  /** The `:ctor` VARIABLE nodes of a class (the field stores + the local constructor parameters). Mirrors
+   *  JSClassBuilder.processBody's `ctorVars`. */
+  private ctorVarsOf(cls: ast.ClassNode): ast.VariableNode[] {
+    return this.classBodyNodes(cls).filter(
+      (b): b is ast.VariableNode =>
+        !!b && b._type === "variable" && ((b as ast.VariableNode).modifiers ?? []).some((m) => m.modifier === "ctor")
+    );
+  }
+
+  /** A class's `:ctor` parameters as {name, default, type}. Mirrors getCtorParamsFromClassNode /
+   *  localCtorParams (they are the same computation) -- used for both this class and a resolved parent. */
+  private ctorParamsOf(cls: ast.ClassNode): Array<{ name: string; defaultValue: ast.ASTNode | undefined; type: ast.TypeNode | undefined }> {
+    return this.ctorVarsOf(cls).map((v) => ({
+      name: (v.name as any).id ?? (v.name as any).name,
+      defaultValue: (v as any).value ?? undefined,
+      type: v.type,
+    }));
+  }
+
+  /**
+   * The resolved constructor (A4, step 5) -- a faithful mirror of JSClassBuilder.buildConstructor's
+   * structural half, done here so the SHAPE lives on the HIR and the emitter merely assembles it. The
+   * inheritance pass-through (parent required params first, in the parent's order, deduped against the
+   * local names) and the default-before-required diagnostic payload are computed exactly as there.
+   */
+  private lowerCtor(cls: ast.ClassNode): HCtor | null {
+    // 1. Parent class + its ctor params (via the symbol table), for pass-through.
+    let parentClassName: string | null = null;
+    let parentArgs: Array<{ name: string; defaultValue: ast.ASTNode | undefined; type: ast.TypeNode | undefined }> = [];
+    if (cls.extends && cls.extends.length > 0) {
+      const parentTypeNode = cls.extends[0];
+      parentClassName = parentTypeNode.type.name;
+      const parentSymbol = this.context.symbolTable.resolveSymbol(parentTypeNode.type);
+      if (parentSymbol && parentSymbol.value && (parentSymbol.value as ast.ASTNode)._type === "class") {
+        parentArgs = this.ctorParamsOf(parentSymbol.value as ast.ClassNode);
+      }
+    }
+
+    // 2/3. Local params + final param list & super args (parent pass-through, then local).
+    const localCtorParams = this.ctorParamsOf(cls);
+    const localCtorArgNames = localCtorParams.map((p) => p.name);
+    const finalConstructorParams: typeof localCtorParams = [];
+    const superCallArgs: string[] = [];
+    for (const pArg of parentArgs) {
+      if (localCtorArgNames.includes(pArg.name)) {
+        superCallArgs.push(pArg.name);
+      } else {
+        finalConstructorParams.push(pArg);
+        superCallArgs.push(pArg.name);
+      }
+    }
+    for (const localParam of localCtorParams) finalConstructorParams.push(localParam);
+
+    const ctorVars = this.ctorVarsOf(cls);
+
+    // 4. No constructor needed.
+    if (finalConstructorParams.length === 0 && !parentClassName && ctorVars.length === 0) return null;
+
+    // 5. Default-before-required: a defaulted param ahead of a required one (legal JS, a trap). Carry the
+    //    diagnostic payload; the emitter reports it (the order is the source's and is not reshuffled).
+    let defaultBeforeRequired: HCtor["defaultBeforeRequired"] = null;
+    const firstDefaulted = finalConstructorParams.findIndex((p) => p.defaultValue != null);
+    if (firstDefaulted !== -1) {
+      const required = finalConstructorParams.slice(firstDefaulted + 1).filter((p) => p.defaultValue == null);
+      if (required.length > 0) {
+        defaultBeforeRequired = {
+          param: finalConstructorParams[firstDefaulted].name,
+          plural: required.length > 1,
+          required: required.map((p) => `'${p.name}'`).join(", "),
+        };
+      }
+    }
+
+    const ctorMethods = this.classBodyNodes(cls)
+      .filter((b): b is ast.FunctionNode => !!b && b._type === "function" && ((b as ast.FunctionNode).modifiers ?? []).some((m) => m.modifier === "ctor"))
+      .map((m) => m.name);
+
+    return {
+      params: finalConstructorParams.map((p) => ({ name: p.name, defaultSrc: p.defaultValue ?? null, type: p.type })),
+      hasSuper: !!parentClassName,
+      superArgs: superCallArgs,
+      fieldInits: ctorVars.map((v) => ({ src: v, field: v.name, paramName: (v.name as any).id ?? (v.name as any).name })),
+      ctorMethods,
+      defaultBeforeRequired,
+    };
   }
 
   /** A statement sequence (a block, or a function body). Last item takes `dest`; the rest are effects. */

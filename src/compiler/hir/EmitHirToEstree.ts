@@ -55,6 +55,12 @@ export interface LegacyLeafEmitter {
    *  runtime decorator, so a modified class becomes a `const` binding) and coerce to a statement. The
    *  remaining legacy post-pass around the modeled shell (JSTransformer.applyModifiersToClass). */
   finishClass(src: ast.ASTNode, decl: ESTree.ClassDeclaration): ESTree.Statement;
+  /** The D11 value-copy prologue for a constructor: `p = __ll_copy(p)` for each parameter that may be a
+   *  struct (a declared primitive is skipped). A per-backend seam -- the JS `parameterCopyPrologue`. */
+  paramCopyPrologue(params: ESTree.Pattern[], types: (ast.TypeNode | undefined)[]): ESTree.Statement[];
+  /** Report the default-before-required constructor diagnostic (a defaulted param ahead of a required one).
+   *  A legacy hook so the emitter stays free of the diagnostics machinery (JSTransformer.report). */
+  reportDefaultBeforeRequired(src: ast.ASTNode, className: string, param: string, plural: boolean, required: string): void;
 }
 
 /** Mirrors ESTreeBuilder.loc: a located source range, or null when the node has no location. */
@@ -125,7 +131,38 @@ export class EmitHirToEstree {
           static: f.isStatic,
           loc: loc(f.src),
         }));
-        const members = [...markers, ...fieldDefs, ...this.legacy.emitClassBody(h.src)];
+        // A4 step 5: the constructor, after the fields and before the methods. The resolved shape (params,
+        // super args, field stores, ctor-method calls, and the diagnostic) is on `h.ctor`; the emitter
+        // builds the MethodDefinition, with the D11 copy prologue + defaults via legacy hooks and the
+        // body statements via the already-modeled HSuperCall / HFieldInit / HCtorMethodCall nodes.
+        const ctorDefs: ESTree.MethodDefinition[] = [];
+        if (h.ctor) {
+          const c = h.ctor;
+          const params: ESTree.Pattern[] = c.params.map((p) => {
+            const id: ESTree.Identifier = { type: "Identifier", name: this.legacy.encodeName(p.name), loc: loc(h.src) };
+            if (p.defaultSrc == null) return id;
+            return { type: "AssignmentPattern", left: id, right: this.legacy.leafExpr(p.defaultSrc), loc: loc(h.src) } as ESTree.AssignmentPattern;
+          });
+          if (c.defaultBeforeRequired) {
+            this.legacy.reportDefaultBeforeRequired(h.src, h.name, c.defaultBeforeRequired.param, c.defaultBeforeRequired.plural, c.defaultBeforeRequired.required);
+          }
+          const body: ESTree.Statement[] = [
+            ...this.legacy.paramCopyPrologue(params, c.params.map((p) => p.type)),
+            ...(c.hasSuper ? [this.emitStmt({ src: h.src, type: undefined, kind: "super-call", args: c.superArgs } as HStmt)] : []),
+            ...c.fieldInits.map((fi) => this.emitStmt({ src: fi.src, type: undefined, kind: "field-init", field: fi.field, paramName: fi.paramName } as HStmt)),
+            ...c.ctorMethods.map((m) => this.emitStmt({ src: h.src, type: undefined, kind: "ctor-method-call", method: m } as HStmt)),
+          ];
+          ctorDefs.push({
+            type: "MethodDefinition",
+            key: { type: "Identifier", name: "constructor" },
+            value: { type: "FunctionExpression", id: null, params, body: { type: "BlockStatement", body }, generator: false, async: false },
+            kind: "constructor",
+            computed: false,
+            static: false,
+            loc: loc(h.src),
+          });
+        }
+        const members = [...markers, ...fieldDefs, ...ctorDefs, ...this.legacy.emitClassBody(h.src)];
         const decl: ESTree.ClassDeclaration = {
           type: "ClassDeclaration",
           id: ident(h.name, h.src),

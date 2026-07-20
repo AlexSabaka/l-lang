@@ -485,6 +485,38 @@ export interface HFieldDecl {
   isStatic: boolean;
 }
 
+/**
+ * A resolved constructor PARAMETER (A4, step 5). `name` is the raw source name (the JS emitter encodes it
+ * and, for a default, wraps in an AssignmentPattern over the re-visited `defaultSrc`). `type` is carried
+ * only so the D11 copy prologue can SKIP a parameter declared a known primitive -- it cannot be a struct.
+ */
+export interface HCtorParam {
+  name: string;
+  defaultSrc: ast.ASTNode | null;
+  type: ast.TypeNode | undefined;
+}
+
+/**
+ * The resolved CONSTRUCTOR of a class (A4, step 5), or absent (`HClass.ctor === null`) when the class needs
+ * none. The whole of JSClassBuilder.buildConstructor's structural work is done in the lowering now:
+ *   - `params` -- the final parameter list after inheritance pass-through (a parent's required ctor params
+ *     come first, in the parent's order, then the local `:ctor` params), each with its default + type.
+ *   - `hasSuper` / `superArgs` -- whether to emit `super(...)` and the source names forwarded to it.
+ *   - `fieldInits` -- the `this.<field> = <param>` stores (the local `:ctor` variables), as HFieldInit data.
+ *   - `ctorMethods` -- the `:ctor` initializer method names, run last (`this.<method>()`), as HCtorMethodCall.
+ *   - `defaultBeforeRequired` -- the LL diagnostic payload when a defaulted param precedes a required one
+ *     (legal JS, a trap; the parameter ORDER is the source's and must not be reordered). Reported at emit.
+ * The JS emitter assembles the MethodDefinition; the D11 parameter-copy prologue stays a legacy hook.
+ */
+export interface HCtor {
+  params: HCtorParam[];
+  hasSuper: boolean;
+  superArgs: string[];
+  fieldInits: Array<{ src: ast.ASTNode; field: ast.ASTNode; paramName: string }>;
+  ctorMethods: ast.ASTNode[];
+  defaultBeforeRequired: { param: string; plural: boolean; required: string } | null;
+}
+
 export interface HClass extends HBase {
   kind: "class";
   /** The declared type name (raw / unencoded) -- the JS class id, a native struct tag. */
@@ -503,6 +535,8 @@ export interface HClass extends HBase {
   /** The class-body FIELDS (non-`:ctor` member variables), in source order. Emitted as PropertyDefinitions
    *  before the constructor; a native backend reads the struct layout from them. */
   fields: HFieldDecl[];
+  /** The resolved constructor, or null when the class needs none (no params, no parent, no `:ctor` vars). */
+  ctor: HCtor | null;
 }
 
 /** A leaf statement: emit by coercing the legacy `visit(src)` to a statement. */

@@ -504,16 +504,10 @@ export class ClassBuilder {
   public buildBodyMembers(): (ESTree.MethodDefinition | ESTree.PropertyDefinition)[] {
     const body: (ESTree.MethodDefinition | ESTree.PropertyDefinition)[] = [];
 
-    // The metadata markers (`__ll_name` / `__ll_struct`, step 3) and the FIELDS (step 4) are modeled on
-    // HClass now and built by the HIR emitter, first, from `sourceName` / `isStruct` / `fields`. `build()`
-    // (the legacy fallback) still prepends them via the methods below so a direct `visit(classNode)` stays
-    // correct.
-
-    // Add constructor if needed
-    const constructor = this.buildConstructor();
-    if (constructor) {
-      body.push(constructor);
-    }
+    // The metadata markers (`__ll_name` / `__ll_struct`, step 3), the FIELDS (step 4) and the CONSTRUCTOR
+    // (step 5) are modeled on HClass now and built by the HIR emitter, in that order before the methods,
+    // from `sourceName` / `isStruct` / `fields` / `ctor`. `build()` (the legacy fallback) still prepends
+    // them via the methods below so a direct `visit(classNode)` stays correct.
 
     // Add methods
     body.push(...this.buildMethods());
@@ -536,12 +530,14 @@ export class ClassBuilder {
   }
 
   public build(): ESTree.ClassDeclaration {
-    // The legacy fallback path: prepend the markers (step 3) and fields (step 4) the HIR emitter now
-    // models, so a direct `visit(classNode)` still produces the byte-identical declaration.
+    // The legacy fallback path: prepend the markers (step 3), fields (step 4) and constructor (step 5) the
+    // HIR emitter now models, so a direct `visit(classNode)` still produces the byte-identical declaration.
+    const ctor = this.buildConstructor();
     const body = [
       ...this.buildTypeNameMarker(),
       ...this.buildValueTypeMarker(),
       ...this.buildFields(),
+      ...(ctor ? [ctor] : []),
       ...this.buildBodyMembers(),
     ];
     return {

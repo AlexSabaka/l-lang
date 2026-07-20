@@ -1828,6 +1828,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         encodeName: (n) => encodeIdentifier(n),
         emitClassBody: (n) => this.emitClassBody(n as ast.ClassNode),
         finishClass: (n, decl) => this.finishClass(n as ast.ClassNode, decl),
+        paramCopyPrologue: (params, types) => this.parameterCopyPrologue(params, types),
+        reportDefaultBeforeRequired: (src, className, param, plural, required) =>
+          this.report(CD.DefaultBeforeRequired, src, { className, param, plural, required }),
       };
       this.hirEmitter = new EmitHirToEstree(legacy);
     }
