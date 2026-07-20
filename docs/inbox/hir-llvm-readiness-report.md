@@ -127,6 +127,14 @@ Ordered by leverage, each a self-contained increment:
 
 ## Open design questions for the Dove round
 
+> **✅ Resolved in the 2026-07 design round** — see `hir-design-round-brief.md` §A and `DECISIONS.md`
+> **D48** (+ **D46** for the coercion substrate). In short: **(1)** split — A6 out of core (a
+> single-backend pass), A5's copy-*decision* becomes an `HCopyStore` node (core, closes a divergence
+> hole); **(2)** fat-pointer `{tag,payload}` ratified; **(3)** callee-identity drains onto the call
+> node, the closure repr is the last real core design; **(4)** patterns become an `HMatchTest` IR fact;
+> **(5)** the `field-get` slot rides `HMemberRead` (resolve, don't relabel). The originals are kept
+> below for the record.
+
 1. **A5 / A6 as native-pipeline passes, confirmed?** The spec leans this way ("the copy/coerce decision
    is IR nodes, only the materialization is backend code"). Confirming it removes ~900 dips from the
    *core* scope in one ruling — they become the LLVM lane's copy-insertion + coercion passes.

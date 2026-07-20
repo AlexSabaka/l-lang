@@ -1,5 +1,11 @@
 # RTTI and cast — a brief for ruling
 
+> **Update (2026-07 design round):** Q4/Q5 are resolved — a cast form **does** exist, but narrowly:
+> `(cast<T> x)` invokes a **user-defined `defcast :explicit` conversion** (`DECISIONS.md` **D46** / B-3),
+> *distinct* from RTTI type-**narrowing** (which `:of` / D41 still owns). The "no cast" recommendation
+> held for *narrowing*; *conversion* is the case that earns the form. RTTI-first still stands — `defcast`
+> rides the same type machinery. See `hir-design-round-brief.md` §B-3.
+
 Five research lenses, all measured against the tree at `7f12c39`. Citations are `file:line`. Anything
 I could not verify is marked UNVERIFIED.
 
