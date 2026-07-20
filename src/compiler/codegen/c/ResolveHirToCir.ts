@@ -117,6 +117,10 @@ export class ResolveHirToCir {
    *  them apart because each function resolves on an isolated scope stack.) */
   private inFunctionBody = false;
   private refused = false;
+  /** A class/struct's src ClassNode -> its modeled HClass, so registerClass can CONSUME the field layout
+   *  the HIR resolved (names + order + parent + struct-ness + defaults) instead of re-deriving it from the
+   *  symbol table. Verified across the corpus to reproduce the checker-derived layout exactly. */
+  private readonly hclassBySrc = new Map<ast.ASTNode, any>();
 
   constructor(
     private readonly context: Context,
@@ -270,6 +274,7 @@ export class ResolveHirToCir {
     const out: ast.ASTNode[] = [];
     const walk = (b: HBlock | undefined): void => {
       for (const s of b?.stmts ?? []) {
+        if (s.kind === "class") this.hclassBySrc.set(s.src, s); // capture the modeled HClass for registerClass
         if (s.kind === "opaque-stmt" || s.kind === "class" || s.kind === "expr-stmt" || s.kind === "var-decl") out.push(s.src);
         else if (s.kind === "block") walk(s.body);
       }
@@ -336,31 +341,43 @@ export class ResolveHirToCir {
     const name = ast.symbolName(node.name);
     if (this.classes.has(name)) return;
     const isStruct = node._type === "struct";
-    this.ledger.record("A4", isStruct ? "defstruct" : "defclass", node, "construction/field-layout resolved from the symbol table (the HIR has none)");
+    const hc = this.hclassBySrc.get(node);
     const t: any = (() => { try { return this.context.symbolTable.resolveSymbol(name, node)?.inferredType; } catch { return undefined; } })();
-    // Field order: constructor params (the slot order the JS ClassBuilder also uses). Field TYPES
-    // come from the AST annotations (`(let :ctor x <- Real)`) -- more complete than the checker's
-    // ctorInfo, which erases an inferred struct field type to Unknown (spec A1).
-    const ctorParams: any[] = t?.ctorInfo?.params ?? [];
     const astFieldTypes = this.memberFieldTypes(node);
     const memberType = (fname: string): CType => {
       const m = (t?.members ?? []).find((mm: any) => mm.name === fname && mm.type?.kind !== "function");
       return m?.type ? mapType(m.type) : C_VALUE;
     };
-    // Own fields = the constructor params (in ctor order) PLUS any non-ctor fields declared in the
-    // body (`:public width 0`), which the ctorInfo omits. The JS ClassBuilder lays out both.
     // The per-field DEFAULT value (`(let :ctor x <- Real 0.0)` / `(let :private tag "rect")`): the
     // initializer used when a ctor arg is omitted, and the ONLY initializer for a non-ctor field.
-    // Construction fills them (resolveConstruct); the HIR models neither the layout nor the defaults.
     const astFieldDefaults = this.memberFieldDefaults(node);
-    const ownFields: { name: string; ctype: CType; default?: ast.ASTNode }[] = ctorParams.map((p: any) => ({
-      name: p.name,
-      ctype: astFieldTypes.get(p.name) ?? (p.type ? mapType(p.type) : memberType(p.name)),
-      default: astFieldDefaults.get(p.name),
-    }));
-    const seen = new Set(ownFields.map((f) => f.name));
-    for (const [fname, ct] of astFieldTypes) {
-      if (!seen.has(fname)) { ownFields.push({ name: fname, ctype: ct, default: astFieldDefaults.get(fname) }); seen.add(fname); }
+    // OWN field layout -- CONSUMED from the modeled HClass when present: the own `:ctor` field stores
+    // (HFieldInit), then the non-ctor fields (HFieldDecl), in the source order the JS ClassBuilder emits.
+    // The whole layout+order lives on the HIR now (A4), so this is no longer a dip; only field TYPES stay
+    // an AST read (`(let :ctor x <- Real)`), which is the A1 type layer the HIR does not carry yet. Without
+    // an HClass (an imported/desugared copy) fall back to the checker's ctorInfo + body scan.
+    let ownFields: { name: string; ctype: CType; default?: ast.ASTNode }[];
+    if (hc) {
+      // The A4 field-layout dip is CLOSED (consumed from HClass); what remains is the field TYPE read from
+      // the AST annotation -- the A1 type layer the HIR does not carry yet. Recorded honestly as A1.
+      this.ledger.record("A1", isStruct ? "defstruct-field-types" : "defclass-field-types", node, "field layout consumed from HClass; field TYPES still read from AST annotations (HIR carries no field types)");
+      const ownNames: string[] = [
+        ...((hc.ctor?.fieldInits ?? []) as any[]).map((fi) => ast.symbolName(fi.field)),
+        ...((hc.fields ?? []) as any[]).map((f) => ast.symbolName(f.name)),
+      ];
+      ownFields = ownNames.map((nm) => ({ name: nm, ctype: astFieldTypes.get(nm) ?? memberType(nm), default: astFieldDefaults.get(nm) }));
+    } else {
+      this.ledger.record("A4", isStruct ? "defstruct" : "defclass", node, "construction/field-layout resolved from the symbol table (no HClass -- imported/desugared copy)");
+      const ctorParams: any[] = t?.ctorInfo?.params ?? [];
+      ownFields = ctorParams.map((p: any) => ({
+        name: p.name,
+        ctype: astFieldTypes.get(p.name) ?? (p.type ? mapType(p.type) : memberType(p.name)),
+        default: astFieldDefaults.get(p.name),
+      }));
+      const seen = new Set(ownFields.map((f) => f.name));
+      for (const [fname, ct] of astFieldTypes) {
+        if (!seen.has(fname)) { ownFields.push({ name: fname, ctype: ct, default: astFieldDefaults.get(fname) }); seen.add(fname); }
+      }
     }
     // Inheritance (`:extends`): the parent's fields come FIRST (lower slots), then this class's own --
     // the layout the JS ClassBuilder also produces. The whole hierarchy is a symbol-table walk the
