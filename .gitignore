@@ -147,3 +147,7 @@ src/test/.compiled-c/
 # Per-library type-metadata cache the compiler writes next to each .lisp (foo.types.json).
 # A build artifact -- regenerated on compile, never a source of truth.
 *.types.json
+
+# Railroad-diagram viewer (npm run grammar:diagrams). A build artifact regenerated from the
+# parser's GAST -- the committed .ebnf is the readable source of truth; the HTML is not tracked.
+docs/inbox/l-lang.grammar.html

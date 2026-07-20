@@ -1,0 +1,155 @@
+(* l-lang grammar -- EBNF, auto-generated from grammar_v2/Parser.ts serialized GAST. *)
+(* DO NOT hand-edit: regenerate with `npm run grammar:ebnf`.                          *)
+(* CAVEAT: 31 semantic GATEs in the parser are NOT expressible in a CFG -- the grammar *)
+(* below is therefore OVER-PERMISSIVE at matrix/vector, adjacency chains, and composite*)
+(* identifiers. It describes the SHAPE, not the exact accepted language.               *)
+
+(* ===== productions ===== *)
+
+program                ::= expression* ;
+expression             ::= ( comment | importExpr | exportExpr | variable | functionExpr | classDecl | structDecl | enumDecl | interfaceDecl | typeDefDecl | modifierDefDecl | macroDecl | whenExpr | ifExpr | condExpr | forExpr | whileExpr | tryCatchExpr | matchExpr | awaitExpr | spreadExpr | assignmentOrExpr | quoteExpr | nil | boolean | number | string ) ;
+assignmentOrExpr       ::= primaryExpr assignmentOp? ;
+primaryExpr            ::= ( list | matrix | vector | map | identifier ( ( indexerSuffix | memberSuffix ) )* ) ;
+assignmentOp           ::= ( ":=" expression | <PlusEq> expression | "-=" expression | <StarEq> expression | <SlashEq> expression | "%=" expression ) ;
+memberSuffix           ::= <Dot> ( <Identifier> | <BareKeyword> ) ;
+indexerSuffix          ::= <LBracket> ( expression ","? )+ <RBracket> ;
+comment                ::= <Comment> ;
+nil                    ::= ( "nil" | "null" ) ;
+boolean                ::= ( ( "true" | "#t" ) | ( "false" | "#f" ) ) ;
+number                 ::= ( <ComplexNumber> | <FractionNumber> | <HexNumber> | <BinaryNumber> | <OctalNumber> | <FloatNumber> | <IntegerNumber> ) ;
+string                 ::= ( formattedString | <StringLiteral> ) ;
+formattedString        ::= <FormattedStringStart> ( ( <StringContent> | formatExpr ) )* <FormattedStringEnd> ;
+formatExpr             ::= <FormatExprStart> expression? <FormatExprEnd> ;
+identifier             ::= ( compositeIdentifier | simpleIdentifier ) ;
+simpleIdentifier       ::= ( <Identifier> ( <Colon> <Identifier> )? | <Plus> | <Minus> | <Star> | <Slash> | <Percent> | <Caret> | <Equal> | <Question> | <Exclamation> | <Tilde> | <Pipe> | <Ampersand> | <LAngle> | <RAngle> | "<-" | "->" | "=>" | "==" | "!=" | <OperatorIdent> ) ;
+compositeIdentifier    ::= <Identifier>? ( <Dot> ( <Identifier> | <BareKeyword> ) )+ ;
+list                   ::= <LParen> expression* ( <OfModKw> type )? <RParen> ;
+vector                 ::= <LBracket> ( expression ","? )* <RBracket> ;
+matrix                 ::= <LBracket> matrixRow ( <Pipe> matrixRow )+ <RBracket> ;
+matrixRow              ::= ( expression ","? )+ ;
+map                    ::= <LBrace> ( ( keyValue | comment ) ","? )* <RBrace> ;
+keyValue               ::= ( <Colon> key expression? | <ModKeyword> expression? | string expression ) ;
+key                    ::= ( <Identifier> | <StringLiteral> | <BareKeyword> ) ;
+quoteExpr              ::= <Quote> ( list | expression ) ;
+type                   ::= ( <LParen> unionType <RParen> ( <LBracket> <RBracket> )? <Question>? | unionType ( <LBracket> <RBracket> )? <Question>? ) ;
+unionType              ::= intersectionType ( <Pipe> intersectionType )* ;
+intersectionType       ::= basicType ( <Ampersand> basicType )* ;
+basicType              ::= ( functionType | mapType | tupleType | genericType | simpleType ) ( <LBracket> <RBracket> )? <Question>? ;
+simpleType             ::= typeName ;
+typeName               ::= ( <Identifier> | ( "nil" | "null" ) ) ;
+genericType            ::= typeName <LAngle> ( type ","? )+ <RAngle> ;
+functionType           ::= "async"? "fn" <LBracket> type* <RBracket> "->" type ;
+mapType                ::= <LBrace> ( keyTypeDefinition ","? )* <RBrace> ;
+keyTypeDefinition      ::= <Colon> mapKeyType "<-" type ;
+mapKeyType             ::= ( identifier | <StringLiteral> ) ;
+tupleType              ::= <LBracket> type+ <RBracket> ;
+modifier               ::= <Colon> ( <Identifier> | "async" ) ( <LBracket> ( expression ","? )* <RBracket> )? ;
+variable               ::= ( "let" | "mut" ) modifier* ( ( vectorPattern | mapPattern | identifier ) )? ( "<-" type )? expression? ;
+functionExpr           ::= "async"? "fn" modifier* identifier? ( <LAngle> ( genericParam ","? )+ <RAngle> )? <LBracket> ( parameter ","? )* <RBracket> ( "->" type )? expression* ;
+parameter              ::= <Spread>? ( vectorPattern | mapPattern | identifier ) modifier* ( "<-" type )? ;
+classDecl              ::= "defclass" modifier* classOrInterfaceName? ( ( <ExtendsModKw> typeRef | <ImplementsModKw> typeRef ) )* expression* ;
+classOrInterfaceName   ::= typeName ( <LAngle> ( genericParam ","? )+ <RAngle> )? ;
+genericParam           ::= modifier? typeName ;
+typeRef                ::= typeName ( <LAngle> ( type ","? )+ <RAngle> )? ;
+structDecl             ::= "defstruct" modifier* typeName? ( ( <ExtendsModKw> typeRef | <ImplementsModKw> typeRef ) )* expression* ;
+enumDecl               ::= "defenum" modifier* typeName? ( ( enumKey | comment ) )* ;
+enumKey                ::= <Colon> ( <Identifier> | <StringLiteral> ) ( "=>" expression )? ;
+interfaceDecl          ::= "definterface" modifier* classOrInterfaceName? ( <ImplementsModKw> typeRef )? expression* ;
+typeDefDecl            ::= "deftype" modifier* identifier? type? ;
+macroDecl              ::= "defmacro" <Identifier>? expression* ;
+modifierDefDecl        ::= "defmodifier" <Identifier> ( <LBracket> ( parameter ","? )* <RBracket> )? expression* ;
+importExpr             ::= "import" ( importDefinition ","? )+ ;
+importDefinition       ::= ( importSymbols | importSource ) ;
+importSymbols          ::= <LBrace> ( symbolAlias ","? )+ <RBrace> "from" importSource ;
+symbolAlias            ::= typeName ( <AsModKw> typeName )? ;
+importSource           ::= ( <StringLiteral> | identifier ) ;
+exportExpr             ::= "export" ( exportAlias ","? )+ ;
+exportAlias            ::= ( identifier | typeName ) ( <AsModKw> identifier )? ;
+whenExpr               ::= "when" ( <CondModKw>? expression )? ( <ThenModKw>? expression* )? ;
+ifExpr                 ::= "if" ( <CondModKw>? expression )? ( <ThenModKw>? expression )? ( <ElseModKw>? expression )? ;
+condExpr               ::= "cond" ( comment* condCase )+ ;
+condCase               ::= <LParen> ( <ElseModKw> expression | ( <CondModKw>? expression )? ( <ThenModKw>? expression )? ) <RParen> ;
+forExpr                ::= "for" ( comment* forClause )+ ;
+forClause              ::= ( <InitModKw> expression | <EachModKw> forEachBinding | <CondModKw> expression | <FromModKw> expression | <StepModKw> expression | <ThenModKw> expression | <ElseModKw> expression ) ;
+forEachBinding         ::= ( vectorPattern | mapPattern | identifier ) ;
+whileExpr              ::= "while" ( <CondModKw>? expression )? ( <ThenModKw>? expression* )? ;
+tryCatchExpr           ::= "try" expression? catchClause* finallyClause? ;
+catchClause            ::= "catch" catchFilter? expression? ;
+catchFilter            ::= <Identifier> ( <OfModKw> typeName )? ;
+finallyClause          ::= "finally" expression ;
+matchExpr              ::= "match" expression <LBrace> ( comment* matchCase )+ <RBrace> ;
+matchCase              ::= pattern ( <WhenModKw> expression )? "=>" expression ;
+pattern                ::= ( anyPattern | restPattern | functionalPattern | listPattern | vectorPattern | mapPattern | typePattern | constantPattern | identifierPattern ) ;
+anyPattern             ::= <Underscore> ;
+functionalPattern      ::= <LParen> pattern* <RParen> "->" pattern ;
+typePattern            ::= identifier <OfModKw> type ;
+listPattern            ::= <LParen> pattern* <RParen> ;
+vectorPattern          ::= <LBracket> pattern* <RBracket> ;
+mapPattern             ::= <LBrace> ( mapPatternPair ","? )* <RBrace> ;
+mapPatternPair         ::= <Colon> key pattern? ;
+restPattern            ::= <Spread> identifier ;
+identifierPattern      ::= identifier ;
+constantPattern        ::= ( <StringLiteral> | ( "nil" | "null" ) | number ) ;
+awaitExpr              ::= "await" expression ;
+spreadExpr             ::= <Spread> expression ;
+
+(* ===== lexical terminals (regex tokens; keywords/punct are inlined above) ===== *)
+
+<Ampersand>             ::= /&(?![=&])/
+<AsModKw>               ::= /:as(?![a-zA-Z0-9_-])/
+<BareKeyword>           ::= (category / programmatic token) -- a token CATEGORY (Lexer.NA)
+<BinaryNumber>          ::= /0b[01]+/
+<Caret>                 ::= /\^(?!=)/
+<Colon>                 ::= /:(?!=)/
+<Comment>               ::= /;[^\n\r]*/
+<ComplexNumber>         ::= /[+-]?[0-9]+\.?[0-9]*[+-][0-9]+\.?[0-9]*[ij]/
+<CondModKw>             ::= /:cond(?![a-zA-Z0-9_-])/
+<Dot>                   ::= /\.(?!\.)/
+<EachModKw>             ::= /:each(?![a-zA-Z0-9_-])/
+<ElseModKw>             ::= /:else(?![a-zA-Z0-9_-])/
+<Equal>                 ::= /=(?![=>])/
+<Exclamation>           ::= /!(?!=)/
+<ExtendsModKw>          ::= /:extends(?![a-zA-Z0-9_-])/
+<FloatNumber>           ::= /[+-]?[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?|[+-]?[0-9]+[eE][+-]?[0-9]+/
+<FormatExprEnd>         ::= /\}/
+<FormatExprStart>       ::= /\{/
+<FormattedStringEnd>    ::= /"/
+<FormattedStringStart>  ::= /'"/
+<FractionNumber>        ::= /[+-]?[0-9]+\/[0-9]+/
+<FromModKw>             ::= /:from(?![a-zA-Z0-9_-])/
+<HexNumber>             ::= /0x[0-9a-fA-F]+/
+<Identifier>            ::= /[a-zA-Z_\u0080-\uFFFF][a-zA-Z0-9_\-\u0080-\uFFFF]*/
+<ImplementsModKw>       ::= /:implements(?![a-zA-Z0-9_-])/
+<InitModKw>             ::= /:init(?![a-zA-Z0-9_-])/
+<IntegerNumber>         ::= /[+-]?[0-9]+/
+<LAngle>                ::= /<(?![-=])/
+<LBrace>                ::= /\{/
+<LBracket>              ::= /\[/
+<LParen>                ::= /\(/
+<Minus>                 ::= /-(?![=>])/
+<ModKeyword>            ::= (category / programmatic token) -- a token CATEGORY (Lexer.NA)
+<OctalNumber>           ::= /0[0-7]+/
+<OfModKw>               ::= /:of(?![a-zA-Z0-9_-])/
+<OperatorIdent>         ::= /[*+\-\\/^&%$#@!~=|<>?]+/
+<Percent>               ::= /%(?!=)/
+<Pipe>                  ::= /\|(?![=|>])/
+<Plus>                  ::= /\+(?!=)/
+<PlusEq>                ::= /\+=/
+<Question>              ::= /\?/
+<Quote>                 ::= /'(?!")/
+<RAngle>                ::= />(?!=)/
+<RBrace>                ::= /\}/
+<RBracket>              ::= /\]/
+<RParen>                ::= /\)/
+<Slash>                 ::= /\/(?!=)/
+<SlashEq>               ::= /\/=/
+<Spread>                ::= /\.\.\./
+<Star>                  ::= /\*(?!=)/
+<StarEq>                ::= /\*=/
+<StepModKw>             ::= /:step(?![a-zA-Z0-9_-])/
+<StringContent>         ::= /(?:[^"\\{]|\\["\\/bfnrtu{]|\\u[0-9a-fA-F]{4})+/
+<StringLiteral>         ::= /"(?:[^"\\]|\\.)*"/
+<ThenModKw>             ::= /:then(?![a-zA-Z0-9_-])/
+<Tilde>                 ::= /~(?!=)/
+<Underscore>            ::= /_(?![a-zA-Z0-9])/
+<WhenModKw>             ::= /:when(?![a-zA-Z0-9_-])/

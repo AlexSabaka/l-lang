@@ -18,7 +18,9 @@
     "test:diagnostics": "ts-node test/diagnostics.ts",
     "test:imports": "ts-node test/imports.ts",
     "test:codegen": "ts-node test/codegen.ts",
-    "test:repl": "ts-node test/repl.ts"
+    "test:repl": "ts-node test/repl.ts",
+    "grammar:ebnf": "ts-node test/export-grammar.ts",
+    "grammar:diagrams": "ts-node test/build-diagrams.ts"
   },
   "author": "Alex Sabaka",
   "license": "MIT",
