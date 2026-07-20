@@ -1016,14 +1016,10 @@ export class ResolveHirToCir {
       }
 
       case "operator":
-        // A3, operator step 2 (dev): `(op a b)` is now MODELED as HOperator. The C backend already
-        // resolves operators off the raw AST (`binopMode` / the `:operator` devirtualization table --
-        // static native op when the operand types are known, boxed runtime dispatch otherwise) via
-        // `resolveCall`, and `h.src` is that original call node -- so routing through it reproduces the
-        // pre-model behavior byte-for-byte (an operator was an opaque leaf here before, recording the
-        // same operator-devirt / boxed-arith dip). Chasing HOperator proper -- consuming `h.op`/`h.args`
-        // to emit the machine op directly -- is the follow-up increment.
-        return this.resolveAstExpr(h.src);
+        // A3: CONSUME HOperator. `(op a b)` dispatches straight to the operator resolver (native machine op
+        // when operand types are known, struct-overload devirt, string contagion) instead of being
+        // re-classified through resolveCall -- closing that share of the A3:call-dispatch dip, byte-identical.
+        return this.resolveOperator(h);
 
       case "nil":
         return { src: h.src, ctype: C_VALUE, kind: "c-nil" };
@@ -1635,6 +1631,57 @@ export class ResolveHirToCir {
     return this.resolveAstExpr(list);
   }
 
+  /**
+   * The operator dispatch (unary `!`, unary `-` with struct-overload devirt, binary left-fold via mkBinop)
+   * -- shared by resolveCall's raw path and the HIR `operator` case (HOperator). Returns undefined when
+   * `op` is not a built-in operator form, so the caller falls through (resolveCall to the rest of its
+   * dispatch; the HIR case to the raw path). Extracted verbatim from resolveCall so both are byte-identical.
+   */
+  private resolveOperatorCall(node: ast.ListNode, op: string, args: ast.ASTNode[]): CExpr | undefined {
+    if (op === "!" && args.length === 1) {
+      const operand = this.resolveAstExpr(args[0]);
+      return { src: node, ctype: C_BOOL, kind: "c-unop", op: "!", mode: "bool", operand };
+    }
+    if (op === "-" && args.length === 1) {
+      const operand = this.resolveAstExpr(args[0]);
+      // A user unary `:operator -` on a struct operand -> a devirtualized call.
+      if (operand.ctype.k === "obj") {
+        const overload = this.operators.get(`u-:${operand.ctype.className}`);
+        if (overload) {
+          this.ledger.record("A3", "operator-call", node, "unary operator overload dispatched statically");
+          return { src: node, ctype: overload.ret, kind: "c-call", callee: { kind: "free", cName: overload.cName, params: [operand.ctype], ret: overload.ret }, args: [operand] };
+        }
+      }
+      const mode = operand.ctype.k === "real" ? "real" : "int";
+      return { src: node, ctype: operand.ctype.k === "real" ? C_REAL : C_INT, kind: "c-unop", op: "-", mode, operand };
+    }
+    if (BINARY_OPS.has(op) && args.length >= 2) {
+      // Left-fold: `(+ a b c)` == `((a+b)+c)`, per-pair mode decisions (string contagion works).
+      let acc = this.resolveAstExpr(args[0]);
+      for (let i = 1; i < args.length; i++) {
+        acc = this.mkBinop(op, acc, this.resolveAstExpr(args[i]), node);
+      }
+      return acc;
+    }
+    return undefined;
+  }
+
+  /**
+   * A3 (consume HOperator): an operator call `(op a b)` dispatches straight to the operator resolver,
+   * bypassing resolveCall's re-classification (the A3:call-dispatch dip). `op` is a built-in operator
+   * symbol; the args come off the call form (which carries the lowered operands). A form the operator
+   * resolver does not cover (a user operator that falls through) drops to the raw path.
+   */
+  private resolveOperator(h: Extract<HExpr, { kind: "operator" }>): CExpr {
+    const list = h.src as ast.ListNode;
+    const form = classifyList(list);
+    if (form.kind === "call" && form.callee._type === "simple-identifier") {
+      const res = this.resolveOperatorCall(list, (form.callee as ast.SimpleIdentifierNode).id, form.args);
+      if (res) return res;
+    }
+    return this.resolveAstExpr(list);
+  }
+
   /** The RAW-AST construction path (a bare `(C ...)` / `(new C ...)` reached via resolveList): resolve the
    *  positional args off the AST, then fill the slots. The A4:construct dip -- no HConstruct was consumed. */
   private resolveConstruct(node: ast.ASTNode, className: string, args: ast.ASTNode[]): CExpr {
@@ -1901,32 +1948,8 @@ export class ResolveHirToCir {
 
     // Operators.
     if (callee._type === "simple-identifier") {
-      const op = (callee as ast.SimpleIdentifierNode).id;
-      if (op === "!" && args.length === 1) {
-        const operand = this.resolveAstExpr(args[0]);
-        return { src: node, ctype: C_BOOL, kind: "c-unop", op: "!", mode: "bool", operand };
-      }
-      if (op === "-" && args.length === 1) {
-        const operand = this.resolveAstExpr(args[0]);
-        // A user unary `:operator -` on a struct operand -> a devirtualized call.
-        if (operand.ctype.k === "obj") {
-          const overload = this.operators.get(`u-:${operand.ctype.className}`);
-          if (overload) {
-            this.ledger.record("A3", "operator-call", node, "unary operator overload dispatched statically");
-            return { src: node, ctype: overload.ret, kind: "c-call", callee: { kind: "free", cName: overload.cName, params: [operand.ctype], ret: overload.ret }, args: [operand] };
-          }
-        }
-        const mode = operand.ctype.k === "real" ? "real" : "int";
-        return { src: node, ctype: operand.ctype.k === "real" ? C_REAL : C_INT, kind: "c-unop", op: "-", mode, operand };
-      }
-      if (BINARY_OPS.has(op) && args.length >= 2) {
-        // Left-fold: `(+ a b c)` == `((a+b)+c)`, per-pair mode decisions (string contagion works).
-        let acc = this.resolveAstExpr(args[0]);
-        for (let i = 1; i < args.length; i++) {
-          acc = this.mkBinop(op, acc, this.resolveAstExpr(args[i]), node);
-        }
-        return acc;
-      }
+      const opRes = this.resolveOperatorCall(node, (callee as ast.SimpleIdentifierNode).id, args);
+      if (opRes) return opRes;
     }
 
     // Dotted callee: `(x.m ...)` native method, or `(Math.log ...)` host intrinsic.
