@@ -997,14 +997,12 @@ export class ResolveHirToCir {
 
       case "method-call":
       case "virtual-call":
-        // A3, method/virtual step 2 (dev): `(obj.method a)` is now MODELED -- HMethodCall for a typed
-        // receiver (devirt-able), HVirtualCall for an untyped one (native vtable). The C backend already
-        // resolves both off the raw AST (`resolveObjMethod` devirtualizes a typed receiver's method;
-        // an untyped/boxed receiver goes dynamic through `ll_dyn_method`) via `resolveCall`, and `h.src`
-        // is that original call node (now carrying the lowered operands, see callSrcWithLoweredOperands)
-        // -- so routing through it reproduces the pre-model behavior byte-for-byte. Chasing these proper
-        // -- consuming `h.head`/`h.args` -- is the follow-up increment.
-        return this.resolveAstExpr(h.src);
+        // A3: CONSUME the HIR's method classification. HMethodCall (typed receiver, devirt-able) and
+        // HVirtualCall (untyped receiver, dynamic) both dispatch to the method resolver, which branches on
+        // the RESOLVED receiver type (obj -> resolveObjMethod devirt; str/vec/dyn -> native / ll_dyn_method).
+        // So the C backend no longer re-classifies the call through resolveCall (the A3:call-dispatch dip);
+        // it routes straight to the same resolver resolveCall would, byte-identically, minus that record.
+        return this.resolveMethodCall(h);
 
       case "construct": {
         // A4: CONSUME HConstruct -- the callee names the class, and `h.args` are the already-lowered
@@ -1609,6 +1607,34 @@ export class ResolveHirToCir {
     const first = unwrap(elements[0]);
     if (first.k === "value") return undefined;
     return elements.every((e) => ctypeEquals(unwrap(e), first)) ? first : undefined;
+  }
+
+  /**
+   * A3 (consume HMethodCall / HVirtualCall): dispatch a modeled method call straight to the method
+   * resolver, bypassing resolveCall's re-classification (and its A3:call-dispatch dip). The routing MIRRORS
+   * resolveCall's member/composite-callee branches exactly -- a `this.m` / `local.m` composite goes to
+   * resolveDottedCall, an `obj.m` member to resolveNativeMethod with the resolved receiver -- so the emitted
+   * call is byte-identical. The args come off the call form (which carries the lowered operands). A head
+   * shape the method router does not cover (a null field name, a non-method callee) falls back to the raw
+   * path, which registers the same dispatch it always did.
+   */
+  private resolveMethodCall(h: Extract<HExpr, { kind: "method-call" | "virtual-call" }>): CExpr {
+    const list = h.src as ast.ListNode;
+    const form = classifyList(list);
+    if (form.kind === "call") {
+      const callee = form.callee;
+      if (callee._type === "composite-identifier") {
+        return this.resolveDottedCall(list, callee as ast.CompositeIdentifierNode, form.args);
+      }
+      if (callee._type === "member") {
+        const m = callee as ast.MemberNode;
+        const fieldName = this.memberName(m.property);
+        if (fieldName !== null) {
+          return this.resolveNativeMethod(list, this.resolveAstExpr(m.object), fieldName, form.args);
+        }
+      }
+    }
+    return this.resolveAstExpr(list);
   }
 
   /** The RAW-AST construction path (a bare `(C ...)` / `(new C ...)` reached via resolveList): resolve the
