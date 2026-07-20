@@ -1,156 +1,57 @@
-# Language ideas — a wishlist, rescued from W99
+# Language ideas — parked & deferred
 
-**Status:** raw design ideas, not decisions. Rescued verbatim-in-spirit from
-`examples/W99_L_sloth_design_v1.lisp` (a C#-WebAPI-port scratchpad) before that file was deleted.
-Staged here for a later Sabaka⇄Dove design round — to be triaged into `docs/roadmap.md` /
-`docs/spec/DECISIONS.md` when picked up. Syntax below is the *scratchpad's* spelling; treat it as
-intent, not ratified grammar. Where a piece already partly exists or is already blocked in the
-corpus, that's noted.
-
----
-
-## Type system
-
-### Refinement / range types
-```lisp
-(deftype uint8 Int :where Int :is (0 .. 255))
-```
-A base type narrowed by a predicate/range. Needs the `..` **range operator**, which neither frontend
-lexes today (this is exactly what blocks `04-data-types/07_structs.lisp`, per the manifest). Opens
-the door to `uint8[256]` **sized array types** too (grammar_v2 rejects sized arrays today).
-
-### `deftype` compositions — unions & intersections
-```lisp
-(deftype Vegetable :is Carrot | Potato | Cabbage)                 ; union
-(deftype Borsch :extends Food :is Carrot & Potato & Cabbage & …)  ; intersection
-```
-`deftype` as type algebra: unions (`|`), intersections (`&`), and `:extends` on the composition.
-
-### `:where` constraint kinds (the three relations)
-```lisp
-:where T :is A            ; strict — T == A
-:where T :extends A       ; T is A or any subtype of A
-:where T :implements IA   ; STRUCTURAL — T matches IA's shape even without an explicit :implements
-```
-Structural conformance is the interesting one (TS-style duck typing alongside nominal). The
-dungeon extraction (`entity.lisp`) already probes structural-vs-nominal at runtime; this is the
-type-annotation surface for it.
-
-### Generic `new()` / ctor constraints
-```lisp
-(definterface IRepository<TEntity> :where TEntity :is class new() …)
-(defclass EntityUtils<T> :where T :has ctor :implements IEntity :inherits BaseEntity …)
-```
-Constrain a type parameter to be constructible / to inherit / to implement — combinable.
-
-### Mapped types & key selectors (TS-style)
-```lisp
-(deftype ReadOnly<T> { (let :readonly [P keyof T] <- T[P]) })         ; over each key P of T
-(deftype IsAvailable<T> {
-    (let :readonly ['"IsAvailable{P}" :where P keyof T] <- T[P])      ; string-formatted NEW key names
-    (let :readonly ['"{P}WithMetadata" :where P keyof T] <- { data <- T[P], meta <- Meta<T[P]> })
-})
-```
-`keyof`, indexed access `T[P]`, and key remapping via string-interpolated names. The `:readonly`
-member modifier rides along (noted as ".NET compatibility" in the scratchpad).
-
-### Type-guard patterns & `typeof`
-```lisp
-(fn isString [x <- Any] -> Boolean (match x { s -> String => true  _ => false }))
-```
-A `pattern -> Type =>` arm as a type guard; a `typeof` operator for guards. Also the note that
-`Any` must NOT be the same as `Object` (System.Object) even though they look alike.
-
-### `implicit` / `explicit` cast-operator overloading (C#-style)  *(added 2026-07-20)*
-```csharp
-// C# shape being stolen:
-public static implicit operator Celsius(Fahrenheit f) => new Celsius((f.V - 32) * 5 / 9);
-public static explicit operator int(Money m)         => (int)m.Amount;   // requires (int)m at the call site
-```
-User-defined conversions attached to a type: `implicit` ones fire automatically wherever the target
-type is expected (assignment, argument passing, return); `explicit` ones fire only under an explicit
-cast. This is the **overloadable-conversion** surface — the dual of operator overloading, which
-l-lang already models (see `06-value-semantics`). **Sabaka's framing:** this ties directly back to
-our open **type-narrowing / casting** question — an `explicit` operator is exactly a checked,
-user-authored narrowing, and an `implicit` operator is a widening the checker may insert silently.
-Design questions to settle when picked up: the l-lang spelling (a `:implicit`/`:explicit` modifier on
-an `operator`/`cast` member? a `defcast`?), how it interacts with the coercion-insertion pass (the C
-backend's `InsertCoercions` P2 is the natural home on the native side), and ambiguity rules when
-several implicit paths exist. **Deferred until HIR is implemented** — revisit alongside the
-narrowing/casting work.
+**Status: TRIAGED in the 2026-07 Sabaka⇄Dove design round.** The wishlist rescued from
+`examples/W99_L_sloth_design_v1.lisp` has been sorted into decisions and roadmap — the rulings now live
+in `docs/spec/DECISIONS.md` (**D46–D48**) and `docs/roadmap.md` (**Phases Cv / Bg / Cr**). Long-form
+reasoning: `docs/inbox/hir-design-round-brief.md` §C. **This file now tracks only the ideas still open —
+parked or deferred.** Everything resolved is in the table below for the record, then closed there.
 
 ---
 
-## Functions & generics
+## Resolved (for the record — follow the pointer; don't re-litigate here)
 
-### Generic functions
-```lisp
-(fn ?<T> [cond :default false <- Boolean | String  a <- T  b <- T] -> T
-    :where T :is class, ctor
-    (match cond { #t => a  #f => b }))
-```
-Type-parameterized free functions with `:where` constraints and a **default parameter value**
-(`:default false`) and a **union-typed parameter** (`Boolean | String`).
-
-### Predicate / function match arms
-```lisp
-(match age {
-    (s <- string)                 => ()
-    (1  2  3)                     => ()                       ; list/tuple pattern
-    (fn [x] (& (> x 0) (< x 10)))  => "just a baby"           ; a lambda predicate as a pattern
-    _                             => "…"
-})
-```
-Match arms that are **predicate lambdas**, plus the full pattern zoo the scratchpad enumerates:
-constant, identifier, type, list, vector, map, expression, and function patterns.
-
----
-
-## Metaprogramming & DSLs
-
-### Quoted-AST as a typed query DSL
-```lisp
-(fn :async sql<T> [query <- ASTQuote] -> T[] ())
-(sql<Product> '(SELECT p.Id, p.Price FROM dbo.Warehouse WHERE p.Quantity > 0 ORDER BY p.Price DESC))
-```
-A quoted form (`ASTQuote`) passed to a generic function that interprets it — LINQ-to-SQL shaped.
-Ties into the homoiconicity question already open in `04-data-types/01_quoting.lisp` (what a quote
-*is*: cons-list vs AST datum) and the missing runtime `eval`.
+| idea | disposition | where |
+|---|---|---|
+| Refinement / range types | **Greenlit** | D46 / Phase Cv (B-1) |
+| Native fixed-width ints (`uint8`…) | **Greenlit** | D46 / Phase Cv (B-2) |
+| `implicit` / `explicit` cast operators | **Greenlit** as `defcast` | D46 / Phase Cv (B-3) |
+| `:where` relations (`:is` / `:extends` / `:implements`) | **Greenlit** — type-variable bounds only | Phase Bg; *not* for value refinements (D46 B-1b) |
+| Generic `new()` / ctor constraints | **Greenlit** (low priority) | Phase Bg |
+| C#-style attributes | **Greenlit** as `:with Attr` + reflection; bracket `[Attr]` **rejected** | Phase Bg |
+| Flags enums (`:with Flags`) | **Greenlit** | Phase Bg |
+| `\|> .method` selectors | **Greenlit** (desugar over the pipe) | Phase Bg |
+| `with`-copy (`(with s :field v)`) | **Greenlit** | Phase Bg |
+| `:readonly` fields | **Greenlit** | Phase Bg |
+| `:stack` allocation | **Greenlit** — needs escape analysis | Phase Bg |
+| Tuples | **Done** | Phase U (D37) |
+| Type-guard patterns + `typeof` | **Done** as `:of` + `typeof`; `-> Type =>` arm **rejected** | D41 |
+| Pattern zoo (constant / id / type / list / vector / map / rest) | **Done** | D26–D28 |
+| `deftype` unions / intersections (`\|`, `&`) | **Done** (already expressible); `deftype :extends :is` shape **rejected** | D46 |
+| Generic functions | **Done**; only *defaults* are new | roadmapped (`:=` + LL0211 + D9) |
+| Instance-/static-by-dot | **Superseded** | D1 (dispatch by type) |
+| Predicate / function match arms | **Rejected** (redundant with `:when`; fn-signature patterns dead) | D26 / Zc |
+| `infix` escape hatch | **Rejected** (conflicts with `\|>`) | D33 |
 
 ---
 
-## Modifiers / attributes / visibility
+## Parked & deferred (still open — may revisit; do **not** build as originally specified)
 
-### C#-style attributes (via modifiers)
-```lisp
-[ApiController]                                    ; bracket-attribute form
-[Route "api/v{version:apiVersion}/[controller]"]
-(defclass :internal FoodsController :inherits ControllerBase
-    :with ApiController
-    :with Route "api/v{version:apiVersion}/[controller]"     ; :with modifier form
-    (let :ctor _foodRepo <- IFoodsRepository<Food>) …)
-```
-Two spellings of attributes: bracket `[Attr args]` and `:with Attr args`. **Sabaka's note: this is
-achievable with custom modifiers in l-lang** — an attribute is a decorator carrying metadata. The
-`:with` form composes cleanly with existing modifiers.
+### Mapped types / `keyof` / `T[P]`
+TS-style type-*computation* in a C#-semantics language — the worst fit of the bunch (it fights the
+"elegancy is illusion" stance). **Not** a declarative type-level sublanguage. If ever wanted, only a
+**restricted** form via comptime / macros, procedurally. Parked, not closed.
 
-### Field / member modifiers seen in the scratchpad
-`:readonly`, `:ctor` (constructor-injected field), `:private`/`:public`/`:internal` visibility,
-`:static` classes & methods, `:stack` (stack allocation — currently a `RESERVED_NATIVE_MODIFIER`,
-a hard error on the JS target, per manifest `04-data-types/07_structs.lisp`), `:async`, and
-`:with JsonIgnore`-style member attributes.
+### Quoted-AST DSL / runtime `eval`
+The LINQ-to-SQL-shaped `sql<T> '(SELECT …)` idea. Runtime `eval` fights the native endgame (it ships an
+interpreter). The l-lang-native path is a **comptime macro** reading the quoted AST at compile time —
+**blocked on the metaprogramming tier** (`defmacro` / `defsyntax`, still zero grammar). Parked, reframed
+to compile-time. Independent of that path: the **homoiconicity question** — is a quote a cons-list or an
+AST datum? — must be settled regardless (open in `04-data-types/01_quoting.lisp`).
 
----
-
-## Data & misc
-
-- **`defstruct` / `defrecord`** — value structs and records (defstruct exists; `defrecord` named,
-  unbuilt).
-- **Flags enums** — `(defenum :public SomeEnum :with Flags …)`.
-- **Tuples** — `(return (tuple avg rms))` and tuple destructuring.
-- **`|>` pipeline with `.method` selectors** — `(|> numList sq .Sum)`,
-  `(… |> .skip N |> .take M |> .to-list)`; a leading-dot method selector in pipe position.
-- **`infix`** — `(Int32 (infix foods-query.Count / query-params.PageSize))` for an infix escape
-  hatch inside prefix code.
-- **Instance-vs-static method distinction by dot** — the scratchpad muses that instance methods
-  start with `.` and static/free methods don't.
+### Provable refinements
+The static-verification version of B-1: the checker discharges `0 .. 255` / a predicate at *compile*
+time instead of at runtime. A **distinct verification project** (Liquid-Haskell / F* / Dafny-grade),
+**same predicate syntax**, retrofitted later as an optimisation. Kept deliberately separate from the
+runtime-checked substrate (D46): a refinement that cannot be discharged runs its check at runtime, full
+stop — the moment the checker starts opportunistically discharging predicates, the SMT project has begun
+without a decision to begin it.
