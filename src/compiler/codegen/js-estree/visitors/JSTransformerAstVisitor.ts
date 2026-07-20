@@ -13,7 +13,7 @@ import {
 } from "../../../utils";
 import { CodegenDiagnostics as CD } from "../../../rules/diagnostics";
 import { TypeChecker } from "../../../types/TypeChecker";
-import { shouldCopyOnStore } from "../../../hir/valueCopy";
+import { shouldCopyOnStore, typeProvablyNotAStruct } from "../../../hir/valueCopy";
 import { isBuiltinModifier, hasModifier } from "../../../helpers/modifiers";
 import * as acorn from "acorn";
 import { ClassBuilder } from "../JSClassBuilder";
@@ -3739,32 +3739,13 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * builder reaches the visitor through an `any` to dodge a circular import.
    */
   /**
-   * Does this inferred type PROVE the value is not a struct?
-   *
-   * Only `true` when we are certain. `Unknown` proves nothing. A `type-ref` is resolved through the
-   * symbol table, because that is where "what is the SHAPE of `Complex`?" lives -- the node channel and
-   * the symbol channel answer different questions, and both are needed right here.
+   * Does this inferred type PROVE the value is not a struct? Delegates to the SHARED, corrected
+   * type-predicate (compiler/hir/valueCopy.ts) so the param-copy prologue and the store-copy decide
+   * `interface` the same way (a struct behind an interface is still a value -- D48/Q1). This is the
+   * one remaining caller: needsValueCopy now routes through `shouldCopyOnStore`.
    */
   private provablyNotAStruct(type: InferredType): boolean {
-    if (TypeChecker.isUnknown(type)) return false;
-
-    let t: InferredType = type;
-    if (t.kind === "type-ref" && t.refName) {
-      const resolved = this.context.symbolTable?.resolveSymbol(t.refName)?.inferredType;
-      if (!resolved) return false;
-      t = resolved;
-    }
-
-    // A struct -- or anything we cannot pin down -- keeps its copy.
-    return (
-      t.kind === "primitive" ||
-      t.kind === "function" ||
-      t.kind === "interface" ||
-      t.kind === "class" ||
-      t.kind === "map" ||
-      t.kind === "array" ||
-      (t.kind === "generic" && t.isArray === true)
-    );
+    return typeProvablyNotAStruct(type, this.context);
   }
 
   public asValue(

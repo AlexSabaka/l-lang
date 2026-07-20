@@ -55,6 +55,7 @@ export const C_PASSING: readonly string[] = [
   "06-value-semantics/03_operators_vector.lisp",
   "06-value-semantics/04_operators_complex.lisp",
   "06-value-semantics/05_interface_binding_copies.lisp",
+  "06-value-semantics/06_interface_param_copies.lisp",
   "08-generics/01_interface_basic.lisp",  // generics erase at runtime (D24); the classes/interfaces compile
   "08-generics/02_multiple_generics.lisp",
   "08-generics/03_generic_constraints.lisp",

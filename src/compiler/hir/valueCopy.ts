@@ -56,7 +56,7 @@ function isConstructorHead(head: ast.ASTNode, ctx: CopyDecisionCtx): boolean {
  * backend (which copies on the concrete `obj` ctype) did not share. `class` STAYS proof: a struct is
  * never a subtype of a class, so a class-typed slot cannot hold one.
  */
-function provablyNotAStruct(type: InferredType, ctx: CopyDecisionCtx): boolean {
+export function typeProvablyNotAStruct(type: InferredType, ctx: CopyDecisionCtx): boolean {
   if (TypeChecker.isUnknown(type)) return false;
 
   let t: InferredType = type;
@@ -82,7 +82,7 @@ export function shouldCopyOnStore(node: ast.ASTNode | undefined | null, ctx: Cop
   if (NEVER_A_STRUCT.has(node._type)) return false;
 
   const known = ctx.nodeTypes?.get(node);
-  if (known && provablyNotAStruct(known, ctx)) return false;
+  if (known && typeProvablyNotAStruct(known, ctx)) return false;
 
   // A fresh construction is a brand-new object nobody else can reach -- copying it duplicates for nothing.
   if (ast.isListNode(node)) {
