@@ -435,6 +435,7 @@ export class LowerAstToHirVisitor {
         if (dispatch.kind === "virtual") return this.lowerVirtualCall(node, dispatch.head, dispatch.args, dest);
         if (dispatch.kind === "operator") return this.lowerOperator(node, dispatch.op, dispatch.head, dispatch.args, dest);
         if (dispatch.kind === "construct") return this.lowerConstruct(node, dispatch.callee, dispatch.args, dest);
+        if (dispatch.kind === "member-read") return this.lowerMemberRead(node, dispatch.head, dest);
         return this.lowerCallLike(node, dest);
       }
       case "apply":
@@ -630,6 +631,16 @@ export class LowerAstToHirVisitor {
     const src = prelude.length > 0 ? this.callSrcWithLoweredOperands(node, callee, atoms, args) : node;
     const call: HExpr = { ...this.base(src), kind: "construct", callee: this.ref(callee), args: atoms };
     return this.placeValue(call, prelude, dest);
+  }
+
+  /**
+   * A field READ `(obj.field)` (`classifyCall` said `member-read`). A 0-arg access has no operands to
+   * hoist, so the node just carries `head`; the JS emitter re-visits `src` (its field-vs-`__ll_member`
+   * branch), a native backend resolves the slot. No longer an opaque leaf re-dispatched as a call.
+   */
+  private lowerMemberRead(node: ast.ListNode, head: ast.ASTNode, dest: Dest): Lowered {
+    const mr: HExpr = { ...this.base(node), kind: "member-read", head };
+    return this.placeValue(mr, [], dest);
   }
 
   private lowerCallLike(node: ast.ListNode, dest: Dest): Lowered {

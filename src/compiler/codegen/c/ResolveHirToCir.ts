@@ -1082,6 +1082,11 @@ export class ResolveHirToCir {
         return { src: h.src, ctype: { k: "map" }, kind: "c-map", entries };
       }
 
+      case "member-read":
+        // A3: a modeled field READ `(obj.field)` -- dispatch straight to the member resolver (0 args), the
+        // same slot access / __ll_member the raw path produced, minus resolveCall's A3:call-dispatch dip.
+        return this.dispatchMemberCall(h.src as ast.ListNode, []);
+
       case "formatted-string": {
         // A2: consume the modeled segments -- an interpolation rides its HExpr (resolveExpr), so neither
         // the segments nor their nested reads/calls re-walk the raw AST. Byte-identical c-interp.
@@ -1635,13 +1640,22 @@ export class ResolveHirToCir {
    * path, which registers the same dispatch it always did.
    */
   private resolveMethodCall(h: Extract<HExpr, { kind: "method-call" | "virtual-call" | "ext-call" }>): CExpr {
-    const list = h.src as ast.ListNode;
+    // Consume the ALREADY-LOWERED operands (h.args): each rides its HRef/atom, so an argument read records
+    // no A2:atom-ref dip. The receiver still resolves off the callee (raw AST).
+    return this.dispatchMemberCall(h.src as ast.ListNode, h.args.map((a) => this.resolveExpr(a)));
+  }
+
+  /**
+   * A3: a member-position dispatch `(obj.member ...)` routed STRAIGHT to the member resolver, bypassing
+   * resolveCall's re-classification (its A3:call-dispatch dip). Mirrors resolveCall's member/composite
+   * branches exactly (a `this.m`/`local.m` composite -> resolveDottedCall; an `obj.m` member ->
+   * resolveNativeMethod on the resolved receiver), with `argVals` the pre-resolved operands (empty for a
+   * 0-arg field read). A shape the router does not cover falls back to the raw path.
+   */
+  private dispatchMemberCall(list: ast.ListNode, argVals: CExpr[]): CExpr {
     const form = classifyList(list);
     if (form.kind === "call") {
       const callee = form.callee;
-      // Consume the ALREADY-LOWERED operands (h.args): each rides its HRef/atom, so an argument read
-      // records no A2:atom-ref dip. The receiver still resolves off the callee (h.head is raw AST).
-      const argVals = h.args.map((a) => this.resolveExpr(a));
       if (callee._type === "composite-identifier") {
         return this.resolveDottedCall(list, callee as ast.CompositeIdentifierNode, form.args, argVals);
       }

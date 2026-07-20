@@ -44,6 +44,7 @@ export type HExpr =
   | HVirtualCall
   | HOperator
   | HConstruct
+  | HMemberRead
   | HOpaqueExpr
   | HNil
   | HTernary
@@ -187,6 +188,18 @@ export interface HConstruct extends HBase {
   kind: "construct";
   callee: HExpr;
   args: HExpr[];
+}
+
+/**
+ * A field/member READ `(obj.field)` -- a D1 read, NOT a call (A3). The shared `classifyCall` decided the
+ * 2-part `obj.member` names a native/known FIELD, so it is a slot access rather than a dispatch. The JS
+ * emitter re-visits `src` (the field-vs-`__ll_member` emission stays the legacy field branch); a native
+ * backend resolves the field slot off the receiver instead of re-dispatching the opaque leaf through the
+ * call machinery (draining the A3:call-dispatch it otherwise records).
+ */
+export interface HMemberRead extends HBase {
+  kind: "member-read";
+  head: ast.ASTNode;
 }
 
 /** A lowering-introduced name (`__ll_hir_<n>`), declared by an HDeclTemp and read here. */

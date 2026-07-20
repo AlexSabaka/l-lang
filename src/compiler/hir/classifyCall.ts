@@ -32,6 +32,7 @@ export type CallDispatch =
   | { kind: "ext"; head: ast.ASTNode; objectName: string; member: string; fnName: string; args: ast.ASTNode[] }
   | { kind: "operator"; op: string; head: ast.ASTNode; args: ast.ASTNode[] }
   | { kind: "construct"; callee: ast.ASTNode; args: ast.ASTNode[] }
+  | { kind: "member-read"; head: ast.ASTNode; objectName: string; member: string }
   | { kind: "opaque" };
 
 // -- the same channel-based predicates JSTransformer uses, re-expressed against a bare Context --------
@@ -100,7 +101,9 @@ export function classifyCall(node: ast.ListNode, ctx: CallClassCtx): CallDispatc
       if (member === "push" || member === "unshift") return { kind: "opaque" };
       return { kind: "method", head, objectName, member, args };
     }
-    if (mk !== undefined) return { kind: "opaque" }; // a native FIELD -- a read, not a call
+    // A native/known FIELD -- `(obj.field)` is a READ, not a call. Modeled so the backend resolves it as
+    // a field access off the node instead of re-dispatching the opaque leaf through the call machinery.
+    if (mk !== undefined) return { kind: "member-read", head, objectName, member };
     // mk === undefined: the receiver TYPE is unknown here. Prefer a conforming `:extension`; else it is a
     // DYNAMIC method call.
     const rtype = receiverType(ctx, objectName, head);
@@ -110,10 +113,11 @@ export function classifyCall(node: ast.ListNode, ctx: CallClassCtx): CallDispatc
     }
     // No native member, no conforming extension -> a call on an untyped receiver dispatched at RUNTIME.
     // With args it is a virtual method call `obj.method(args)` (the emitter's general member-call branch;
-    // JS lets the runtime resolve, a native backend needs a vtable). A 0-arg access falls to `__ll_member`
-    // or a field read -- a distinct emission (member-dyn), left opaque here.
+    // JS lets the runtime resolve, a native backend needs a vtable). A 0-arg access is a `__ll_member` /
+    // field READ -- a member-read (the emission stays the legacy branch; the backend resolves it off the
+    // node instead of re-dispatching the opaque leaf as a call).
     if (args.length > 0) return { kind: "virtual", head, objectName, member, args };
-    return { kind: "opaque" };
+    return { kind: "member-read", head, objectName, member };
   }
 
   if (head?._type !== "simple-identifier") return { kind: "opaque" };

@@ -422,6 +422,11 @@ export class EmitHirToEstree {
         // Modeled atom: JS materializes the reference (its identifier policy) via the per-backend hook.
         return this.legacy.emitRef(h.src);
 
+      case "member-read":
+        // A3: the field-vs-`__ll_member` emission stays the legacy field branch (JS re-visits `src`), so
+        // this is byte-identical; the model exists so a native backend resolves the slot off the node.
+        return this.legacy.leafExpr(h.src);
+
       case "formatted-string": {
         // A2: build the template literal DIRECTLY -- byte-identical to visitFormattedString. Consecutive
         // literal segments accumulate into a quasi; each interpolation becomes `__ll_format_object(<e>)`.
