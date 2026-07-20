@@ -13,6 +13,7 @@ import {
 } from "../../../utils";
 import { CodegenDiagnostics as CD } from "../../../rules/diagnostics";
 import { TypeChecker } from "../../../types/TypeChecker";
+import { shouldCopyOnStore } from "../../../hir/valueCopy";
 import { isBuiltinModifier, hasModifier } from "../../../helpers/modifiers";
 import * as acorn from "acorn";
 import { ClassBuilder } from "../JSClassBuilder";
@@ -3720,55 +3721,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // ===========================================================================================
 
   /**
-   * Node types that can NEVER evaluate to a struct.
-   *
-   * A DENY-list, on purpose. The alternative -- listing what CAN be a struct -- fails unsafely: a node
-   * type I forget would be left unwrapped, which is an aliasing bug. Forgetting one here merely leaves
-   * a redundant `__ll_copy()` around a literal, which is noise. Correctness is not symmetric with
-   * tidiness, so the asymmetry decides the direction.
-   */
-  private static readonly NEVER_A_STRUCT = new Set([
-    "integer-number", "float-number", "hex-number", "octal-number", "binary-number",
-    "fraction-number", "complex-number", "string", "formatted-string", "boolean", "null",
-    "vector", "matrix", "map", "function", "quote", "comment",
-  ]);
-
-  /**
-   * Does this expression need a copy on the way into a binding, a parameter, or a collection slot?
-   *
-   * Codegen CAN ask now -- see the channel below. The `NEVER_A_STRUCT` deny-list stays as the cheap
-   * syntactic answer for the cases no type is needed for (a literal is not a struct).
+   * Does this expression need a D11 copy on the way into a binding, a parameter, or a collection slot?
+   * The deny-list + type-channel logic now lives in the shared `shouldCopyOnStore` predicate (the single
+   * source the HIR lowering also reads), so this is a thin delegate.
    */
   private needsValueCopy(node: ast.ASTNode | undefined | null): boolean {
-    if (!node) return false;
-    if (JSTransformerAstVisitor.NEVER_A_STRUCT.has(node._type)) return false;
-
-    // ASK. `context.nodeTypes` is the per-node type channel the types stage fills, so this is no
-    // longer "could it POSSIBLY be a struct?" but "is it one?".
-    //
-    // The asymmetry is the design: a type proving NOT-a-struct elides the copy; NO type says nothing,
-    // and the copy stays. Gradual typing means the channel is often empty, and an empty channel must
-    // never read as "not a struct" -- that turns a missing type into an aliasing bug, the exact class
-    // D11 exists to kill. Erring the other way merely leaves a redundant call around a value that
-    // cannot carry the marker.
-    const known = this.context.nodeTypes?.get(node);
-    if (known && this.provablyNotAStruct(known)) return false;
-
-    // A FRESH construction is already a brand-new object -- `(let result (Complex))`. Copying it would
-    // duplicate an object nobody else can reach. This is not just an optimisation: the corpus's whole
-    // idiom is construct-mutate-return, so without it every struct in std/math and 09_operators would
-    // be cloned once for no reason at all.
-    if (ast.isListNode(node)) {
-      const head = (node as ast.ListNode).nodes[0];
-      if (head && head._type === "simple-identifier") {
-        const id = ast.symbolName(head as ast.IdentifierNode);
-        // Symbol table, not source order: a construction is a construction wherever the class is
-        // declared, and a freshly-constructed value never needs copying.
-        if (id === "new" || this.isConstructorName(head)) return false;
-      }
-    }
-
-    return true;
+    // Delegates to the SHARED store-copy predicate (A5) -- the single source the HIR lowering also reads
+    // (caching it on HVarDecl.copies), so JS and the native backend cannot decide the D11 copy
+    // differently. This is where the interface-elides-a-struct-copy divergence was fixed (D48/Q1).
+    return shouldCopyOnStore(node, this.context);
   }
 
   /**

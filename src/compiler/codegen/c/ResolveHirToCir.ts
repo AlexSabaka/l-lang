@@ -663,7 +663,7 @@ export class ResolveHirToCir {
         }
 
         case "var-decl":
-          return this.resolveVarDecl(h.src as ast.VariableNode, h.init ? this.resolveExpr(h.init) : null, { name: h.name, mutable: h.mutable, declaredType: h.declaredType });
+          return this.resolveVarDecl(h.src as ast.VariableNode, h.init ? this.resolveExpr(h.init) : null, { name: h.name, mutable: h.mutable, declaredType: h.declaredType, copies: h.copies });
 
         case "user-assign":
           return this.resolveUserAssign(h.src as ast.SimpleAssignmentNode | ast.CompoundAssignmentNode, this.resolveExpr(h.rhs));
@@ -760,7 +760,7 @@ export class ResolveHirToCir {
     return { src: e.src, ctype: C_VOID, kind: "c-expr-stmt", expr };
   }
 
-  private resolveVarDecl(node: ast.VariableNode, init: CExpr | null, modeled?: { name: string | null; mutable: boolean; declaredType: InferredType | undefined }): CStmt[] {
+  private resolveVarDecl(node: ast.VariableNode, init: CExpr | null, modeled?: { name: string | null; mutable: boolean; declaredType: InferredType | undefined; copies: boolean }): CStmt[] {
     // Name / mutability / declared-type: OFF THE HIR NODE when the declaration was modeled (HVarDecl), so
     // no decl-structure / decl-type / mut-narrowed dip below the HIR. The raw path (a var-decl inside a
     // bailed opaque subtree) still reads the VariableNode + symbol table, and records those dips.
@@ -811,8 +811,11 @@ export class ResolveHirToCir {
       this.ledger.record("A5", "mut-capture-cell", node, "mut binding captured by a closure; boxed into a shared heap cell");
       declCType = C_VALUE;
     }
-    // A `let`/`mut` is a store site: a struct initializer is COPIED (D11).
-    const storedInit = init ? this.copyStore(init, node, "let-decl") : null;
+    // A `let`/`mut` is a store site: a struct initializer is COPIED (D11). The DECISION rode the HIR
+    // node (A5) on the modeled path, so consume it -- no re-derive, no dip. The raw path re-derives.
+    const storedInit = init
+      ? (modeled ? this.copyDecided(init, node, modeled.copies) : this.copyStore(init, node, "let-decl"))
+      : null;
     // A module-level binding referenced by a function is a C GLOBAL: declare it once at file scope
     // and emit an ASSIGNMENT here (the global is visible to the functions that close over it).
     if (!this.inFunctionBody && this.globalNames.has(srcName)) {
@@ -837,6 +840,17 @@ export class ResolveHirToCir {
   /** The D11 copy DECISION at a store site (spec A5). Wraps a struct/boxed value in an explicit copy
    *  node; a native primitive, array or class reference is left alone (CP3 shallow-at-reference). The
    *  copy MATERIALIZATION (deep vs shared) is the runtime's ll_copy dispatching on the tag. */
+  /** The copy at a MODELED store site (A5): the DECISION rode the HIR node (`shouldCopyOnStore`), so
+   *  consume it -- no re-derivation, no dip. The ctype guard stays (never wrap a non-obj/value; a fresh
+   *  construction is already a new value), so the materialization is identical to `copyStore` minus the
+   *  independently-synthesised decision -- which is exactly the divergence D48/Q1 removes. */
+  private copyDecided(e: CExpr, src: ast.ASTNode, copies: boolean): CExpr {
+    if (!copies) return e;
+    if (e.ctype.k !== "obj" && e.ctype.k !== "value") return e;
+    if (e.kind === "c-construct") return e;
+    return { src, ctype: e.ctype, kind: "c-copy", inner: e };
+  }
+
   private copyStore(e: CExpr, src: ast.ASTNode, site: string): CExpr {
     if (e.ctype.k !== "obj" && e.ctype.k !== "value") return e; // int/real/str/vec/map/closure: no copy
     // A fresh construction is already a new value -- no copy needed (matches the JS elision).

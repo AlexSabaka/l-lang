@@ -482,6 +482,13 @@ export interface HVarDecl extends HBase {
    * backend needs neither `nodeTypes` nor the symbol table for it.
    */
   declaredType: InferredType | undefined;
+  /**
+   * The D11 copy DECISION for the initializer (A5), resolved ONCE at lowering by the shared
+   * `shouldCopyOnStore` predicate. Both backends read it instead of re-deriving the copy on their own
+   * representation (JS off `nodeTypes`, C off the CIR ctype) -- the divergence D48/Q1 closes. `true`
+   * means the initializer is `__ll_copy`/`ll_copy`-wrapped; the runtime still no-ops on non-structs.
+   */
+  copies: boolean;
 }
 
 /** A simple assignment `(x := rhs)` whose RHS is an HExpr the HIR emits inline; the target + D11 copy

@@ -27,6 +27,7 @@ import * as ast from "../frontend/ast";
 import type { InferredType } from "../analysis/SymbolTable";
 import { classifyList } from "../analysis/listForm";
 import { classifyCall } from "./classifyCall";
+import { shouldCopyOnStore } from "./valueCopy";
 import { HirModule } from "./HirModule";
 import { TempAllocator } from "./TempAllocator";
 import {
@@ -1181,7 +1182,9 @@ export class LowerAstToHirVisitor {
       ? ast.symbolName(nm as ast.IdentifierNode)
       : null;
     const declaredType = this.declaredTypeOf(node, name);
-    const hvar: HStmt = { ...this.base(node), kind: "var-decl", init: init.value, name, mutable: !!node.mutable, declaredType };
+    // The D11 copy decision, resolved ONCE here (A5) so both backends consume it, not re-derive it.
+    const copies = shouldCopyOnStore(node.value, this.context);
+    const hvar: HStmt = { ...this.base(node), kind: "var-decl", init: init.value, name, mutable: !!node.mutable, declaredType, copies };
     return { stmts: [...init.stmts, hvar], value: dest.kind === "value" ? this.nil(node) : null };
   }
 
