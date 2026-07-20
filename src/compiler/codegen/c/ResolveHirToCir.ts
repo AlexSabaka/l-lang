@@ -1637,13 +1637,15 @@ export class ResolveHirToCir {
    * `op` is not a built-in operator form, so the caller falls through (resolveCall to the rest of its
    * dispatch; the HIR case to the raw path). Extracted verbatim from resolveCall so both are byte-identical.
    */
-  private resolveOperatorCall(node: ast.ListNode, op: string, args: ast.ASTNode[]): CExpr | undefined {
-    if (op === "!" && args.length === 1) {
-      const operand = this.resolveAstExpr(args[0]);
-      return { src: node, ctype: C_BOOL, kind: "c-unop", op: "!", mode: "bool", operand };
+  private resolveOperatorCall(node: ast.ListNode, op: string, args: ast.ASTNode[], argVals?: CExpr[]): CExpr | undefined {
+    // The operand at position i: a pre-resolved value (HIR path, consuming h.args) or a raw-AST resolve.
+    const A = (i: number): CExpr => (argVals ? argVals[i] : this.resolveAstExpr(args[i]));
+    const n = argVals ? argVals.length : args.length;
+    if (op === "!" && n === 1) {
+      return { src: node, ctype: C_BOOL, kind: "c-unop", op: "!", mode: "bool", operand: A(0) };
     }
-    if (op === "-" && args.length === 1) {
-      const operand = this.resolveAstExpr(args[0]);
+    if (op === "-" && n === 1) {
+      const operand = A(0);
       // A user unary `:operator -` on a struct operand -> a devirtualized call.
       if (operand.ctype.k === "obj") {
         const overload = this.operators.get(`u-:${operand.ctype.className}`);
@@ -1655,11 +1657,11 @@ export class ResolveHirToCir {
       const mode = operand.ctype.k === "real" ? "real" : "int";
       return { src: node, ctype: operand.ctype.k === "real" ? C_REAL : C_INT, kind: "c-unop", op: "-", mode, operand };
     }
-    if (BINARY_OPS.has(op) && args.length >= 2) {
+    if (BINARY_OPS.has(op) && n >= 2) {
       // Left-fold: `(+ a b c)` == `((a+b)+c)`, per-pair mode decisions (string contagion works).
-      let acc = this.resolveAstExpr(args[0]);
-      for (let i = 1; i < args.length; i++) {
-        acc = this.mkBinop(op, acc, this.resolveAstExpr(args[i]), node);
+      let acc = A(0);
+      for (let i = 1; i < n; i++) {
+        acc = this.mkBinop(op, acc, A(i), node);
       }
       return acc;
     }
@@ -1667,19 +1669,17 @@ export class ResolveHirToCir {
   }
 
   /**
-   * A3 (consume HOperator): an operator call `(op a b)` dispatches straight to the operator resolver,
-   * bypassing resolveCall's re-classification (the A3:call-dispatch dip). `op` is a built-in operator
-   * symbol; the args come off the call form (which carries the lowered operands). A form the operator
-   * resolver does not cover (a user operator that falls through) drops to the raw path.
+   * A3 (consume HOperator): an operator call `(op a b)` dispatches straight to the operator resolver with
+   * its ALREADY-LOWERED operands (h.args resolved via resolveExpr, so an operand read rides its HRef and
+   * records no A2:atom-ref dip), bypassing resolveCall's re-classification (the A3:call-dispatch dip). The
+   * emitted op is byte-identical -- the modeled/raw distinction only gates the ledger. A user operator the
+   * resolver does not cover falls back to the raw path.
    */
   private resolveOperator(h: Extract<HExpr, { kind: "operator" }>): CExpr {
-    const list = h.src as ast.ListNode;
-    const form = classifyList(list);
-    if (form.kind === "call" && form.callee._type === "simple-identifier") {
-      const res = this.resolveOperatorCall(list, (form.callee as ast.SimpleIdentifierNode).id, form.args);
-      if (res) return res;
-    }
-    return this.resolveAstExpr(list);
+    const argVals = h.args.map((a) => this.resolveExpr(a));
+    const res = this.resolveOperatorCall(h.src as ast.ListNode, h.op, [], argVals);
+    if (res) return res;
+    return this.resolveAstExpr(h.src);
   }
 
   /** The RAW-AST construction path (a bare `(C ...)` / `(new C ...)` reached via resolveList): resolve the
