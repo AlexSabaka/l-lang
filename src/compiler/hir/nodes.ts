@@ -288,6 +288,7 @@ export type HStmt =
   | HFieldInit
   | HSuperCall
   | HCtorMethodCall
+  | HClass
   | HOpaqueStmt;
 
 /** An expression evaluated for effect; its value is discarded. */
@@ -444,6 +445,27 @@ export interface HVarDecl extends HBase {
 export interface HUserAssign extends HBase {
   kind: "user-assign";
   rhs: HExpr;
+}
+
+/**
+ * A class / struct DECLARATION (A4, class-def step 1 -- the seam).
+ *
+ * A class was, until now, indistinguishable from any other leaf statement: it lowered to an
+ * `HOpaqueStmt` and the emitter re-visited `src`. That is the same catch-all a bare `foo()` uses, so
+ * neither backend could tell "a type is being declared here" from "some effect runs here" -- and the
+ * whole class SHAPE (fields, constructor, methods, markers) lived entirely off the HIR, in
+ * `JSClassBuilder` on the JS side and a parallel `registerClass` pre-pass on the C side.
+ *
+ * `HClass` gives the declaration its own node. It carries nothing but `src` yet: this step only
+ * introduces the honest kind and routes class/struct through it, byte-identically (both backends emit
+ * exactly as they did for the opaque leaf -- JS via `leafStmt`, C via the same `resolveAstStmt` /
+ * `topLevelStmtNodes` collection). The value is the SEAM: the structure (name, superclass, resolved
+ * constructor params + prologue, fields, methods, iterable bridge, markers) moves onto this node in the
+ * following gated increments, until `JSClassBuilder` is the thin consumer the spec wants (Step 5) and
+ * the C backend consumes the same modeled node instead of re-deriving from raw AST.
+ */
+export interface HClass extends HBase {
+  kind: "class";
 }
 
 /** A leaf statement: emit by coercing the legacy `visit(src)` to a statement. */

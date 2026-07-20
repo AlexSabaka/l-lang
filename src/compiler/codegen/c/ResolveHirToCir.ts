@@ -270,7 +270,7 @@ export class ResolveHirToCir {
     const out: ast.ASTNode[] = [];
     const walk = (b: HBlock | undefined): void => {
       for (const s of b?.stmts ?? []) {
-        if (s.kind === "opaque-stmt" || s.kind === "expr-stmt" || s.kind === "var-decl") out.push(s.src);
+        if (s.kind === "opaque-stmt" || s.kind === "class" || s.kind === "expr-stmt" || s.kind === "var-decl") out.push(s.src);
         else if (s.kind === "block") walk(s.body);
       }
     };
@@ -605,6 +605,11 @@ export class ResolveHirToCir {
     try {
       switch (h.kind) {
         case "opaque-stmt":
+        case "class":
+          // A4 step 1: a class/struct declaration in body position. `resolveAstStmt` routes struct/class
+          // to `collectClassMembers` and emits nothing (the type is registered in the pre-pass) -- the
+          // same no-op the opaque leaf performed. When the class is lowered onto HClass, this consumes
+          // the modeled node instead of re-reading `h.src`.
           return this.resolveAstStmt(h.src);
 
         case "expr-stmt": {

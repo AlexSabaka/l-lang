@@ -241,9 +241,26 @@ export class LowerAstToHirVisitor {
       case "composite-identifier":
         // Modeled reference atoms (A2). Value-position identifiers only -- a callee stays legacy.
         return this.placeValue(this.ref(node), [], dest);
+      case "class":
+      case "struct":
+        return this.lowerClassLike(node, dest);
       default:
         return this.leaf(node, dest);
     }
+  }
+
+  /**
+   * A class / struct declaration -> `HClass` (A4, class-def step 1). In statement position (which is the
+   * only position a declaration ever occupies -- the program and every body lower in effect dest) this
+   * is the dedicated `HClass` seam; the emitter re-visits `src` exactly as it did for the opaque leaf, so
+   * this is byte-identical. Any other dest keeps the legacy leaf path unchanged (a class never reaches
+   * value/assign/return, but the fallback stays honest rather than fabricating an `HClass` expression).
+   */
+  private lowerClassLike(node: ast.ASTNode, dest: Dest): Lowered {
+    if (dest.kind === "effect") {
+      return { stmts: [{ ...this.base(node), kind: "class" }], value: null };
+    }
+    return this.leaf(node, dest);
   }
 
   /** A statement sequence (a block, or a function body). Last item takes `dest`; the rest are effects. */

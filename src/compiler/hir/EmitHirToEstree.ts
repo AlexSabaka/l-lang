@@ -82,6 +82,11 @@ export class EmitHirToEstree {
       case "opaque-stmt":
         return this.legacy.leafStmt(h.src);
 
+      case "class":
+        // A4 step 1: the class declaration re-visits `src` exactly as the opaque leaf did (JSClassBuilder
+        // still owns the shape). Byte-identical; the seam only makes the declaration a distinct node.
+        return this.legacy.leafStmt(h.src);
+
       case "var-decl":
         return this.legacy.emitVarDecl(h.src, h.init ? this.emitExpr(h.init) : null);
 
