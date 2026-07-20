@@ -2812,6 +2812,12 @@ prints `just a baby`.
 not yet work — the `:when` half is real, the `:of` half is not. Likewise `rest-pattern` (`[1 ...rest]`)
 and `functional-pattern`. Those are separate defects; this ruling is guards.
 
+### Amended by the 2026-07 design round
+
+**Predicate-lambda match arms are rejected.** A `(fn [x] …)` lambda used as a pattern is redundant with
+the `:when` guard this decision added — `n :when (pred n)` already expresses "match where a predicate
+holds," and one spelling is the rule. (Source: `docs/inbox/hir-design-round-brief.md` §C.)
+
 ## D27 — `:of` type patterns
 
 `x :of T` matches when the scrutinee is a `T`, and binds it to `x`. It is the value-level companion to
@@ -3194,6 +3200,12 @@ real element types.
 **La** (cursor substrate: `iter`/`next` builtins, `Iterator :implements Iterable`), **Lb** (straight-
 through `:gen` operators), **Lc** (early-exit + terminals, and the laziness proof), **Ld** (this ruling
 and D34).
+
+### Amended by the 2026-07 design round
+
+**`infix` is closed.** An `(infix a / b)` escape hatch conflicts with this decision's ruling that `|>`
+is the language's one infix form, and with the deliberately-Lisp prefix surface. Rejected.
+(Source: `docs/inbox/hir-design-round-brief.md` §C.)
 
 ## D34 — modifier composition: DISPATCH modifiers vs BODY modifiers
 
@@ -3612,6 +3624,12 @@ evidence, leave it dead and say so"*). A union `:of` that IS decidable — `(x :
 expanded at the emitter into `__ll_is_type(x,"Int") || __ll_is_type(x,"String")` (Zd), restoring what
 Zc refuses, correctly.
 
+### Amended by the 2026-07 design round
+
+**The `pattern -> Type =>` type-guard arm is rejected.** `:of` (this decision) is the *one* spelling for
+the type question in both pattern and expression position; a second `-> Type` spelling is redundant.
+(Source: `docs/inbox/hir-design-round-brief.md` §C.)
+
 ---
 
 ## D42 — types are nominal, interfaces are structural (the Go model; sub-phases Zf–Zg)
@@ -3874,3 +3892,156 @@ is invisible to it, and the ternary peephole kept the emitted text identical whe
 good. After full inversion and the cut there is a single mode; the gate now stands at runner **71/0**,
 `test:codegen` **297/0** (the three LL0103 cases removed), `test:diagnostics` **45 probes** (the LL0103
 probe removed), type-errors 0, imports 19/19, repl 26/0.
+
+---
+
+## D46 — the coercion pass is the type system's checked-conversion layer (Phase Cv)
+
+> **Ratified in the 2026-07 Sabaka⇄Dove design round; not yet built.** Long-form source of record:
+> `docs/inbox/hir-design-round-brief.md` §B. Recorded here so it is not re-opened.
+
+The native pipeline's coercion pass (A6, the C backend's `InsertCoercions` P2) is **not** "box/unbox for
+`Unknown`" — it is the **boundary-conversion layer of the type system**. Every feature that inserts a
+check/convert at a typed↔typed (or typed↔`Unknown`) edge rides it. Model the coercion node to carry the
+**check/convert kind + the target type**, not a bespoke box/unbox — the repr is load-bearing for the
+type-system future. JS erases coercions, so this is a **single-backend pass** (see D48/A-0); the
+*decision* to insert one is a type-system fact.
+
+**B-1 — refinements = "a value of the base type for which a boolean holds."** Type-agnostic, zero
+per-type machinery: the check is "evaluate the boolean at construction and at every coercion into the
+refined type; throw if false." Total, UB-free, backend-identical. `(lo .. hi)` is **sugar that desugars
+to a predicate** (`(0 .. 255)` → `(& (>= v 0) (<= v 255))`), not a primitive. Per built-in:
+numbers/chars get range sugar (`Char` is numeric underneath); booleans get the predicate form for free
+but **no range sugar** (it degenerates to a singleton — a non-problem, not chased); strings get
+length/predicate refinements.
+- **B-1a — regex is a stdlib predicate, never grammar sugar.** `String :where "regex"` is rejected *as
+  grammar*: backend divergence (`\w` ASCII-in-JS vs Unicode-in-PCRE), ReDoS on every construction, and a
+  fuzzy anchoring/escaping surface. A regex refinement is an ordinary predicate calling `matches?` — one
+  place to pin a documented, backend-identical subset. **General rule:** sugar only for UB-free,
+  backend-identical refinements (ranges, membership, length); anything with engine/portability semantics
+  goes through an explicit stdlib predicate.
+- **B-1b — record-field refinements attach to the field** (the field *is* the subject; no naming). And
+  **`:where <predicate>` is for value refinements; `:is`/`:extends`/`:implements` are reserved for
+  type-variable bounds** — a type-level relation, a *different feature*. No shared keyword; the
+  `:where name :is (0..n)` spelling is rejected (redundant + collides).
+
+**B-2 — native fixed-width integers** (`uint8`/`int32`/…) are B-1 without a user body: a fixed-range
+refinement on `Int` materialised as a native width (`uint8_t`), the `Int↔width` conversion riding the
+same pass. Native-relevant (packing/FFI/layout); a no-op-to-`Int` degrade on JS.
+
+**B-3 — `defcast :implicit`/`:explicit`** — a user-defined conversion is a stripped function keyed by
+types (like an operator): no name, exactly one param (source), a return type (target), a body. Exactly
+one of `:implicit`/`:explicit` among the modifiers (reuse the modifier machinery — not a dedicated
+keyword). **Implicit** fires at coercion sites (assignment/arg/return), inserted by the coercion pass —
+**one hop only, lossless widening only**, a subtype relation preferred (no cast); nothing lossy fires
+silently. **Explicit** fires only at an explicit cast site — `(cast<T> x)` (distinct from construction,
+which is `(T x)`). Resolution rides the operator path: a registry keyed by (source, target),
+devirtualised to a direct call — on C both are direct calls after devirt.
+
+**Grammar deltas (B-0 / B-1c), clean against the current EBNF:**
+```
+typeDefDecl        ::= "deftype" modifier* identifier "<-" type refinement? ;   (* name+type now REQUIRED *)
+keyTypeDefinition  ::= <Colon> mapKeyType "<-" type refinement? ;               (* record fields *)
+refinement         ::= <WhereModKw> ( range | expression ) ;                    (* expression = boolean predicate *)
+range              ::= <LParen> expression <Range> expression <RParen> ;        (* sugar -> predicate *)
+castDefDecl        ::= "defcast" modifier* <LBracket> parameter <RBracket> "->" type expression* ;
+```
+New tokens: `deftype` gains the universal `<-` binder (was `identifier? type?`, both optional — an empty
+`deftype` parses today); `<Range> ::= /\.\.(?!\.)/` (slots between `<Dot>` and `<Spread>`;
+`<OperatorIdent>` excludes `.`, so no collision); `<WhereModKw> ::= /:where(?![a-zA-Z0-9_-])/`.
+
+**Discipline — do not blur the line to provable refinements.** Runtime-checked (this decision) is the
+substrate. A *provable* refinement (the checker discharges `0..255` statically) is a **separate
+verification project** (Liquid-Haskell/F*/Dafny-grade), same syntax, retrofitted later as an
+optimisation. A refinement that can't be discharged **runs its check at runtime, full stop** — the
+moment the checker opportunistically discharges predicates, the SMT project has silently begun. Keep it
+a named-and-later thing.
+
+---
+
+## D47 — conditions / restarts: a resumable second exception mechanism (Phase Cr; C-native, JS-refused)
+
+> **Ratified in the 2026-07 design round; not yet built.** Source: `docs/inbox/hir-design-round-brief.md` §D.
+
+The Common Lisp condition/restart system — **resumable exceptions**, a *second* mechanism **beside**
+`try`/`catch`, not a replacement. `try`/`catch` unwinds *up* to the handler; a restart runs the handler
+**without unwinding** (control stays at the signal point), then transfers to a marked restart point that
+can be *below* the handler — "handle in place, then resume below," which `try`/`catch` structurally
+cannot express.
+
+**Cost — moderate, not continuation-heavy.** Because CL runs handlers *before* unwinding, **no
+continuations**: a dynamically-scoped handler stack (push on handler-bind), a dynamically-scoped restart
+registry (push on restart-case, each carrying a `setjmp` point), `signal` walks the handler list in the
+current frame, `invoke-restart` = `longjmp` to the chosen point. No stack copying, no fibers — that is
+what separates restarts (tractable) from `call/cc` / algebraic effects (the heavy thing). The C backend
+already lowers `try`/`catch` to `setjmp`/`longjmp`.
+
+**Shapes** (spellings open to bikeshed; semantics are the ruling): `restart-case <body> (:name [params]
+body)*` — each restart's return value becomes the whole form's value when it is invoked; `handle <body>
+(:on Cond [c] …)*` — in-place handlers that may invoke a restart / decline to the next / non-locally
+exit; `(signal cond)`; `(invoke-restart :name args*)`. Keep **`handle` distinct from `try`** (opposite
+mechanisms); avoid `with-handlers` (Racket uses it for the *unwinding* kind — it would mislead).
+
+**Scope = the resumable kernel** (`restart-case`/`handle`/`signal`/`invoke-restart`). Skip the full CL
+apparatus (interactive-debugger integration, `compute-restarts` reflection).
+
+**The one genuinely hard part** (hand to the worktree up front): a restart transfer **must run
+intervening `finally`/cleanup/`:destructor` blocks.** `longjmp` is a raw jump — it does not run cleanups
+between the signal point and the restart target, but semantically it must (a `finally` between the
+`restart-case` and the `signal` fires during unwind-to-restart exactly as during a catch-unwind). So
+restarts hook the **same** cleanup stack the `try`/`catch` lowering already manages, **not** a parallel
+one — naive `setjmp`/`longjmp` is not enough, and skipped-cleanup is a silent-wrong bug. Secondary
+edges: handler bind/unbind discipline (a handler runs with itself unbound so a re-signal doesn't
+recurse); a D11 value-copy in flight left consistent across the raw jump.
+
+**JS refuses first.** JS has no resumable exceptions → an honest refusal with a diagnostic, exactly as C
+refuses coroutines today (the mirror image: JS-free coroutines / C-refused; C-native restarts /
+JS-refused). The worktree targets **C**. Composes with B-1 (D46): a failed refinement can `signal` a
+`RefinementViolation` carrying `:clamp`/`:use-default` restarts instead of throwing — recoverable at the
+handler's discretion; flag the ordering when both land.
+
+---
+
+## D48 — the HIR core tail: nodify dual-backend decisions, reclassify single-backend passes (Phase 6)
+
+> **Ratified in the 2026-07 design round; the resolutions to `docs/inbox/hir-llvm-readiness-report.md`'s
+> five open questions.** Source: `docs/inbox/hir-design-round-brief.md` §A.
+
+**A-0 (the governing rule).** The gap ledger's power is that a dip cannot be argued away. A thing leaves
+core **only** if it is genuinely a single-backend pass (JS has no version of it). A decision **both**
+backends make stays core and must be **nodified** so they cannot diverge. A computation the backend
+performs is a dip **even if cheap and deterministic** — resolve it onto the node, do not relabel it.
+This is the instrument; keep it.
+
+- **Q1 — A5/A6 split, not symmetric.** **A6 (coercions): out of core** — single-backend (JS erases
+  them; only the native pipeline decides one); it is D46's pass. **A5 (copies): the *decision* is core,
+  materialisation is out of core.** D11 value semantics run on **both** backends, so the copy decision
+  ("struct value, copies per D11/CP3?") is made twice and *can diverge* — TY8 one level down (drift on a
+  boxed-`Unknown`-holding-a-struct → one backend shares, the other copies, silently). `isStore` marks
+  *that* a store happens, not *whether* it copies. **Ruling:** make it an `HCopyStore` node (both
+  backends read it, cannot disagree); leave `__ll_copy`/`memcpy`/move as backend materialisation. Drains
+  the 640 like `HRef` drained `atom-ref`. *Escape hatch:* if JS and C already route the decision through
+  one shared predicate, the node is merely tidier; if the synthesis sites are separate, it is
+  mandatory-for-soundness — verify before committing.
+- **Q2 — boxed-`Unknown` repr: fat pointer `{tag, payload}`, ratified by construction.** The C backend
+  already runs it (boxed-`Unknown` the sole home; statics unboxed) and passes — a working proof. LLVM
+  inherits the repr; only materialisation changes (C struct → LLVM aggregate).
+- **Q3 — closure ABI, split.** **Callee-identity (110): cheap** — the call carries the name but not
+  *which declaration*; put the resolved binding on the call node ("`HRef` for calls"). **Function-as-
+  value: the last non-mechanical core work** — a closure needs a representation (code pointer + captured
+  environment) and a real D10/D11 decision (capture by value vs reference; how a captured `mut` becomes
+  a heap cell — `mut-capture-cell`). Do the cheap half first; the closure repr is where the thinking is.
+- **Q4 — patterns: model as an IR fact (`HMatchTest`), not a backend-lowered leaf.** The fused-boolean
+  form `(v = scrut, test)` is a semantic trap — it mutates while looking pure, and the bind-then-test
+  ordering is load-bearing (it is *why* arms need an else-chain). C only survives because P1 hand-expands
+  it. Model the **shape** once (scrutinee tests + binding set + ordering); each pattern kind fills it in.
+  The last opaque-leaf *class*.
+- **Q5 — field-get: resolve, don't relabel.** `field-get` is "consuming `HClass`" only if the resolved
+  slot is *on* `HMemberRead`. If the backend re-walks the `HClass` field list for the index, that is a
+  real dip. **Ruling:** carry the resolved slot on `HMemberRead` (the `HRef` move). Relabelling by fiat
+  erodes the instrument A-0 protects.
+
+**Core-tail sequencing.** (1) Cheap drains together — `HCopyStore`, field-get slot on `HMemberRead`,
+callee-identity on call nodes (all `HRef`-style; big dip drop, closes the A5 divergence hole). (2)
+`HMatchTest`. (3) Closure representation (the one real design commitment). (4) A1 field types + residue
+as they surface.
