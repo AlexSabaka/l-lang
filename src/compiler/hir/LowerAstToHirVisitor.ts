@@ -34,6 +34,7 @@ import {
   HBlock,
   HCatch,
   HExpr,
+  HFieldDecl,
   HIf,
   HMapEntry,
   HReturn,
@@ -267,9 +268,36 @@ export class LowerAstToHirVisitor {
       // The `__ll_name` marker's value: the SOURCE name, which survives the inliner's rename of `name`.
       const sourceName = (cls as any).__ll_source_name ?? cls.name?.name ?? null;
       const isStruct = node._type === "struct";
-      return { stmts: [{ ...this.base(node), kind: "class", name, superName, sourceName, isStruct }], value: null };
+      const fields = this.classFields(cls);
+      return { stmts: [{ ...this.base(node), kind: "class", name, superName, sourceName, isStruct, fields }], value: null };
     }
     return this.leaf(node, dest);
+  }
+
+  /**
+   * The class-body FIELDS: member variables WITHOUT the `:ctor` modifier (a `:ctor` variable is a
+   * constructor parameter, not a field). Mirrors JSClassBuilder.processBody exactly -- the body is
+   * flattened (a grouped form carries its children in `.nodes`) and scanned in source order, so the
+   * emitted PropertyDefinition order is unchanged.
+   */
+  private classFields(cls: ast.ClassNode): HFieldDecl[] {
+    const bodyNodes = (cls.body ?? [])
+      .map((x: any) => (x.nodes ? x.nodes : [x]))
+      .flat(2);
+    const fields: HFieldDecl[] = [];
+    for (const b of bodyNodes) {
+      if (!b || b._type !== "variable") continue;
+      const v = b as ast.VariableNode;
+      const mods = (v.modifiers ?? []).map((m) => m.modifier);
+      if (mods.includes("ctor")) continue;
+      fields.push({
+        src: v,
+        name: v.name,
+        valueSrc: (v as any).value ?? null,
+        isStatic: mods.includes("static"),
+      });
+    }
+    return fields;
   }
 
   /** A statement sequence (a block, or a function body). Last item takes `dest`; the rest are effects. */

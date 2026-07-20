@@ -471,6 +471,20 @@ export interface HUserAssign extends HBase {
  * until `JSClassBuilder` is the thin consumer the spec wants (Step 5) and the C backend consumes the same
  * modeled node instead of re-deriving from raw AST.
  */
+/**
+ * A class-body FIELD declaration (A4, step 4) -- a non-`:ctor` member variable, emitted as a JS
+ * `PropertyDefinition` (a native backend lays out a struct slot). `name` is the field-name node and
+ * `valueSrc` its initializer node (both re-visited by the JS leaf hooks); `hasInit` is `valueSrc != null`.
+ * `isStatic` is the `:static` modifier (D11e). The initializer's D11 value-copy is applied by the emitter
+ * via `storeValue` (a field is a new home for a value). Not an HStmt -- a member spec carried on HClass.
+ */
+export interface HFieldDecl {
+  src: ast.ASTNode;
+  name: ast.ASTNode;
+  valueSrc: ast.ASTNode | null;
+  isStatic: boolean;
+}
+
 export interface HClass extends HBase {
   kind: "class";
   /** The declared type name (raw / unencoded) -- the JS class id, a native struct tag. */
@@ -486,6 +500,9 @@ export interface HClass extends HBase {
   /** A struct is a VALUE TYPE -- the `static __ll_struct = true` marker (D11); a class omits it. This is
    *  exactly the by-value discrimination a native backend needs, so it rides the node, not just the JS. */
   isStruct: boolean;
+  /** The class-body FIELDS (non-`:ctor` member variables), in source order. Emitted as PropertyDefinitions
+   *  before the constructor; a native backend reads the struct layout from them. */
+  fields: HFieldDecl[];
 }
 
 /** A leaf statement: emit by coercing the legacy `visit(src)` to a statement. */

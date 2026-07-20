@@ -112,7 +112,20 @@ export class EmitHirToEstree {
         const markers: ESTree.PropertyDefinition[] = [];
         if (h.sourceName != null) markers.push(staticMarker("__ll_name", h.sourceName, h.src));
         if (h.isStruct) markers.push(staticMarker("__ll_struct", true, h.src));
-        const members = [...markers, ...this.legacy.emitClassBody(h.src)];
+        // A4 step 4: the fields, after the markers and before the constructor. A field is a new home for
+        // a value, so a named-struct initializer is D11-copied (`storeValue`); the name + initializer are
+        // re-visited by the JS leaf hooks. Visibility is erased (a plain `this.x`, never `#x`; see D11c).
+        const fieldDefs: ESTree.PropertyDefinition[] = h.fields.map((f) => ({
+          type: "PropertyDefinition",
+          key: this.legacy.leafExpr(f.name) as ESTree.PropertyDefinition["key"],
+          value: f.valueSrc != null
+            ? this.legacy.storeValue(this.legacy.leafExpr(f.valueSrc), f.valueSrc)
+            : null,
+          computed: false,
+          static: f.isStatic,
+          loc: loc(f.src),
+        }));
+        const members = [...markers, ...fieldDefs, ...this.legacy.emitClassBody(h.src)];
         const decl: ESTree.ClassDeclaration = {
           type: "ClassDeclaration",
           id: ident(h.name, h.src),
