@@ -53,7 +53,23 @@ export type HExpr =
   | HMatrix
   | HMap
   | HMember
+  | HFormattedString
   | HIndex;
+
+/** One segment of a formatted string: a literal chunk, or an interpolation expression (already lowered). */
+export type HFormatSegment = { str: string } | { expr: HExpr };
+
+/**
+ * An interpolated string `f"a{x}b"` (A2 -- was an opaque leaf re-walked from the raw AST). `segments` are
+ * the source-order chunks: a literal string, or an interpolation expression the HIR lowered like a call's
+ * operand (so evaluation order + temp binding are unchanged). The JS emitter accumulates consecutive
+ * literals into template quasis and wraps each interpolation in `__ll_format_object`; a native backend
+ * interleaves the parts into its string builder -- neither re-walks the raw AST for the segments.
+ */
+export interface HFormattedString extends HBase {
+  kind: "formatted-string";
+  segments: HFormatSegment[];
+}
 
 /**
  * A modeled literal ATOM -- integer/float/string/boolean (A2). The value is on the node, so the emitter

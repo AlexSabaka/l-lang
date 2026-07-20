@@ -422,6 +422,27 @@ export class EmitHirToEstree {
         // Modeled atom: JS materializes the reference (its identifier policy) via the per-backend hook.
         return this.legacy.emitRef(h.src);
 
+      case "formatted-string": {
+        // A2: build the template literal DIRECTLY -- byte-identical to visitFormattedString. Consecutive
+        // literal segments accumulate into a quasi; each interpolation becomes `__ll_format_object(<e>)`.
+        const quasis: ESTree.TemplateElement[] = [];
+        const expressions: ESTree.Expression[] = [];
+        let cur = "";
+        for (const seg of h.segments) {
+          if ("str" in seg) { cur += seg.str; continue; }
+          quasis.push({ type: "TemplateElement", value: { raw: cur, cooked: cur }, tail: false });
+          cur = "";
+          expressions.push({
+            type: "CallExpression",
+            callee: { type: "Identifier", name: "__ll_format_object" },
+            arguments: [this.emitExpr(seg.expr)],
+            optional: false,
+          } as ESTree.CallExpression);
+        }
+        quasis.push({ type: "TemplateElement", value: { raw: cur, cooked: cur }, tail: true });
+        return { type: "TemplateLiteral", quasis, expressions, loc: loc(h.src) } as ESTree.TemplateLiteral;
+      }
+
       case "free-call":
         // Resolved dispatch (classifyCall): build the call directly -- byte-identical to
         // ESTreeBuilder.callExpression -- with no re-dispatch back through the legacy call path.

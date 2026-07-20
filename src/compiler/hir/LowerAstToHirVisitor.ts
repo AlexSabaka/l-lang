@@ -36,6 +36,7 @@ import {
   HCtor,
   HExpr,
   HFieldDecl,
+  HFormatSegment,
   HIf,
   HMapEntry,
   HReturn,
@@ -697,28 +698,25 @@ export class LowerAstToHirVisitor {
   }
 
   private lowerFormattedString(node: ast.FormattedStringNode, dest: Dest): Lowered {
-    // The string segments stay; only the `{expr}` interpolations are value-position children.
-    const slots: number[] = [];
-    const children: ast.ASTNode[] = [];
-    (node.value ?? []).forEach((v, i) => {
-      if (v._type === "format-expression") {
-        slots.push(i);
-        children.push((v as ast.FormatExpressionNode).expression);
+    // Model the whole string (A2): a `string` segment is a literal chunk; every other segment is an
+    // interpolation, whose expression is lowered like a call's operand (same unnest / temp binding, so
+    // evaluation order is unchanged) and rides the node as an HExpr. `visitFormatExpression` emits
+    // `visitExpr(v.expression)`, so lowering `v.expression` is byte-identical to the legacy interpolation.
+    const values = node.value ?? [];
+    const exprNodes: ast.ASTNode[] = [];
+    for (const v of values) {
+      if (v._type !== "string") {
+        exprNodes.push(v._type === "format-expression" ? (v as ast.FormatExpressionNode).expression : v);
       }
-    });
-    if (children.length === 0) return this.leaf(node, dest);
-    return this.lowerViaLegacy(
-      node,
-      children,
-      (newExprs) => {
-        const newValue = [...node.value];
-        slots.forEach((slot, k) => {
-          newValue[slot] = { ...(node.value[slot] as ast.FormatExpressionNode), expression: newExprs[k] } as ast.ASTNode;
-        });
-        return { ...node, value: newValue } as ast.ASTNode;
-      },
-      dest
+    }
+    const { prelude, atoms, diverged } = this.lowerCallArgs(exprNodes);
+    if (diverged) return { stmts: prelude, value: null };
+    let e = 0;
+    const segments: HFormatSegment[] = values.map((v) =>
+      v._type === "string" ? { str: (v as ast.StringNode).value } : { expr: atoms[e++] }
     );
+    const hfstr: HExpr = { ...this.base(node), kind: "formatted-string", segments };
+    return this.placeValue(hfstr, prelude, dest);
   }
 
   /**

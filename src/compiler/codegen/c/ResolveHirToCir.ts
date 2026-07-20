@@ -1082,6 +1082,13 @@ export class ResolveHirToCir {
         return { src: h.src, ctype: { k: "map" }, kind: "c-map", entries };
       }
 
+      case "formatted-string": {
+        // A2: consume the modeled segments -- an interpolation rides its HExpr (resolveExpr), so neither
+        // the segments nor their nested reads/calls re-walk the raw AST. Byte-identical c-interp.
+        const parts: (string | CExpr)[] = h.segments.map((seg) => ("str" in seg ? seg.str : this.resolveExpr(seg.expr)));
+        return { src: h.src, ctype: C_STR, kind: "c-interp", parts };
+      }
+
       case "member":
         throw this.refuse(h.src, "hir-member(pipeline)", "resolveExpr");
 
