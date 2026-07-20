@@ -1006,14 +1006,18 @@ export class ResolveHirToCir {
         // -- consuming `h.head`/`h.args` -- is the follow-up increment.
         return this.resolveAstExpr(h.src);
 
-      case "construct":
-        // A3/A4, construct step 2 (dev): `(Dog a)` is now MODELED as HConstruct. The C backend already
-        // resolves construction off the raw AST (`resolveConstruct` -- allocate + run the constructor,
-        // registering an imported class on demand) via `resolveList`, and `h.src` is that original call
-        // node (now carrying lowered operands) -- so routing through it reproduces the pre-model behavior
-        // byte-for-byte. Chasing HConstruct proper -- consuming `h.callee`/`h.args` -- lands with the
-        // wider A4 work (construction in the HIR; JSClassBuilder / its C analog become thin emitters).
+      case "construct": {
+        // A4: CONSUME HConstruct -- the callee names the class, and `h.args` are the already-lowered
+        // constructor operands. With the field LAYOUT off HClass (registerClass) and the ARGS off the HIR
+        // node, construction no longer dips to the raw AST (only an omitted arg's default still does).
+        // A callee that is not a plain class ref (a computed / imported-but-unresolvable head) falls back
+        // to the raw-AST path, which registers the class on demand and re-derives from `h.src`.
+        const className = this.classNameOf(h.callee);
+        if (className && this.ensureClassRegistered(className, h.src)) {
+          return this.buildConstruct(h.src, className, h.args.map((a) => this.resolveExpr(a)), true);
+        }
         return this.resolveAstExpr(h.src);
+      }
 
       case "operator":
         // A3, operator step 2 (dev): `(op a b)` is now MODELED as HOperator. The C backend already
@@ -1607,17 +1611,32 @@ export class ResolveHirToCir {
     return elements.every((e) => ctypeEquals(unwrap(e), first)) ? first : undefined;
   }
 
+  /** The RAW-AST construction path (a bare `(C ...)` / `(new C ...)` reached via resolveList): resolve the
+   *  positional args off the AST, then fill the slots. The A4:construct dip -- no HConstruct was consumed. */
   private resolveConstruct(node: ast.ASTNode, className: string, args: ast.ASTNode[]): CExpr {
+    this.ledger.record("A4", "construct", node, `construction of '${className}' resolved from the symbol table (raw-AST path, no HConstruct)`);
+    return this.buildConstruct(node, className, args.map((a) => this.resolveAstExpr(a)), false);
+  }
+
+  /**
+   * Fill a construction's field slots from the RESOLVED positional args -- shared by the raw-AST path
+   * (`resolveConstruct`) and the HIR path (the `construct` case consuming HConstruct). Every slot gets a
+   * provided positional arg, else the field's declared default, else nil (`ll_obj_new` zero-fills).
+   *
+   * `fromHir` records honestly: when the args come from HConstruct AND the layout from HClass, the
+   * A4:construct dip is closed -- the only AST read left is a per-field DEFAULT for an OMITTED arg (the
+   * HIR carries the args, not the defaults), recorded per use.
+   */
+  private buildConstruct(node: ast.ASTNode, className: string, argVals: CExpr[], fromHir: boolean): CExpr {
     const desc = this.classes.get(className)!;
-    this.ledger.record("A4", "construct", node, `construction of '${className}' resolved from the symbol table (no HIR node)`);
-    // Fill EVERY field slot: a provided positional arg, else the field's declared default, else nil.
-    // A non-ctor field (`(let :private tag "rect")`) or an omitted ctor arg (`(new Vector3)`) would
-    // otherwise land as nil (ll_obj_new zero-fills) -- the layout+defaults the HIR models nowhere (A4).
     const cArgs = desc.fields.map((f, i) => {
-      const src = i < args.length ? args[i] : f.default;
-      if (!src) return { src: node, ctype: C_VALUE, kind: "c-nil" } as CExpr;
       // A field initializer is a store site: a struct-typed value is copied (D11), an array/class shared.
-      return this.copyStore(this.resolveAstExpr(src), node, "field-init");
+      if (i < argVals.length) return this.copyStore(argVals[i], node, "field-init");
+      if (f.default) {
+        if (fromHir) this.ledger.record("A4", "construct-default", node, `omitted arg -> field '${f.name}' default read from AST (HConstruct carries args, not defaults)`);
+        return this.copyStore(this.resolveAstExpr(f.default), node, "field-init");
+      }
+      return { src: node, ctype: C_VALUE, kind: "c-nil" } as CExpr;
     });
     return {
       src: node, ctype: { k: "obj", className },
