@@ -89,6 +89,11 @@ export class EmitCirToC {
   private out: string[] = [];
   private indent = 0;
   private fresh = 0;
+  // The stack of enclosing `try` frames (innermost last) at the current emit point. A `return` or a
+  // no-match rethrow must run each enclosing finalizer AND restore `ll_handler_top` on the way out --
+  // a raw C `return`/`ll_throw` would jump past both. Every try frame is tracked, even finalizer-less
+  // ones: a `return` out of any try still has to pop the handler stack, or it dangles at a dead frame.
+  private tryStack: { frameVar: string; finalizer: CBlock | null }[] = [];
 
   emitModule(m: CModule): string {
     this.out = [];
@@ -138,7 +143,7 @@ export class EmitCirToC {
     for (const a of m.adapters) this.emitAdapter(a);
     this.line("int main(void) {");
     this.indent++;
-    this.emitBlockStmts(m.main);
+    this.withFreshTryStack(() => this.emitBlockStmts(m.main));
     this.line("return 0;");
     this.indent--;
     this.line("}");
@@ -159,7 +164,7 @@ export class EmitCirToC {
     for (const c of l.captures) {
       this.line(`${c.cell ? "ll_value*" : cType(c.ctype)} ${c.field} = __e->${c.field};`);
     }
-    this.emitBlockStmts(l.body);
+    this.withFreshTryStack(() => this.emitBlockStmts(l.body));
     this.line("return ll_nil();"); // closures always return boxed; unreachable when the body returned
     this.indent--;
     this.line("}");
@@ -206,7 +211,7 @@ export class EmitCirToC {
   private emitFunction(f: CFunction): void {
     this.line(`${this.signature(f)} {`);
     this.indent++;
-    this.emitBlockStmts(f.body);
+    this.withFreshTryStack(() => this.emitBlockStmts(f.body));
     this.indent--;
     this.line("}");
     this.line("");
@@ -218,6 +223,56 @@ export class EmitCirToC {
 
   private emitBlockStmts(b: CBlock): void {
     for (const s of b.stmts) this.emitStmt(s);
+  }
+
+  /** A `return`, routed through every enclosing `try` frame. The value is evaluated FIRST -- while the
+   *  innermost frame is still installed, so a throw inside the return expression is still caught here --
+   *  then each frame is unwound inner-to-outer: restore its `ll_handler_top`, run its finalizer. With no
+   *  enclosing try this is the plain `return <expr>;`. (l-lang has no break/continue, so `return` is the
+   *  only structured early exit that can bypass a finalizer.) */
+  private emitReturn(value: CExpr | null): void {
+    if (this.tryStack.length === 0) {
+      this.line(value ? `return ${this.expr(value)};` : "return;");
+      return;
+    }
+    const frames = this.tryStack;
+    this.line("{");
+    this.indent++;
+    let retTemp = "";
+    if (value && value.ctype.k !== "void") {
+      retTemp = `__r${this.fresh++}`;
+      this.line(`${cType(value.ctype)} ${retTemp} = ${this.expr(value)};`);
+    } else if (value) {
+      this.line(`(void)(${this.expr(value)});`); // evaluate for effect while the frame is installed
+    }
+    // Inner-to-outer: pop the frame (so a throw inside its finalizer targets the ENCLOSING try), then
+    // run the finalizer. The `frames.slice(0, k)` narrows tryStack so a `return` inside finalizer k
+    // routes through the outer frames only, never re-entering k.
+    for (let k = frames.length - 1; k >= 0; k--) {
+      this.line(`ll_handler_top = ${frames[k].frameVar}.prev;`);
+      if (frames[k].finalizer) this.emitFinalizer(frames[k].finalizer!, frames.slice(0, k));
+    }
+    this.line(retTemp ? `return ${retTemp};` : "return;");
+    this.indent--;
+    this.line("}");
+  }
+
+  /** Emit a finalizer body with `tryStack` narrowed to `outer` -- so a `return`/rethrow inside the
+   *  finalizer routes through the enclosing frames only, never re-entering the frame being finalized. */
+  private emitFinalizer(finalizer: CBlock, outer: { frameVar: string; finalizer: CBlock | null }[]): void {
+    const saved = this.tryStack;
+    this.tryStack = outer;
+    this.emitBlockStmts(finalizer);
+    this.tryStack = saved;
+  }
+
+  /** Run `body` with a fresh (empty) try-frame stack, restoring the caller's afterwards. A `try` never
+   *  spans a function boundary, so each function body starts clean -- a defensive reset against bleed. */
+  private withFreshTryStack(body: () => void): void {
+    const saved = this.tryStack;
+    this.tryStack = [];
+    body();
+    this.tryStack = saved;
   }
 
   private emitStmt(s: CStmt): void {
@@ -259,7 +314,7 @@ export class EmitCirToC {
         this.line("}");
         return;
       case "c-return":
-        this.line(s.value ? `return ${this.expr(s.value)};` : "return;");
+        this.emitReturn(s.value);
         return;
       case "c-while":
         this.line(`while (${this.expr(s.test)}) {`);
@@ -321,6 +376,10 @@ export class EmitCirToC {
         this.line("{");
         this.indent++;
         this.line(`ll_try_frame ${f}; ${f}.prev = ll_handler_top; ll_handler_top = &${f};`);
+        // Active across BOTH arms: a `return` in the try body OR in a catch body routes through this
+        // frame's finalizer + handler-top restore (see emitReturn). Popped before the normal-completion
+        // finalizer below, so the fall-through path stays exactly as it was and never double-runs.
+        this.tryStack.push({ frameVar: f, finalizer: s.finalizer });
         this.line(`if (setjmp(${f}.buf) == 0) {`);
         this.indent++;
         this.emitBlockStmts(s.tryBlock);
@@ -333,6 +392,7 @@ export class EmitCirToC {
         this.emitCatchChain(s, s.catches, 0);
         this.indent--;
         this.line("}");
+        this.tryStack.pop();
         if (s.finalizer) this.emitBlockStmts(s.finalizer);
         this.indent--;
         this.line("}");
@@ -358,7 +418,13 @@ export class EmitCirToC {
   /** The catch filter chain: try each filtered catch by type, then the default; no match rethrows. */
   private emitCatchChain(s: Extract<CStmt, { kind: "c-try" }>, catches: Extract<CStmt, { kind: "c-try" }>["catches"], i: number): void {
     if (i >= catches.length) {
-      this.line(`ll_throw(${s.errVar});`); // no arm matched -> rethrow
+      // No arm matched -> this frame is leaving via a throw, so run ITS finalizer before rethrowing.
+      // `ll_handler_top` is already `f.prev` (popped at the top of the else arm), so both the finalizer
+      // and the rethrow target the enclosing frame; a throw inside the finalizer propagates correctly.
+      // Outer finalizers are NOT run here -- they fire as the rethrow re-lands at each enclosing level
+      // (throw is frame-by-frame; a `return` is all-at-once, which is why emitReturn differs).
+      if (s.finalizer) this.emitFinalizer(s.finalizer, this.tryStack.slice(0, -1));
+      this.line(`ll_throw(${s.errVar});`);
       return;
     }
     const c = catches[i];
