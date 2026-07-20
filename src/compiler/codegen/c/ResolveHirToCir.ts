@@ -663,7 +663,7 @@ export class ResolveHirToCir {
         }
 
         case "var-decl":
-          return this.resolveVarDecl(h.src as ast.VariableNode, h.init ? this.resolveExpr(h.init) : null);
+          return this.resolveVarDecl(h.src as ast.VariableNode, h.init ? this.resolveExpr(h.init) : null, { name: h.name, mutable: h.mutable, declaredType: h.declaredType });
 
         case "user-assign":
           return this.resolveUserAssign(h.src as ast.SimpleAssignmentNode | ast.CompoundAssignmentNode, this.resolveExpr(h.rhs));
@@ -760,31 +760,40 @@ export class ResolveHirToCir {
     return { src: e.src, ctype: C_VOID, kind: "c-expr-stmt", expr };
   }
 
-  private resolveVarDecl(node: ast.VariableNode, init: CExpr | null): CStmt[] {
-    // The declaration STRUCTURE (name, mutability, destructuring) is not on the HIR node (A2/A5 --
-    // the legacy emitVarDecl seam).
-    const name = this.dipAst("A2", "decl-structure", node, "binding name/mutability read from raw VariableNode", () => node.name);
-    if (name._type !== "simple-identifier" && name._type !== "composite-identifier") {
-      throw this.refuse(node, "destructuring-declaration", "resolveVarDecl");
-    }
-    if (node.extern) return []; // an ambient host global declaration -- nothing to emit
-    const srcName = ast.symbolName(name);
-    const cName = mangleC(srcName);
-    // The binding's declared/inferred type. For a MUTABLE binding the symbol table's DECLARED type
-    // must win: the channel's entry on the VariableNode carries the INITIALIZER's narrowed type
-    // (`(mut label <- String? "hello")` arrives as String, not String?), and a mut binding can be
-    // re-assigned outside that narrowing. Measured on this corpus; a real channel finding (A1).
+  private resolveVarDecl(node: ast.VariableNode, init: CExpr | null, modeled?: { name: string | null; mutable: boolean; declaredType: InferredType | undefined }): CStmt[] {
+    // Name / mutability / declared-type: OFF THE HIR NODE when the declaration was modeled (HVarDecl), so
+    // no decl-structure / decl-type / mut-narrowed dip below the HIR. The raw path (a var-decl inside a
+    // bailed opaque subtree) still reads the VariableNode + symbol table, and records those dips.
+    let srcName: string;
+    let mutable: boolean;
     let t: InferredType | undefined;
-    if (node.mutable) {
-      this.ledger.record("A1", "mut-decl-narrowed", node, "channel type on a mut decl is the initializer's narrowing; declared type from symbols");
-      t = this.dipSymbols("A2", "decl-type", node, "declaration type resolved through the symbol table", srcName)?.inferredType
-        ?? this.context.nodeTypes.get(node);
+    if (modeled) {
+      if (modeled.name === null) throw this.refuse(node, "destructuring-declaration", "resolveVarDecl");
+      srcName = modeled.name;
+      mutable = modeled.mutable;
+      t = modeled.declaredType;
     } else {
-      t = this.context.nodeTypes.get(node);
-      if (t === undefined) {
-        t = this.dipSymbols("A2", "decl-type", node, "declaration type resolved through the symbol table", srcName)?.inferredType;
+      const name = this.dipAst("A2", "decl-structure", node, "binding name/mutability read from raw VariableNode", () => node.name);
+      if (name._type !== "simple-identifier" && name._type !== "composite-identifier") {
+        throw this.refuse(node, "destructuring-declaration", "resolveVarDecl");
+      }
+      srcName = ast.symbolName(name);
+      mutable = node.mutable;
+      // For a MUTABLE binding the symbol table's DECLARED type wins (the channel carries the initializer's
+      // narrowing, and a mut can be re-assigned outside it); for a `let`, the channel then the symbols.
+      if (node.mutable) {
+        this.ledger.record("A1", "mut-decl-narrowed", node, "channel type on a mut decl is the initializer's narrowing; declared type from symbols");
+        t = this.dipSymbols("A2", "decl-type", node, "declaration type resolved through the symbol table", srcName)?.inferredType
+          ?? this.context.nodeTypes.get(node);
+      } else {
+        t = this.context.nodeTypes.get(node);
+        if (t === undefined) {
+          t = this.dipSymbols("A2", "decl-type", node, "declaration type resolved through the symbol table", srcName)?.inferredType;
+        }
       }
     }
+    if (node.extern) return []; // an ambient host global declaration -- nothing to emit
+    const cName = mangleC(srcName);
     let declCType = t !== undefined ? mapType(t) : init ? init.ctype : C_VALUE;
     // A binding whose type resolved to boxed but whose initializer is a concrete struct/vector keeps
     // the initializer's shape: the symbol table erases an inferred struct type to Unknown, but the
@@ -811,11 +820,11 @@ export class ResolveHirToCir {
         this.globalDeclared.add(cName);
         this.globalDecls.push({ cName, ctype: declCType });
       }
-      this.declareLocal(cName, declCType, node.mutable, cell); // still in module scope for local reads
+      this.declareLocal(cName, declCType, mutable, cell); // still in module scope for local reads
       if (!storedInit) return [];
       return [{ src: node, ctype: C_VOID, kind: "c-assign", target: { kind: "name", cName, ctype: declCType }, value: storedInit }];
     }
-    this.declareLocal(cName, declCType, node.mutable, cell);
+    this.declareLocal(cName, declCType, mutable, cell);
     return [{ src: node, ctype: C_VOID, kind: "c-decl", cName, declCType, init: storedInit, cell }];
   }
 

@@ -1164,9 +1164,31 @@ export class LowerAstToHirVisitor {
     const init = this.lowerNode(node.value, VALUE);
     if (init.value === null) return { stmts: init.stmts, value: null }; // RHS diverged -> the binding is dead
     // The init is emitted INLINE by the HIR (a ternary / temp / array), so no value-position init ever
-    // reaches legacy asExpression. The declaration structure stays a legacy emit hook (emitVarDecl).
-    const hvar: HStmt = { ...this.base(node), kind: "var-decl", init: init.value };
+    // reaches legacy asExpression. The JS declaration structure (const-vs-let, destructuring, D11) stays a
+    // legacy emit hook (emitVarDecl); the binding name/mutability/declared-type ride the node for the
+    // native backend (A2/A1).
+    const nm = node.name;
+    const name = nm._type === "simple-identifier" || nm._type === "composite-identifier"
+      ? ast.symbolName(nm as ast.IdentifierNode)
+      : null;
+    const declaredType = this.declaredTypeOf(node, name);
+    const hvar: HStmt = { ...this.base(node), kind: "var-decl", init: init.value, name, mutable: !!node.mutable, declaredType };
     return { stmts: [...init.stmts, hvar], value: dest.kind === "value" ? this.nil(node) : null };
+  }
+
+  /**
+   * The DECLARED type of a binding (A1), resolved once here so the native backend reads it off the node.
+   * Mirrors the C backend's prior resolution EXACTLY: a `mut` takes the symbol table's declared type over
+   * the channel (the channel holds the initializer's narrowing, which a mut can be re-assigned past); a
+   * `let` takes the channel, else the symbol table. Null-name (destructuring) has no single declared type.
+   */
+  private declaredTypeOf(node: ast.VariableNode, name: string | null): InferredType | undefined {
+    const fromSymbols = (): InferredType | undefined => {
+      if (name === null) return undefined;
+      try { return this.context.symbolTable.resolveSymbol(name, node)?.inferredType; } catch { return undefined; }
+    };
+    const channel = this.context.nodeTypes.get(node);
+    return node.mutable ? (fromSymbols() ?? channel) : (channel ?? fromSymbols());
   }
 
   private lowerAssignment(node: ast.SimpleAssignmentNode | ast.CompoundAssignmentNode, dest: Dest): Lowered {

@@ -438,6 +438,21 @@ export interface HForEach extends HBase {
 export interface HVarDecl extends HBase {
   kind: "var-decl";
   init: HExpr | null;
+  /**
+   * The binding NAME (A2 -- the declaration structure on the node, not read from the raw VariableNode),
+   * or null when the target is a destructuring pattern (which the native path refuses). The JS emitter
+   * still uses `emitVarDecl` for the full structure (const-vs-let, destructuring, the D11 copy).
+   */
+  name: string | null;
+  /** `mut` vs `let` -- the mutability on the node (A2). */
+  mutable: boolean;
+  /**
+   * The binding's DECLARED type (A1), resolved once at lowering: for a `mut` the symbol table's declared
+   * type wins (the channel carries the initializer's NARROWED type, and a mut can be re-assigned outside
+   * that narrowing); for a `let` the channel type, else the symbol table. On the node so the native
+   * backend needs neither `nodeTypes` nor the symbol table for it.
+   */
+  declaredType: InferredType | undefined;
 }
 
 /** A simple assignment `(x := rhs)` whose RHS is an HExpr the HIR emits inline; the target + D11 copy
