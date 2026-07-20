@@ -732,6 +732,15 @@ export class ResolveHirToCir {
         case "try":
           return this.resolveTry(h);
 
+        case "restart-case":
+        case "handle":
+          // D47 conditions/restarts. The CIR node defs (CRestartCase / CHandle), the EmitCirToC emission
+          // skeletons, and the runtime.c handler-stack/restart-registry structs all exist as scaffold, but
+          // the RESOLUTION that produces them -- the setjmp-pad inline arms, the closure-converted handler
+          // frames, and the shared ll_unwind cleanup-stack hook -- is TODO(restart-stage2). Refuse honestly
+          // (a tracked gap that nulls the C output) rather than fake a half-lowering. See runtime.c.
+          throw this.refuse(h.src, `${h.kind} (TODO restart-stage2)`, "resolveStmt");
+
         case "field-init":
         case "super-call":
         case "ctor-method-call":
@@ -1114,6 +1123,13 @@ export class ResolveHirToCir {
 
       case "pattern-test":
         return this.resolvePatternTest(h);
+
+      case "signal":
+      case "invoke-restart":
+        // D47. The eventual C shape is a c-call to the runtime `ll_signal` / `ll_invoke_restart` (see the
+        // runtime.c skeleton), but that hangs off the handler-stack + restart-registry that resolveStmt's
+        // restart-case/handle lowering installs -- all TODO(restart-stage2). Refuse honestly for now.
+        throw this.refuse(h.src, `${h.kind} (TODO restart-stage2)`, "resolveExpr");
 
       default: {
         const never: never = h;

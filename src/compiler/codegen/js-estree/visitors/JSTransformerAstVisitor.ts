@@ -1832,6 +1832,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         paramCopyPrologue: (params, types) => this.parameterCopyPrologue(params, types),
         reportDefaultBeforeRequired: (src, className, param, plural, required) =>
           this.report(CD.DefaultBeforeRequired, src, { className, param, plural, required }),
+        reportRestartsRefused: (src, form) =>
+          this.report(CD.RestartsRefused, src, { form }),
       };
       this.hirEmitter = new EmitHirToEstree(legacy);
     }

@@ -85,6 +85,13 @@ class LLangParser extends CstParser {
   catchClause: ParserMethod<[], CstNode>;
   catchFilter: ParserMethod<[], CstNode>;
   finallyClause: ParserMethod<[], CstNode>;
+  // D47 conditions/restarts (each form CONSUMEs only its keyword; the enclosing `list` supplies parens).
+  restartCaseExpr: ParserMethod<[], CstNode>;
+  restartArm: ParserMethod<[], CstNode>;
+  handleExpr: ParserMethod<[], CstNode>;
+  handleClause: ParserMethod<[], CstNode>;
+  signalExpr: ParserMethod<[], CstNode>;
+  invokeRestartExpr: ParserMethod<[], CstNode>;
   matchExpr: ParserMethod<[], CstNode>;
   matchCase: ParserMethod<[], CstNode>;
   pattern: ParserMethod<[], CstNode>;
@@ -165,6 +172,11 @@ class LLangParser extends CstParser {
         { ALT: () => this.SUBRULE(this.forExpr) },
         { ALT: () => this.SUBRULE(this.whileExpr) },
         { ALT: () => this.SUBRULE(this.tryCatchExpr) },
+        // D47 conditions/restarts -- each leads with a distinct keyword, so k=1 disambiguates.
+        { ALT: () => this.SUBRULE(this.restartCaseExpr) },
+        { ALT: () => this.SUBRULE(this.handleExpr) },
+        { ALT: () => this.SUBRULE(this.signalExpr) },
+        { ALT: () => this.SUBRULE(this.invokeRestartExpr) },
         { ALT: () => this.SUBRULE(this.matchExpr) },
         // Await operator
         { ALT: () => this.SUBRULE(this.awaitExpr) },
@@ -1341,6 +1353,66 @@ class LLangParser extends CstParser {
     this.finallyClause = this.RULE("finallyClause", () => {
       this.CONSUME(t.FinallyKw);
       this.SUBRULE(this.expression);
+    });
+
+    // ========================================================================
+    // D47 CONDITIONS / RESTARTS (C-native, JS-refused)
+    //
+    // `handle` is kept DISTINCT from `try` on purpose: opposite mechanisms (try unwinds UP to the
+    // handler; a handler runs IN PLACE without unwinding). See docs/spec/DECISIONS.md#d47.
+    //
+    // The body is MANDATORY (a single SUBRULE, not an OPTION). This is the deliberate scaffold cure for
+    // the construction ambiguity the blueprint flagged: an OPTION(body) followed by a MANY of LParen-led
+    // arms/clauses collides at the `(` (a body list also starts with `(`). With a mandatory single body
+    // the following MANY decides purely on `(` (arm/clause) vs `)` (end of the enclosing list) -- k=1,
+    // no ambiguity. The arm/clause params vector is likewise MANDATORY (`[]` when unused), which removes
+    // the second latent ambiguity (a `[..]` params vector vs a `[..]` vector-literal body expression).
+    // (restart-case <body> (:name [params] body*)*)
+    this.restartCaseExpr = this.RULE("restartCaseExpr", () => {
+      this.CONSUME(t.RestartCaseKw);
+      this.SUBRULE(this.expression); // the protected body (mandatory)
+      this.MANY(() => this.SUBRULE(this.restartArm));
+    });
+
+    // (:name [params] body*) -- each arm's body value becomes the whole form's value when invoked (D47).
+    this.restartArm = this.RULE("restartArm", () => {
+      this.CONSUME(t.LParen);
+      this.CONSUME(t.Colon);
+      this.CONSUME(t.Identifier);
+      this.SUBRULE(this.vector); // params (mandatory; `[]` when the restart takes none)
+      this.MANY(() => this.SUBRULE(this.expression));
+      this.CONSUME(t.RParen);
+    });
+
+    // (handle <body> (:on Cond [c] body*)*) -- in-place handlers.
+    this.handleExpr = this.RULE("handleExpr", () => {
+      this.CONSUME(t.HandleKw);
+      this.SUBRULE(this.expression); // the protected body (mandatory)
+      this.MANY(() => this.SUBRULE(this.handleClause));
+    });
+
+    // (:on Cond [binder] body*) -- clauses stay in SOURCE order end-to-end.
+    this.handleClause = this.RULE("handleClause", () => {
+      this.CONSUME(t.LParen);
+      this.CONSUME(t.OnModKw);
+      this.SUBRULE(this.typeName);
+      this.SUBRULE(this.vector); // the condition binder (mandatory; `[]` when unused)
+      this.MANY(() => this.SUBRULE(this.expression));
+      this.CONSUME(t.RParen);
+    });
+
+    // (signal <cond>) -- the pure primitive: walks handlers in place; RETURNS nil if unhandled.
+    this.signalExpr = this.RULE("signalExpr", () => {
+      this.CONSUME(t.SignalKw);
+      this.SUBRULE(this.expression);
+    });
+
+    // (invoke-restart :name args*) -- a diverging control transfer.
+    this.invokeRestartExpr = this.RULE("invokeRestartExpr", () => {
+      this.CONSUME(t.InvokeRestartKw);
+      this.CONSUME(t.Colon);
+      this.CONSUME(t.Identifier);
+      this.MANY(() => this.SUBRULE(this.expression));
     });
 
     // match expression { cases }

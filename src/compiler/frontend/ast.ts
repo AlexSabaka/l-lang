@@ -101,6 +101,10 @@ export type NodeType =
   | "call"
   | "member"
   | "try-catch"
+  | "restart-case"
+  | "handle"
+  | "signal"
+  | "invoke-restart"
   | "when"
   | "if"
   | "cond"
@@ -556,6 +560,55 @@ export interface TryCatchFilter {
     type: TypeNameNode;
   };
   body: ASTNode;
+}
+
+// ============================================================================
+// D47 CONDITIONS / RESTARTS (C-native, JS-refused)
+//
+// A CL-style resumable-condition kernel: a SECOND mechanism beside try/catch, not a replacement. All
+// four are REAL AST nodes so BOTH backends see one shape (the JS backend RECOGNIZES and REFUSES them
+// with a located LL0108; the C backend lowers them). Kept structurally DISTINCT from TryCatchNode --
+// `handle` is the opposite mechanism (in-place, non-unwinding). See docs/spec/DECISIONS.md#d47.
+// ============================================================================
+
+/** `(restart-case <body> (:name [params] body*)*)`. Each arm's body value becomes the whole form's
+ *  value when that restart is invoked. `body` is mandatory in the grammar (never null in practice). */
+export interface RestartCaseNode extends ASTNode<"restart-case"> {
+  body: ASTNode | null;
+  arms: RestartArm[];
+}
+
+export interface RestartArm {
+  name: string;
+  /** The restart's parameter binders (the element nodes of the `[params]` vector). */
+  params: ASTNode[];
+  body: ASTNode[];
+}
+
+/** `(handle <body> (:on Cond [c] body*)*)`. In-place handlers: a clause may invoke a restart, decline
+ *  to the next handler, or perform a non-local exit. Clauses stay in SOURCE order end-to-end. */
+export interface HandleNode extends ASTNode<"handle"> {
+  body: ASTNode | null;
+  clauses: HandleClause[];
+}
+
+export interface HandleClause {
+  condType: string;
+  /** The condition binder (the single element of the `[c]` vector), or undefined when `[]`. */
+  binder?: ASTNode;
+  body: ASTNode[];
+}
+
+/** `(signal <cond>)` -- the pure primitive: walks handlers in place. RETURNS nil if unhandled (NOT an
+ *  error), or DIVERGES if a handler performs a non-local transfer. A handler that returns is a decline. */
+export interface SignalNode extends ASTNode<"signal"> {
+  condition: ASTNode;
+}
+
+/** `(invoke-restart :name args*)` -- a diverging control transfer to a named restart. */
+export interface InvokeRestartNode extends ASTNode<"invoke-restart"> {
+  name: string;
+  args: ASTNode[];
 }
 
 export interface WhenNode extends ASTNode<"when"> {

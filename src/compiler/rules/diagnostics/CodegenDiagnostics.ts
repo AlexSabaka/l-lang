@@ -82,4 +82,19 @@ export const CodegenDiagnostics = {
       `(whose arguments are erased).`
   ),
 
+  // LL0108 -- D47 conditions/restarts refused on the JS backend. The exact MIRROR of C-refuses-coroutines
+  // (LL0105): a native-feature refusal, so it lives in the JS band (LL0100-04). JS has no resumable
+  // exceptions -- signal / restart-case / handle / invoke-restart need a native handler+restart stack
+  // (setjmp/longjmp on C) JS cannot express. Severity Error is MANDATORY: `hasErrors` counts only Error,
+  // and a Warning would fail OPEN (the silent-wrong outcome D47 warns of -- the placeholder emit
+  // "succeeds"). LL0103 is RETIRED and must not be reused; LL0105-07 are the C band; LL0108 is next-free.
+  RestartsRefused: def<{ form: string }>(
+    "LL0108",
+    Error,
+    (p) =>
+      `'${p.form}' -- the JavaScript backend has no resumable conditions/restarts. ` +
+      `signal / restart-case / handle / invoke-restart need a native handler+restart stack ` +
+      `(setjmp/longjmp on C) that JS cannot express (D47); the backend refuses. Compile with --language c.`
+  ),
+
 };

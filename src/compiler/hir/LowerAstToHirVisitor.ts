@@ -209,6 +209,14 @@ export class LowerAstToHirVisitor {
         return this.lowerIndexer(node as ast.IndexerNode, dest);
       case "try-catch":
         return this.lowerTry(node as ast.TryCatchNode, dest);
+      case "restart-case":
+        return this.lowerRestartCase(node as ast.RestartCaseNode, dest);
+      case "handle":
+        return this.lowerHandle(node as ast.HandleNode, dest);
+      case "signal":
+        return this.lowerSignal(node as ast.SignalNode, dest);
+      case "invoke-restart":
+        return this.lowerInvokeRestart(node as ast.InvokeRestartNode, dest);
       case "while":
         return this.lowerWhile(node as ast.WhileNode, dest);
       case "for":
@@ -1106,6 +1114,73 @@ export class LowerAstToHirVisitor {
       ? { stmts: this.lowerNode(node.finally, EFFECT).stmts }
       : null;
     return { ...this.base(node), kind: "try", tryBlock, catchVar, catches, finalizer };
+  }
+
+  // -- D47 conditions / restarts --------------------------------------------------------------------
+  //
+  // These lower to their dedicated HIR nodes (NOT the opaque `throw`-style leaf, which would route JS to
+  // the generic LL0100 instead of the honest LL0108). The C backend lowers them; the JS backend refuses
+  // with LL0108. The destination-driven result temp mirrors lowerTry: a value-position form binds a temp
+  // and each body/arm assigns into it. A full type-inference layer for `resultTemp`'s join and the deep C
+  // signal/invoke-restart lowering are stage-2 work (see runtime.c TODO(restart-stage2)).
+
+  private lowerRestartCase(node: ast.RestartCaseNode, dest: Dest): Lowered {
+    if (dest.kind === "value") {
+      const result = this.temps.fresh();
+      const h = this.buildRestartCase(node, { kind: "assign", temp: result });
+      return { stmts: [this.declTemp(result, node), h], value: this.temp(result, node) };
+    }
+    return { stmts: [this.buildRestartCase(node, dest)], value: null };
+  }
+
+  private buildRestartCase(node: ast.RestartCaseNode, bodyDest: Dest): HStmt {
+    const body: HBlock = { stmts: node.body ? this.lowerNode(node.body, bodyDest).stmts : [] };
+    const arms = (node.arms ?? []).map((a) => ({
+      name: a.name,
+      // Params are simple-identifier binders; carry their source names (the C arm unpacks the packed args).
+      params: (a.params ?? []).map((p) => (p as any).id ?? ast.symbolName(p as any)),
+      body: { stmts: this.lowerSeq(a.body ?? [], bodyDest).stmts },
+    }));
+    return { ...this.base(node), kind: "restart-case", body, arms };
+  }
+
+  private lowerHandle(node: ast.HandleNode, dest: Dest): Lowered {
+    if (dest.kind === "value") {
+      const result = this.temps.fresh();
+      const h = this.buildHandle(node, { kind: "assign", temp: result });
+      return { stmts: [this.declTemp(result, node), h], value: this.temp(result, node) };
+    }
+    return { stmts: [this.buildHandle(node, dest)], value: null };
+  }
+
+  private buildHandle(node: ast.HandleNode, bodyDest: Dest): HStmt {
+    const body: HBlock = { stmts: node.body ? this.lowerNode(node.body, bodyDest).stmts : [] };
+    // Clauses stay in SOURCE order (first-written matching `:on` wins). The clause body lowers in EFFECT
+    // position for the scaffold (a clause typically declines / invokes a restart / exits non-locally).
+    const clauses = (node.clauses ?? []).map((c) => ({
+      condType: c.condType,
+      binder: c.binder ? ((c.binder as any).id ?? ast.symbolName(c.binder as any)) : undefined,
+      body: { stmts: this.lowerSeq(c.body ?? [], EFFECT).stmts },
+    }));
+    return { ...this.base(node), kind: "handle", body, clauses };
+  }
+
+  private lowerSignal(node: ast.SignalNode, dest: Dest): Lowered {
+    const cond = this.lowerNode(node.condition, VALUE);
+    if (cond.value === null) return { stmts: cond.stmts, value: null }; // condition diverged
+    const sig: HExpr = { ...this.base(node), kind: "signal", condition: cond.value };
+    return this.placeValue(sig, cond.stmts, dest);
+  }
+
+  private lowerInvokeRestart(node: ast.InvokeRestartNode, dest: Dest): Lowered {
+    // invoke-restart DIVERGES. It MUST be materialized into the statement stream in EVERY dest (mustFix
+    // #5.1): a bare {stmts, value:null} that dropped the node would erase the transfer -- and the LL0108
+    // refusal -- when it sits in argument/value position. So we always emit it as an expr-stmt and report
+    // divergence (value:null); any dead code after the transfer is correctly dropped by callers.
+    const { prelude, atoms, diverged } = this.lowerCallArgs(node.args ?? []);
+    if (diverged) return { stmts: prelude, value: null };
+    const inv: HExpr = { ...this.base(node), kind: "invoke-restart", name: node.name, args: atoms };
+    return { stmts: [...prelude, this.exprStmt(inv, node)], value: null };
   }
 
   // -- match ----------------------------------------------------------------------------------------

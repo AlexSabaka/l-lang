@@ -99,6 +99,15 @@ export const AsyncKw = createToken({ name: "AsyncKw", pattern: /async/, longer_a
 export const CondKw = createToken({ name: "CondKw", pattern: /cond/, longer_alt: Identifier, categories: [BareKeyword] });
 export const WhenKw = createToken({ name: "WhenKw", pattern: /when/, longer_alt: Identifier, categories: [BareKeyword] });
 export const TryKw = createToken({ name: "TryKw", pattern: /try/, longer_alt: Identifier, categories: [BareKeyword] });
+// D47 conditions/restarts (C-native, JS-refused). Reserved keywords. Two of them carry a hyphen, which
+// is a legal Identifier char -- so `longer_alt: Identifier` is MANDATORY (the D14 cure): it keeps every
+// `handle-*` / `signal-*` prefix identifier (handle-request, signal-strength) lexing as an Identifier,
+// since a strictly-longer match wins. Declared most-specific FIRST (restart-case / invoke-restart before
+// their `signal`-less bare prefixes); array order in the mode lists below governs actual lexer priority.
+export const RestartCaseKw = createToken({ name: "RestartCaseKw", pattern: /restart-case/, longer_alt: Identifier, categories: [BareKeyword] });
+export const InvokeRestartKw = createToken({ name: "InvokeRestartKw", pattern: /invoke-restart/, longer_alt: Identifier, categories: [BareKeyword] });
+export const SignalKw = createToken({ name: "SignalKw", pattern: /signal/, longer_alt: Identifier, categories: [BareKeyword] });
+export const HandleKw = createToken({ name: "HandleKw", pattern: /handle/, longer_alt: Identifier, categories: [BareKeyword] });
 export const ForKw = createToken({ name: "ForKw", pattern: /for/, longer_alt: Identifier, categories: [BareKeyword] });
 export const IfKw = createToken({ name: "IfKw", pattern: /if/, longer_alt: Identifier, categories: [BareKeyword] });
 // Module Keywords
@@ -161,6 +170,11 @@ export const AsModKw = createToken({ name: "AsModKw", pattern: new RegExp(`:as${
 export const OfModKw = createToken({ name: "OfModKw", pattern: new RegExp(`:of${modKwTail}`), categories: [ModKeyword] });
 export const IsModKw = createToken({ name: "IsModKw", pattern: new RegExp(`:is${modKwTail}`), categories: [ModKeyword] });
 export const WhenModKw = createToken({ name: "WhenModKw", pattern: new RegExp(`:when${modKwTail}`), categories: [ModKeyword] });
+// D47 `handle` clause head: `(:on Cond [c] ...)`. The modKwTail negative-lookahead stops `:on` from
+// over-matching `:online`. A restart NAME or handle binder that spells `:on` is thus unavailable as a
+// name (it lexes as this structural token) -- a SyntaxRules diagnostic should flag that, as for the
+// other ~16 structural ModKeywords. (Post-parse shape checks are a follow-up; the token lands here.)
+export const OnModKw = createToken({ name: "OnModKw", pattern: new RegExp(`:on${modKwTail}`), categories: [ModKeyword] });
 
 // ============================================================================
 // OPERATORS (Multi-char before single-char!)
@@ -336,6 +350,8 @@ export const defaultModeTokens: TokenType[] = [
   // Keywords (most specific first)
   DefInterfaceKw, DefModifierKw, DefStructKw, DefClassKw, DefMacroKw, DefEnumKw, DefTypeKw,
   FinallyKw, MatchKw, WhileKw, CatchKw, AwaitKw, AsyncKw,
+  // D47 restart keywords -- multi-word (hyphenated) forms FIRST so they win over their bare prefixes.
+  RestartCaseKw, InvokeRestartKw, SignalKw, HandleKw,
   CondKw, WhenKw, TryKw, ForKw, IfKw,
   ExportKw, ImportKw, FromKw,
   KeyOfKw, MutKw, LetKw, FnKw,
@@ -344,7 +360,7 @@ export const defaultModeTokens: TokenType[] = [
   ImplementsModKw, ExtendsModKw, WhereModKw,
   CondModKw, ThenModKw, ElseModKw,
   InitModKw, StepModKw, EachModKw, FromModKw,
-  AsModKw, OfModKw, IsModKw, WhenModKw,
+  AsModKw, OfModKw, IsModKw, WhenModKw, OnModKw,
   // Multi-char operators first!
   RightDoubleArrow, LeftArrow, RightArrow,
   PlusEq, MinusEq, StarEq, SlashEq, PercentEq,
@@ -380,6 +396,8 @@ export const formatExprModeTokens: TokenType[] = [
   // Keywords
   DefInterfaceKw, DefModifierKw, DefStructKw, DefClassKw, DefMacroKw, DefEnumKw, DefTypeKw,
   FinallyKw, MatchKw, WhileKw, CatchKw, AwaitKw, AsyncKw,
+  // D47 restart keywords -- multi-word (hyphenated) forms FIRST so they win over their bare prefixes.
+  RestartCaseKw, InvokeRestartKw, SignalKw, HandleKw,
   CondKw, WhenKw, TryKw, ForKw, IfKw,
   ExportKw, ImportKw, FromKw,
   KeyOfKw, MutKw, LetKw, FnKw,
@@ -388,7 +406,7 @@ export const formatExprModeTokens: TokenType[] = [
   ImplementsModKw, ExtendsModKw, WhereModKw,
   CondModKw, ThenModKw, ElseModKw,
   InitModKw, StepModKw, EachModKw, FromModKw,
-  AsModKw, OfModKw, IsModKw, WhenModKw,
+  AsModKw, OfModKw, IsModKw, WhenModKw, OnModKw,
   // Operators
   RightDoubleArrow, LeftArrow, RightArrow,
   PlusEq, MinusEq, StarEq, SlashEq, PercentEq,

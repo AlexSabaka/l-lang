@@ -338,6 +338,16 @@ export class EmitCirToC {
         this.line("}");
         return;
       }
+      case "c-restart-case":
+      case "c-handle":
+        // D47 SCAFFOLD (TODO restart-stage2). ResolveHirToCir refuses restart forms today, so these CIR
+        // nodes are never actually produced -- this case exists as plumbing for the stage-2 lowering, and
+        // as the exhaustiveness anchor keeping the `never` check honest once the union carries them. When
+        // stage-2 lands, this emits the setjmp-pad inline arms (restart-case) / ordered handler frame
+        // (handle) against the runtime.c handler stack. Emitting a TODO marker keeps any accidental
+        // reach loud rather than silently wrong.
+        this.line(`/* TODO(restart-stage2): emit ${s.kind} -- D47 setjmp/handler-stack lowering */`);
+        return;
       default: {
         const never: never = s;
         throw new Error(`C emit: unhandled statement kind '${(never as any).kind}'`);

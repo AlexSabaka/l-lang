@@ -61,6 +61,11 @@ export interface LegacyLeafEmitter {
   /** Report the default-before-required constructor diagnostic (a defaulted param ahead of a required one).
    *  A legacy hook so the emitter stays free of the diagnostics machinery (JSTransformer.report). */
   reportDefaultBeforeRequired(src: ast.ASTNode, className: string, param: string, plural: boolean, required: string): void;
+  /** Report the D47 conditions/restarts refusal (LL0108). The JS backend has no resumable exceptions, so
+   *  every restart form refuses -- the mirror of the C backend refusing coroutines. `form` names the
+   *  construct (`restart-case` / `handle` / `signal` / `invoke-restart`). A legacy hook so the emitter
+   *  stays free of the diagnostics machinery. */
+  reportRestartsRefused(src: ast.ASTNode, form: string): void;
 }
 
 /** Mirrors ESTreeBuilder.loc: a located source range, or null when the node has no location. */
@@ -402,6 +407,13 @@ export class EmitHirToEstree {
           } as ESTree.CallExpression,
         } as ESTree.ExpressionStatement;
 
+      case "restart-case":
+      case "handle":
+        // D47 refused on JS (LL0108). Report the located diagnostic and emit a harmless EmptyStatement --
+        // emitStmt must return a valid ESTree Statement, and hasErrors suppresses the output file anyway.
+        this.legacy.reportRestartsRefused(h.src, h.kind);
+        return { type: "EmptyStatement", loc: loc(h.src) } as ESTree.Statement;
+
       default: {
         const never: never = h;
         throw new Error(`HIR emit: unhandled statement kind '${(never as any).kind}'`);
@@ -627,6 +639,14 @@ export class EmitHirToEstree {
           loc: loc(h.src),
         } as ESTree.LogicalExpression;
       }
+
+      case "signal":
+      case "invoke-restart":
+        // D47 refused on JS (LL0108). Report the located diagnostic and emit the harmless `undefined`
+        // placeholder (valid in expression context; mirrors the onUnhandled fallback). hasErrors
+        // suppresses the output file, so the placeholder never actually ships.
+        this.legacy.reportRestartsRefused(h.src, h.kind);
+        return { type: "Identifier", name: "undefined", loc: loc(h.src) } as ESTree.Identifier;
 
       default: {
         const never: never = h;
