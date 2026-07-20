@@ -61,6 +61,24 @@ member modifier rides along (noted as ".NET compatibility" in the scratchpad).
 A `pattern -> Type =>` arm as a type guard; a `typeof` operator for guards. Also the note that
 `Any` must NOT be the same as `Object` (System.Object) even though they look alike.
 
+### `implicit` / `explicit` cast-operator overloading (C#-style)  *(added 2026-07-20)*
+```csharp
+// C# shape being stolen:
+public static implicit operator Celsius(Fahrenheit f) => new Celsius((f.V - 32) * 5 / 9);
+public static explicit operator int(Money m)         => (int)m.Amount;   // requires (int)m at the call site
+```
+User-defined conversions attached to a type: `implicit` ones fire automatically wherever the target
+type is expected (assignment, argument passing, return); `explicit` ones fire only under an explicit
+cast. This is the **overloadable-conversion** surface — the dual of operator overloading, which
+l-lang already models (see `06-value-semantics`). **Sabaka's framing:** this ties directly back to
+our open **type-narrowing / casting** question — an `explicit` operator is exactly a checked,
+user-authored narrowing, and an `implicit` operator is a widening the checker may insert silently.
+Design questions to settle when picked up: the l-lang spelling (a `:implicit`/`:explicit` modifier on
+an `operator`/`cast` member? a `defcast`?), how it interacts with the coercion-insertion pass (the C
+backend's `InsertCoercions` P2 is the natural home on the native side), and ambiguity rules when
+several implicit paths exist. **Deferred until HIR is implemented** — revisit alongside the
+narrowing/casting work.
+
 ---
 
 ## Functions & generics
