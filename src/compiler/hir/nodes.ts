@@ -477,6 +477,15 @@ export interface HClass extends HBase {
   name: string;
   /** The single parent type's name, or null -- the JS `extends` clause / native parent link. */
   superName: string | null;
+  /**
+   * The type's SOURCE name (`__ll_source_name ?? name`) -- the `static __ll_name` marker's value, which
+   * is NOT `name`: the import inliner renames the binding (`name` = `__ll_inlined_Point_3`) but the type
+   * identity stays `Point`, and the operator/RTTI registries key on this. Null only if there is no name.
+   */
+  sourceName: string | null;
+  /** A struct is a VALUE TYPE -- the `static __ll_struct = true` marker (D11); a class omits it. This is
+   *  exactly the by-value discrimination a native backend needs, so it rides the node, not just the JS. */
+  isStruct: boolean;
 }
 
 /** A leaf statement: emit by coercing the legacy `visit(src)` to a statement. */

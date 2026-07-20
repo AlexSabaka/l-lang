@@ -504,10 +504,9 @@ export class ClassBuilder {
   public buildBodyMembers(): (ESTree.MethodDefinition | ESTree.PropertyDefinition)[] {
     const body: (ESTree.MethodDefinition | ESTree.PropertyDefinition)[] = [];
 
-    // The markers, before anything else -- static fields, so ordering is immaterial, but they read
-    // first and that is where a human looks.
-    body.push(...this.buildTypeNameMarker());
-    body.push(...this.buildValueTypeMarker());
+    // The metadata markers (`__ll_name` / `__ll_struct`) are modeled on HClass now (A4 step 3) and built
+    // by the HIR emitter, first, from `sourceName` / `isStruct`. `build()` (the legacy fallback) still
+    // prepends them via the marker methods below so a direct `visit(classNode)` stays correct.
 
     // Add fields
     body.push(...this.buildFields());
@@ -539,13 +538,20 @@ export class ClassBuilder {
   }
 
   public build(): ESTree.ClassDeclaration {
+    // The legacy fallback path: prepend the markers the HIR emitter now models (step 3), so a direct
+    // `visit(classNode)` still produces the byte-identical declaration.
+    const body = [
+      ...this.buildTypeNameMarker(),
+      ...this.buildValueTypeMarker(),
+      ...this.buildBodyMembers(),
+    ];
     return {
       type: "ClassDeclaration",
       id: this.name,
       superClass: this.superClass,
       body: {
         type: "ClassBody",
-        body: this.buildBodyMembers()
+        body
       },
       loc: loc(this.node)
     };

@@ -264,7 +264,10 @@ export class LowerAstToHirVisitor {
       const cls = node as ast.ClassNode;
       const name = cls.name.name;
       const superName = cls.extends && cls.extends.length > 0 ? cls.extends[0].type.name : null;
-      return { stmts: [{ ...this.base(node), kind: "class", name, superName }], value: null };
+      // The `__ll_name` marker's value: the SOURCE name, which survives the inliner's rename of `name`.
+      const sourceName = (cls as any).__ll_source_name ?? cls.name?.name ?? null;
+      const isStruct = node._type === "struct";
+      return { stmts: [{ ...this.base(node), kind: "class", name, superName, sourceName, isStruct }], value: null };
     }
     return this.leaf(node, dest);
   }

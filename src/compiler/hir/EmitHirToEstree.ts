@@ -72,6 +72,19 @@ function ident(name: string, src: ast.ASTNode): ESTree.Identifier {
   return { type: "Identifier", name, loc: loc(src) } as ESTree.Identifier;
 }
 
+/** `static <name> = <value>;` -- a class metadata marker (`__ll_name` / `__ll_struct`). Mirrors the
+ *  shape JSClassBuilder used: computed:false, static:true, an Identifier key and a Literal value. */
+function staticMarker(name: string, value: string | boolean, src: ast.ASTNode): ESTree.PropertyDefinition {
+  return {
+    type: "PropertyDefinition",
+    key: { type: "Identifier", name },
+    value: { type: "Literal", value } as ESTree.Literal,
+    computed: false,
+    static: true,
+    loc: loc(src),
+  } as ESTree.PropertyDefinition;
+}
+
 export class EmitHirToEstree {
   constructor(private readonly legacy: LegacyLeafEmitter) {}
 
@@ -92,11 +105,14 @@ export class EmitHirToEstree {
         return this.legacy.leafStmt(h.src);
 
       case "class": {
-        // A4 step 2: the emitter assembles the ClassDeclaration SHELL from the modeled name / superName;
-        // the body members and the custom-modifier wrapping stay legacy hooks (emitClassBody in the class
-        // scope, finishClass for the `defmodifier` wrap). The class id/superClass are raw (unencoded)
-        // names, so this is byte-identical to JSClassBuilder's own shell.
-        const members = this.legacy.emitClassBody(h.src);
+        // A4 step 2-3: the emitter assembles the ClassDeclaration SHELL from the modeled name / superName,
+        // and the metadata MARKERS from sourceName / isStruct (step 3). The remaining body members and the
+        // custom-modifier wrapping stay legacy hooks (emitClassBody in the class scope, finishClass for the
+        // `defmodifier` wrap). Marker order matches JSClassBuilder: `__ll_name` then `__ll_struct`, first.
+        const markers: ESTree.PropertyDefinition[] = [];
+        if (h.sourceName != null) markers.push(staticMarker("__ll_name", h.sourceName, h.src));
+        if (h.isStruct) markers.push(staticMarker("__ll_struct", true, h.src));
+        const members = [...markers, ...this.legacy.emitClassBody(h.src)];
         const decl: ESTree.ClassDeclaration = {
           type: "ClassDeclaration",
           id: ident(h.name, h.src),
