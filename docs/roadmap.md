@@ -425,6 +425,44 @@ proven by a characterization snapshot (`test:diagnostics`, 42 probes, byte-for-b
         Remaining: R3 (explicit stores/copy-insertion) and R4 (dispatch-at-HIR).
 *   [x] **IR Codegen:** HIR → ESTree, mechanical, and now the **only** value-lowering path. The flag
         (`--no-hir`/`LL_HIR`) and the legacy IIFE/LL0103/`visitIf`-`visitMatch` machinery were cut.
+*   [ ] **The core tail (D48).** The readiness report's remaining dips resolved *onto* nodes — cheap
+        drains (`HCopyStore` for the A5 copy-decision, the field-get slot on `HMemberRead`,
+        callee-identity on call nodes) → `HMatchTest` (patterns as an IR fact) → the **closure
+        representation** (the one real design commitment left). Governed by A-0: nodify what *both*
+        backends decide; reclassify only genuine single-backend passes (A6 coercions leave core).
+
+## 🔮 The language-feature lane (2026-07 design round)
+
+The Sabaka⇄Dove design round (`docs/inbox/hir-design-round-brief.md`) ratified a lane of language
+features on the now-solid HIR / coercion substrate. **Post-design-round sequencing:** the HIR core tail
+(Phase 6, D48) → the conversion substrate (Cv) → bounded generics + ergonomics (Bg) → conditions /
+restarts (Cr). All of it is JS-safe (degrades, no-ops, or refuses honestly), so none *depends* on native
+surviving — it pays *extra* if native does.
+
+### 🔮 Phase Cv — the conversion substrate (D46)
+The coercion pass reframed as the type system's checked-conversion layer. In order:
+*   [ ] **B-0 tokens:** `deftype`'s required `<-` binder, the `..` `Range` token, the `:where` modkw.
+*   [ ] **Native fixed-width ints (B-2):** `uint8`/`int32`/… → `uint8_t` etc. — a fixed-range refinement
+        materialised as a native width. No-op-to-`Int` on JS.
+*   [ ] **Refinements (B-1):** `T :where (pred)` — a predicate over the value (total); `(lo .. hi)` range
+        sugar desugaring to a predicate; regex via a stdlib `matches?` predicate, never grammar (B-1a);
+        record-field refinements on the field (B-1b).
+*   [ ] **`defcast` (B-3):** `:implicit` (one-hop, lossless-widening, at coercion sites) / `:explicit`
+        (`(cast<T> x)`), keyed by type-pair on the operator devirt path.
+
+### 🔮 Phase Bg — bounded generics & ergonomics
+*   [ ] **The three `:where` relations** (`:is` / `:extends` / `:implements`, type-variable subject only)
+        — reuse the existing `typesEqual` / `isSubtype` / `conformsStructurally` predicates.
+*   [ ] **Small greenlit ergonomics:** `|> .method` selectors (desugar over the pipe), flags enums
+        (`:with Flags`), `with`-copy (`(with s :field v)`), `:readonly` fields, attributes → reflection
+        (`:with Attr`, wired into `type`), `:stack` allocation (needs escape analysis).
+
+### 🔮 Phase Cr — conditions / restarts (D47)
+*   [ ] **The resumable kernel** — `restart-case` / `handle` / `signal` / `invoke-restart`: a second,
+        *resumable* exception mechanism beside `try`/`catch`. **C-native, JS-refused** (the mirror of
+        C-refused coroutines). Known hard part: a restart transfer must run intervening `finally` /
+        `:destructor` cleanups — it hooks the **same** cleanup stack as `try`/`catch`, not a raw
+        `longjmp`. Parallel worktree, C-targeted.
 
 ## 🚀 Phase 7: The Speed of Light (v1.0.0)
 **Theme:** "The Sloth becomes a Cheetah."
@@ -547,15 +585,17 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     `fromCharCode(parseInt("", 16))` = `fromCharCode(NaN)` = **NUL**. Both now key on LENGTH (`u`+4,
     `x`+2). Fixing `\x` on the old `esc[0]` test would have duplicated that bug rather than exposed
     it — the malformed-escape guard is what caught it.
-*   **Parse/lex gaps.** Boolean match patterns; `:is` type patterns; the `..` range operator; sized
-    array types; `fn` parameter defaults; the numeric tower (octal/binary/hex/fraction/complex all lex,
-    none emit). (`__bar` **now lexes** — fixed via `longer_alt`, inbox #1.)
+*   **Parse/lex gaps.** Boolean match patterns; `:is` type patterns; the `..` range operator (now
+    specced as the `Range` token in D46 / Phase Cv); sized array types; `fn` parameter defaults; the
+    numeric tower (octal/binary/hex/fraction/complex all lex, none emit). (`__bar` **now lexes** — fixed
+    via `longer_alt`, inbox #1.)
 *   **A module boundary is not transitive.** If A imports B and B imports C, A can still name C's
     exports — `SymbolTable.join` splices every module's scopes in, and the import check declines to
     invent a diagnostic where no *direct* import was recorded. Whether a boundary *should* be
     transitive is a real question, and **D20 does not answer it**.
 *   **`:as` aliasing is unimplemented.** It parses in both frontends, on both the import and the
-    export side, and nothing honours it.
+    export side, and nothing honours it. (D46 keeps `:as` import/export-alias-only; value conversion is
+    the separate `(cast<T> x)` form, not `:as`.)
 *   **Identifier encoding escapes into DATA.** D13 ruled map keys are never mangled, but *class members*
     still are: `player-pos` is emitted as `player2dpos` (`-` → its hex `2d`). This is invisible while the
     program only talks to itself, and wrong the moment the data leaves — `JSON.stringify` of an instance
