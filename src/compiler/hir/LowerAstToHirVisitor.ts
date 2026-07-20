@@ -258,7 +258,13 @@ export class LowerAstToHirVisitor {
    */
   private lowerClassLike(node: ast.ASTNode, dest: Dest): Lowered {
     if (dest.kind === "effect") {
-      return { stmts: [{ ...this.base(node), kind: "class" }], value: null };
+      // The shell, captured the way JSClassBuilder reads it: the class id is `node.name.name` raw (a
+      // class name is not encoded), and the single parent is `extends[0].type.name` (a struct shares the
+      // shape -- visitStruct delegates to visitClass). Both stable here (rename ran in transformation).
+      const cls = node as ast.ClassNode;
+      const name = cls.name.name;
+      const superName = cls.extends && cls.extends.length > 0 ? cls.extends[0].type.name : null;
+      return { stmts: [{ ...this.base(node), kind: "class", name, superName }], value: null };
     }
     return this.leaf(node, dest);
   }

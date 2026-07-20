@@ -866,6 +866,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   // Classes
   // =========================================================================
 
+  // A4 step 2: the HIR `class` emit no longer routes through here -- it drives `emitClassBody` (members,
+  // in scope) + the emitter-assembled shell + `finishClass` (modifier wrap). `visitClass` is now the
+  // legacy fallback for a direct `visit(classNode)` and produces the byte-identical declaration.
   visitClass(
     node: ast.ClassNode
   ): ESTree.ClassDeclaration | ESTree.VariableDeclaration {
@@ -1823,6 +1826,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         emitVarDecl: (node, initES) => this.emitVarDecl(node as ast.VariableNode, initES),
         emitAssign: (node, rhsES) => this.emitAssign(node as ast.SimpleAssignmentNode, rhsES),
         encodeName: (n) => encodeIdentifier(n),
+        emitClassBody: (n) => this.emitClassBody(n as ast.ClassNode),
+        finishClass: (n, decl) => this.finishClass(n as ast.ClassNode, decl),
       };
       this.hirEmitter = new EmitHirToEstree(legacy);
     }
@@ -1851,6 +1856,29 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   /** A4: a constructor's `this.<method>()` call to a `:ctor` initializer method (an HCtorMethodCall). */
   public buildCtorMethodCall(method: ast.ASTNode, src: ast.ASTNode): ESTree.Statement {
     return this.ensureHirEmitter().emitStatement({ src, type: undefined, kind: "ctor-method-call", method } as any);
+  }
+
+  /**
+   * A4 step 2: the class-body MEMBERS for the HIR `class` emit. Mirrors `visitClass`'s body build exactly
+   * -- records the source name (metadata lookup) and builds the members in the class scope -- but returns
+   * only the members. The HIR emitter assembles the `ClassDeclaration` shell (id / superClass) around them
+   * from the modeled `HClass.name` / `superName`, and `finishClass` applies the modifier wrap. `visitClass`
+   * remains the legacy fallback for a direct `visit(classNode)` and produces the identical declaration.
+   */
+  private emitClassBody(node: ast.ClassNode): (ESTree.MethodDefinition | ESTree.PropertyDefinition)[] {
+    this.classes.push(node.name.name);
+    return this.runInScope(ScopeType.class, () =>
+      new ClassBuilder(node, this.context, this).buildBodyMembers()
+    );
+  }
+
+  /**
+   * A4 step 2: finish the HIR-assembled class shell -- the custom-modifier wrap (`applyModifiersToClass`,
+   * which turns a `defmodifier`-decorated class into a `const` binding) and coercion to a statement. The
+   * legacy post-pass that stays outside the modeled node; identical to step 1's `asStatement(visitClass)`.
+   */
+  private finishClass(node: ast.ClassNode, decl: ESTree.ClassDeclaration): ESTree.Statement {
+    return this.asStatement(this.applyModifiersToClass(node, decl), node);
   }
 
   /**

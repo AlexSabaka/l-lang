@@ -456,16 +456,27 @@ export interface HUserAssign extends HBase {
  * whole class SHAPE (fields, constructor, methods, markers) lived entirely off the HIR, in
  * `JSClassBuilder` on the JS side and a parallel `registerClass` pre-pass on the C side.
  *
- * `HClass` gives the declaration its own node. It carries nothing but `src` yet: this step only
- * introduces the honest kind and routes class/struct through it, byte-identically (both backends emit
- * exactly as they did for the opaque leaf -- JS via `leafStmt`, C via the same `resolveAstStmt` /
- * `topLevelStmtNodes` collection). The value is the SEAM: the structure (name, superclass, resolved
- * constructor params + prologue, fields, methods, iterable bridge, markers) moves onto this node in the
- * following gated increments, until `JSClassBuilder` is the thin consumer the spec wants (Step 5) and
- * the C backend consumes the same modeled node instead of re-deriving from raw AST.
+ * `HClass` gives the declaration its own node, and the SHELL now lives on it (step 2): `name` is the
+ * declared type name and `superName` the single parent's name -- the JS `class <name> extends <super>`
+ * identity and, for a native backend, the struct tag + parent link. Both are the RAW source names, which
+ * is what the JS id/superClass are built from (a class id is not encoded, unlike a value-position ref)
+ * and are STABLE by codegen time: the import inliner renames a class in the transformation stage
+ * (`node.name` is already `__ll_inlined_Point_3` here; `__ll_source_name` keeps the original), before
+ * lowering, so capturing the name at lowering is safe.
+ *
+ * The JS emitter assembles the `ClassDeclaration` (id, superClass, ClassBody) from these; the class-body
+ * MEMBERS (markers, fields, constructor + its resolved params/prologue/super/field-stores/ctor-methods,
+ * methods, iterable bridge) and the custom-modifier wrapping remain legacy hooks for now
+ * (`emitClassBody` / `finishClass`). Those members move onto this node in the following gated increments,
+ * until `JSClassBuilder` is the thin consumer the spec wants (Step 5) and the C backend consumes the same
+ * modeled node instead of re-deriving from raw AST.
  */
 export interface HClass extends HBase {
   kind: "class";
+  /** The declared type name (raw / unencoded) -- the JS class id, a native struct tag. */
+  name: string;
+  /** The single parent type's name, or null -- the JS `extends` clause / native parent link. */
+  superName: string | null;
 }
 
 /** A leaf statement: emit by coercing the legacy `visit(src)` to a statement. */

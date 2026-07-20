@@ -495,7 +495,13 @@ export class ClassBuilder {
     ];
   }
 
-  public build(): ESTree.ClassDeclaration {
+  /**
+   * The class-body MEMBERS, in source order: markers, fields, constructor, methods, the iterable bridge,
+   * and any other valid members. The class SHELL (id / superClass / ClassDeclaration wrap) is assembled
+   * by the HIR emitter now (A4 step 2) from the modeled `HClass.name` / `superName`; this is the seam the
+   * emitter drives through the `emitClassBody` hook. `build()` still wraps these for any legacy caller.
+   */
+  public buildBodyMembers(): (ESTree.MethodDefinition | ESTree.PropertyDefinition)[] {
     const body: (ESTree.MethodDefinition | ESTree.PropertyDefinition)[] = [];
 
     // The markers, before anything else -- static fields, so ordering is immaterial, but they read
@@ -529,13 +535,17 @@ export class ClassBuilder {
       }
     }
 
+    return body;
+  }
+
+  public build(): ESTree.ClassDeclaration {
     return {
       type: "ClassDeclaration",
       id: this.name,
       superClass: this.superClass,
       body: {
         type: "ClassBody",
-        body
+        body: this.buildBodyMembers()
       },
       loc: loc(this.node)
     };

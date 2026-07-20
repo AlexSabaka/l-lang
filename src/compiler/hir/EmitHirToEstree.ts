@@ -46,6 +46,15 @@ export interface LegacyLeafEmitter {
   /** Encode a source name to its emitted JS identifier (encodeIdentifier). A per-backend seam -- the JS
    *  identifier policy for a constructor param's RHS in a field store (HFieldInit). */
   encodeName(name: string): string;
+  /** The class-body MEMBERS (markers, fields, constructor, methods, iterable bridge, other) for a class /
+   *  struct declaration, built in the class scope with the class-name side effect. The emitter assembles
+   *  the ClassDeclaration shell around them from the modeled `name` / `superName`. A per-backend seam --
+   *  the JS `ClassBuilder.buildBodyMembers`; a native backend lays out fields/methods instead. */
+  emitClassBody(src: ast.ASTNode): Array<ESTree.MethodDefinition | ESTree.PropertyDefinition>;
+  /** Finish an assembled class declaration: apply custom `defmodifier` wrapping (a `defmodifier` body is a
+   *  runtime decorator, so a modified class becomes a `const` binding) and coerce to a statement. The
+   *  remaining legacy post-pass around the modeled shell (JSTransformer.applyModifiersToClass). */
+  finishClass(src: ast.ASTNode, decl: ESTree.ClassDeclaration): ESTree.Statement;
 }
 
 /** Mirrors ESTreeBuilder.loc: a located source range, or null when the node has no location. */
@@ -82,10 +91,21 @@ export class EmitHirToEstree {
       case "opaque-stmt":
         return this.legacy.leafStmt(h.src);
 
-      case "class":
-        // A4 step 1: the class declaration re-visits `src` exactly as the opaque leaf did (JSClassBuilder
-        // still owns the shape). Byte-identical; the seam only makes the declaration a distinct node.
-        return this.legacy.leafStmt(h.src);
+      case "class": {
+        // A4 step 2: the emitter assembles the ClassDeclaration SHELL from the modeled name / superName;
+        // the body members and the custom-modifier wrapping stay legacy hooks (emitClassBody in the class
+        // scope, finishClass for the `defmodifier` wrap). The class id/superClass are raw (unencoded)
+        // names, so this is byte-identical to JSClassBuilder's own shell.
+        const members = this.legacy.emitClassBody(h.src);
+        const decl: ESTree.ClassDeclaration = {
+          type: "ClassDeclaration",
+          id: ident(h.name, h.src),
+          superClass: h.superName != null ? ident(h.superName, h.src) : null,
+          body: { type: "ClassBody", body: members },
+          loc: loc(h.src),
+        };
+        return this.legacy.finishClass(h.src, decl);
+      }
 
       case "var-decl":
         return this.legacy.emitVarDecl(h.src, h.init ? this.emitExpr(h.init) : null);
