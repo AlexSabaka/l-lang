@@ -98,6 +98,10 @@ export class BaseAstVisitor {
         "call": this.visitCall.bind(this),
         "member": this.visitMember.bind(this),
         "try-catch": this.visitTryCatch.bind(this),
+        "restart-case": this.visitRestartCase.bind(this),
+        "handle": this.visitHandle.bind(this),
+        "signal": this.visitSignal.bind(this),
+        "invoke-restart": this.visitInvokeRestart.bind(this),
         "when": this.visitWhen.bind(this),
         "if": this.visitIf.bind(this),
         "cond": this.visitCond.bind(this),
@@ -386,6 +390,24 @@ export class BaseAstVisitor {
 
   visitTryCatch(node: ast.TryCatchNode): any {
     return this.onUnhandled(node, "visitTryCatch");
+  }
+
+  // D47 conditions/restarts. Default to onUnhandled like every other node; the passes that care
+  // (type inference, syntax rules) override. The JS backend refuses them at emit (LL0108).
+  visitRestartCase(node: ast.RestartCaseNode): any {
+    return this.onUnhandled(node, "visitRestartCase");
+  }
+
+  visitHandle(node: ast.HandleNode): any {
+    return this.onUnhandled(node, "visitHandle");
+  }
+
+  visitSignal(node: ast.SignalNode): any {
+    return this.onUnhandled(node, "visitSignal");
+  }
+
+  visitInvokeRestart(node: ast.InvokeRestartNode): any {
+    return this.onUnhandled(node, "visitInvokeRestart");
   }
 
   visitWhen(node: ast.WhenNode): any {

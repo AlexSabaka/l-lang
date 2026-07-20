@@ -98,6 +98,16 @@ export class InsertCoercions {
         const collection = coll.ctype.k === "vec" ? coll : this.coerce(coll, { k: "vec", elem: C_VALUE });
         return { ...s, collection, body: this.block(s.body, ret), elseBlock: s.elseBlock ? this.block(s.elseBlock, ret) : null };
       }
+
+      case "c-restart-case":
+        // D47 SCAFFOLD (TODO restart-stage2). Recurse into the body + each arm so the coercion pass is
+        // correct once ResolveHirToCir actually produces these; stage-2 also coerces every arm value to
+        // the restart-case JOIN CType (mustFix #4.3). Never produced today (restart forms refuse).
+        return { ...s, body: this.block(s.body, ret), arms: s.arms.map((a) => ({ ...a, body: this.block(a.body, ret) })) };
+
+      case "c-handle":
+        // D47 SCAFFOLD (TODO restart-stage2). Recurse into the body + each (closure-converted) clause body.
+        return { ...s, body: this.block(s.body, ret), clauses: s.clauses.map((c) => ({ ...c, body: this.block(c.body, ret) })) };
     }
   }
 

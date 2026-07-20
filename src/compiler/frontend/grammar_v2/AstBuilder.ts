@@ -122,7 +122,9 @@ export class LLangAstBuilder extends BaseCstVisitor {
       "comment", "importExpr", "exportExpr", "variable", "functionExpr",
       "classDecl", "structDecl", "enumDecl", "interfaceDecl", "typeDefDecl",
       "modifierDefDecl", "macroDecl", "whenExpr", "ifExpr", "condExpr", "forExpr",
-      "whileExpr", "tryCatchExpr", "matchExpr", "awaitExpr", "spreadExpr",
+      "whileExpr", "tryCatchExpr",
+      "restartCaseExpr", "handleExpr", "signalExpr", "invokeRestartExpr",
+      "matchExpr", "awaitExpr", "spreadExpr",
       "assignmentOrExpr", "quoteExpr", "nil", "boolean", "number", "string",
     ];
     for (const alt of alternatives) {
@@ -1214,6 +1216,55 @@ export class LLangAstBuilder extends BaseCstVisitor {
 
   finallyClause(ctx: any): ast.ASTNode {
     return this.visit(ctx.expression[0]);
+  }
+
+  // ========================================================================
+  // D47 CONDITIONS / RESTARTS
+  //
+  // All four are REAL AST nodes (not C-only special forms): the JS backend must RECOGNIZE and REFUSE
+  // them with a located LL0108 -- a special-form-only path would let JS silently emit a call to a
+  // nonexistent runtime fn (silent-wrong). positionalExpressions() drops `;comment` nodes so a comment
+  // never steals a positional slot.
+  // ========================================================================
+  restartCaseExpr(ctx: any): ast.RestartCaseNode {
+    // Grammar makes the body mandatory + puts arms in their own subrule, so ctx.expression is exactly
+    // the body. Arms carry their OWN expressions inside restartArm's ctx.
+    const body = ctx.expression ? this.visit(ctx.expression[0]) : null;
+    const arms = ctx.restartArm ? ctx.restartArm.map((a: any) => this.visit(a)) : [];
+    return this.makeNode("restart-case", ctx, { body, arms });
+  }
+
+  restartArm(ctx: any): ast.RestartArm {
+    const name = ctx.Identifier[0].image;
+    // The (mandatory) params vector -- its element nodes are the restart's parameter binders.
+    const params = ctx.vector ? (this.visit(ctx.vector[0]).values as ast.ASTNode[]) : [];
+    const body = this.positionalExpressions(ctx);
+    return { name, params, body } as ast.RestartArm;
+  }
+
+  handleExpr(ctx: any): ast.HandleNode {
+    const body = ctx.expression ? this.visit(ctx.expression[0]) : null;
+    const clauses = ctx.handleClause ? ctx.handleClause.map((c: any) => this.visit(c)) : [];
+    return this.makeNode("handle", ctx, { body, clauses });
+  }
+
+  handleClause(ctx: any): ast.HandleClause {
+    const condType = this.visit(ctx.typeName[0]).name;
+    const binderVec = ctx.vector ? (this.visit(ctx.vector[0]).values as ast.ASTNode[]) : [];
+    const binder = binderVec.length > 0 ? binderVec[0] : undefined;
+    const body = this.positionalExpressions(ctx);
+    return { condType, binder, body } as ast.HandleClause;
+  }
+
+  signalExpr(ctx: any): ast.SignalNode {
+    const condition = this.visit(ctx.expression[0]);
+    return this.makeNode("signal", ctx, { condition });
+  }
+
+  invokeRestartExpr(ctx: any): ast.InvokeRestartNode {
+    const name = ctx.Identifier[0].image;
+    const args = this.positionalExpressions(ctx);
+    return this.makeNode("invoke-restart", ctx, { name, args });
   }
 
   matchExpr(ctx: any): ast.MatchNode {

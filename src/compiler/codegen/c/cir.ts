@@ -275,6 +275,8 @@ export type CStmt = CBase & (
   | CFor
   | CForEach
   | CTry
+  | CRestartCase
+  | CHandle
 );
 
 /** A try/catch/finally, lowered to a setjmp/longjmp handler frame. Each catch may filter on an
@@ -285,6 +287,32 @@ export interface CTry {
   errVar: string; // the boxed `ll_value` holding the thrown error in the catch arm
   catches: { errorCName?: string; filterTypeName?: string; body: CBlock }[];
   finalizer: CBlock | null;
+}
+
+/**
+ * D47 `restart-case` -- SCAFFOLD (TODO restart-stage2). Lowered to ONE setjmp pad (an LL_RESTART frame on
+ * the shared handler stack) whose arms emit INLINE at the `else` branch, keyed by the invoked restart's
+ * index. `resultCName` is the value-position result temp (the join of body + arm values). Not yet produced
+ * by ResolveHirToCir (which refuses restart forms today); the field shape lands here for stage-2.
+ */
+export interface CRestartCase {
+  kind: "c-restart-case";
+  body: CBlock;
+  resultCName?: string;
+  arms: { name: string; paramCNames: string[]; body: CBlock }[];
+}
+
+/**
+ * D47 `handle` -- SCAFFOLD (TODO restart-stage2). Lowered to ONE bookkeeping LL_HANDLER frame carrying the
+ * ORDERED clause list (source order -- first-written matching `:on` wins). Each clause closure-converts to
+ * `static ll_value <handlerFnName>(void* env, ll_value cond)` capturing the handle-frame's live locals. Not
+ * yet produced by ResolveHirToCir; the field shape lands here for stage-2.
+ */
+export interface CHandle {
+  kind: "c-handle";
+  body: CBlock;
+  resultCName?: string;
+  clauses: { condType: string; binderCName?: string; handlerFnName: string; body: CBlock }[];
 }
 
 export interface CExprStmt {

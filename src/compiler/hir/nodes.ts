@@ -47,6 +47,8 @@ export type HExpr =
   | HMemberRead
   | HOpaqueExpr
   | HNil
+  | HSignal
+  | HInvokeRestart
   | HTernary
   | HSeq
   | HPatternTest
@@ -218,6 +220,29 @@ export interface HNil extends HBase {
   kind: "nil";
 }
 
+/**
+ * D47 `(signal <cond>)` -- an HExpr. VALUE CONTRACT: Nil-on-all-decline / DIVERGES-on-transfer. On C it
+ * lowers to an `ll_signal` c-call (walks the handler list IN PLACE -- no unwind); the JS backend refuses
+ * it (LL0108). A handler that RETURNS a value is a DECLINE and its value is discarded -- `signal` never
+ * yields a handler's result. `condition` is the (already-lowered) condition operand.
+ */
+export interface HSignal extends HBase {
+  kind: "signal";
+  condition: HExpr;
+}
+
+/**
+ * D47 `(invoke-restart :name args*)` -- an HExpr that DIVERGES (a non-local control transfer to the named
+ * restart). On C it lowers to an `ll_invoke_restart` c-call; the JS backend refuses it (LL0108). Lowering
+ * must MATERIALIZE this node into the statement stream even in value/argument position (never drop it),
+ * or the transfer -- and the LL0108 refusal -- would silently vanish. `args` are the lowered operands.
+ */
+export interface HInvokeRestart extends HBase {
+  kind: "invoke-restart";
+  name: string;
+  args: HExpr[];
+}
+
 /** The peephole for a value-position `if` whose BOTH arms lowered to pure atoms -- `test ? then : else`. */
 export interface HTernary extends HBase {
   kind: "ternary";
@@ -309,6 +334,8 @@ export type HStmt =
   | HReturn
   | HHoist
   | HTry
+  | HRestartCase
+  | HHandle
   | HWhile
   | HFor
   | HForEach
@@ -429,6 +456,32 @@ export interface HTry extends HBase {
   catchVar: string;
   catches: HCatch[];
   finalizer: HBlock | null;
+}
+
+/**
+ * D47 `restart-case` -- an HStmt, destination-driven like HTry (a value-position restart-case declares a
+ * `resultTemp` up front; the body fall-through AND each invoked arm assign into it -- no IIFE). Each arm's
+ * value becomes the whole form's value when that restart is invoked. On C the arms emit INLINE at the
+ * setjmp pad; the JS backend refuses (LL0108). `resultTemp`'s type is the CHECKED JOIN of body + every arm
+ * (a full type-inference layer is stage-2 work; the node shape lands now).
+ */
+export interface HRestartCase extends HBase {
+  kind: "restart-case";
+  body: HBlock;
+  resultTemp?: string;
+  arms: { name: string; params: string[]; body: HBlock }[];
+}
+
+/**
+ * D47 `handle` -- an HStmt, sibling of HTry but the OPPOSITE mechanism (in-place, non-unwinding). Clauses
+ * stay in SOURCE order (the first-written matching `:on` wins). On C each clause body closure-converts into
+ * one handler frame per `handle` form carrying the ordered clause list; the JS backend refuses (LL0108).
+ */
+export interface HHandle extends HBase {
+  kind: "handle";
+  body: HBlock;
+  resultTemp?: string;
+  clauses: { condType: string; binder?: string; body: HBlock }[];
 }
 
 /**
