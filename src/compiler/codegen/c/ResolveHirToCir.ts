@@ -2677,17 +2677,17 @@ export class ResolveHirToCir {
     // (3) An intrinsic (a std/js host global with a simple name, e.g. `print`) or an imported l-lang
     // function whose body is lowered on demand. Which of the two is still a symbol-table question --
     // the callee-identity satellite the node does not yet answer.
-    const entry = this.dipSymbols("A3", "callee-identity", node, "callee resolved through the symbol table (spec wants it on the call node)", name);
+    // The callee identity rode the HIR node (A3, D48/Q3) -- consume it, no re-resolution, no dip.
+    const cb = h.calleeBinding;
     const builtin = INTRINSIC_CALLS.get(name);
     if (builtin) {
-      if (entry !== undefined && !this.isExtern(entry)) {
+      if (cb && cb.resolved && !cb.extern) {
         this.ledger.record("A9-extern", "stdlib-intrinsic", node, `'${name}' stdlib body shadowed by a C intrinsic`);
       }
       return { src: node, ctype: builtin.ret, kind: "c-call", callee: { kind: "intrinsic", ...builtin }, args: cArgs };
     }
-    const symT = entry?.inferredType;
-    if (symT?.kind === "function" && !this.isExtern(entry) && (entry?.value as any)?._type === "function") {
-      this.lowerImportedFunction(name, entry!.value as ast.FunctionNode);
+    if (cb && cb.isFunctionType && !cb.extern && cb.fnNode) {
+      this.lowerImportedFunction(name, cb.fnNode);
       const sig = this.topLevelFns.get(name);
       if (!sig) return { src: node, ctype: C_VALUE, kind: "c-nil" };
       return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: cArgs };

@@ -33,6 +33,7 @@ import { TempAllocator } from "./TempAllocator";
 import {
   HBase,
   HBlock,
+  HCalleeBinding,
   HCatch,
   HCtor,
   HExpr,
@@ -576,8 +577,31 @@ export class LowerAstToHirVisitor {
   private lowerFreeCall(node: ast.ListNode, callee: ast.ASTNode, args: ast.ASTNode[], dest: Dest): Lowered {
     const { prelude, atoms, diverged } = this.lowerCallArgs(args);
     if (diverged) return { stmts: prelude, value: null };
-    const call: HExpr = { ...this.base(node), kind: "free-call", callee: this.ref(callee), args: atoms };
+    const call: HExpr = { ...this.base(node), kind: "free-call", callee: this.ref(callee), args: atoms, calleeBinding: this.calleeBinding(callee, node) };
     return this.placeValue(call, prelude, dest);
+  }
+
+  /**
+   * Resolve the callee IDENTITY off the symbol table ONCE (A3, D48/Q3), so the native backend consumes
+   * it instead of re-resolving (the `callee-identity` dip). Mirrors the C backend's `resolveFreeCall`
+   * reads: resolved-ness, extern-ness, function-type, and the FunctionNode value (for on-demand import
+   * lowering). Resolved with the CALL node as the scope anchor -- the same `at` the C dip used.
+   */
+  private calleeBinding(callee: ast.ASTNode, at: ast.ASTNode): HCalleeBinding | null {
+    if (callee._type !== "simple-identifier" && callee._type !== "composite-identifier") return null;
+    const name = ast.symbolName(callee as ast.IdentifierNode);
+    let entry: any;
+    try {
+      entry = this.context.symbolTable?.resolveSymbol?.(name as any, at);
+    } catch {
+      entry = undefined;
+    }
+    return {
+      resolved: entry !== undefined,
+      extern: (entry?.value as any)?.extern === true,
+      isFunctionType: (entry?.inferredType as any)?.kind === "function",
+      fnNode: (entry?.value as any)?._type === "function" ? (entry.value as ast.FunctionNode) : null,
+    };
   }
 
   /**

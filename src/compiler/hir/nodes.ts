@@ -106,10 +106,26 @@ export interface HRef extends HBase {
  * `args` the lowered operands (with the same evaluation-order hoisting the opaque path used). Emitted
  * directly; falls back to legacy emission of `src` only when substituted into a legacy-parent operand.
  */
+/**
+ * The resolved CALLEE IDENTITY (A3, D48/Q3), resolved once at lowering from the symbol table so the
+ * native backend does not re-resolve it (the `callee-identity` dip). `resolved` = the table found an
+ * entry; `extern` = an ambient host value; `isFunctionType` = its inferred type is a function; `fnNode`
+ * = its FunctionNode value (present iff it is a user function, for on-demand lowering of an import).
+ * The JS backend keeps its own `emitRef` import-inlining; this is the C backend's call-target need.
+ */
+export interface HCalleeBinding {
+  resolved: boolean;
+  extern: boolean;
+  isFunctionType: boolean;
+  fnNode: ast.FunctionNode | null;
+}
+
 export interface HFreeCall extends HBase {
   kind: "free-call";
   callee: HExpr;
   args: HExpr[];
+  /** The resolved callee identity for the native backend (null when the callee is not a plain name). */
+  calleeBinding: HCalleeBinding | null;
 }
 
 /**
