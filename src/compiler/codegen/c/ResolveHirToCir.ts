@@ -986,14 +986,12 @@ export class ResolveHirToCir {
         return this.resolveFreeCall(h);
 
       case "ext-call":
-        // A3, ext step 2 (dev): `(obj.method a)` is now MODELED as HExtCall rather than lowered opaque.
-        // The C backend already devirtualizes `:extension` calls statically (the `this.extensions`
-        // table, Dove's Q4 static case) via `resolveCall` off the raw AST -- and `h.src` is that exact
-        // original call node. Routing through it reproduces the pre-model behavior byte-for-byte (an ext
-        // call was an opaque leaf here before, so this records the same `extension-devirt` dip it did).
-        // CHASING HExtCall proper -- consuming `h.head`/`h.fnName`/`h.args` to drain the extension-devirt
-        // dips, the way `resolveFreeCall` chased HFreeCall -- is the follow-up increment (§5.1 pattern).
-        return this.resolveAstExpr(h.src);
+        // A3: CONSUME HExtCall. An `:extension` call `(recv.method a)` is method-SHAPED -- its head is the
+        // `recv.method` member, and the extension dispatch already lives inside the method resolver
+        // (resolveNativeMethod's primitive-extension branch, resolveObjMethod's tryExtensionCall). So it
+        // routes through the same method dispatch as HMethodCall, bypassing resolveCall's re-classification
+        // (the A3:call-dispatch dip) and reproducing the extension-devirt result byte-identically.
+        return this.resolveMethodCall(h);
 
       case "method-call":
       case "virtual-call":
@@ -1618,7 +1616,7 @@ export class ResolveHirToCir {
    * shape the method router does not cover (a null field name, a non-method callee) falls back to the raw
    * path, which registers the same dispatch it always did.
    */
-  private resolveMethodCall(h: Extract<HExpr, { kind: "method-call" | "virtual-call" }>): CExpr {
+  private resolveMethodCall(h: Extract<HExpr, { kind: "method-call" | "virtual-call" | "ext-call" }>): CExpr {
     const list = h.src as ast.ListNode;
     const form = classifyList(list);
     if (form.kind === "call") {
