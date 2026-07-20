@@ -1617,14 +1617,17 @@ export class ResolveHirToCir {
     const form = classifyList(list);
     if (form.kind === "call") {
       const callee = form.callee;
+      // Consume the ALREADY-LOWERED operands (h.args): each rides its HRef/atom, so an argument read
+      // records no A2:atom-ref dip. The receiver still resolves off the callee (h.head is raw AST).
+      const argVals = h.args.map((a) => this.resolveExpr(a));
       if (callee._type === "composite-identifier") {
-        return this.resolveDottedCall(list, callee as ast.CompositeIdentifierNode, form.args);
+        return this.resolveDottedCall(list, callee as ast.CompositeIdentifierNode, form.args, argVals);
       }
       if (callee._type === "member") {
         const m = callee as ast.MemberNode;
         const fieldName = this.memberName(m.property);
         if (fieldName !== null) {
-          return this.resolveNativeMethod(list, this.resolveAstExpr(m.object), fieldName, form.args);
+          return this.resolveNativeMethod(list, this.resolveAstExpr(m.object), fieldName, form.args, argVals);
         }
       }
     }
@@ -1730,28 +1733,29 @@ export class ResolveHirToCir {
   }
 
   /** A method call on a typed struct/class receiver, devirtualized to a direct call with self. */
-  private resolveObjMethod(node: ast.ASTNode, recv: CExpr, method: string, args: ast.ASTNode[]): CExpr {
+  private resolveObjMethod(node: ast.ASTNode, recv: CExpr, method: string, args: ast.ASTNode[], argVals?: CExpr[]): CExpr {
     const className = (recv.ctype as any).className as string;
     const desc = this.classes.get(className)!;
     const m = desc.methods.get(method);
     if (m) {
       this.ledger.record("A3", "method-devirt", node, "method call devirtualized to a direct call with explicit self (SIL-style)");
-      const cArgs = args.map((a) => this.resolveAstExpr(a));
+      const cArgs = argVals ?? args.map((a) => this.resolveAstExpr(a));
       return { src: node, ctype: m.ret, kind: "c-call", callee: { kind: "free", cName: m.cName, params: [{ k: "obj", className }, ...m.params], ret: m.ret }, args: [recv, ...cArgs] };
     }
     if (desc.fieldSlot.has(method)) {
       // `(obj.field)` with NO args is a D1 field READ; with args, a call through a field-held closure.
       const field = this.fieldGet(node, recv, method);
-      return args.length === 0 ? field : this.closureCall(node, field, args);
+      const cArgs = argVals ?? args.map((a) => this.resolveAstExpr(a));
+      return cArgs.length === 0 ? field : this.closureCallResolved(node, field, cArgs);
     }
-    const ext = this.tryExtensionCall(node, recv, method, args);
+    const ext = this.tryExtensionCall(node, recv, method, args, argVals);
     if (ext) return ext;
     throw this.refuse(node, `method:${className}.${method}`, "resolveObjMethod");
   }
 
   /** `(recv.method args)` where `method` is a registered `:extension` for the receiver's type ->
    *  a direct call `method(recv, ...args)`. The devirtualization the HIR does not model (A3, Q4). */
-  private tryExtensionCall(node: ast.ASTNode, recv: CExpr, method: string, args: ast.ASTNode[]): CExpr | undefined {
+  private tryExtensionCall(node: ast.ASTNode, recv: CExpr, method: string, args: ast.ASTNode[], argVals?: CExpr[]): CExpr | undefined {
     const recvType = this.ctypeName(recv.ctype);
     if (!recvType) return undefined;
     const extName = this.extensions.get(`${method}:${recvType}`);
@@ -1759,7 +1763,7 @@ export class ResolveHirToCir {
     const sig = this.topLevelFns.get(extName);
     if (!sig) return undefined;
     this.ledger.record("A3", "extension-devirt", node, "extension method devirtualized to a free call on its first parameter (Q4 static case)");
-    const cArgs = args.map((a) => this.resolveAstExpr(a));
+    const cArgs = argVals ?? args.map((a) => this.resolveAstExpr(a));
     return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName: mangleC(extName), params: sig.params, ret: sig.ret }, args: [recv, ...cArgs] };
   }
 
@@ -2051,7 +2055,7 @@ export class ResolveHirToCir {
     });
   }
 
-  private resolveDottedCall(node: ast.ListNode, callee: ast.CompositeIdentifierNode, args: ast.ASTNode[]): CExpr {
+  private resolveDottedCall(node: ast.ListNode, callee: ast.CompositeIdentifierNode, args: ast.ASTNode[], argVals?: CExpr[]): CExpr {
     const whole = callee.id;
     const intrinsic = INTRINSIC_CALLS.get(whole);
     const headName = callee.parts[0];
@@ -2059,7 +2063,7 @@ export class ResolveHirToCir {
     if (headName === "this" && this.selfClass) {
       let recv: CExpr = { src: callee, ctype: { k: "obj", className: this.selfClass }, kind: "c-ref", cName: "__self" };
       for (const mid of callee.parts.slice(1, -1)) recv = this.memberRead(node, recv, mid);
-      return this.resolveNativeMethod(node, recv, callee.parts[callee.parts.length - 1], args);
+      return this.resolveNativeMethod(node, recv, callee.parts[callee.parts.length - 1], args, argVals);
     }
     const localEntry = (() => { try { return this.context.symbolTable.resolveSymbol(headName, callee); } catch { return undefined; } })();
     const localVar = this.localInfo(mangleC(headName));
@@ -2077,30 +2081,30 @@ export class ResolveHirToCir {
       // Intermediate `.a.b` parts are member reads; the LAST part is the method.
       for (const mid of callee.parts.slice(1, -1)) recv = this.memberRead(node, recv, mid);
       const method = callee.parts[callee.parts.length - 1];
-      return this.resolveNativeMethod(node, recv, method, args);
+      return this.resolveNativeMethod(node, recv, method, args, argVals);
     }
 
     if (intrinsic) {
       this.ledger.record("A9-extern", "host-intrinsic", node, `'${whole}' resolved against the C runtime (JS resolves it against the host)`);
-      const cArgs = args.map((a) => this.resolveAstExpr(a));
+      const cArgs = argVals ?? args.map((a) => this.resolveAstExpr(a));
       return { src: node, ctype: intrinsic.ret, kind: "c-call", callee: { kind: "intrinsic", ...intrinsic }, args: cArgs };
     }
 
     throw this.refuseExtern(node, whole);
   }
 
-  private resolveNativeMethod(node: ast.ListNode, recv: CExpr, method: string, args: ast.ASTNode[]): CExpr {
+  private resolveNativeMethod(node: ast.ListNode, recv: CExpr, method: string, args: ast.ASTNode[], argVals?: CExpr[]): CExpr {
     // A struct/class receiver -> a devirtualized user method (spec A3/A4).
-    if (recv.ctype.k === "obj") return this.resolveObjMethod(node, recv, method, args);
+    if (recv.ctype.k === "obj") return this.resolveObjMethod(node, recv, method, args, argVals);
     const baseKey = recv.ctype.k === "str" ? "str" : recv.ctype.k === "vec" ? "vec" : "dyn";
     let def = NATIVE_METHODS.get(`${baseKey}.${method}`);
-    let cArgs = args.map((a) => this.resolveAstExpr(a));
+    let cArgs = argVals ?? args.map((a) => this.resolveAstExpr(a));
 
     if (!def && baseKey !== "dyn") {
       // A zero-arg "call" of a FIELD (`(m.length)`): D1 makes the dotted form a call, __ll_member
       // makes a non-function a read. Mirror that.
       const field = NATIVE_FIELDS.get(`${baseKey}.${method}`);
-      if (field && args.length === 0) {
+      if (field && cArgs.length === 0) {
         return { src: node, ctype: field.ret, kind: "c-member", object: recv, fieldName: method, runtimeFn: field.runtimeFn };
       }
     }
