@@ -4090,9 +4090,25 @@ the language — so this follows from D9 rather than adding to it.
 `return (ll_console_log(...), ll_nil())` → nil. No golden catches it because no corpus program prints
 the value. Under D9 the C answer is correct.
 
-**Consequence.** `new:void-in-value-position` is a **JS bug report** that was wearing a C ledger row:
-the fix belongs in the JS emitter, which must yield nil where it currently yields `undefined`. Filed
-against JS, not tracked as a C gap.
+**Consequence, and a correction to this ruling's own first reading.** Implementing it showed the row is
+*not* simply "a JS bug". The rule is modeled in the lowering (`nilIfVoid`, at every value placement), so
+any expression the CHECKER types `Void` now yields nil on both backends — which, after D49a, covers every
+user `-> Void` function called in value position. `(let r (noisy 1))` prints `null` on both, where JS
+printed `undefined` before.
+
+What it does **not** cover is a host intrinsic like `console.log`. Its void-ness exists **only** in the C
+backend's intrinsic table (`codegen/c/intrinsics.ts`, `ret: C_VOID`); the checker deliberately types host
+globals as Unknown ("a base we cannot type tells us nothing — `console.log`, `Math.floor`, an import.
+Gradual"). So the HIR has no Void to see, C knows from a private table, and JS knows nothing.
+
+That makes the residual `void-in-value-position` an **A9 extern-boundary gap**, not a JS bug: it is
+blocked on the std/js surface declaring its return types somewhere both backends read — the same
+unmodeled boundary that owns the ledger's single largest row (`A9-extern:host-intrinsic`). Filed there.
+
+**One latent bug this surfaced.** D49a made `-> Void` functions really return `void` in C, which made
+`(let r (noisy 1))` emit `void r` — not compilable. There is no `void` variable: a binding whose declared
+type is Void holds the bottom value, so it is boxed. No corpus program does this, which is why the suites
+were green; a probe found it.
 
 ### D49c — module scope is settled language semantics; `new:module-global` is retired
 

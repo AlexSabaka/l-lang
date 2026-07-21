@@ -672,7 +672,8 @@ export class ResolveHirToCir {
           const cn = this.classNameOf(h.init);
           if (cn) { this.tempClassName.set(h.name, cn); return []; }
           const t = h.init ? this.resolveExpr(h.init) : null;
-          const declCType = t ? t.ctype : this.ctypeOf(h, "decl-temp");
+          let declCType = t ? t.ctype : this.ctypeOf(h, "decl-temp");
+          if (declCType.k === "void") declCType = C_VALUE; // no `void` variable -- see resolveVarDecl
           this.declareLocal(h.name, declCType);
           return [{ src: h.src, ctype: C_VOID, kind: "c-decl", cName: h.name, declCType, init: t }];
         }
@@ -822,6 +823,11 @@ export class ResolveHirToCir {
     if (node.extern) return []; // an ambient host global declaration -- nothing to emit
     const cName = mangleC(srcName);
     let declCType = t !== undefined ? mapType(t) : init ? init.ctype : C_VALUE;
+    // There is no `void` VARIABLE. A binding whose declared type is Void holds the bottom value, which
+    // is a value like any other (D9 / D49b: a Void expression in value position is nil) -- so it is
+    // boxed. Reachable since D49a made `-> Void` functions actually return void: `(let r (noisy 1))`
+    // would otherwise emit `void r`, which does not compile.
+    if (declCType.k === "void") declCType = C_VALUE;
     // A binding whose type resolved to boxed but whose initializer is a concrete struct/vector keeps
     // the initializer's shape: the symbol table erases an inferred struct type to Unknown, but the
     // init is authoritative (a struct binding must stay typed for field access). Skip when the

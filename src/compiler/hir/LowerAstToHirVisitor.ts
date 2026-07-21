@@ -1180,16 +1180,30 @@ export class LowerAstToHirVisitor {
   private placeValue(value: HExpr, prelude: HStmt[], dest: Dest): Lowered {
     switch (dest.kind) {
       case "value":
-        return { stmts: prelude, value };
+        return { stmts: prelude, value: this.nilIfVoid(value) };
       case "effect":
         // Evaluated for effect: keep the expression as a statement so its own side effects still run
-        // (a bare temp is a harmless `t;`).
+        // (a bare temp is a harmless `t;`). No value is produced, so nothing to nil-ify.
         return { stmts: [...prelude, this.exprStmt(value, value.src)], value: null };
       case "assign":
-        return { stmts: [...prelude, this.assignTemp(dest.temp, value, value.src)], value: null };
+        return { stmts: [...prelude, this.assignTemp(dest.temp, this.nilIfVoid(value), value.src)], value: null };
       case "return":
-        return { stmts: [...prelude, this.hReturn(value, true, value.src)], value: null };
+        return { stmts: [...prelude, this.hReturn(this.nilIfVoid(value), true, value.src)], value: null };
     }
+  }
+
+  /**
+   * D49b: a `Void` expression used AS A VALUE evaluates to nil.
+   *
+   * This follows from D9 -- one bottom value, spelled `nil`, with `undefined` not a spelling of the
+   * language -- so it is modeled here rather than left to each backend. The two disagreed: JS returned
+   * the void call's own result (`undefined`), while C sequenced it with nil in its coercion pass. Doing
+   * it in the lowering makes them agree by construction, and is why the C-side coercion can go.
+   */
+  private nilIfVoid(value: HExpr): HExpr {
+    const t = value.type as any;
+    if (!(t?.kind === "primitive" && t.name === "Void")) return value;
+    return { ...this.base(value.src), kind: "seq", exprs: [value, this.nil(value.src)] };
   }
 
   /** A leaf: the node is an atom as far as HIR is concerned. `src` carries it; the legacy emitter re-visits. */
