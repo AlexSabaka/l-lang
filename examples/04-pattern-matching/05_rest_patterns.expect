@@ -1,0 +1,4 @@
+head 1 tail-len 2 tail0 2
+a 10 b 20 rest-len 2
+a 10 b 20 rest-len 0
+too short

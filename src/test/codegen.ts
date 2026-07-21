@@ -1849,6 +1849,104 @@ const CASES: Case[] = [
   },
 
   // ===============================================================================================
+  // A7 fence -- MAP PATTERNS and ENUM ARMS. Both go through `generateCondition`, and neither had a
+  // single case in this suite: map patterns were covered only by 04-pattern-matching/02_map_patterns'
+  // stdout golden, enum arms only by 05-data-structures/04_enums and friends. They are the two shapes
+  // most likely to break when the pattern test moves onto the HIR (HMatchTest), because they are the
+  // two whose decisions live furthest from the pattern node: the map's key ACCESS is built by string
+  // concatenation, and the enum arm is an equality TEST that looks exactly like a binder.
+  // ===============================================================================================
+  {
+    name: "A7: a map pattern matches a literal key and BINDS another",
+    source: `(console.log (match { :type "DEPOSIT" :amount 50 } {
+  { :type "DEPOSIT" :amount amt } => amt
+  _                               => 0
+}))`,
+    expect: ["50"],
+    wasBroken:
+      "not broken -- a FENCE. Map patterns had zero cases in this suite; the only coverage was one corpus "
+      + "stdout golden. This is the shape whose key ACCESS is built by string concatenation today."
+  },
+  {
+    name: "A7: a map pattern DISCRIMINATES on its literal key",
+    source: `(console.log (match { :type "WITHDRAW" :amount 50 } {
+  { :type "DEPOSIT" :amount amt } => "deposit"
+  { :type "WITHDRAW" :amount amt } => "withdraw"
+  _                                => "other"
+}))`,
+    expect: ["withdraw"],
+    wasBroken:
+      "not broken -- a fence. Two map arms differing only in a literal key value: proves the key test runs "
+      + "rather than the arm matching on shape alone."
+  },
+  {
+    name: "A7: a map pattern falls through on a MISSING key",
+    // The key is absent, so the sub-pattern tests an absent value and must not match. Pinning this
+    // because the two backends read an absent key differently (undefined on JS, nil on C) -- a
+    // divergence the modeled pattern has to keep honest.
+    source: `(console.log (match { :other 1 } {
+  { :type "DEPOSIT" } => "matched"
+  _                   => "no match"
+}))`,
+    expect: ["no match"],
+    wasBroken:
+      "not broken -- a fence on the JS/C divergence: an absent key reads undefined on JS and nil on C, so "
+      + "the modeled pattern must not quietly make one of them match."
+  },
+  {
+    name: "A7: a NESTED map pattern binds through two levels",
+    source: `(console.log (match { :type "user" :payload { :id 7 } } {
+  { :type "user" :payload { :id i } } => i
+  _                                   => 0
+}))`,
+    expect: ["7"],
+    wasBroken:
+      "not broken -- a fence. Nesting is where the recursive sub-scrutinee path is built, and the only "
+      + "corpus file exercising it (04-pattern-matching/04_destructuring) is an xfail."
+  },
+  {
+    name: "A7: an enum arm is an equality TEST, not a binder",
+    // The trap this fences: `HttpMethod:GET` is an identifier-pattern, structurally identical to the
+    // binder `x`. If the modeled lowering ever mistakes it for a binding it matches EVERYTHING, and
+    // this prints "get" for a POST -- silently, since the arm still "works".
+    // `route`, not `handle`: `handle` is a D47 bare keyword and cannot be a function name.
+    source: `(defenum HttpMethod :GET :POST)
+(fn route [m] (match m {
+  HttpMethod:GET  => "get"
+  HttpMethod:POST => "post"
+  _               => "other"
+}))
+(console.log (route HttpMethod:POST))
+(console.log (route HttpMethod:GET))`,
+    expect: ["post", "get"],
+    wasBroken:
+      "not broken -- a fence, and the sharpest one here: an enum arm is an identifier-pattern, structurally "
+      + "identical to a binder. Three places decide which it is, by three different tests. Mistake it for a "
+      + "binding and the arm matches EVERYTHING while still looking correct."
+  },
+  {
+    name: "A7: a later enum arm is reachable (the first does not swallow it)",
+    source: `(defenum Color :RED :GREEN :BLUE)
+(fn name-of [c] (match c { Color:RED => "r" Color:GREEN => "g" Color:BLUE => "b" _ => "?" }))
+(console.log (name-of Color:BLUE))`,
+    expect: ["b"],
+    wasBroken:
+      "not broken -- the direct falsifier for the enum-as-binder mistake: if arm one binds instead of tests, "
+      + "it matches first and nothing after it is reachable."
+  },
+  {
+    name: "A7: an enum arm and a BINDER arm coexist in one match",
+    source: `(defenum E :A :B)
+(fn f [v] (match v { E:A => "is-a" x => x }))
+(console.log (f E:A))
+(console.log (f 42))`,
+    expect: ["is-a", "42"],
+    wasBroken:
+      "not broken -- a fence. The two readings of an identifier-pattern side by side in ONE match, so a "
+      + "single wrong decision cannot satisfy both."
+  },
+
+  // ===============================================================================================
   // Inference: a self-referential return type. `(fn :operator + [o <- V] -> V ...)` returns the very
   // struct being defined -- and during collection that name does not resolve yet, so `convertAstType`
   // degraded `-> V` to Unknown. The operator's result therefore had no type, so `(let v3 (+ v1 v2))`
