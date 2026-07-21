@@ -1,15 +1,16 @@
-// The extern/stdlib intercept table (v0 stdlib strategy).
+// The C backend's view of the runtime boundary.
 //
-// The JS backend resolves `console.log` / `Math.*` against HOST GLOBALS (the std/js prelude of
-// `:extern` declarations) and inlines imported l-lang stdlib bodies. The C pipeline has no host --
-// every name below is provided by runtime.c instead. EACH hit that shadows a host global or an
-// l-lang stdlib body is A9-extern evidence: the consumption spec has no assumption covering this
-// boundary, which is precisely why the table exists.
+// `INTRINSIC_CALLS` is no longer a table here: it is DERIVED from the intrinsic floor
+// (`compiler/floor/floor.ts`, D50), which states each signature once in l-lang types and is read by
+// the checker too. That is the point -- this file used to be a private C-typed table that nothing
+// could check against `lib/std/js`'s untyped externs, and the two had silently disagreed about
+// `Math.floor`'s return type for as long as both existed.
 //
-// Native MEMBERS (String.length, Array.push, ...) mirror src/compiler/types/nativeMembers.ts -- the
-// side-table the checker already assumes -- resolved here to typed C runtime functions.
+// Native MEMBERS (String.length, Array.push, ...) still mirror src/compiler/types/nativeMembers.ts
+// by hand -- the same duplication one layer down, and the next thing the floor should absorb.
 
-import { CType, C_BOOL, C_INT, C_REAL, C_STR, C_VALUE, C_VOID } from "./ctype";
+import { CType, C_BOOL, C_INT, C_REAL, C_STR, C_VALUE, C_VOID, mapType } from "./ctype";
+import { FLOOR } from "../../floor/floor";
 
 export interface IntrinsicDef {
   runtimeFn: string;
@@ -24,61 +25,21 @@ function def(runtimeFn: string, params: CType[], ret: CType, variadic = false): 
   return { runtimeFn, variadic, params, ret };
 }
 
-/** Free-call intrinsics, keyed by the SOURCE callee name (simple or dotted). */
-export const INTRINSIC_CALLS: ReadonlyMap<string, IntrinsicDef> = new Map<string, IntrinsicDef>([
-  // -- the std/js host boundary (A9) --
-  ["console.log", def("ll_console_log", [], C_VOID, true)],
-  ["console.error", def("ll_console_error", [], C_VOID, true)],
-  // -- lib/std/io -- deliberately ABSENT.
-  //
-  // `print`/`prn` used to map straight to `ll_console_log` (a plain space-join), which is what made
-  // C print `x={0} 5` instead of `x=5`: this table is consulted BEFORE the branch that lowers an
-  // imported l-lang body, so io.lisp's actual body was unreachable for any name listed here.
-  // Removing them lets the real body lower, so `print` on C runs the same FLOOR.md 3.6 scanner JS
-  // runs -- one source, both backends. It needed rest-parameter packing first (packRestArgs in
-  // ResolveHirToCir): `print` is `[msg <- String ...args <- Any[]]`, and the old entry only ever
-  // worked because `variadic: true` makes a C VARARGS call, which never builds the array a lowered
-  // l-lang body indexes.
-  // -- number parsing / predicates (host globals, A9) --
-  ["Number", def("ll_number", [C_VALUE], C_VALUE)],
-  ["parseInt", def("ll_parse_int", [C_VALUE], C_VALUE)],
-  ["parseFloat", def("ll_parse_float", [C_VALUE], C_VALUE)],
-  ["isNaN", def("ll_is_nan", [C_VALUE], C_BOOL)],
-  ["isFinite", def("ll_is_finite", [C_VALUE], C_BOOL)],
-  // -- Math.* host globals (A9) --
-  ["Math.sqrt", def("ll_math_sqrt", [C_REAL], C_REAL)],
-  ["Math.log", def("ll_math_log", [C_REAL], C_REAL)],
-  ["Math.exp", def("ll_math_exp", [C_REAL], C_REAL)],
-  ["Math.sin", def("ll_math_sin", [C_REAL], C_REAL)],
-  ["Math.cos", def("ll_math_cos", [C_REAL], C_REAL)],
-  ["Math.tan", def("ll_math_tan", [C_REAL], C_REAL)],
-  ["Math.asin", def("ll_math_asin", [C_REAL], C_REAL)],
-  ["Math.acos", def("ll_math_acos", [C_REAL], C_REAL)],
-  ["Math.atan", def("ll_math_atan", [C_REAL], C_REAL)],
-  ["Math.atan2", def("ll_math_atan2", [C_REAL, C_REAL], C_REAL)],
-  ["Math.hypot", def("ll_math_hypot", [C_REAL, C_REAL], C_REAL)],
-  ["Math.abs", def("ll_math_abs", [C_REAL], C_REAL)],
-  ["Math.floor", def("ll_math_floor", [C_REAL], C_REAL)],
-  ["Math.ceil", def("ll_math_ceil", [C_REAL], C_REAL)],
-  ["Math.round", def("ll_math_round", [C_REAL], C_REAL)],
-  ["Math.pow", def("ll_math_pow", [C_REAL, C_REAL], C_REAL)],
-  ["Math.min", def("ll_math_min", [C_REAL, C_REAL], C_REAL)],
-  ["Math.max", def("ll_math_max", [C_REAL, C_REAL], C_REAL)],
-  ["Math.random", def("ll_math_random", [], C_REAL)],
-  ["Math.sign", def("ll_math_sign", [C_REAL], C_REAL)],
-  ["Math.trunc", def("ll_math_trunc", [C_REAL], C_REAL)],
-  // -- runtime builtins (the SYMBOL_MAP surface; the runtime is the backend's own contract, but the
-  //    callee-identity-by-name resolution is A3 evidence) --
-  ["get", def("ll_get", [C_VALUE, C_VALUE], C_VALUE)],
-  ["head", def("ll_head", [C_VALUE], C_VALUE)],
-  ["tail", def("ll_tail", [C_VALUE], VEC_VALUE)],
-  ["empty", def("ll_empty", [C_VALUE], C_BOOL)],
-  ["elem", def("ll_elem", [C_VALUE, C_VALUE], C_VALUE)],
-  ["list", def("ll_list", [], VEC_VALUE, true)],
-  // Reflection (the __ll_type_metadata mirror): a class's metadata map (name, extends), boxed.
-  ["type", def("ll_type", [C_VALUE], C_VALUE)],
-  ["type-by-name", def("ll_type_by_name", [C_VALUE], C_VALUE)],
-]);
+/**
+ * Free-call intrinsics, keyed by the SOURCE callee name (simple or dotted).
+ *
+ * DERIVED from the intrinsic floor (D50, `compiler/floor/floor.ts`) -- not a table in its own right.
+ * The floor states each signature ONCE, in l-lang types; the CTypes below are `mapType`'d from it, so
+ * the C backend and the checker cannot hold different opinions about what `Math.floor` returns. That
+ * exact disagreement (Real here, `-> Int` in lib/std/math) sat unnoticed for as long as the two
+ * halves were separate tables.
+ */
+export const INTRINSIC_CALLS: ReadonlyMap<string, IntrinsicDef> = new Map<string, IntrinsicDef>(
+  [...FLOOR].map(([name, e]) => [
+    name,
+    { runtimeFn: e.runtimeFn, variadic: !!e.variadic, params: e.params.map(mapType), ret: mapType(e.ret) },
+  ])
+);
 
 /**
  * Native member METHODS: `recv.m(args)`. Keyed `<base>.<name>` where base is "str" | "vec" | "dyn"
