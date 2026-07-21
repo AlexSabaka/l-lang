@@ -124,6 +124,9 @@ export const C_PASSING: readonly string[] = [
   // (an interface-only hierarchy) emitted its field table as a `const char**` variable and then named
   // it in the descriptor's static initializer, which is not a constant expression.
   "08-generics/05_covariance.lisp",
+  // A hoisted module global is file-scope storage: never a heap cell, never captured into a closure
+  // env, and its DECLARED ctype wins at every reference site (store, receiver, and member-read head).
+  "30-applications/05_snake_tick.lisp",
   "20-algorithms/01_evaluator.lisp",    // unlocked by match binding patterns
   // Phase E broad sweep -- field mutation on boxed receivers (dyn-field store).
   "30-applications/04_flood_fill.lisp", // (c.mine := v) on an array-element struct -> ll_member_slot

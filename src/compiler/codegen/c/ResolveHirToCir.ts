@@ -820,7 +820,14 @@ export class ResolveHirToCir {
     if (t === undefined && !init) this.ledger.record("A1", "decl-untyped", node, "no channel or symbol type for binding; boxed");
     // A mutable binding captured by an escaping closure becomes a heap cell (boxed) so the closure
     // and the origin share the mutation -- the env the HIR does not model (spec A3/A5).
-    const cell = this.cellVars.has(cName);
+    //
+    // EXCEPT when the binding is a module-level one that gets hoisted to a C global: file-scope
+    // storage is ALREADY shared with every function, so the cell buys nothing and actively breaks the
+    // emission. The global was declared from the cell-widened ctype (a plain `ll_value`) while the
+    // module-scope reads kept `cell: true` and emitted `(*u_calls)` -- a deref of a non-pointer, and a
+    // file that disagreed with itself about the same name.
+    const isModuleGlobal = !this.inFunctionBody && this.globalNames.has(srcName);
+    const cell = !isModuleGlobal && this.cellVars.has(cName);
     if (cell) {
       this.ledger.record("A5", "mut-capture-cell", node, "mut binding captured by a closure; boxed into a shared heap cell");
       declCType = C_VALUE;
@@ -2071,10 +2078,14 @@ export class ResolveHirToCir {
     const info = this.localInfo(mangleC(headName));
     const isLocal = !this.isExtern(local) && (local?.inferredType !== undefined || info !== undefined);
     if (isLocal) {
-      // A member read off a local binding.
+      // A member read off a local binding. A hoisted module global's DECLARED ctype wins over
+      // re-inference here, exactly as it does at store sites (resolveLValue) and receiver sites
+      // (headObject): re-inferring `FOODS` as untyped picked the DYNAMIC accessor for `.length` and
+      // handed it a concrete `ll_vec*`, which is a cc type error -- while `FOODS[i]`, which goes
+      // through headObject, got the right type on the same line.
       let expr: CExpr = {
         src: node,
-        ctype: info?.ctype ?? mapType(local?.inferredType),
+        ctype: info?.ctype ?? this.globalCType(headName, mangleC(headName)) ?? mapType(local?.inferredType),
         kind: "c-ref",
         cName: mangleC(headName),
         cell: info?.cell,
@@ -2702,6 +2713,10 @@ export class ResolveHirToCir {
     const capType = new Map<string, { ctype: CType; cell: boolean }>();
     for (const srcName of freeVariables(fn)) {
       const cName = mangleC(srcName);
+      // A hoisted module global lives at C file scope, so the lifted function can name it directly.
+      // Capturing it would copy it into the env and silently fork the mutation -- which is exactly
+      // why such a binding used to be forced into a heap cell to compensate.
+      if (this.globalDeclared.has(cName)) continue;
       const info = this.localInfo(cName);
       if (!info) continue; // a global / top-level fn / intrinsic -- resolved without capture
       // For a cell, capture the POINTER (c-ref with cell:false emits the bare `ll_value*` variable).
