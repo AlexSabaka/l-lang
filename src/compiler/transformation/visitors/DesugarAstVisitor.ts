@@ -37,6 +37,20 @@ import { formatWithOptions } from "util";
  * seen: `scopeOf` misses, resolution silently falls back to the flat root search, and P6 is undone.
  * Measured: 0 lexical misses when the original parent is kept, 1056 when the chain is rebuilt.
  */
+/**
+ * Is this function declared `-> Void`? (D49a -- the annotation suppresses the implicit return.)
+ * Unwraps the `type` wrapper the way every other consumer of a TypeNode does.
+ */
+function isVoidReturn(node: ast.FunctionNode): boolean {
+  const nameOf = (t: any): string | undefined => {
+    if (!t || typeof t !== "object") return undefined;
+    if (t._type === "type") return nameOf(t.type);
+    const nm = typeof t.name === "string" ? t.name : t.name?.name;
+    return typeof nm === "string" ? nm : undefined;
+  };
+  return nameOf(node.returns) === "Void";
+}
+
 export class DesugarAstVisitor extends BaseAstTreeWalker {
   /** `and`/`or`/`not` -> the operators they alias (D39). See `transformLogicalAlias`. */
   private static readonly LOGICAL_ALIASES: ReadonlyMap<string, string> = new Map([
@@ -380,7 +394,12 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
 
     return {
       ...node,
-      body: this.injectImplicitReturns ? this.wrapTail(body) : body,
+      // D49a: `-> Void` BINDS -- it suppresses the implicit return, the same exemption a `:gen` body
+      // needs (D31: a generator's tail value is not a sequence element). Without it the annotation
+      // asserted something nothing enforced: D9 makes Void == Nil, so `checkReturns` bails on a
+      // `-> Void` declaration, and the tail got returned anyway -- which is how
+      // `(fn add [x] -> Void (this.items.push x))` came to return an Int.
+      body: this.injectImplicitReturns && !isVoidReturn(node) ? this.wrapTail(body) : body,
     } as ast.FunctionNode;
   }
 

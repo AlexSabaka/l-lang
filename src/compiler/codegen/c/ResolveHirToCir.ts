@@ -436,7 +436,7 @@ export class ResolveHirToCir {
       // `return <v>` cc-fails. Same void-fn-boxed treatment userFnRet gives free functions.
       const rawRet = this.typeNodeToCType(m.returns) ?? mapType(sig?.returns);
       let ret = rawRet;
-      if (rawRet.k === "void") { this.ledger.record("new", "void-fn-boxed", m, "checker-Void method returns ll_value (implicit-return tail)"); ret = C_VALUE; }
+      // D49a: a `-> Void` method returns nothing now that the implicit return is suppressed.
       methods.set(mn, { cName, params: paramCTypes, ret });
       // A `:ctor` initializer method runs at construction time (after field init) to derive fields.
       if (m.modifiers?.some((mod) => mod.modifier === "ctor")) ctorMethods.push(cName);
@@ -2485,10 +2485,9 @@ export class ResolveHirToCir {
    *  a checker/runtime divergence a typed target cannot paper over (ledgered). */
   private userFnRet(t: InferredType | undefined, src: ast.ASTNode): CType {
     const mapped = mapType(t?.kind === "function" ? t.returns : undefined);
-    if (mapped.k === "void") {
-      this.ledger.record("new", "void-fn-boxed", src, "checker-Void user function returns ll_value (bodies may return values the checker missed)");
-      return C_VALUE;
-    }
+    // D49a: `-> Void` binds -- the implicit-return desugar no longer wraps such a body, so a Void
+    // function really does return nothing and C emits a real `void`. This used to widen to ll_value
+    // because the tail WAS returned, which is what made `-> Void` unenforceable.
     return mapped;
   }
 
