@@ -24,6 +24,14 @@ import { C_PASSING } from './c-status';
 // SAME .expect goldens, with ratchet semantics from c-status.ts. Default `js` is byte-for-byte
 // the historical behavior.
 const BACKEND: 'js' | 'c' = process.argv.includes('--backend=c') ? 'c' : 'js';
+// C optimization level (`--copt=O2`). Default: none, i.e. cc's -O0. The C backend emits `volatile` on
+// locals clobberable across a setjmp landing (C11 7.13.2.1p3 -- see codegen/c/volatiles.ts); at -O0
+// those reads happen to work anyway, so ONLY an optimized run can falsify that emission. `test:c:o2`
+// is that fence -- it is how the original clobber (18-error-handling/11 printing 0/0 for 5/5) surfaced.
+const COPT = (() => {
+  const a = process.argv.find((x) => x.startsWith('--copt='));
+  return a ? a.slice('--copt='.length) : undefined;
+})();
 const GAP_LEDGER_ARG = (() => {
   const i = process.argv.indexOf('--gap-ledger');
   return i >= 0 ? process.argv[i + 1] : undefined;
@@ -186,7 +194,8 @@ function runCTest(lispPath: string): TestResult {
   const listed = C_PASSING.includes(relPath);
   const expectPath = lispPath.replace(/\.lisp$/, '.expect');
   const cPath = compiledPathFor(lispPath);
-  const binPath = cPath.replace(/\.c$/, '.bin');
+  // The opt level rides in the binary name so an -O0 and an -O2 run cannot clobber each other's artifact.
+  const binPath = cPath.replace(/\.c$/, COPT ? `.${COPT}.bin` : '.bin');
   const softStatus = listed ? undefined : ('not-yet' as const);
 
   if (!fs.existsSync(expectPath)) {
@@ -218,7 +227,7 @@ function runCTest(lispPath: string): TestResult {
   fs.writeFileSync(cPath, code);
 
   // Step 2: cc. A cc failure is a FINDING (usually a missed coercion), surfaced not hidden.
-  const cc = spawnSync('cc', ['-std=c11', cPath, '-o', binPath, '-lm'], { encoding: 'utf-8', timeout: 30000 });
+  const cc = spawnSync('cc', ['-std=c11', ...(COPT ? [`-${COPT}`] : []), cPath, '-o', binPath, '-lm'], { encoding: 'utf-8', timeout: 30000 });
   if (cc.status !== 0) {
     const firstErr = (cc.stderr || '').split('\n').find((l) => l.includes('error')) ?? (cc.stderr || '').split('\n')[0];
     return { name: fileName, status: softStatus ?? 'error', message: `cc failed: ${firstErr}`, stderr: cc.stderr };
