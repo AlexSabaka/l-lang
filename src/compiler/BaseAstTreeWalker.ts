@@ -35,15 +35,48 @@ export class BaseAstTreeWalker extends BaseAstVisitor {
               // It's an ASTNode, process it
               return this.visit(item, defaultVisitor);
             } else {
-              return item;
+              return this.walkPlainObject(item, defaultVisitor);
             }
           });
         };
         result[key] = mapArray(value);
       } else if (ast.isAstNode(value)) {
         result[key] = this.visit(value, defaultVisitor);
+      } else {
+        result[key] = this.walkPlainObject(value, defaultVisitor);
       }
     }
     return result;
+  }
+
+  /**
+   * Descend into a PLAIN OBJECT that holds child nodes.
+   *
+   * A handful of AST fields are records rather than nodes -- they carry no `_type`, so `isAstNode` is
+   * false and the walk above used to hand them back untouched, taking their children with them. That
+   * made whole bodies invisible to every pass built on this walker: `catch` bodies (TryCatchFilter),
+   * `handle` clause bodies + binders (HandleClause), `restart-case` arm bodies + params (RestartArm),
+   * and `deftype :where` constraint values. An undefined name in any of them reported nothing at all.
+   *
+   * Fixing it here rather than with a `visitTryCatch`/`visitHandle`/... override per pass: an override
+   * only repairs the pass that has it, and silently misses the next pass (or the next record-shaped
+   * field) somebody adds.
+   */
+  private walkPlainObject(value: any, defaultVisitor?: (node?: ast.ASTNode) => any): any {
+    if (!value || typeof value !== "object") return value;
+    const out: any = Array.isArray(value) ? [] : {};
+    for (const key of Object.keys(value)) {
+      const child = value[key];
+      if (Array.isArray(child)) {
+        out[key] = child.map((item: any) =>
+          item && ast.isAstNode(item) ? this.visit(item, defaultVisitor) : this.walkPlainObject(item, defaultVisitor)
+        );
+      } else if (child && ast.isAstNode(child)) {
+        out[key] = this.visit(child, defaultVisitor);
+      } else {
+        out[key] = this.walkPlainObject(child, defaultVisitor);
+      }
+    }
+    return out;
   }
 }

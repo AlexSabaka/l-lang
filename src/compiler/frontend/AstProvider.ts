@@ -34,12 +34,45 @@ function assignParentNodeReferences(
           } else if (item && ast.isAstNode(item)) {
             // It's an ASTNode, process it
             assignParentNodeReferences(item as ast.ASTNode, node);
+          } else {
+            // A record: `catch` clauses, `handle` clauses and restart `arms` all arrive as arrays of
+            // plain objects. See assignParentsInRecord.
+            assignParentsInRecord(item, node);
           }
         });
       };
       processArray(value);
     } else if (ast.isAstNode(value)) {
       assignParentNodeReferences(value as ast.ASTNode, node);
+    } else {
+      assignParentsInRecord(value, node);
+    }
+  }
+}
+
+/**
+ * Link parents through a RECORD-shaped field -- a plain object holding child nodes but carrying no
+ * `_type`, so `isAstNode` is false and the walk above stepped over it.
+ *
+ * Four AST fields are shaped that way: `catch` clauses (TryCatchFilter), `handle` clauses
+ * (HandleClause), `restart-case` arms (RestartArm) and `deftype :where` constraints. Everything inside
+ * them had `_parent === undefined`, and `_parent` is how `SymbolTable.scopeOf` finds the enclosing
+ * scope -- so a `catch` binder declared in a function's scope was UNRESOLVABLE from the catch body
+ * that uses it. It went unnoticed only because no pass ever walked those bodies to ask.
+ */
+function assignParentsInRecord(value: any, parent: ast.ASTNode): void {
+  if (!value || typeof value !== "object") return;
+  for (const key of Object.keys(value)) {
+    const child = value[key];
+    if (Array.isArray(child)) {
+      child.forEach((item: any) => {
+        if (item && ast.isAstNode(item)) assignParentNodeReferences(item as ast.ASTNode, parent);
+        else assignParentsInRecord(item, parent);
+      });
+    } else if (child && ast.isAstNode(child)) {
+      assignParentNodeReferences(child as ast.ASTNode, parent);
+    } else {
+      assignParentsInRecord(child, parent);
     }
   }
 }

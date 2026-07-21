@@ -8,7 +8,7 @@
 ;; Expected: parent clause, child clause, null.
 (
     (defclass AppError :extends Error (let :ctor message))
-    (defclass ParseError :extends AppError (let :ctor message))
+    (defclass ParseError :extends AppError)
     (handle
         ((console.log (signal (ParseError "p"))))
         (:on AppError [] (console.log "parent clause"))

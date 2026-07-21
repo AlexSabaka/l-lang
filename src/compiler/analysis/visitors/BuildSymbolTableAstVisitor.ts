@@ -184,6 +184,24 @@ class ResolvePassVisitor extends BaseAstTreeWalker {
     return node;
   }
 
+  // D47. A handle clause's `[c]` binds the condition, and a restart arm's `[params]` bind the invoke's
+  // arguments -- both were never declared anywhere, which went unnoticed only because the walker never
+  // reached the bodies that read them (see BaseAstTreeWalker.walkPlainObject). Same shape as the catch
+  // binder above: declared into the enclosing scope, which is what `catch` has always done.
+  visitHandle(node: ast.HandleNode) {
+    for (const clause of node.clauses ?? []) {
+      if (clause?.binder) this.symbolTableBuilder.defineBinding(clause.binder as any, node);
+    }
+    return node;
+  }
+
+  visitRestartCase(node: ast.RestartCaseNode) {
+    for (const arm of node.arms ?? []) {
+      for (const p of arm?.params ?? []) this.symbolTableBuilder.defineBinding(p as any, node);
+    }
+    return node;
+  }
+
   /**
    * An ENUM was never defined as a symbol -- by anyone, anywhere. `(defenum HttpMethod :GET :POST)`
    * put nothing in the table, so `HttpMethod:GET` resolved to nothing and LL0210 called it undefined

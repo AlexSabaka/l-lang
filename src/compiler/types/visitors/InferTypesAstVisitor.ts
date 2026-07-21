@@ -1966,10 +1966,42 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             }
           } else if (ast.isAstNode(item)) {
             this.visit(item);
+          } else {
+            this.visitRecordChildren(item);
           }
         }
       } else if (ast.isAstNode(value)) {
         this.visit(value);
+      } else {
+        this.visitRecordChildren(value);
+      }
+    }
+  }
+
+  /**
+   * Descend into a RECORD-shaped field -- a plain object that holds child nodes but carries no
+   * `_type`, so `isAstNode` is false and the walk above used to step straight over it.
+   *
+   * Four AST fields are shaped that way, and their contents were invisible to this entire pass:
+   * `catch` bodies (TryCatchFilter), `handle` clause bodies + binders (HandleClause), `restart-case`
+   * arm bodies + params (RestartArm), and `deftype :where` constraint values. Nothing in them was
+   * ever typed or resolved, so an undefined name there produced NO diagnostic at all -- it reached
+   * run time on JS, and `cc` on the C backend. (BaseAstTreeWalker has the same blind spot and the
+   * same cure, but this pass overrides `visit` to control its own traversal, so it needs its own.)
+   */
+  private visitRecordChildren(value: any): void {
+    if (!value || typeof value !== "object") return;
+    for (const key of Object.keys(value)) {
+      const child = value[key];
+      if (Array.isArray(child)) {
+        for (const item of child) {
+          if (ast.isAstNode(item)) this.visit(item);
+          else this.visitRecordChildren(item);
+        }
+      } else if (ast.isAstNode(child)) {
+        this.visit(child);
+      } else {
+        this.visitRecordChildren(child);
       }
     }
   }
@@ -3931,6 +3963,22 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         break;
       }
 
+      // `try` and the D47 condition forms in VALUE position -- a function's tail expression, a `let`
+      // initializer. The switch has no case for them, so they used to land in `default`: Unknown, and
+      // their children never visited. Combined with the record-shaped fields below them (catch bodies,
+      // handle clauses, restart arms), that meant nothing inside those bodies was ever typed or
+      // resolved -- an undefined name in them reported NOTHING. Walking is the fix; the value type
+      // stays Unknown (these forms have no join to compute yet, and JS refuses the D47 four anyway).
+      case "try-catch":
+      case "restart-case":
+      case "handle":
+      case "signal":
+      case "invoke-restart": {
+        this.visitChildren(node);
+        inferredType = TypeEnvironment.unknown();
+        break;
+      }
+
       default:
         inferredType = TypeEnvironment.unknown();
         this.context.log(LogLevel.Debug, `No type inference for node type: ${node._type}`);
@@ -4134,7 +4182,6 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       this.checkForwardReference(node, head, entry);
       return;
     }
-
     this.report(TD.NotDefined, node, { name: head });
   }
 

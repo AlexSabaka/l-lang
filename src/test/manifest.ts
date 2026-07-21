@@ -291,6 +291,23 @@ export const MANIFEST: Record<string, ManifestEntry> = {
     reason: "D47 restart forms are refused on the JS backend (no native handler/restart stack). Pins " +
       "LL0108 -- the mirror of the C band's LL0105-07 refusals. Compile with --language c to use them.",
   },
+  // The record-shaped-field blind spot: `catch` clauses, `handle` clauses and restart `arms` carry no
+  // `_type`, so every AST walker stepped over them and NOTHING in those bodies was ever name-checked.
+  // Three tests because the three shapes are three separate records; one passing does not imply another.
+  "90-diagnostics/ll0210_undefined_in_catch.lisp": {
+    status: "negative", codes: ["LL0210"],
+    reason: "An undefined name in a CATCH body. Reported nothing at all until the walkers learned to " +
+      "descend into record-shaped fields -- try/catch is shipped, so this was the widest half of the gap.",
+  },
+  "90-diagnostics/ll0210_undefined_in_handle_clause.lisp": {
+    status: "negative", codes: ["LL0210"],
+    reason: "An undefined name in a D47 `handle` clause body. Also pins the other half: the clause " +
+      "binder `c` is a legitimate binding and must NOT be reported alongside it.",
+  },
+  "90-diagnostics/ll0210_undefined_in_restart_arm.lisp": {
+    status: "negative", codes: ["LL0210"],
+    reason: "An undefined name in a D47 `restart-case` arm body; the arm's params must NOT be reported.",
+  },
   "90-diagnostics/ll0008_two_default_catch.lisp": {
     status: "negative", codes: ["LL0008"],
     reason:

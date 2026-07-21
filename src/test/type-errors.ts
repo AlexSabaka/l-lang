@@ -232,7 +232,16 @@ const CASES: Case[] = [
   { name: "a parameter resolves", source: "(fn f [n <- Int] -> Int (return (+ n 1)))\n(console.log (f 1))", silent: true },
   { name: "a local let resolves", source: "(fn f [] -> Int (let k 2) (return k))\n(console.log (f))", silent: true },
   { name: "a for-each binding resolves", source: "(let xs [1 2])\n(for :each x :from xs :then (console.log x))", silent: true },
-  { name: "a catch binding resolves", source: '(try ((throw (Error "x"))) catch e :of Error ((console.log e)))', silent: true },
+  // Scoped INSIDE a function on purpose. The top-level spelling passed vacuously for as long as the
+  // hole existed: no walker descended into a `catch` clause (a record with no `_type`), so the binder
+  // was never looked up and could not be reported missing. Inside a function it is the real test --
+  // that is where `scopeOf` has to walk `_parent` out of the clause to find the binding.
+  { name: "a catch binding resolves", source: '(fn f [] (try ((throw (Error "x"))) catch e :of Error ((console.log e))))\n(f)', silent: true },
+  { name: "a catch binding resolves at top level", source: '(try ((throw (Error "x"))) catch e :of Error ((console.log e)))', silent: true },
+  // The D47 halves of the same rule: the clause binder and the arm params are bindings, not typos.
+  // (Their bodies still refuse at EMIT with LL0108 on JS -- these assert only that name resolution is
+  // silent, which is what `silent` checks.)
+  { name: "an undefined name in a catch body IS reported", source: '(fn f [] (try ((console.log "ok")) catch e ((bogus-fn e))))\n(f)', expect: /LL0210/ },
   { name: "a match binding resolves", source: "(let v [1 2])\n(match v { [a b] => (console.log a b) _ => 0 })", silent: true },
   { name: "map KEYS are not references", source: '(let m { :name "x" :age 1 })\n(console.log m)', silent: true },
   { name: "JS globals are not flagged", source: '(console.log (Math.max 1 2) (JSON.stringify [1]))', silent: true },

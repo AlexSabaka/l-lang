@@ -392,8 +392,11 @@ export class BaseAstVisitor {
     return this.onUnhandled(node, "visitTryCatch");
   }
 
-  // D47 conditions/restarts. Default to onUnhandled like every other node; the passes that care
-  // (type inference, syntax rules) override. The JS backend refuses them at emit (LL0108).
+  // D47 conditions/restarts. Default to onUnhandled like every other node. A pass overrides only to
+  // add its own handling (the symbol-table builder declares the clause binder / arm params); the
+  // CHILDREN, including the clause and arm bodies, are reached by BaseAstTreeWalker's generic walk --
+  // they were dark until walkPlainObject taught it to descend into record-shaped fields. The JS
+  // backend refuses these forms at emit (LL0108).
   visitRestartCase(node: ast.RestartCaseNode): any {
     return this.onUnhandled(node, "visitRestartCase");
   }
