@@ -113,6 +113,16 @@ export class EmitHirToEstree {
     return this.emitStmt(h);
   }
 
+  /**
+   * A `for`'s `:step` in the update slot. The slot holds an EXPRESSION, so a statement-shaped step is
+   * unwrapped: an expression statement yields its expression, and anything else is emitted and its
+   * expression taken -- a shape the lowering already refused to produce.
+   */
+  private forUpdate(h: HStmt): ESTree.Expression | null {
+    const st = this.emitStmt(h);
+    return st.type === "ExpressionStatement" ? (st as ESTree.ExpressionStatement).expression : null;
+  }
+
   private emitStmt(h: HStmt): ESTree.Statement {
     switch (h.kind) {
       case "opaque-stmt":
@@ -291,7 +301,7 @@ export class EmitHirToEstree {
           type: "ForStatement",
           init: null,
           test: h.test ? this.emitExpr(h.test) : null,
-          update: h.update ? this.emitExpr(h.update) : null,
+          update: h.update ? this.forUpdate(h.update) : null,
           body: { type: "BlockStatement", body: this.emitBlock(h.body), loc: loc(h.src) } as ESTree.BlockStatement,
           loc: loc(h.src),
         } as ESTree.ForStatement);

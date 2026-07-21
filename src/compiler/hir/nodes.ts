@@ -618,7 +618,13 @@ export interface HFor extends HBase {
   kind: "for";
   init: HBlock;
   test: HExpr | null;
-  update: HExpr | null;
+  /**
+   * The `:step`, as a STATEMENT -- because the normal way to write one is an assignment
+   * (`:step (i := (+ i 1))`), which is a statement in this IR, not an expression. Modelling it as an
+   * expression meant every such loop bailed to the legacy emitter WHOLE, taking everything inside it
+   * along: one narrow field turned an entire construct opaque.
+   */
+  update: HStmt | null;
   body: HBlock;
   elseBlock: HBlock | null;
 }

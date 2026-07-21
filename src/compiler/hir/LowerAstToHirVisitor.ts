@@ -1337,16 +1337,21 @@ export class LowerAstToHirVisitor {
 
   private lowerFor(node: ast.ForNode, dest: Dest): Lowered {
     const test = node.condition ? this.lowerNode(node.condition, VALUE) : null;
-    const update = node.step ? this.lowerNode(node.step, VALUE) : null;
-    if ((test && (test.stmts.length > 0 || test.value === null)) || (update && (update.stmts.length > 0 || update.value === null))) {
-      return this.leaf(node, dest); // re-evaluated test/step can't hoist -> legacy (rare)
+    // The step runs once per iteration, so it may not hoist a prelude -- but it IS a statement
+    // (`:step (i := (+ i 1))` is an assignment). Lower it in EFFECT position and require exactly one
+    // statement; anything else is a shape no `for` update slot can hold, and bails.
+    const updateL = node.step ? this.lowerNode(node.step, EFFECT) : null;
+    const update = updateL && updateL.stmts.length === 1 ? updateL.stmts[0] : null;
+    if (test && (test.stmts.length > 0 || test.value === null)) {
+      return this.leaf(node, dest); // a re-evaluated test cannot hoist -> legacy (rare)
     }
+    if (updateL && update === null) return this.leaf(node, dest);
     const hf: HStmt = {
       ...this.base(node),
       kind: "for",
       init: { stmts: node.initial ? this.lowerNode(node.initial, EFFECT).stmts : [] },
       test: test ? test.value : null,
-      update: update ? update.value : null,
+      update,
       body: { stmts: this.lowerNode(node.then, EFFECT).stmts },
       elseBlock: node.else ? { stmts: this.lowerNode(node.else, EFFECT).stmts } : null,
     };

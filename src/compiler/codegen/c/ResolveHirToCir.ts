@@ -722,9 +722,10 @@ export class ResolveHirToCir {
           }];
 
         case "for": {
-          const update = h.update
-            ? this.asUpdateStmt(h.update)
-            : null;
+          // The step is a STATEMENT on the node now (an assignment, normally). resolveStmt can yield
+          // several; the update slot takes one, and the lowering already guaranteed that shape.
+          const updateStmts = h.update ? this.resolveStmt(h.update) : [];
+          const update = updateStmts.length === 1 ? updateStmts[0] : null;
           const out: CStmt[] = [{
             src: h.src, ctype: C_VOID, kind: "c-for",
             init: this.resolveBlock(h.init),
@@ -786,11 +787,6 @@ export class ResolveHirToCir {
   }
 
   /** A for `:step` is an expression in the HIR; C wants a statement. */
-  private asUpdateStmt(e: HExpr): CStmt {
-    const expr = this.resolveExpr(e);
-    return { src: e.src, ctype: C_VOID, kind: "c-expr-stmt", expr };
-  }
-
   private resolveVarDecl(node: ast.VariableNode, init: CExpr | null, modeled?: { name: string | null; mutable: boolean; declaredType: InferredType | undefined; copies: boolean }): CStmt[] {
     // Name / mutability / declared-type: OFF THE HIR NODE when the declaration was modeled (HVarDecl), so
     // no decl-structure / decl-type / mut-narrowed dip below the HIR. The raw path (a var-decl inside a
