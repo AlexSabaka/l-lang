@@ -33,7 +33,18 @@
 ;; ==================================================================================================
 (
   ;; --- Core objects ---
-  (let :extern console)
+  ;; `console` is TYPED -- the first name to leave the untyped set above, and the one that mattered
+  ;; most: it is 1033 of the corpus's calls, and `console.log` is the reason a `Void` expression in
+  ;; value position had no answer (D49b). With this declaration the checker knows the call yields
+  ;; nothing, so `(let r (console.log "x"))` binds nil on BOTH backends instead of `undefined` on one.
+  ;;
+  ;; `[...args]` is load-bearing. Declaring it `(fn log [] -> Void)` -- the obvious spelling -- makes
+  ;; the arity check fire on every call site: "'console.log' expects 0 arguments, got 3". That is the
+  ;; same trap nativeMembers.ts documents for `csv.split(",")`, and it is why the note above says
+  ;; typing these is a MEASURED pass: the declaration has to admit the host's real variadic shape.
+  (definterface ConsoleAPI
+    (fn log [...args] -> Void))
+  (let :extern console <- ConsoleAPI)
   (let :extern Math)
   (let :extern JSON)
   (let :extern Object)
