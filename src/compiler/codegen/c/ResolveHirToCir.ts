@@ -1772,7 +1772,17 @@ export class ResolveHirToCir {
   /** A core `call` node whose callee is an arbitrary expression (operator, name, lambda, or value). */
   private resolveCoreCall(node: ast.ASTNode, callee: ast.ASTNode, args: ast.ASTNode[]): CExpr {
     if (callee._type === "simple-identifier" || callee._type === "composite-identifier") {
-      // Reuse the full callee-resolution path (operators, top-level, intrinsics, closures).
+      // A core CallNode is UNAMBIGUOUSLY a call: `(call f)` desugars to exactly this shape
+      // (DesugarAstVisitor.transformCall) for the sole purpose of saying so. `resolveCall` applies
+      // D1's zero-arg READ rule -- `(counter)` reads the binding rather than invoking it -- which is
+      // right for a bare list and wrong here, and it is why `(call check-j)` in a `for :cond` came
+      // out as the closure VALUE and then failed to emit as `no cast closure -> bool`. A zero-arg
+      // closure has no other spelling, so this branch is the only way to invoke one.
+      if (callee._type === "simple-identifier" && args.length === 0
+          && this.localInfo(mangleC((callee as ast.SimpleIdentifierNode).id))) {
+        return this.closureCall(node, this.resolveIdentifier(callee as ast.IdentifierNode), []);
+      }
+      // Otherwise reuse the full callee-resolution path (operators, top-level, intrinsics, closures).
       return this.resolveCall(node as ast.ListNode, callee, args);
     }
     if (callee._type === "function") {

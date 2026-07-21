@@ -1,0 +1,4 @@
+lambda: hello
+fn-ref: HEY
+capturing: 42
+cond: ready

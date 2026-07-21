@@ -25,12 +25,19 @@ export const C_PASSING: readonly string[] = [
   "02-control-flow/03_flow_cond.lisp",
   "02-control-flow/04_flow_control.lisp",
   "03-loops/00_for_loop.lisp",
-  // 03-loops/01_for.lisp COMPILES since the `for :else` scope fix, but loops forever, so it times out
-  // rather than failing to build. Cause is Phase B, not emission: a `fn` declared inside a `for :init`
-  // is registered as a TOP-LEVEL C function (resolveAstStmt only asks `inFunctionBody`, and a for-init
-  // at module level is not "in a function"), so it closes over a HOISTED GLOBAL `j` while the loop
-  // body reads the same-named block local -- two storages, and the step never moves the one the
-  // condition reads. Wants nested `fn` declarations lowered as closures.
+  // 03-loops/01_for.lisp COMPILES but loops forever, so it times out rather than failing to build.
+  //
+  // Two causes, one left. The old note blamed a `fn` in a `for :init` being registered as a TOP-LEVEL
+  // C function closing over a hoisted global -- that is FIXED, the nested `fn`s now lower as real
+  // closures. And `(call check-j)` used to resolve to the closure VALUE rather than invoking it,
+  // which is why it did not even emit ("no cast closure -> bool") -- also fixed.
+  //
+  // What remains is the CAPTURE MODE. `j` is a `mut` that the nested `inc-j` MUTATES, so D48/Q3 makes
+  // it a by-REFERENCE capture (a heap cell). The cell analysis does not promote it inside a
+  // `for :init`, so the env gets a copy:
+  //     __e->u_j = u_j;                        /* env gets a copy   */
+  //     int64_t u_j = __e->u_j; u_j = u_j + 1; /* increments a copy */
+  // `j` never advances, `check-j` never goes false. Wants computeCellVars to see a for-init block.
   "03-loops/03_for_each.lisp",
   "03-loops/04_foreach.lisp",
   "03-loops/05_while.lisp",
@@ -191,6 +198,10 @@ export const C_PASSING: readonly string[] = [
   // The same collision on the function-as-VALUE path: `(apply-fn label)` never calls `label` by
   // name, so it resolves through `functionValue` and its boxed adapter rather than a direct call.
   "80-adversarial/module_private_fnvalue/main.lisp",
+  // `(call f)` on a ZERO-ARG function value. D1 makes a bare `(f)` a read, so this is the only
+  // spelling that invokes one -- and the C backend was re-applying the read rule to the core
+  // CallNode the desugarer builds precisely to say "this is a call".
+  "80-adversarial/call_zero_arg_closure.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the
