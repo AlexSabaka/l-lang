@@ -130,6 +130,12 @@ export const C_PASSING: readonly string[] = [
   // A `member` callee is a METHOD CALL: the pipeline `(x |> (.m a))` shape reached the generic
   // computed-callee path, which resolved the member as a VALUE and applied the args to its result.
   "04-pattern-matching/02_map_patterns.lisp",
+  // An imported `let`/`mut` used as a value now hoists to a C global initialized at the top of main
+  // (the value analog of on-demand imported-function/class lowering). 06_multiple_interfaces was an
+  // EXAMPLE bug: a method written `(fn toJson [] Any` without the `->`, so the return type parsed as
+  // a body statement -- harmless on JS only because the method is never called.
+  "08-generics/06_multiple_interfaces.lisp",
+  "15-modules/01_main.lisp",
   "20-algorithms/01_evaluator.lisp",    // unlocked by match binding patterns
   // Phase E broad sweep -- field mutation on boxed receivers (dyn-field store).
   "30-applications/04_flood_fill.lisp", // (c.mine := v) on an array-element struct -> ll_member_slot

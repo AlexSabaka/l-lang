@@ -10,7 +10,7 @@
   (fn draw []
     (console.log "Drawing shape"))
   
-  (fn toJson [] Any
+  (fn toJson [] -> Any
     (return { :name this.name })))
 
 (let shape (Shape "Triangle"))

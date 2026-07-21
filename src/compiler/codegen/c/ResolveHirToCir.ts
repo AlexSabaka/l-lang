@@ -107,6 +107,10 @@ export class ResolveHirToCir {
   private readonly globalNames = new Set<string>();
   private readonly globalDecls: { cName: string; ctype: CType }[] = [];
   private readonly globalDeclared = new Set<string>();
+  /** Imported module-level bindings already hoisted to C globals (dedup for ensureImportedValue). */
+  private readonly importedValues = new Set<string>();
+  /** Their initializers, spliced in FRONT of `main` -- an import is evaluated before the importer. */
+  private readonly importedInits: CStmt[] = [];
   /** Lexical scope stack of local bindings (by C name). scope[0] is the module/main body. */
   private readonly scopes: Map<string, VarInfo>[] = [new Map()];
   /** Names (C names) that must be heap cells in the CURRENT function scope (mutable-captured). */
@@ -220,7 +224,9 @@ export class ResolveHirToCir {
     // The module body is itself a scope for capture purposes (a top-level lambda still captures
     // module locals). Compute its cell set from nested closures before resolving.
     this.cellVars = this.computeCellVars(items);
-    const main = body ? this.resolveBlock(body) : { stmts: [] };
+    const resolvedMain = body ? this.resolveBlock(body) : { stmts: [] };
+    // An imported binding initializes BEFORE this module's own body -- the order the import implies.
+    const main = { stmts: [...this.importedInits, ...resolvedMain.stmts] };
     if (this.refused) return null;
     const classes: CClass[] = [...this.classes.values()].map((c) => {
       // OWN methods only (inherited ones carry the parent's cName and are found via the runtime parent
@@ -2022,6 +2028,15 @@ export class ResolveHirToCir {
     if (!info && this.topLevelFns.has(name)) {
       return this.functionValue(node, name);
     }
+    // An imported VALUE binding (`(export secret-number-a)` in another module). Functions and classes
+    // were already lowered on demand; a plain `let`/`mut` was not, so its mangled name was emitted as
+    // a bare reference that no C scope declares. Hoist it to a global here, same as the local
+    // module-global path, with its initializer run at the top of main.
+    if (!info && !this.globalNames.has(name) && this.ensureImportedValue(name, node)) {
+      const g = this.globalDecls.find((d) => d.cName === cName);
+      if (!modeled) this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
+      return { src: node, ctype: g?.ctype ?? C_VALUE, kind: "c-ref", cName };
+    }
     if (!modeled) this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
     let t = this.context.nodeTypes.get(node);
     if (t === undefined) {
@@ -2242,6 +2257,43 @@ export class ResolveHirToCir {
     }
 
     throw this.refuse(node, `callee:${callee._type}`, "resolveCall");
+  }
+
+  /**
+   * An imported `let`/`mut` used as a value -> a C global initialized at the top of `main`.
+   *
+   * The value analog of lowerImportedFunction / imported-class registration (A9's extern boundary).
+   * Without it, `(export secret-number-a)` in another module resolved to a bare mangled name that no
+   * C scope declares -- the whole module's body is NOT emitted (that is the point of on-demand
+   * lowering; the library's own top-level side effects must not run), so nothing ever declared it.
+   *
+   * Returns true when `name` is such a binding, after registering it. The initializer is resolved in
+   * an ISOLATED scope: it belongs to the other module and must not see this one's locals.
+   */
+  private ensureImportedValue(name: string, node: ast.ASTNode): boolean {
+    const cName = mangleC(name);
+    if (this.importedValues.has(name)) return true;
+    const entry = this.resolveSymbolSafe(name, node);
+    const varNode = entry?.value as ast.VariableNode | undefined;
+    if (!entry || this.isExtern(entry) || varNode?._type !== "variable") return false;
+    if (varNode.name?._type !== "simple-identifier") return false; // a destructuring import: not modeled
+    this.importedValues.add(name);
+    this.ledger.record("A9-extern", "imported-value", node, `imported l-lang binding '${name}' hoisted to a C global (value analog of imported-body)`);
+    let init: CExpr | null = null;
+    this.isolated(varNode as any, () => {
+      init = varNode.value ? this.resolveAstExpr(varNode.value) : null;
+    });
+    const ctype: CType = init ? (init as CExpr).ctype : C_VALUE;
+    this.globalDeclared.add(cName);
+    this.globalNames.add(name);
+    this.globalDecls.push({ cName, ctype });
+    if (init) {
+      this.importedInits.push({
+        src: node, ctype: C_VOID, kind: "c-assign",
+        target: { kind: "name", cName, ctype }, value: init,
+      });
+    }
+    return true;
   }
 
   /** Lower an imported l-lang function's body on demand, isolating its scope (dedup by source name). */
