@@ -1,0 +1,31 @@
+fn: {
+  name: 'add',
+  kind: 'function',
+  params: [ { name: 'a', type: 'Int' }, { name: 'b', type: 'Int' } ],
+  returns: 'Int',
+  nullable: false
+}
+prim: { name: 'Int', kind: 'primitive', nullable: false }
+class: {
+  name: 'Point',
+  kind: 'class',
+  properties: [
+    {
+      name: 'x',
+      type: 'Int',
+      isPublic: true,
+      isPrivate: false,
+      isStatic: false
+    },
+    {
+      name: 'y',
+      type: 'Int',
+      isPublic: true,
+      isPrivate: false,
+      isStatic: false
+    }
+  ],
+  methods: [ { name: 'norm', params: [], returns: 'Int' } ],
+  constructor: { params: [ [Object], [Object] ], requiredCount: 2 },
+  nullable: false
+}

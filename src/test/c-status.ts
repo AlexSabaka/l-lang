@@ -166,4 +166,18 @@ export const C_PASSING: readonly string[] = [
   "15-modules/02_packages/main.lisp",
   "20-algorithms/07_tokenizer.lisp",
   "20-algorithms/08_state_machine.lisp",
+  // ---------------------------------------------------------------------------------------------
+  // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
+  // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the
+  // §5.2 silent-divergence clusters from docs/inbox/c-backend-gap-ledger.md. They exist so the C fix
+  // has a crisp target: when C reaches parity the ratchet turns RED ("newly passing -- add it"),
+  // which is the signal to MOVE the corresponding line down into the array above.
+  //   80-adversarial/print_positional_format.lisp   -- cluster 1: std/io `print` {N} positional format
+  //                                                    (intrinsics.ts maps print->ll_console_log; bind io.lisp's body)
+  //   80-adversarial/interp_container_format.lisp    -- cluster 2: container interpolation depth
+  //                                                    (EmitCirToC routes interp through ToString, not ll_inspect_sb)
+  //   80-adversarial/reflection_metadata_depth.lisp  -- cluster 3: reflection metadata depth
+  //                                                    (ll_class carries only name+parent; no param/method/field graph emitted)
+  // Cluster 4 (modifier side effects) is intentionally absent: C REFUSES body-carrying defmodifiers
+  // fail-closed, which is already the correct loud signal -- there is no silent-wrong to guard.
 ];
