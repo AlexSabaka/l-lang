@@ -195,6 +195,16 @@ export interface HOperator extends HBase {
   op: string;
   head: ast.ASTNode;
   args: HExpr[];
+  /**
+   * `/` on two statically-`Int` operands is INTEGER division (D49d) -- D43 applied literally: the
+   * static type decides and the runtime never gets a vote. Decided here because both backends need
+   * the same answer and neither may guess it at run time (a `Number.isInteger` test would contradict
+   * the static type, which is the failure D43 exists to rule out).
+   *
+   * Truncates toward zero on both: C's `/` on int64_t does, and JS needs `Math.trunc` -- NOT
+   * `Math.floor`, which disagrees for negatives.
+   */
+  intDiv: boolean;
 }
 
 /**

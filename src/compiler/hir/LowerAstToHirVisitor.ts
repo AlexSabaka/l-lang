@@ -896,11 +896,18 @@ export class LowerAstToHirVisitor {
    * as the opaque path); the callee stays the `leafExpr(head)` hook -- so `(op a b)` emits the JS shim
    * call `_op(a, b)` -- and `op` is carried for the native backend. (A3 / TY8.)
    */
+  /** `/` with both operands statically `Int` -- integer division (D49d). */
+  private isIntDivision(op: string, args: HExpr[]): boolean {
+    if (op !== "/" || args.length !== 2) return false;
+    const isInt = (t: InferredType | undefined) => t?.kind === "primitive" && (t as any).name === "Int";
+    return isInt(args[0].type) && isInt(args[1].type);
+  }
+
   private lowerOperator(node: ast.ListNode, op: string, head: ast.ASTNode, args: ast.ASTNode[], dest: Dest): Lowered {
     const { prelude, atoms, diverged } = this.lowerCallArgs(args);
     if (diverged) return { stmts: prelude, value: null };
     const src = prelude.length > 0 ? this.callSrcWithLoweredOperands(node, head, atoms, args) : node;
-    const call: HExpr = { ...this.base(src), kind: "operator", op, head, args: atoms };
+    const call: HExpr = { ...this.base(src), kind: "operator", op, head, args: atoms, intDiv: this.isIntDivision(op, atoms) };
     return this.placeValue(call, prelude, dest);
   }
 

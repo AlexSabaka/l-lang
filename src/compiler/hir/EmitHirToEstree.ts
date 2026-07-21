@@ -627,13 +627,32 @@ export class EmitHirToEstree {
         // (visitExpr) encodes the operator to its shim identifier (`+` -> `_2b`) AND registers the shim,
         // exactly as the emitter's callee did; args are HIR-emitted. Byte-identical to the emitter's
         // callExpression(visitExpr(head), args). `h.op` rides the node for the native backend, unused here.
-        return {
-          type: "CallExpression",
-          callee: this.legacy.leafExpr(h.head),
-          arguments: h.args.map((a) => this.emitExpr(a)),
-          optional: false,
-          loc: loc(h.src),
-        } as ESTree.CallExpression;
+        {
+          const call = {
+            type: "CallExpression",
+            callee: this.legacy.leafExpr(h.head),
+            arguments: h.args.map((a) => this.emitExpr(a)),
+            optional: false,
+            loc: loc(h.src),
+          } as ESTree.CallExpression;
+          // D49d: `Int / Int` is integer division. JS division is always Real, so truncate -- toward
+          // ZERO (Math.trunc), which is what C's int64_t `/` does; Math.floor would disagree for
+          // negatives. The decision rode the node; nothing is re-derived or guessed here.
+          if (!h.intDiv) return call;
+          return {
+            type: "CallExpression",
+            callee: {
+              type: "MemberExpression",
+              object: ident("Math", h.src),
+              property: ident("trunc", h.src),
+              computed: false,
+              optional: false,
+            } as ESTree.MemberExpression,
+            arguments: [call],
+            optional: false,
+            loc: loc(h.src),
+          } as ESTree.CallExpression;
+        }
 
       case "construct":
         // Resolved construction (classifyCall): `(Dog a)` -> `new Dog(a)`. The class-name callee is the

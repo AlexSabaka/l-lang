@@ -1849,7 +1849,7 @@ export class ResolveHirToCir {
    * `op` is not a built-in operator form, so the caller falls through (resolveCall to the rest of its
    * dispatch; the HIR case to the raw path). Extracted verbatim from resolveCall so both are byte-identical.
    */
-  private resolveOperatorCall(node: ast.ListNode, op: string, args: ast.ASTNode[], argVals?: CExpr[]): CExpr | undefined {
+  private resolveOperatorCall(node: ast.ListNode, op: string, args: ast.ASTNode[], argVals?: CExpr[], intDiv = false): CExpr | undefined {
     // The operand at position i: a pre-resolved value (HIR path, consuming h.args) or a raw-AST resolve.
     const A = (i: number): CExpr => (argVals ? argVals[i] : this.resolveAstExpr(args[i]));
     const n = argVals ? argVals.length : args.length;
@@ -1873,7 +1873,7 @@ export class ResolveHirToCir {
       // Left-fold: `(+ a b c)` == `((a+b)+c)`, per-pair mode decisions (string contagion works).
       let acc = A(0);
       for (let i = 1; i < n; i++) {
-        acc = this.mkBinop(op, acc, A(i), node);
+        acc = this.mkBinop(op, acc, A(i), node, intDiv);
       }
       return acc;
     }
@@ -1889,7 +1889,7 @@ export class ResolveHirToCir {
    */
   private resolveOperator(h: Extract<HExpr, { kind: "operator" }>): CExpr {
     const argVals = h.args.map((a) => this.resolveExpr(a));
-    const res = this.resolveOperatorCall(h.src as ast.ListNode, h.op, [], argVals);
+    const res = this.resolveOperatorCall(h.src as ast.ListNode, h.op, [], argVals, h.intDiv);
     if (res) return res;
     return this.resolveAstExpr(h.src);
   }
@@ -2402,7 +2402,7 @@ export class ResolveHirToCir {
     return { src: node, ctype: def.ret, kind: "c-call", callee: { kind: "intrinsic", ...def }, args: [recv, ...cArgs] };
   }
 
-  private mkBinop(op: string, lhs: CExpr, rhs: CExpr, src: ast.ASTNode): CExpr {
+  private mkBinop(op: string, lhs: CExpr, rhs: CExpr, src: ast.ASTNode, intDiv = false): CExpr {
     const canonOp = op === "≠" ? "!=" : op;
     // A user `:operator` overload on a struct/class LEFT operand -> a direct devirtualized call (Q4:
     // extensions/operators resolve statically when the operand type is known). Both shapes call
@@ -2418,24 +2418,23 @@ export class ResolveHirToCir {
         };
       }
     }
-    const mode = this.binopMode(canonOp, lhs, rhs, src);
+    const mode = this.binopMode(canonOp, lhs, rhs, src, intDiv);
     const ctype = this.binopCType(canonOp, mode);
     return { src, ctype, kind: "c-binop", op: canonOp, mode, lhs, rhs };
   }
 
-  private binopMode(op: string, l: CExpr, r: CExpr, src: ast.ASTNode): BinopMode {
+  private binopMode(op: string, l: CExpr, r: CExpr, src: ast.ASTNode, intDiv = false): BinopMode {
     const lt = l.ctype, rt = r.ctype;
     if (op === "&&" || op === "||") return "bool";
     if (op === "+" && (lt.k === "str" || rt.k === "str")) return "str-concat";
     if (["+", "-", "*", "/", "%"].includes(op)) {
       if (op === "/") {
-        // JS division always yields a Real. If the checker claims Int, the runtime disagrees -- a
-        // genuine checker/runtime divergence, ledgered, and the golden (JS) semantics win.
-        const claimed = this.context.nodeTypes.get(src);
-        if (claimed?.kind === "primitive" && claimed.name === "Int") {
-          this.ledger.record("new", "int-division", src, "checker types Int/Int division as Int; JS runtime yields Real");
-        }
-        return "real";
+        // D49d: `Int / Int` is integer division. The decision is the NODE's (h.intDiv), not something
+        // re-derived from CIR ctypes here -- deriving it locally is how the two backends first
+        // disagreed: C read int/int off the ctypes for `(/ (round x) 100)` and truncated, while JS read
+        // the HIR types, saw non-Int, and did not. int64_t `/` truncates toward zero, matching the
+        // Math.trunc JS emits.
+        return intDiv ? "int" : "real";
       }
       if (lt.k === "int" && rt.k === "int") return "int";
       if (NUMERIC(lt) && NUMERIC(rt)) return "real";
