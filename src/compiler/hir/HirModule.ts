@@ -17,6 +17,11 @@ export class HirModule {
   // order. Resolved once at lowering (shouldCopyParam) so both backends' param-copy prologues consume
   // it instead of re-deriving the copy on their own representation. A MISSING entry -> re-derive.
   private readonly paramCopies = new Map<ast.ASTNode, boolean[]>();
+  // Functions that are DECLARATIONS (a direct module-level item, or a class/struct member) rather than
+  // closure VALUES. Decided structurally at lowering so the backends cannot answer it differently --
+  // the C backend used to approximate it with "am I inside a function body", which is false inside a
+  // `for :init` at module level.
+  private readonly declarationFns = new Set<ast.ASTNode>();
 
   set(owner: ast.ASTNode, body: HBlock): void {
     this.bodies.set(owner, body);
@@ -34,6 +39,15 @@ export class HirModule {
   /** The per-param copy decisions for `owner`, or undefined -- undefined means "re-derive". */
   paramCopiesFor(owner: ast.ASTNode): boolean[] | undefined {
     return this.paramCopies.get(owner);
+  }
+
+  markDeclarationFn(fn: ast.ASTNode): void {
+    this.declarationFns.add(fn);
+  }
+
+  /** Is this function a declaration rather than a closure value? */
+  isDeclarationFn(fn: ast.ASTNode): boolean {
+    return this.declarationFns.has(fn);
   }
 
   get size(): number {

@@ -118,6 +118,11 @@ export class EmitHirToEstree {
       case "opaque-stmt":
         return this.legacy.leafStmt(h.src);
 
+      case "closure-decl":
+        // Same emission as the opaque leaf it replaces -- JS binds a closure by naming it, and needs
+        // none of the modeled capture information.
+        return this.legacy.leafStmt(h.src);
+
       case "class": {
         // A4 step 2-3: the emitter assembles the ClassDeclaration SHELL from the modeled name / superName,
         // and the metadata MARKERS from sourceName / isStruct (step 3). The remaining body members and the
@@ -523,6 +528,13 @@ export class EmitHirToEstree {
   private emitExpr(h: HExpr): ESTree.Expression {
     switch (h.kind) {
       case "opaque-expr":
+        return this.legacy.leafExpr(h.src);
+
+      case "closure":
+      case "function-ref":
+        // JS gets closure capture from the engine, so it consumes NOTHING the model adds: same
+        // emission as the opaque leaf these used to be. The modeled captures/signature exist for a
+        // typed native target, which has to build an environment explicitly.
         return this.legacy.leafExpr(h.src);
 
       case "literal":

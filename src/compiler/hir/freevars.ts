@@ -1,17 +1,18 @@
-// Free-variable analysis for lambda lifting.
+// Free-variable analysis for closures.
 //
 // A nested function's FREE variables are the names it references that it does not itself bind
-// (params, inner lets/muts/fns, loop/match binders). The resolver intersects these with the
-// enclosing local scopes to decide what a lifted closure must CAPTURE -- the env the HIR does not
-// model (spec A3: callee identity, and the state it closes over, live below the HIR).
+// (params, inner lets/muts/fns, loop/match binders). The LOWERING intersects these with the enclosing
+// binders to build a closure's CAPTURE list (spec A3, D48/Q3) -- so the capture set is one shared
+// fact on the HIR rather than something each native backend recomputes. It used to live under
+// codegen/c/, which is what made it a C-private answer to a question every typed target asks.
 //
 // Syntactic and conservative: it over-approximates references (a name that turns out to be a global
 // or intrinsic is simply not in any enclosing scope, so the resolver drops it). That is the safe
 // direction -- capturing a name that is actually global would be wrong, but the resolver's
 // scope-membership test filters those out.
 
-import * as ast from "../../frontend/ast";
-import { classifyList } from "../../analysis/listForm";
+import * as ast from "../frontend/ast";
+import { classifyList } from "../analysis/listForm";
 
 /** Names a binding target introduces (a name, or a destructuring pattern's leaves). */
 function targetNames(t: ast.ASTNode | undefined, into: Set<string>): void {

@@ -52,6 +52,8 @@ export type HExpr =
   | HTernary
   | HSeq
   | HMatchTest
+  | HClosure
+  | HFunctionRef
   | HVector
   | HMatrix
   | HMap
@@ -224,6 +226,61 @@ export interface HMemberRead extends HBase {
 export interface HTemp extends HBase {
   kind: "temp";
   name: string;
+}
+
+/**
+ * One CAPTURED binding of a closure (spec A3, D48/Q3).
+ *
+ * `mode` is the D10-derived decision, not a free choice: a `let` or a parameter is bound ONCE, so the
+ * closure can hold its own copy of the binding and never observe a difference. A `mut` can be
+ * reassigned on either side, so closure and origin must share ONE piece of storage -- what the C
+ * backend materializes as a heap cell (`mut-capture-cell`) and what JS gets from the engine for free.
+ *
+ * Capturing is NOT a store, so no D11 value-copy is inserted here: capturing a struct-typed `let`
+ * shares the object, exactly as reading the binding would.
+ */
+export interface HCapture {
+  /** SOURCE name -- each backend applies its own mangling. */
+  name: string;
+  mode: "value" | "reference";
+  type: InferredType | undefined;
+}
+
+/**
+ * A function VALUE -- a lambda literal, or a nested named `fn` (spec A3; D48/Q3 "the one real design
+ * commitment"). The representation D48 asks for: code, plus the environment it closes over.
+ *
+ * The BODY is not here: it lives in `HirModule` keyed by `src`, which is already HIR rather than a dip
+ * below it. What this node adds is every DECISION the backends were making independently -- the
+ * capture set and each capture's mode, the signature, and whether this is a coroutine.
+ *
+ * It deliberately carries NO runtime signature descriptor. That is a ruling, not an omission:
+ * `functional-pattern` is dead precisely because "a closure does not carry its parameter types at run
+ * time", so nothing may start depending on it doing so.
+ */
+export interface HClosure extends HBase {
+  kind: "closure";
+  /** null = anonymous (a lambda literal). */
+  name: string | null;
+  params: { name: string; type: InferredType | undefined }[];
+  returnType: InferredType | undefined;
+  /** Resolved at lowering, in a STABLE order -- a native backend lays out an environment from this, so
+   *  the order is observable and must not vary between runs. */
+  captures: HCapture[];
+  generator: boolean;
+  async: boolean;
+}
+
+/**
+ * A top-level function referenced as a VALUE rather than called (spec A3, "functions are values").
+ * The C backend wraps it in a boxed-convention adapter; JS just names it. The DECISION -- this name
+ * denotes a function and is being used as a value -- is resolved once here instead of re-derived from
+ * the symbol table at each use.
+ */
+export interface HFunctionRef extends HBase {
+  kind: "function-ref";
+  name: string;
+  binding: HCalleeBinding;
 }
 
 /** A leaf: emit by handing `src` back to the legacy `visitExpr`. The lowering did not look inside. */
@@ -400,6 +457,7 @@ export type HStmt =
   | HSuperCall
   | HCtorMethodCall
   | HClass
+  | HClosureDecl
   | HOpaqueStmt;
 
 /** An expression evaluated for effect; its value is discarded. */
@@ -701,6 +759,15 @@ export interface HClass extends HBase {
   fields: HFieldDecl[];
   /** The resolved constructor, or null when the class needs none (no params, no parent, no `:ctor` vars). */
   ctor: HCtor | null;
+}
+
+/**
+ * A nested NAMED function declaration -- `(fn helper [] ...)` inside a body or block. It binds a
+ * closure VALUE to a name, which is why it is not the same thing as a module-level declaration.
+ */
+export interface HClosureDecl extends HBase {
+  kind: "closure-decl";
+  closure: HClosure;
 }
 
 /** A leaf statement: emit by coercing the legacy `visit(src)` to a statement. */

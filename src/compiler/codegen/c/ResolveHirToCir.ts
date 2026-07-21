@@ -26,7 +26,7 @@ import {
 } from "./cir";
 import { CType, C_BOOL, C_INT, C_REAL, C_STR, C_VALUE, C_VOID, mapType, ctypeEquals } from "./ctype";
 import { INTRINSIC_CALLS, NATIVE_METHODS, NATIVE_FIELDS } from "./intrinsics";
-import { freeVariables, freeVariablesOfBody } from "./freevars";
+import { freeVariables, freeVariablesOfBody } from "../../hir/freevars";
 import { isBuiltinModifier } from "../../helpers/modifiers";
 
 const BINARY_OPS = new Set(["+", "-", "*", "/", "%", "==", "!=", "≠", "<", ">", "<=", ">=", "&&", "||"]);
@@ -741,6 +741,9 @@ export class ResolveHirToCir {
         case "for-each":
           return this.resolveForEach(h);
 
+        case "closure-decl":
+          return this.resolveNestedFnDecl(h.src as ast.FunctionNode, h.closure);
+
         case "hoist": {
           // The match's pattern variables, declared boxed at the top of its block scope. The name SET
           // (and its order) is decided at lowering now -- this used to recompute it from the raw
@@ -1141,6 +1144,16 @@ export class ResolveHirToCir {
       case "opaque-expr":
         return this.resolveAstExpr(h.src);
 
+      case "closure":
+        // The capture set, each capture's MODE, and the signature are decided at lowering now; this
+        // only materializes them (env struct + the boxed argv ABI).
+        return this.lift(h.src as ast.FunctionNode, h);
+
+      case "function-ref":
+        // A top-level function used as a VALUE -> a boxed-convention adapter. The decision that this
+        // name denotes a function rode the node, so no symbol-table dip here.
+        return this.functionValue(h.src, h.name);
+
       case "literal":
         // Step 3 (HLiteral) landed on dev: the atom is MODELED -- its value and type ride the node
         // itself, so no dip below the HIR (the A2/A1 drain the probe was measuring). No ledger entry.
@@ -1486,9 +1499,11 @@ export class ResolveHirToCir {
         return [];
       case "function": {
         const f = node as ast.FunctionNode;
-        // A module-level declaration is a top-level C function; a declaration inside a function body
-        // is a nested closure bound to a local.
-        if (!this.inFunctionBody) { this.collectFunction(f); return []; }
+        // Declaration or closure VALUE -- decided structurally at lowering and consumed here, so the
+        // two backends cannot disagree. Asking `inFunctionBody` instead was wrong for a `fn` inside a
+        // `for :init` at module level: not "in a function", yet plainly not a top-level declaration.
+        const isDecl = this.hir.isDeclarationFn(f) || (!this.inFunctionBody && !this.hir.bodyFor(f));
+        if (isDecl) { this.collectFunction(f); return []; }
         return this.resolveNestedFnDecl(f);
       }
       case "variable": {
@@ -2767,10 +2782,10 @@ export class ResolveHirToCir {
   }
 
   /** A nested NAMED function declaration statement -> lift it and bind a local closure value. */
-  private resolveNestedFnDecl(fn: ast.FunctionNode): CStmt[] {
+  private resolveNestedFnDecl(fn: ast.FunctionNode, modeled?: Extract<HExpr, { kind: "closure" }>): CStmt[] {
     const name = ast.symbolName(fn.name);
     if (this.refuseCoroutine(fn, name)) return [];
-    const closure = this.lift(fn);
+    const closure = this.lift(fn, modeled);
     const cName = mangleC(name);
     this.declareLocal(cName, closure.ctype, false, false);
     return [{ src: fn, ctype: C_VOID, kind: "c-decl", cName, declCType: closure.ctype, init: closure }];
@@ -2781,8 +2796,8 @@ export class ResolveHirToCir {
    * a top-level `ll_value fn(void* env, int argc, ll_value* argv)`, and return the closure-make. This
    * is the env the HIR does not model (spec A3 -- callee identity and closed-over state as a value).
    */
-  private lift(fn: ast.FunctionNode): CExpr {
-    this.ledger.record("A3", "closure-lift", fn, "nested function lifted with an explicit captured environment (not in the HIR)");
+  private lift(fn: ast.FunctionNode, modeled?: Extract<HExpr, { kind: "closure" }>): CExpr {
+    if (!modeled) this.ledger.record("A3", "closure-lift", fn, "nested function lifted with an explicit captured environment (not in the HIR)");
     const id = this.liftCounter++;
     const baseName = fn.name ? mangleC(ast.symbolName(fn.name)) : "lam";
     const liftedName = `__ll_lam_${baseName}_${id}`;
@@ -2790,7 +2805,10 @@ export class ResolveHirToCir {
     // Captures: free vars bound in an ENCLOSING (or the current) scope. Computed BEFORE we isolate.
     const captures: CCapture[] = [];
     const capType = new Map<string, { ctype: CType; cell: boolean }>();
-    for (const srcName of freeVariables(fn)) {
+    // The capture SET and each capture's MODE come from the node (D48/Q3). Without a modeled node --
+    // an imported body lowered on demand -- fall back to deriving them here.
+    const modeledCaptures = modeled?.captures.map((c) => c.name);
+    for (const srcName of modeledCaptures ?? freeVariables(fn)) {
       const cName = mangleC(srcName);
       // A hoisted module global lives at C file scope, so the lifted function can name it directly.
       // Capturing it would copy it into the env and silently fork the mutation -- which is exactly
@@ -2805,8 +2823,12 @@ export class ResolveHirToCir {
     }
 
     // Build the lifted params (typed) from the signature.
-    const symT = this.dipSymbols("A3", "lambda-signature", fn, "lambda signature resolved through the symbol table", fn.name ? ast.symbolName(fn.name) : "<lambda>")?.inferredType;
-    const paramTs = symT?.kind === "function" && symT.params ? symT.params : fn.params.map(() => undefined);
+    const symT = modeled
+      ? undefined
+      : this.dipSymbols("A3", "lambda-signature", fn, "lambda signature resolved through the symbol table", fn.name ? ast.symbolName(fn.name) : "<lambda>")?.inferredType;
+    const paramTs = modeled
+      ? modeled.params.map((p) => p.type)
+      : symT?.kind === "function" && symT.params ? symT.params : fn.params.map(() => undefined);
 
     // Resolve the lifted body in an ISOLATED scope (params + captures only -- a C function cannot see
     // the enclosing frame except through its env).
@@ -2839,7 +2861,7 @@ export class ResolveHirToCir {
     }
 
     const paramCTypes = liftedParams.map((p) => p.ctype);
-    const ret = this.userFnRet(symT, fn);
+    const ret = modeled ? this.userFnRet({ kind: "function", returns: modeled.returnType } as any, fn) : this.userFnRet(symT, fn);
     return {
       src: fn,
       ctype: { k: "closure", params: paramCTypes, ret },

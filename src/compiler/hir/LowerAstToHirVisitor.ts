@@ -31,6 +31,7 @@ import { shouldCopyOnStore, shouldCopyParam } from "./valueCopy";
 import { HirModule } from "./HirModule";
 import { TempAllocator } from "./TempAllocator";
 import { RuntimeProvider } from "../runtime";
+import { freeVariables } from "./freevars";
 import {
   HBase,
   HBlock,
@@ -41,6 +42,8 @@ import {
   HFieldDecl,
   HFormatSegment,
   HIf,
+  HCapture,
+  HClosure,
   HMapEntry,
   HPattern,
   HReturn,
@@ -76,6 +79,8 @@ const LITERAL_TYPES: ReadonlySet<string> = new Set([
 
 export class LowerAstToHirVisitor {
   private readonly temps: TempAllocator;
+  /** Functions that are DECLARATIONS (module top level, class members) rather than closure values. */
+  private readonly declarationFns = new Set<ast.FunctionNode>();
 
   // `tempPrefix` lets the on-demand instance (used by the emitter for an imported/inlined function body
   // not pre-lowered here) name its temps `__ll_hir_i_*`, distinct from the pre-lowering's `__ll_hir_*`.
@@ -95,6 +100,8 @@ export class LowerAstToHirVisitor {
    */
   lower(root: ast.ASTNode): HirModule {
     const module = new HirModule();
+    this.collectDeclarationFns(root);
+    for (const fn of this.declarationFns) module.markDeclarationFn(fn);
     if (root._type === "program") {
       module.set(root, { stmts: this.lowerSeq((root as ast.ProgramNode).program ?? [], EFFECT).stmts });
     }
@@ -104,6 +111,45 @@ export class LowerAstToHirVisitor {
       module.setParamCopies(fn, (fn.params ?? []).map((p) => shouldCopyParam(p.type, this.context)));
     });
     return module;
+  }
+
+  /**
+   * The functions that are DECLARATIONS rather than closure values: a direct top-level item of the
+   * module, and every class/struct member. Everything else that produces a function -- a lambda, or a
+   * named `fn` nested inside any body, loop or block -- closes over its surroundings.
+   *
+   * Computed structurally, because the question is structural. The C backend approximated it with a
+   * single "am I resolving a function body" flag, which is false inside a `for :init` at module level:
+   * a helper declared there became a top-level C function with no environment, closing over a hoisted
+   * global while the loop read a same-named block local.
+   */
+  private collectDeclarationFns(root: ast.ASTNode): void {
+    const addDirect = (item: ast.ASTNode | undefined): void => {
+      if (!item) return;
+      // Top-level forms arrive wrapped in a `list`; unwrap it the way the symbol-table scan does.
+      if (item._type === "list") {
+        for (const n of ((item as ast.ListNode).nodes ?? [])) addDirect(n);
+        return;
+      }
+      if (item._type === "function") this.declarationFns.add(item as ast.FunctionNode);
+    };
+    if (root._type === "program") for (const item of (root as ast.ProgramNode).program ?? []) addDirect(item);
+    // Class and struct MEMBERS are methods, not closures, wherever the class itself is declared.
+    const walkClasses = (node: any): void => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) { for (const c of node) walkClasses(c); return; }
+      if (node._type === "class" || node._type === "struct") {
+        for (const m of (node.body ?? [])) {
+          if (m?._type === "function") this.declarationFns.add(m as ast.FunctionNode);
+          if (m?._type === "list") for (const n of (m.nodes ?? [])) if (n?._type === "function") this.declarationFns.add(n as ast.FunctionNode);
+        }
+      }
+      for (const k of Object.keys(node)) {
+        if (k.startsWith("_")) continue;
+        walkClasses(node[k]);
+      }
+    };
+    walkClasses(root);
   }
 
   // -- tree walk: find every FunctionNode (including nested) -----------------------------------------
@@ -147,6 +193,20 @@ export class LowerAstToHirVisitor {
     return { ...this.base(src), kind: "ref", name: ast.symbolName(src as ast.IdentifierNode) };
   }
 
+  /**
+   * A value-position identifier. When it names a FUNCTION, that is a distinct fact (spec A3, "functions
+   * are values"): a native backend has to wrap it in a boxed-convention adapter, and it should not have
+   * to re-ask the symbol table at every use to find out.
+   */
+  private refOrFunctionValue(src: ast.ASTNode): HExpr {
+    const name = ast.symbolName(src as ast.IdentifierNode);
+    const binding = this.calleeBinding(src, src);
+    if (binding && binding.isFunctionType && binding.fnNode && !binding.extern) {
+      return { ...this.base(src), kind: "function-ref", name, binding };
+    }
+    return this.ref(src);
+  }
+
   private temp(name: string, src: ast.ASTNode): HExpr {
     return { ...this.base(src), kind: "temp", name };
   }
@@ -184,6 +244,85 @@ export class LowerAstToHirVisitor {
 
   private patternTest(pattern: ast.PatternNode, scrutName: string, guard: ast.ASTNode | undefined, src: ast.ASTNode): HExpr {
     return { ...this.base(src), kind: "match-test", pattern: this.buildPattern(pattern), scrutName, guard: this.lowerGuard(guard) };
+  }
+
+  /**
+   * A function VALUE -- a lambda literal, or a nested named `fn` (spec A3, D48/Q3).
+   *
+   * A MODULE-LEVEL named declaration is not a closure: it is a top-level function, and both backends
+   * emit it as one. Everything else -- a lambda anywhere, a named `fn` nested inside any body or block
+   * -- closes over its surroundings. That distinction is syntactic, so it belongs here; the C backend
+   * used to approximate it with "am I resolving a function body right now", which is false inside a
+   * `for :init` at module level and turned a helper there into a top-level C function silently.
+   */
+  private lowerFunction(fn: ast.FunctionNode, dest: Dest): Lowered {
+    if (fn.extern) return this.leaf(fn, dest); // `:extern` declares, emits nothing
+    if (this.declarationFns.has(fn)) return this.leaf(fn, dest); // a declaration, not a closure value
+    const closure: HExpr = {
+      ...this.base(fn),
+      kind: "closure",
+      name: fn.name ? ast.symbolName(fn.name) : null,
+      params: (fn.params ?? []).map((p) => ({
+        name: p.name && (p.name._type === "simple-identifier" || p.name._type === "composite-identifier")
+          ? ast.symbolName(p.name as ast.IdentifierNode)
+          : "",
+        type: this.symbolType(p),
+      })),
+      returnType: this.symbolTypeOfName(fn.name ? ast.symbolName(fn.name) : undefined, fn),
+      captures: this.capturesOf(fn),
+      generator: fn.generator === true,
+      async: fn.async === true,
+    };
+    // A named nested fn binds the closure to a name -- a statement, not a value in expression position.
+    if (fn.name && dest.kind === "effect") {
+      return { stmts: [{ ...this.base(fn), kind: "closure-decl", closure: closure as HClosure }], value: null };
+    }
+    return this.placeValue(closure, [], dest);
+  }
+
+  /**
+   * The bindings a closure captures, with each capture's MODE.
+   *
+   * D10 decides the mode rather than us: a `let` or a parameter is bound once, so the closure may hold
+   * its own copy; a `mut` can be reassigned from either side, so the two must share one piece of
+   * storage. Mutability comes from the symbol table (the authority) rather than a syntactic re-scan.
+   *
+   * Order is the free-variable walk's order, fixed here -- a native backend lays out an environment
+   * from this list, so it must not vary between runs.
+   */
+  private capturesOf(fn: ast.FunctionNode): HCapture[] {
+    const out: HCapture[] = [];
+    for (const name of freeVariables(fn)) {
+      let entry: any;
+      try {
+        entry = this.context.symbolTable?.resolveSymbol?.(name as any, fn);
+      } catch {
+        entry = undefined;
+      }
+      // Not a binding we can see (a global, a top-level function, an intrinsic): not a capture. The
+      // free-variable walk deliberately over-approximates; this is where that is filtered.
+      if (!entry || (entry.value as any)?._type === "function") continue;
+      out.push({
+        name,
+        mode: entry.mutability === true ? "reference" : "value",
+        type: entry.inferredType,
+      });
+    }
+    return out;
+  }
+
+  private symbolType(p: ast.ParameterNode): InferredType | undefined {
+    return this.context.nodeTypes.get(p as any);
+  }
+
+  private symbolTypeOfName(name: string | undefined, at: ast.ASTNode): InferredType | undefined {
+    if (!name) return undefined;
+    try {
+      const t = this.context.symbolTable?.resolveSymbol?.(name as any, at)?.inferredType as any;
+      return t?.kind === "function" ? t.returns : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -363,10 +502,12 @@ export class LowerAstToHirVisitor {
       case "simple-identifier":
       case "composite-identifier":
         // Modeled reference atoms (A2). Value-position identifiers only -- a callee stays legacy.
-        return this.placeValue(this.ref(node), [], dest);
+        return this.placeValue(this.refOrFunctionValue(node), [], dest);
       case "class":
       case "struct":
         return this.lowerClassLike(node, dest);
+      case "function":
+        return this.lowerFunction(node as ast.FunctionNode, dest);
       default:
         return this.leaf(node, dest);
     }
@@ -847,7 +988,12 @@ export class LowerAstToHirVisitor {
       h.kind === "method-call" ||
       h.kind === "virtual-call" ||
       h.kind === "operator" ||
-      h.kind === "construct"
+      h.kind === "construct" ||
+      // A closure / function-ref is inline-able exactly like the opaque leaf it replaces: it is a pure
+      // value with no prelude. Leaving them out temp-bound every lambda argument, which is a real
+      // change to the emitted program for no reason -- modelling a node must not move code.
+      h.kind === "closure" ||
+      h.kind === "function-ref"
     );
   }
 
@@ -1476,6 +1622,7 @@ export class LowerAstToHirVisitor {
       return rebuilt;
     }
     if (h.kind === "opaque-expr" || h.kind === "literal" || h.kind === "ref") return h.src;
+    if (h.kind === "closure" || h.kind === "function-ref") return h.src; // the legacy emitter re-visits the fn
     return srcForLoc; // nil/ternary/seq don't reach here (pure -> no prelude -> opaque path)
   }
 
