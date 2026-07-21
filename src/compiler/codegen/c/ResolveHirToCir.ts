@@ -85,8 +85,33 @@ export class ResolveHirToCir {
    *  `restAt` is the index of a REST parameter (`[a ...xs]`) when the function has one: from that
    *  position on, the call site packs its trailing arguments into one vec (see `packRestArgs`). */
   private readonly topLevelFns = new Map<string, { params: CType[]; ret: CType; arity: number; restAt?: number }>();
-  /** Imported (non-intrinsic) l-lang bodies lowered on demand, by source name (dedup). */
+  /** Imported (non-intrinsic) l-lang bodies lowered on demand, by ALIAS KEY (see `aliasFor`). */
   private readonly importedLowered = new Set<string>();
+  /**
+   * The flat-namespace guard.
+   *
+   * C has one global namespace; l-lang has module-PRIVATE bindings (D20), so two imported modules may
+   * legitimately each define `TAG` or `decorate`. Keyed by bare source name, the second silently
+   * reused the first's global and the program printed the first module's answer -- a wrong answer,
+   * not a crash. `aliasFor` hands every (defining module, source name) pair its own alias: the bare
+   * name for whoever claims it first, then `name#2`, `name#3`, ... The alias is what `topLevelFns` /
+   * `importedLowered` / `importedValues` key on and what `mangleC` turns into the C identifier, so
+   * every existing single-claimant program emits byte-identical C.
+   */
+  private readonly aliases = new Map<string, string>();
+  /** alias -> the `${module}::${name}` key that owns it (so a re-ask by the same owner is stable). */
+  private readonly aliasOwner = new Map<string, string>();
+  /**
+   * THIS module's own top-level function / global names.
+   *
+   * `topLevelFns` and `globalNames` accumulate imported entries too, so asking them "is this one of
+   * mine?" answers yes for whatever import registered the spelling FIRST -- which routed a second
+   * module's private `decorate` / `TAG` straight to the first module's C name, short-circuiting
+   * before module identity was ever consulted. These two sets are written only by the pre-scan, so
+   * they mean what those call sites actually need.
+   */
+  private readonly ownFns = new Set<string>();
+  private readonly ownGlobals = new Set<string>();
   /** Struct/class descriptors, by source name (spec A4). */
   private readonly classes = new Map<string, ClassDesc>();
   /** Operator overloads: key `<op>:<leftOperandTypeName>` -> the operator's C function. `isMethod`
@@ -278,6 +303,9 @@ export class ResolveHirToCir {
         if (moduleBindings.has(fv)) this.globalNames.add(fv);
       }
     }
+    // Same claim as for this module's functions: our own globals own their bare names, so an
+    // imported module's private binding of the same name is aliased aside rather than colliding.
+    for (const g of this.globalNames) { this.aliasFor(g, this.rootSource ?? ""); this.ownGlobals.add(g); }
     if (this.globalNames.size) this.ledger.record("new", "module-global", items[0], "module-level binding referenced by a top-level function; hoisted to a C global (JS closes over module scope for free)");
   }
 
@@ -2043,7 +2071,7 @@ export class ResolveHirToCir {
     const cName = mangleC(name);
     const info = this.localInfo(cName);
     // A module-level GLOBAL referenced from inside a function (not shadowed by a local).
-    if (!info && this.globalNames.has(name)) {
+    if (!info && this.ownGlobals.has(name)) {
       const g = this.globalDecls.find((d) => d.cName === cName);
       if (!modeled) this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
       return { src: node, ctype: g?.ctype ?? C_VALUE, kind: "c-ref", cName };
@@ -2058,10 +2086,12 @@ export class ResolveHirToCir {
     // were already lowered on demand; a plain `let`/`mut` was not, so its mangled name was emitted as
     // a bare reference that no C scope declares. Hoist it to a global here, same as the local
     // module-global path, with its initializer run at the top of main.
-    if (!info && !this.globalNames.has(name) && this.ensureImportedValue(name, node)) {
-      const g = this.globalDecls.find((d) => d.cName === cName);
+    const importedCName = info ? undefined : this.ensureImportedValue(name, node);
+    if (importedCName) {
+      const g = this.globalDecls.find((d) => d.cName === importedCName);
       if (!modeled) this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
-      return { src: node, ctype: g?.ctype ?? C_VALUE, kind: "c-ref", cName };
+      // `importedCName`, not `cName`: the defining module may not own the bare spelling.
+      return { src: node, ctype: g?.ctype ?? C_VALUE, kind: "c-ref", cName: importedCName };
     }
     if (!modeled) this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
     let t = this.context.nodeTypes.get(node);
@@ -2249,7 +2279,7 @@ export class ResolveHirToCir {
         return this.resolveConstruct(node, name, args);
       }
       // (3) A top-level function defined in this module -> a direct typed C call.
-      if (this.topLevelFns.has(name)) {
+      if (this.ownFns.has(name)) {
         const sig = this.topLevelFns.get(name)!;
         const cArgs = args.map((a) => this.resolveAstExpr(a));
         return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: this.packRestArgs(node, sig, cArgs) };
@@ -2267,13 +2297,14 @@ export class ResolveHirToCir {
       // (3) An IMPORTED (non-intrinsic) l-lang function -> lower its body on demand (the C analog of
       // the JS backend's ensureSymbolInlined) and call it directly.
       if (symT?.kind === "function" && !this.isExtern(entry) && (entry?.value as any)?._type === "function") {
-        this.lowerImportedFunction(name, entry!.value as ast.FunctionNode);
-        const sig = this.topLevelFns.get(name);
+        // The ALIAS, not the source name: another module may already own the bare spelling.
+        const alias = this.lowerImportedFunction(name, entry!.value as ast.FunctionNode);
+        const sig = this.topLevelFns.get(alias);
         // A refused import (e.g. an imported `:gen` generator) registered nothing; the compilation is
         // already refused, so return a placeholder rather than crash on a missing signature.
         if (!sig) return { src: node, ctype: C_VALUE, kind: "c-nil" };
         const cArgs = args.map((a) => this.resolveAstExpr(a));
-        return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: this.packRestArgs(node, sig, cArgs) };
+        return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName: mangleC(alias), params: sig.params, ret: sig.ret }, args: this.packRestArgs(node, sig, cArgs) };
       }
       if (args.length === 0) {
         // `(x)` where x is not a function: redundant parens around a value (D1).
@@ -2296,14 +2327,65 @@ export class ResolveHirToCir {
    * Returns true when `name` is such a binding, after registering it. The initializer is resolved in
    * an ISOLATED scope: it belongs to the other module and must not see this one's locals.
    */
-  private ensureImportedValue(name: string, node: ast.ASTNode): boolean {
-    const cName = mangleC(name);
-    if (this.importedValues.has(name)) return true;
+  /** The file a node (or a symbol's defining scope) came from -- the module identity aliases key on. */
+  private static moduleOfNode(node: ast.ASTNode | undefined): string {
+    return node?._location?.source ?? "";
+  }
+
+  private static moduleOfEntry(entry: SymbolEntry | undefined): string {
+    let s: any = entry?.scope;
+    while (s?.parent) s = s.parent;
+    return ResolveHirToCir.moduleOfNode(s?.node) || ResolveHirToCir.moduleOfNode(entry?.value);
+  }
+
+  /**
+   * The alias a (defining module, source name) pair owns in C's ONE global namespace.
+   *
+   * D20 makes a module-private binding real, so `alpha.lisp` and `beta.lisp` may each define `TAG`
+   * and `decorate`. Whoever asks first keeps the bare name -- which is why every existing program
+   * emits byte-identical C -- and a later, DIFFERENT module gets `name#2`, `name#3`, ... The mangled
+   * form is what actually has to be unique, so the search tests `mangleC(candidate)` rather than the
+   * alias: `decorate#2` mangles to `u_decorate_232`, and so would a user symbol literally spelled
+   * `decorate_232`.
+   */
+  private aliasFor(name: string, module: string): string {
+    const owner = `${module}::${name}`;
+    const existing = this.aliases.get(owner);
+    if (existing !== undefined) return existing;
+    let alias = name;
+    for (let n = 2; ; n++) {
+      const held = this.aliasOwner.get(mangleC(alias));
+      if (held === undefined || held === owner) break;
+      alias = `${name}#${n}`;
+    }
+    this.aliases.set(owner, alias);
+    this.aliasOwner.set(mangleC(alias), owner);
+    return alias;
+  }
+
+  /**
+   * Hoist an imported module-level binding to a C global. Returns the C NAME it was given, or
+   * undefined when the name is not such a binding.
+   *
+   * The name is per DEFINING MODULE (`aliasFor`), not per spelling: `alpha.lisp` and `beta.lisp` may
+   * each have a private `TAG` (D20), and deduping on the bare spelling made the second reuse the
+   * first's global -- the program then printed the first module's value, silently.
+   */
+  private ensureImportedValue(name: string, node: ast.ASTNode): string | undefined {
     const entry = this.resolveSymbolSafe(name, node);
     const varNode = entry?.value as ast.VariableNode | undefined;
-    if (!entry || this.isExtern(entry) || varNode?._type !== "variable") return false;
-    if (varNode.name?._type !== "simple-identifier") return false; // a destructuring import: not modeled
-    this.importedValues.add(name);
+    if (!entry || this.isExtern(entry) || varNode?._type !== "variable") return undefined;
+    if (varNode.name?._type !== "simple-identifier") return undefined; // a destructuring import: not modeled
+    const module = ResolveHirToCir.moduleOfEntry(entry);
+    // OUR OWN module-level binding: `computeGlobals` already owns it and its declaration is emitted
+    // where the variable is resolved. Say so by returning nothing, so the caller keeps the existing
+    // path -- this is also the check that used to be the caller's `!globalNames.has(name)` guard,
+    // which could not tell "our global" from "an import that happens to share the spelling".
+    if (module === (this.rootSource ?? "")) return undefined;
+    const alias = this.aliasFor(name, module);
+    const cName = mangleC(alias);
+    if (this.importedValues.has(alias)) return cName;
+    this.importedValues.add(alias);
     this.ledger.record("A9-extern", "imported-value", node, `imported l-lang binding '${name}' hoisted to a C global (value analog of imported-body)`);
     let init: CExpr | null = null;
     this.isolated(varNode as any, () => {
@@ -2311,7 +2393,7 @@ export class ResolveHirToCir {
     });
     const ctype: CType = init ? (init as CExpr).ctype : C_VALUE;
     this.globalDeclared.add(cName);
-    this.globalNames.add(name);
+    this.globalNames.add(alias);
     this.globalDecls.push({ cName, ctype });
     if (init) {
       this.importedInits.push({
@@ -2319,25 +2401,34 @@ export class ResolveHirToCir {
         target: { kind: "name", cName, ctype }, value: init,
       });
     }
-    return true;
+    return cName;
   }
 
-  /** Lower an imported l-lang function's body on demand, isolating its scope (dedup by source name). */
-  private lowerImportedFunction(name: string, fn: ast.FunctionNode): void {
-    if (this.importedLowered.has(name)) return;
-    this.importedLowered.add(name);
+  /**
+   * Lower an imported l-lang function's body on demand, isolating its scope.
+   *
+   * Returns the ALIAS the function is known by from here on -- the bare source name unless another
+   * module already claimed it, in which case the caller must look up `topLevelFns` and build the C
+   * name with the alias, not the source name. Two imported modules may each define a private
+   * `decorate` (D20); dedup on the bare name made the second silently reuse the first's body.
+   */
+  private lowerImportedFunction(name: string, fn: ast.FunctionNode): string {
+    const alias = this.aliasFor(name, ResolveHirToCir.moduleOfNode(fn));
+    if (this.importedLowered.has(alias)) return alias;
+    this.importedLowered.add(alias);
     // `fn` is the symbol table's PRE-desugar node -- give it the implicit return the main module got.
     fn = this.desugaredCopyOf(fn);
-    if (this.refuseCoroutine(fn, name)) return;
+    if (this.refuseCoroutine(fn, name)) return alias;
     this.ledger.record("A9-extern", "imported-body", fn, `imported l-lang function '${name}' lowered on demand (C analog of ensureSymbolInlined)`);
-    this.registerTopLevel(fn, name);
-    const sig = this.topLevelFns.get(name)!;
+    this.registerTopLevel(fn, alias);
+    const sig = this.topLevelFns.get(alias)!;
     this.isolated(fn, () => {
       const params: CParam[] = fn.params.map((p, i) => this.declareParam(p, sig.params[i]));
       const prologue = this.paramCopyPrologue(fn, params);
       const body = this.resolveFunctionBody(fn);
-      this.functions.push({ src: fn, cName: mangleC(name), params, ret: sig.ret, body: { stmts: [...prologue, ...body.stmts] } });
+      this.functions.push({ src: fn, cName: mangleC(alias), params, ret: sig.ret, body: { stmts: [...prologue, ...body.stmts] } });
     });
+    return alias;
   }
 
   private resolveDottedCall(node: ast.ListNode, callee: ast.CompositeIdentifierNode, args: ast.ASTNode[], argVals?: CExpr[]): CExpr {
@@ -2358,23 +2449,22 @@ export class ResolveHirToCir {
     // so the bare `u_DIGITS` built below would be a reference nothing declares. Hoist it to a C
     // global first, exactly as `resolveIdentifier` does for the non-dotted read of the same binding
     // -- that path had the ensure and this one did not, which is the whole of the bug.
-    if (localVar === undefined && !this.globalNames.has(headName) && !this.isExtern(localEntry)) {
-      this.ensureImportedValue(headName, callee);
-    }
+    const headCName = localVar !== undefined || this.isExtern(localEntry)
+      ? undefined
+      : this.ensureImportedValue(headName, callee)
+        ?? (this.globalNames.has(headName) ? mangleC(headName) : undefined);
     // Once hoisted (here or by the module-global pass), the GLOBAL's declared ctype is what C sees;
     // `mapType(inferredType)` is only the fallback for a binding that is neither local nor global.
-    const globalT = this.globalNames.has(headName)
-      ? this.globalDecls.find((d) => d.cName === mangleC(headName))?.ctype
-      : undefined;
+    const globalT = headCName ? this.globalDecls.find((d) => d.cName === headCName)?.ctype : undefined;
 
     // A local binding wins over a host global of the same spelling -- but an `:extern` entry IS the
     // host global (the std/js prelude declares `console`, `Math`, ... into the symbol table).
-    if (!this.isExtern(localEntry) && (localEntry?.inferredType !== undefined || localVar !== undefined || globalT !== undefined)) {
+    if (!this.isExtern(localEntry) && (localEntry?.inferredType !== undefined || localVar !== undefined || headCName !== undefined)) {
       let recv: CExpr = {
         src: callee,
         ctype: localVar?.ctype ?? globalT ?? mapType(localEntry?.inferredType),
         kind: "c-ref",
-        cName: mangleC(headName),
+        cName: localVar !== undefined ? mangleC(headName) : headCName ?? mangleC(headName),
         cell: localVar?.cell,
       };
       // Intermediate `.a.b` parts are member reads; the LAST part is the method.
@@ -2598,7 +2688,12 @@ export class ResolveHirToCir {
     for (const n of items) {
       if (n?._type === "function" && (n as ast.FunctionNode).name
           && !(n as ast.FunctionNode).modifiers?.some((m) => m.modifier === "operator")) {
-        this.registerTopLevel(n as ast.FunctionNode, ast.symbolName((n as ast.FunctionNode).name));
+        const nm = ast.symbolName((n as ast.FunctionNode).name);
+        // This module runs first, so it always keeps the bare name; the claim is what makes a LATER
+        // import with the same private name step aside instead of overwriting it.
+        this.aliasFor(nm, this.rootSource ?? "");
+        this.ownFns.add(nm);
+        this.registerTopLevel(n as ast.FunctionNode, nm);
       }
     }
   }
@@ -2973,7 +3068,7 @@ export class ResolveHirToCir {
       return this.closureCallResolved(node, this.resolveIdentifier(h.callee.src as ast.IdentifierNode, true), cArgs);
     }
     // (2) A top-level function in this module -> a direct typed C call.
-    if (this.topLevelFns.has(name)) {
+    if (this.ownFns.has(name)) {
       const sig = this.topLevelFns.get(name)!;
       return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: this.packRestArgs(node, sig, cArgs) };
     }
@@ -2990,10 +3085,11 @@ export class ResolveHirToCir {
       return { src: node, ctype: builtin.ret, kind: "c-call", callee: { kind: "intrinsic", ...builtin }, args: cArgs };
     }
     if (cb && cb.isFunctionType && !cb.extern && cb.fnNode) {
-      this.lowerImportedFunction(name, cb.fnNode);
-      const sig = this.topLevelFns.get(name);
+      // The ALIAS, not the source name: another module may already own the bare spelling.
+      const alias = this.lowerImportedFunction(name, cb.fnNode);
+      const sig = this.topLevelFns.get(alias);
       if (!sig) return { src: node, ctype: C_VALUE, kind: "c-nil" };
-      return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: this.packRestArgs(node, sig, cArgs) };
+      return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName: mangleC(alias), params: sig.params, ret: sig.ret }, args: this.packRestArgs(node, sig, cArgs) };
     }
     throw this.refuseExtern(node, name);
   }

@@ -369,11 +369,24 @@ caught it because no C-passing example read an imported module-level constant at
 `E`/`PI`/`TAU` existed but were never reached from a C path. That coverage is now deliberate:
 `80-adversarial/imported_module_constant.lisp` pins both shapes.
 
-> **Still open, and worth knowing before Phase F adds stdlib modules:** hoisted imported bindings are
-> keyed by their **bare source name** (`importedValues`, and `mangleC` is not module-qualified), so
-> two modules that each define a *private* `(let DIGITS …)` would collide on one `u_DIGITS` global —
-> the second silently reuses the first's value. Harmless at today's one-such-binding scale, a
-> silent-wrong bug the moment two stdlib modules pick the same private constant name.
+**A fourth, from following that thread — the flat-namespace collision, also fixed.** C has one global
+namespace; D20 makes a module-*private* binding real, so two imported modules may each define `TAG`
+and `decorate`. Everything keyed on the bare source name, so the second silently reused the first's
+global and the program printed the first module's answer. Proven, not theorised:
+`80-adversarial/module_private_collision/` prints `[from alpha]` twice before the fix and
+`[from alpha]` / `<from beta>` after.
+
+The naming was only half of it. `aliasFor` gives each (defining module, source name) pair its own
+alias — bare for whoever claims it first, then `name#2` — but that allocator was being asked *too
+late*: `topLevelFns` and `globalNames` accumulate imported entries, so `topLevelFns.has(name)` and
+`globalNames.has(name)` answered *"yes, mine"* for whatever import registered the spelling first, and
+short-circuited before module identity was ever consulted. Splitting out `ownFns` / `ownGlobals` —
+written only by the pre-scan — is what actually made the alias reachable.
+
+> **Worth knowing for Phase F:** the C backend's global namespace stays flat, and only the paths that
+> a resolved defining module can reach are aliased. A function used as a *value* still resolves
+> through `topLevelFns` by bare name, so a colliding private import referenced as a value (rather
+> than called) is not covered.
 
 ---
 

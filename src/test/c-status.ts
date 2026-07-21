@@ -177,6 +177,9 @@ export const C_PASSING: readonly string[] = [
   // An imported module-level CONSTANT, read plainly (`PI`) and as a dotted head
   // (`(DIGITS.indexOf c)` inside a lowered imported body -- the shape that was broken).
   "80-adversarial/imported_module_constant.lisp",
+  // Two imported modules whose MODULE-PRIVATE names collide (D20 makes them distinct bindings).
+  // C has one global namespace, so each (defining module, name) pair now gets its own alias.
+  "80-adversarial/module_private_collision/main.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the

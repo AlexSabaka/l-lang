@@ -43,6 +43,8 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   // `lib/` alongside `examples/`, so it did not leave the diagnostic harness on the way out. Sf gives
   // it goldens. See STDLIB.md.
   "16-stdlib/complex_math_test/math_utils.lisp": { status: "library" },
+  "80-adversarial/module_private_collision/alpha.lisp": { status: "library" },
+  "80-adversarial/module_private_collision/beta.lisp": { status: "library" },
   "99-fixtures/p5-bindings.lisp": { status: "library" },
 
   // --- fixture: not a plain-`node` language-conformance test ---
