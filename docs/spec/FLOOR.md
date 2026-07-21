@@ -309,30 +309,56 @@ this whole document exists to eliminate.
 In dependency order. Each sub-phase lands its floor primitives **and** the conformance guards that
 prove parity, then collapses the corresponding `std/*` module to l-lang on top of them.
 
-- **Fa — the shared typed surface (D50).** One typed floor contract; retire `intrinsics.ts`'s private
-  table and fold the typed slice of `std/js` into it. Unblocks D49b's void-in-value residual (the
-  boundary now declares return types both backends read). *No behaviour change; the plumbing.*
-- **Fe — the numeric floor (D51).** JS `Int` → `BigInt` + `BigInt.asIntN(64)`, C `-fwrapv`, and the
-  `number->string` exponent thresholds. Guarded by an overflow/precision differential and a
-  float-formatting differential (both currently latent).
-- **Fb — the i/o + format base.** `write-string` as the only sink; `print`/`prn` and the `{N}`
-  substitution (§3.6) become l-lang on it. **Greens §5.2 cluster 1.**
+- ✅ **Fa — the shared typed surface (D50). DONE.** `compiler/floor/floor.ts` states each floor op
+  once, in l-lang types, with the `runtime.c` function that implements it. The C backend derives its
+  `INTRINSIC_CALLS` CTypes from it via `mapType` (verified a pure refactor: the derived table was
+  dumped and diffed against the old hardcoded one, all 36 entries identical), and the checker
+  resolves floor names through the same entries, so `Math.sqrt` is `Real -> Real` instead of Unknown.
+  Two real defects surfaced the moment the names were typed: `(Math.random 0 100)` (LL0211, an
+  example bug the file's own comment already contradicted) and `truncate`'s `-> Int` over a
+  Real-returning body — fixed by making `Math.trunc` the one NARROWING floor entry, `[Real] -> Int`,
+  backed by a new `ll_truncate`. *Still hand-mirrored, and the next thing the floor should absorb:*
+  `NATIVE_METHODS`/`NATIVE_FIELDS` vs `types/nativeMembers.ts`.
 - **Fc — the display formatter (D55).** l-lang `inspect` implementing **§3.5**, on `number->string`
   + reflection tag. **Greens §5.2 cluster 2.** Re-derives the ~87 wrapping-dependent golden lines
   from the §3.5 rule, and adds the `[Circular]` guard.
 - **Fd — reflection depth (D54).** C runtime emits the metadata graph now on the HIR class node.
   **Greens §5.2 cluster 3.**
+- **Fb — the i/o + format base.** `write-string` as the only sink; `print`/`prn` and the `{N}`
+  substitution (§3.6) become l-lang on it. Cluster 1 is already green (rest-param packing let C lower
+  io.lisp's real body), so what remains here is the sink itself.
+- **Fe — the numeric floor (D51).** JS `Int` → `BigInt` + `BigInt.asIntN(64)`, C `-fwrapv`, and the
+  `number->string` exponent thresholds. Guarded by an overflow/precision differential and a
+  float-formatting differential (both currently latent).
 - **Ff — the string floor (D52).** C UTF-8 decode, JS scalar-value iteration, the vendored case
   table; `std/string` collapses to l-lang. Guarded by a non-ASCII length/case/index differential;
   re-capture the affected goldens once.
 - **Fg — containers + equality (D53).** `vec`/`map` primitives, structural `equals`; `std/seq`
   collapses to l-lang.
 
-**Why Fe is second and not last.** It was originally sequenced after Fb/Fc/Fd because it is the most
-expensive item. But it rewrites how the **JS backend produces numbers**, and JS output is what every
-downstream golden is graded against — landing it after three sub-phases of goldens have been built on
-the old oracle means re-validating all of them. Its blast radius only grows with what sits on top, so
-it goes early, right after the no-behaviour-change plumbing.
+**Fc is the linchpin — corrected sequencing.** Fe was moved to second on the argument that it rewrites
+how JS produces numbers, and JS output is what downstream goldens are graded against. That argument
+does not survive D55: display goldens are hand-derived from §3.5 *regardless* of what JS does, so JS
+is no longer the oracle that would need re-validating. The dependency that actually binds runs the
+other way:
+
+- **Fe needs Fc.** Under D51 an `Int` is a `BigInt` on JS. Until our own formatter exists, every
+  number still prints through node's inspect — `1n`, `[ 1n, 2n ]` — so landing Fe first churns every
+  golden in the corpus. D51 amendment (a) says the suffix "never arises" *because* the formatter is
+  ours; that is only true once Fc has landed.
+- **Fd needs Fc too**, for its observable half. The metadata graph is independent work, but
+  `reflection_metadata_depth.expect` currently bakes node's `[Object]` depth-2 truncation and its
+  `compact:3` wrapping — the exact format D55 replaces. Emitting the full graph before Fc means
+  matching a rendering we have already ruled we are abandoning.
+
+So the order is **Fa → Fc → Fd → Fb → Fe → Ff → Fg**, and Fc is what unblocks the two after it.
+
+**A note on how Fc must be verified.** Its ~87 wrapping-dependent golden lines have no independent
+oracle: node's rule is being *replaced*, so whoever implements §3.5 would otherwise be writing both
+the code and the expected output and checking one against the other. Everything except wrapping and
+depth still agrees with node, so node remains a check there — but the wrapping decisions must be
+verified *arithmetically* against the rule (count the one-line form, compare to 80 minus indent), not
+by running the new formatter and accepting what it prints.
 
 **The two hard, up-front items** — **UTF-8 decode** and the vendored **case table** — are each real
 work and each, until done, is exactly one named not-yet guard, the same pattern the §5.2 three already
