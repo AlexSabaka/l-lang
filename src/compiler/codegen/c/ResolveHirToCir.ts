@@ -2106,7 +2106,15 @@ export class ResolveHirToCir {
         : this.dipSymbols("A1", "ref-type-via-symbols", node, "identifier use missing from channel; binding type from symbol table", name);
       if (this.isExtern(entry)) throw this.refuseExtern(node, name);
       // An imported/top-level function referenced as a value but not yet registered: treat as a value.
-      if (entry?.inferredType?.kind === "function" && this.isLocalDef(entry)) {
+      //
+      // `inferredType.kind === "function"` is NOT enough to say the definition is a function: a
+      // `(let c5 (constantly 5))` binds a VARIABLE whose inferred type is a function, and reading
+      // `.params` off that VariableNode crashed the backend outright ("reading 'map'" of undefined).
+      // A variable holding a function is a closure VALUE and belongs on the ordinary binding path
+      // below -- only a real declaration gets a top-level adapter. (D1: `(x)` is a call iff `x` is a
+      // function, declared as one OR holding one -- but only the first has a body to point at.)
+      if (entry?.inferredType?.kind === "function" && this.isLocalDef(entry)
+          && (entry.value as ast.ASTNode | undefined)?._type === "function") {
         // Register under the bare name ONLY for a function of this module. For an imported one that
         // would claim the bare spelling on the wrong module's behalf; `functionValue` resolves the
         // definition and lowers it under its own module's alias instead.
