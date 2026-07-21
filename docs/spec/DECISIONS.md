@@ -4152,3 +4152,66 @@ so those sites are Real division and stay so.
 `Int / Int` as `Int`, which is now true rather than a claim the backend overrides, and
 `new:int-division` drains. A separate named operator for the *other* rounding mode is a future
 question, not part of this ruling.
+
+---
+
+## D50–D54 — the intrinsic floor (Phase F)
+
+> **Ruled 2026-07.** The runtime-boundary companion to D19–D22 (the stdlib) and D48 (the HIR core
+> tail). Full evidence and worklist in [`FLOOR.md`](./FLOOR.md); these are the rulings themselves.
+> They apply D48's governing rule (**A-0** — *a decision both backends make must be modeled so they
+> cannot diverge*) at the **runtime** contract instead of the HIR, and they are the modeled answer to
+> the gap ledger's **A9-extern** row (642 dips, "every program preludes `std/js`, unmodeled") and to
+> D49b's void-in-value residual (*"blocked on the `std/js` surface declaring its return types
+> somewhere both backends read"*).
+
+### D50 — the floor is a typed, minimal, shared contract
+
+The **intrinsic floor** is the smallest set of runtime operations that are (a) irreducible — needing
+a syscall, host facility, or representation primitive l-lang cannot express — and (b) implemented by
+both backends to one specification. It is expressed as **typed signatures both backends consume**,
+retiring the C backend's private `codegen/c/intrinsics.ts` table and the untyped `std/js` prelude as
+separate, mutually-uncheckable things. Everything *not* on the floor is written in l-lang **on** the
+floor and is therefore never a backend primitive — a divergence made impossible rather than
+conformance-tested. The floor is a cost (each entry must be tested for parity), so it is minimized:
+`intrinsics.ts` collapses from ~90 entries to ~28.
+
+### D51 — `Int` is wrapping `int64`, `Real` is `f64`
+
+`Int` is a wrapping 64-bit two's-complement integer on **both** backends; `Real` is IEEE-754 double.
+This completes the D43 → D49d arc: the static type decides **representation**, not just operations. C
+uses `int64_t` under `-fwrapv`; JS moves `Int` off f64 onto `BigInt` normalised with
+`BigInt.asIntN(64, …)` — a real migration of the working JS backend, ruled explicitly because it
+cannot be drifted into (output stays golden-stable, `String(5n) === "5"`). `number->string` is
+shortest-round-trip (JS `toString` is the spec; C vendors Ryū). Division truncates per D49d; modulo
+is truncated (sign-of-dividend); mixed `Int`/`Real` promotes to `Real`; a `.`-bearing literal is
+`Real`; bitwise ops are defined on `Int`; transcendentals use host libm/`Math` with a documented
+last-ULP tolerance; `string->number` on bad input is nil (D9). Chosen over f64-unified (loses 2⁵³
+precision) and bignum (viral BigInt without int64's C-family fit): l-lang "thinks it's C#", and int64
+is free and correct on the native endgame, taxing only the transient JS backend.
+
+### D52 — `String` is Unicode codepoints
+
+A `String` is a sequence of Unicode scalar values, not UTF-16 code units (JS's accident) and not
+bytes (C's). `(length "café")` is 4; `(length "😀")` is 1. A codepoint is the existing `Char`
+(`uint32_t`). The floor is `codepoint-at`, `codepoint-length`, `string-from-codepoints`, `concat`,
+plus a **vendored simple-case table** shared by both runtimes (host `towupper`/`toUpperCase` are
+locale/ICU-dependent and would diverge). Every other string op is l-lang on those. Non-ASCII goldens
+change from the JS-UTF-16 count to the correct codepoint count — a one-time, guard-pinned re-capture.
+
+### D53 — primitive `vec`/`map`, structural `equals`
+
+Vectors are a floor representation (`vec-new/push!/get/set!/length`); maps are a floor representation,
+**insertion-ordered with String keys** (`map-new/get/set!/has/delete/keys`) — insertion order is
+spec'd because the corpus already bakes it into goldens. `equals` is a structural, deep floor
+primitive (`[1 2]` equals `[1 2]`). All of `pop/reverse/slice/concat/join/index-of/includes/map/
+filter/reduce/zip/range/sort` (a **stable l-lang mergesort**) are l-lang on top.
+
+### D54 — display is `util.inspect`; reflection has one shape
+
+The canonical display of a value (interpolation, `console.log`, `inspect`) is node's `util.inspect`
+exactly — `[ 1, 2, 3 ]`, `{ a: 1 }`, single-quoted strings — both backends reproduce it, chosen for
+golden-stability over a cleaner l-lang format. Reflection: the backend emits the metadata **graph**
+into the runtime, but the accessor **shape is the spec, not per-backend** — the JS `type`/
+`type-by-name` object (`{name, kind, params, returns, nullable}` / `{name, kind, properties, methods,
+…}`) is canonical, pinned by `reflection_metadata_depth.lisp`.
