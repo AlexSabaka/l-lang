@@ -372,28 +372,67 @@ export class EmitCirToC {
         return;
       }
       case "c-try": {
-        const f = `__t${this.fresh++}`;
+        // Unified ll_frame model (Cr-0): a `finally` installs a CLEANUP frame (outer), a catch chain a
+        // CATCH frame (inner) -- `finally` wraps `catch`. `throw` routes through ll_unwind, which longjmps
+        // into the CLEANUP pad on the propagate path; the SAME `finally` is reached by structured
+        // fall-through and by the pad landing (one join, discriminated by `pending`), so it is emitted
+        // ONCE. `return` stays inline (emitReturn) -- the one tryStack entry carries the OUTERMOST frame,
+        // so `ll_handler_top = frame.prev` pops the whole try in one shot. A distinct CLEANUP frame (not a
+        // fold into the catch else-arm) is what lets a later restart's ll_unwind run the finally while
+        // SKIPPING the catch.
+        const hasC = s.catches.length > 0;
+        const hasF = !!s.finalizer;
+        if (!hasC && !hasF) {
+          // A bare `try (body)`: no handlers, no frames -- a throw just propagates. Emit the body plain.
+          this.line("{");
+          this.indent++;
+          this.emitBlockStmts(s.tryBlock);
+          this.indent--;
+          this.line("}");
+          return;
+        }
+        const cl = hasF ? `__cl${this.fresh++}` : "";
+        const ca = hasC ? `__ca${this.fresh++}` : "";
+        const outer = hasF ? cl : ca; // one pop of the outermost frame restores the whole try
         this.line("{");
         this.indent++;
-        this.line(`ll_try_frame ${f}; ${f}.prev = ll_handler_top; ll_handler_top = &${f};`);
-        // Active across BOTH arms: a `return` in the try body OR in a catch body routes through this
-        // frame's finalizer + handler-top restore (see emitReturn). Popped before the normal-completion
-        // finalizer below, so the fall-through path stays exactly as it was and never double-runs.
-        this.tryStack.push({ frameVar: f, finalizer: s.finalizer });
-        this.line(`if (setjmp(${f}.buf) == 0) {`);
-        this.indent++;
-        this.emitBlockStmts(s.tryBlock);
-        this.line(`ll_handler_top = ${f}.prev;`);
-        this.indent--;
-        this.line("} else {");
-        this.indent++;
-        this.line(`ll_handler_top = ${f}.prev;`);
-        this.line(`ll_value ${s.errVar} = ${f}.err;`);
-        this.emitCatchChain(s, s.catches, 0);
-        this.indent--;
-        this.line("}");
+        if (hasF) {
+          this.line(`ll_frame ${cl}; ${cl}.kind = LL_CLEANUP; ${cl}.dtor = 0; ${cl}.pending = LL_UNWIND_NONE;`);
+          this.line(`${cl}.prev = ll_handler_top; ll_handler_top = &${cl};`);
+        }
+        this.tryStack.push({ frameVar: outer, finalizer: s.finalizer });
+        if (hasF) { this.line(`if (setjmp(${cl}.buf) == 0) {`); this.indent++; }
+        if (hasC) {
+          this.line(`ll_frame ${ca}; ${ca}.kind = LL_CATCH; ${ca}.prev = ll_handler_top; ll_handler_top = &${ca};`);
+          this.line(`if (setjmp(${ca}.buf) == 0) {`);
+          this.indent++;
+          this.emitBlockStmts(s.tryBlock);
+          this.line(`ll_handler_top = ${ca}.prev;`); // normal body completion: pop CATCH
+          this.indent--;
+          this.line("} else {");
+          this.indent++;
+          this.line(`ll_handler_top = ${ca}.prev;`); // longjmp landing: pop CATCH
+          this.line(`ll_value ${s.errVar} = ${ca}.err;`);
+          this.emitCatchChain(s, s.catches, 0);
+          this.indent--;
+          this.line("}");
+        } else {
+          this.emitBlockStmts(s.tryBlock); // finally-only: body runs directly under the CLEANUP frame
+        }
+        if (hasF) {
+          this.line(`ll_handler_top = ${cl}.prev;`); // STRUCTURED completion (normal OR catch-match): pop CLEANUP
+          this.indent--;
+          this.line("} else {");
+          this.indent++;
+          this.line(`ll_handler_top = ${cl}.prev;`); // UNWIND landing (propagate / throw-in-catch): pop CLEANUP
+          this.indent--;
+          this.line("}");
+        }
         this.tryStack.pop();
-        if (s.finalizer) this.emitBlockStmts(s.finalizer);
+        if (hasF) {
+          this.emitBlockStmts(s.finalizer!); // finally, emitted ONCE (tryStack popped -> a return here routes to outer)
+          this.line(`if (${cl}.pending != LL_UNWIND_NONE) ll_unwind(${cl}.prev, ${cl}.pending, ${cl}.target, ${cl}.err, ${cl}.which);`);
+        }
         this.indent--;
         this.line("}");
         return;
@@ -418,12 +457,9 @@ export class EmitCirToC {
   /** The catch filter chain: try each filtered catch by type, then the default; no match rethrows. */
   private emitCatchChain(s: Extract<CStmt, { kind: "c-try" }>, catches: Extract<CStmt, { kind: "c-try" }>["catches"], i: number): void {
     if (i >= catches.length) {
-      // No arm matched -> this frame is leaving via a throw, so run ITS finalizer before rethrowing.
-      // `ll_handler_top` is already `f.prev` (popped at the top of the else arm), so both the finalizer
-      // and the rethrow target the enclosing frame; a throw inside the finalizer propagates correctly.
-      // Outer finalizers are NOT run here -- they fire as the rethrow re-lands at each enclosing level
-      // (throw is frame-by-frame; a `return` is all-at-once, which is why emitReturn differs).
-      if (s.finalizer) this.emitFinalizer(s.finalizer, this.tryStack.slice(0, -1));
+      // No arm matched -> rethrow. ll_throw -> ll_unwind walks out from ll_handler_top (already this try's
+      // CLEANUP frame or the enclosing handler): the CLEANUP pad runs this try's `finally` on the way, so
+      // there is no inline finalizer here anymore (that was the Phase-0 model, pre-Cr-0).
       this.line(`ll_throw(${s.errVar});`);
       return;
     }

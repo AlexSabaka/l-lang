@@ -279,8 +279,11 @@ export type CStmt = CBase & (
   | CHandle
 );
 
-/** A try/catch/finally, lowered to a setjmp/longjmp handler frame. Each catch may filter on an
- *  error class name (`catch e :of T`); an unfiltered catch is the default; no match rethrows. */
+/** A try/catch/finally. At emit time (Cr-0) it becomes up to two `ll_frame`s on the unified handler
+ *  stack -- a CLEANUP frame (per `finally`) wrapping a CATCH frame (per catch chain) -- walked by
+ *  `ll_unwind`. That CLEANUP/CATCH split is a C-emission detail and deliberately does NOT live here (the
+ *  JS backend lowers this same node to a native `TryStatement`). Each catch may filter on an error class
+ *  name (`catch e :of T`); an unfiltered catch is the default; no match rethrows. */
 export interface CTry {
   kind: "c-try";
   tryBlock: CBlock;

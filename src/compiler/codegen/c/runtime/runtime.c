@@ -193,110 +193,106 @@ extern ll_class *__ll_class_registry[];
 extern size_t __ll_class_count;
 static const ll_class *ll_class_by_name(const char *name); /* fwd: used by dynamic dispatch below */
 
-/* -- exceptions: try/catch/throw via a setjmp/longjmp handler stack (native-only; JS gets this free).
- * `throw` sets the current frame's error and longjmps; the emitted try block installs a frame. ---- */
-
-typedef struct ll_try_frame {
-  jmp_buf buf;
-  ll_value err;
-  struct ll_try_frame *prev;
-} ll_try_frame;
-
-static ll_try_frame *ll_handler_top = 0;
-
-static void ll_throw(ll_value err) {
-  if (!ll_handler_top) {
-    /* Uncaught: mirror node's "Uncaught <message>" then exit non-zero. */
-    const char *msg = "exception";
-    if (err.tag == LL_OBJ) {
-      const ll_class *cls = err.as.o->cls;
-      for (size_t i = 0; i < cls->field_count; i++) {
-        if (strcmp(cls->field_names[i], "message") == 0 && err.as.o->fields[i].tag == LL_STR) {
-          msg = err.as.o->fields[i].as.s->data;
-        }
-      }
-      fprintf(stderr, "Uncaught %s: %s\n", cls->name, msg);
-    } else if (err.tag == LL_STR) {
-      fprintf(stderr, "Uncaught %s\n", err.as.s->data);
-    } else {
-      fprintf(stderr, "Uncaught exception\n");
-    }
-    exit(70);
-  }
-  ll_handler_top->err = err;
-  longjmp(ll_handler_top->buf, 1);
-}
-
-/* ================================================================================================
- * D47 CONDITIONS / RESTARTS -- SCAFFOLD (TODO restart-stage2)
- *
- * A CL-style resumable-condition kernel: a SECOND mechanism beside try/catch. `signal` walks a handler
- * stack IN PLACE (an ordinary C call, NO longjmp -- that is the property that makes resumption possible);
- * `invoke-restart` performs a non-local transfer to a marked restart point. The ONE hard part (D47): a
- * restart transfer MUST run intervening finally/:destructor cleanups, so restarts hook the SAME cleanup
- * stack the try/catch lowering uses -- NOT a parallel one.
- *
- * FINAL SHAPE (stage 0/2 of the blueprint): rename `ll_try_frame` -> `ll_frame` with a `kind` tag, keep
- * `ll_handler_top` as the single head, and route BOTH `ll_throw` and `ll_invoke_restart` and the
- * return/break/continue epilogue through ONE `ll_unwind(from, mode, target, payload, which)` primitive
- * that longjmp-hops into each intervening CLEANUP frame's inline-finally pad. That unification is a
- * REFACTOR of the existing try/catch lowering and is deliberately NOT done here (this scaffold is
- * additive-only): the structs + stubs below stand alongside the current `ll_try_frame` chain and are not
- * yet wired (ResolveHirToCir refuses restart forms today -- LL0106 gap). Stage 2 replaces `ll_try_frame`
- * with `ll_frame`, points `ll_handler_top` at it, and fills the stub bodies.
- * ============================================================================================== */
+/* -- exceptions + unwinding: try/catch/finally/throw over a unified `ll_frame` handler stack, walked by
+ * ONE `ll_unwind` primitive (native-only; JS gets this free via a real try/finally). A `try` installs a
+ * CLEANUP frame per `finally` (an inline pad longjmp'd into) and a CATCH frame per catch chain; `throw`
+ * routes through `ll_unwind`, which runs each intervening CLEANUP finally then lands at the nearest CATCH
+ * (or prints "Uncaught ..." and exits 70). The D47 restart lowering (Cr-1) reuses the SAME stack + the
+ * SAME primitive: `ll_unwind(RESTART)` runs the same CLEANUP finallys while SKIPPING the CATCH frames. -- */
 
 typedef enum { LL_CATCH, LL_CLEANUP, LL_HANDLER, LL_RESTART, LL_BOUNDARY } ll_kind;
 typedef enum { LL_UNWIND_NONE = 0, LL_UNWIND_THROW, LL_UNWIND_RESTART, LL_UNWIND_RETURN } ll_unwind_mode;
 
-/* The unified frame (stage-2 target; `ll_try_frame` folds into this). `err` doubles as the unwind
- * payload. A CLEANUP frame with dtor!=NULL is a function-cleanup (D15 :destructor) called DIRECTLY during
- * the walk; dtor==NULL is a pad-cleanup (inline `finally`) longjmp'd into. A HANDLER frame carries ONE
- * ordered clause list per (handle) form. A RESTART frame carries the restart names it offers. */
+/* The unified handler-stack frame. `err` doubles as the unwind payload. A CLEANUP frame with dtor!=NULL is
+ * a function-cleanup (D15 :destructor) called DIRECTLY during the walk; dtor==NULL is a pad-cleanup (inline
+ * `finally`) longjmp'd into. The HANDLER/RESTART fields back the D47 restart lowering (Cr-1). */
 typedef struct ll_frame {
   ll_kind kind;
   jmp_buf buf;
   ll_value err;
   struct ll_frame *prev;
-  int pending;              /* CLEANUP/RESTART/RETURN resume state (an ll_unwind_mode) */
-  struct ll_frame *target;  /* the frame this transfer is aimed at */
-  int which;               /* RESTART: chosen restart index; RETURN: break/continue/return code */
+  int pending;              /* CLEANUP resume state (an ll_unwind_mode); NONE on a structured exit */
+  struct ll_frame *target;  /* the frame a transfer is aimed at (RESTART/BOUNDARY -- Cr-1) */
+  int which;               /* RESTART: chosen restart index; RETURN: return/break/continue code (Cr-1) */
   void (*dtor)(ll_value);  /* CLEANUP: non-NULL = function-cleanup (D15), NULL = pad-cleanup (finally) */
   ll_value self;           /* CLEANUP: the dtor's argument */
-  /* HANDLER: the ordered clause list (source order; first match wins). */
+  /* HANDLER: the ordered clause list (source order; first match wins) -- Cr-1. */
   const char **cond_types;
   ll_value (**handlers)(void *, ll_value);
   void *henv;
   size_t clause_count;
   int active;              /* 0 IFF this handler is currently executing on the C stack (re-entry guard) */
-  /* RESTART: the offered restart names. */
+  /* RESTART: the offered restart names -- Cr-1. */
   const char **names;
   size_t name_count;
-  int exit_mode;           /* BOUNDARY: distinguishes return vs break vs continue landings */
+  int exit_mode;           /* BOUNDARY: distinguishes return vs break vs continue landings -- Cr-1 */
 } ll_frame;
 
-/* A SEPARATE scaffold head (stage 2 merges this into ll_handler_top). Unused until the restart lowering
- * lands; kept so the stubs below type-check as real C. */
-static ll_frame *ll_d47_frame_top = 0;
+static ll_frame *ll_handler_top = 0;
 
-/* The ONE unwind primitive (stage-2 target): walk `from`, running each intervening CLEANUP frame's
- * finalizer (dtor call or inline-finally longjmp pad), until `target`/a matching CATCH is reached. A
- * registration-free LEAF, so a nested longjmp discarding its activation is always safe. STUBBED. */
-static void ll_unwind(ll_frame *from, ll_unwind_mode mode, ll_frame *target, ll_value payload, int which) {
-  (void)from; (void)mode; (void)target; (void)payload; (void)which;
-  /* TODO(restart-stage2): walk the chain, hop into CLEANUP pads (running finally/:destructor exactly
-   * once each), longjmp into the matching CATCH (THROW) / target RESTART / target BOUNDARY. */
-  ll_trap("ControlError", "ll_unwind: D47 restart lowering not implemented (restart-stage2)");
+/* An exception ran off the top of the handler stack: mirror node's "Uncaught <message>" then exit 70. */
+static void ll_uncaught(ll_value err) {
+  const char *msg = "exception";
+  if (err.tag == LL_OBJ) {
+    const ll_class *cls = err.as.o->cls;
+    for (size_t i = 0; i < cls->field_count; i++) {
+      if (strcmp(cls->field_names[i], "message") == 0 && err.as.o->fields[i].tag == LL_STR) {
+        msg = err.as.o->fields[i].as.s->data;
+      }
+    }
+    fprintf(stderr, "Uncaught %s: %s\n", cls->name, msg);
+  } else if (err.tag == LL_STR) {
+    fprintf(stderr, "Uncaught %s\n", err.as.s->data);
+  } else {
+    fprintf(stderr, "Uncaught exception\n");
+  }
+  exit(70);
 }
 
-/* (signal <cond>) -- walk the handler stack IN PLACE (no longjmp), trying each frame's clauses in SOURCE
- * order; a matching clause runs as an ORDINARY C call with the handler's cluster marked inert. All decline
- * => RETURN nil (an unhandled signal is NOT an error). A handler that performs a non-local transfer
- * diverges via ll_unwind. STUBBED: returns nil (the all-decline answer) so a stage-1 caller is harmless. */
+/* The ONE unwind primitive. Walk `from` outward: at a CLEANUP frame run its finalizer (a direct dtor call,
+ * or -- for an inline `finally` -- longjmp into its pad, which runs the finally then RESUMES this walk); at
+ * a CATCH frame (THROW only) longjmp into the emitted type-filter/rethrow pad. Off the end with no CATCH
+ * => uncaught. Each CLEANUP-pad longjmp collapses the C stack back to the user frame before the pad resumes
+ * ll_unwind, so the walk never deep-recurses. `target`/`which` + the RESTART/RETURN modes are threaded for
+ * Cr-1 (unused on the THROW path today). */
+static void ll_unwind(ll_frame *from, ll_unwind_mode mode, ll_frame *target, ll_value payload, int which) {
+  for (ll_frame *f = from; f; f = f->prev) {
+    if (f->kind == LL_CLEANUP) {
+      if (f->dtor) { ll_handler_top = f->prev; f->dtor(f->self); continue; } /* D15 function-cleanup (Cr-1) */
+      f->pending = mode; f->err = payload; f->target = target; f->which = which;
+      longjmp(f->buf, 1); /* into the inline finally pad; never returns */
+    }
+    if (f->kind == LL_CATCH && mode == LL_UNWIND_THROW) {
+      f->err = payload;
+      longjmp(f->buf, 1); /* into the emitted catch-filter/rethrow pad */
+    }
+    /* LL_HANDLER / LL_RESTART / LL_BOUNDARY: not a THROW landing -- skipped (Cr-1 handles RESTART/RETURN). */
+  }
+  ll_uncaught(payload);
+}
+
+/* `throw` is a thin unwind: hand the payload to ll_unwind in THROW mode. */
+static void ll_throw(ll_value err) {
+  ll_unwind(ll_handler_top, LL_UNWIND_THROW, 0, err, 0);
+}
+
+/* ================================================================================================
+ * D47 CONDITIONS / RESTARTS -- the remaining stubs (TODO restart-stage2, i.e. Cr-1).
+ *
+ * The unified ll_frame + ll_unwind stack above is now LIVE (Cr-0). What remains for the resumable-condition
+ * kernel: `signal` walks the LL_HANDLER frames IN PLACE (an ordinary C call, NO longjmp -- the property
+ * that makes resumption possible); `invoke-restart` performs a non-local transfer to a marked LL_RESTART
+ * frame via ll_unwind(RESTART), which -- crucially -- runs the intervening CLEANUP finallys exactly as a
+ * throw does. Both are still refused by ResolveHirToCir (LL0106), so these bodies are unreachable stubs.
+ * ============================================================================================== */
+
+/* (signal <cond>) -- walk ll_handler_top's LL_HANDLER frames IN PLACE (no longjmp), trying each frame's
+ * clauses in SOURCE order; a matching clause runs as an ORDINARY C call with the handler's cluster marked
+ * inert. All decline => RETURN nil (an unhandled signal is NOT an error). A handler that performs a
+ * non-local transfer diverges via ll_unwind. STUBBED: returns nil (the all-decline answer). */
 static ll_value ll_signal(ll_value cond) {
   (void)cond;
-  /* TODO(restart-stage2): walk ll_d47_frame_top's LL_HANDLER frames; push a transient active-restore
-   * CLEANUP around each handler call; suppress the running handler's cluster by boundary. */
+  /* TODO(restart-stage2): walk ll_handler_top's LL_HANDLER frames; run each clause with its cluster inert. */
   return ll_nil();
 }
 
@@ -305,8 +301,8 @@ static ll_value ll_signal(ll_value cond) {
  * STUBBED. */
 static ll_value ll_invoke_restart(const char *name, ll_value packed_args) {
   (void)name; (void)packed_args;
-  /* TODO(restart-stage2): scan ll_d47_frame_top for the restart, pack args into target->err, then
-   * ll_unwind(ll_d47_frame_top, LL_UNWIND_RESTART, target, packed_args, which). */
+  /* TODO(restart-stage2): scan ll_handler_top for the restart, pack args into target->err, then
+   * ll_unwind(ll_handler_top, LL_UNWIND_RESTART, target, packed_args, which). */
   ll_trap("ControlError", "ll_invoke_restart: D47 restart lowering not implemented (restart-stage2)");
   return ll_nil();
 }
