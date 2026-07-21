@@ -435,10 +435,11 @@ proven by a characterization snapshot (`test:diagnostics`, 42 probes, byte-for-b
 *   [ ] **The core tail (D48).** The readiness report's remaining dips resolved *onto* nodes. Step 1,
         the cheap drains, is **done** — the A5 copy-decision (as `copies` fields on `HReturn`/`HVarDecl`
         rather than a distinct `HCopyStore`), the field-get slot on `HMemberRead`, and callee-identity
-        on the call nodes. Remaining, in order: **`HMatchTest`** (patterns as an IR fact — still the
-        last opaque-leaf class: `HPatternTest.pattern` is a raw `ast.PatternNode` and the test is built
-        at emit time by the legacy `generateCondition`) → the **closure representation** (the one real
-        design commitment left) → A1 field types. Governed by A-0: nodify what *both* backends decide;
+        on the call nodes. **The core tail is DONE.** `HMatchTest` landed (A7 drained
+        144 -> 2, its floor); the **closure representation** landed (HClosure carries the capture set and
+        each capture's D10-derived mode); `HFor` gained a statement-bearing `:step`, draining the
+        `raw-structural` family to zero; and **A1 field types** now ride `HFieldDecl`/`HCtorParam`, so a
+        native backend no longer walks the class body to learn what a field IS. Governed by A-0: nodify what *both* backends decide;
         reclassify only genuine single-backend passes (A6 coercions leave core).
 
 ## 🔮 The language-feature lane (2026-07 design round)

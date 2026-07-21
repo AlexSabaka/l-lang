@@ -721,6 +721,12 @@ export interface HFieldDecl {
   name: ast.ASTNode;
   valueSrc: ast.ASTNode | null;
   isStatic: boolean;
+  /**
+   * The field's DECLARED type annotation (A1, D48 step 4), the same shape `HCtorParam.type` carries.
+   * The field LAYOUT has ridden HClass since A4, but the layout is not the type: a native backend was
+   * still walking the class body AST to learn what each field IS. It reads this instead.
+   */
+  type: ast.TypeNode | undefined;
 }
 
 /**

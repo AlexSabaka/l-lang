@@ -379,14 +379,23 @@ export class ResolveHirToCir {
     // an HClass (an imported/desugared copy) fall back to the checker's ctorInfo + body scan.
     let ownFields: { name: string; ctype: CType; default?: ast.ASTNode }[];
     if (hc) {
-      // The A4 field-layout dip is CLOSED (consumed from HClass); what remains is the field TYPE read from
-      // the AST annotation -- the A1 type layer the HIR does not carry yet. Recorded honestly as A1.
-      this.ledger.record("A1", isStruct ? "defstruct-field-types" : "defclass-field-types", node, "field layout consumed from HClass; field TYPES still read from AST annotations (HIR carries no field types)");
+      // Layout AND field TYPES both ride HClass now (A4 + A1/D48 step 4): a `:ctor` field's type comes
+      // from its constructor parameter, a plain field's from HFieldDecl.type. No class-body AST walk.
+      const modeledType = new Map<string, CType>();
+      for (const p of (hc.ctor?.params ?? []) as any[]) {
+        const ct = this.typeNodeToCType(p.type);
+        if (ct) modeledType.set(p.name, ct);
+      }
+      for (const f of (hc.fields ?? []) as any[]) {
+        const nm = ast.symbolName(f.name);
+        const ct = this.typeNodeToCType(f.type) ?? this.ctypeFromLiteral(f.valueSrc);
+        if (ct) modeledType.set(nm, ct);
+      }
       const ownNames: string[] = [
         ...((hc.ctor?.fieldInits ?? []) as any[]).map((fi) => ast.symbolName(fi.field)),
         ...((hc.fields ?? []) as any[]).map((f) => ast.symbolName(f.name)),
       ];
-      ownFields = ownNames.map((nm) => ({ name: nm, ctype: astFieldTypes.get(nm) ?? memberType(nm), default: astFieldDefaults.get(nm) }));
+      ownFields = ownNames.map((nm) => ({ name: nm, ctype: modeledType.get(nm) ?? memberType(nm), default: astFieldDefaults.get(nm) }));
     } else {
       this.ledger.record("A4", isStruct ? "defstruct" : "defclass", node, "construction/field-layout resolved from the symbol table (no HClass -- imported/desugared copy)");
       const ctorParams: any[] = t?.ctorInfo?.params ?? [];

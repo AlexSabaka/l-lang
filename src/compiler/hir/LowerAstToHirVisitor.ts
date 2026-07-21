@@ -559,6 +559,7 @@ export class LowerAstToHirVisitor {
         name: v.name,
         valueSrc: (v as any).value ?? null,
         isStatic: mods.includes("static"),
+        type: (v as any).type,
       });
     }
     return fields;
