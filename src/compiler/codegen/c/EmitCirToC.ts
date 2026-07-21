@@ -342,9 +342,34 @@ export class EmitCirToC {
           this.line(`${this.declType(s.declCType, s.cName)} ${s.cName} = ${s.init ? this.expr(s.init) : defaultInit(s.declCType)};`);
         }
         return;
-      case "c-assign":
-        this.line(`${this.lvalue(s.target)} = ${this.expr(s.value)};`);
+      case "c-assign": {
+        // A CONTAINER-slot store must evaluate its value BEFORE taking the slot address.
+        //
+        // `ll_map_slot` / `ll_index_slot` / `(vec)->items` all hand back a pointer INTO the
+        // container's storage, and that storage is `realloc`ed when the container grows. So
+        //
+        //     *ll_map_slot(memo, k) = fib(n-1) + fib(n-2);
+        //
+        // computes the slot, then runs a right-hand side that recursively inserts into `memo` --
+        // and writes through a pointer freed by the realloc those inserts caused. Memory
+        // corruption, surfacing as whatever the freed cell happens to hold (here: a bogus tag, so
+        // the read on the next line trapped "expected an Int" three frames away from the cause).
+        //
+        // P2 has already coerced every non-`name` target's value to `ll_value`, so one boxed temp
+        // is always the right shape. A `name` target has no such storage and is left alone.
+        if (s.target.kind === "name") {
+          this.line(`${this.lvalue(s.target)} = ${this.expr(s.value)};`);
+          return;
+        }
+        const tmp = `__ll_st${this.fresh++}`;
+        this.line("{");
+        this.indent++;
+        this.line(`ll_value ${tmp} = ${this.expr(s.value)};`);
+        this.line(`${this.lvalue(s.target)} = ${tmp};`);
+        this.indent--;
+        this.line("}");
         return;
+      }
       case "c-if":
         this.line(`if (${this.expr(s.test)}) {`);
         this.indent++;
