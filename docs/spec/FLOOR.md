@@ -339,12 +339,27 @@ work and each, until done, is exactly one named not-yet guard, the same pattern 
 establish. Nothing is silently deferred. (Ryū was a third until D51's amendment (c) showed
 `ll_fmt_double` already generates shortest-round-trip digits; what remains is threshold matching.)
 
-**Two corrections to this document's own first draft.** `println` is listed above and in §2 as part of
+**A correction to this document's own first draft.** `println` is listed above and in §2 as part of
 the `std/io` surface; it **does not exist** anywhere in `lib/` — it is aspirational, and Fb either
-writes it or the mention goes. And §5.2 cluster 1 may not need Fb at all: `ResolveHirToCir` consults
-`INTRINSIC_CALLS` *before* the branch that lowers an imported l-lang body, so `print` matches the
-table and io.lisp's body is simply unreachable. Removing that one table entry may green the cluster on
-its own; it is worth trying before building on the assumption that it cannot.
+writes it or the mention goes.
+
+**What Fb actually needs, measured.** §5.2 cluster 1 looked like it might be pure lookup order:
+`ResolveHirToCir` consults `INTRINSIC_CALLS` *before* the branch that lowers an imported l-lang body,
+so `print` matched the table and io.lisp's body was unreachable. Removing the `print`/`prn` entries
+was tried, and it is **necessary but not sufficient** — the guard moves from "output mismatch" to a
+*compile* error, `C emit: no cast int -> vec`, at the first `(print "x={0}" 5)`. The real blocker is
+one layer down:
+
+> **The C backend cannot pack a rest parameter.** `print`'s signature is
+> `[msg <- String ...args <- Any[]]`, and lowering its body means materialising `5` into the `Any[]`
+> slot. There is no rest-argument packing anywhere in `ResolveHirToCir`. The reason C ever appeared to
+> handle `print` is that `ll_console_log` is declared `variadic: true`, i.e. a **C varargs call** —
+> a different mechanism entirely, which boxes arguments at the call site instead of building an array
+> the callee can index.
+
+So Fb's first item is rest-parameter packing for lowered l-lang bodies; the table entries come out
+*after* that, not before. Both `print` and `prn` therefore stay in `intrinsics.ts` for now, and the
+guard stays a soft `not-yet` — which is exactly the ratchet doing its job.
 
 ---
 
