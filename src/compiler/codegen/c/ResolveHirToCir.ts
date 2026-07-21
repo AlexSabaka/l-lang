@@ -1104,9 +1104,13 @@ export class ResolveHirToCir {
       }
 
       case "member-read":
-        // A3: a modeled field READ `(obj.field)` -- dispatch straight to the member resolver (0 args), the
-        // same slot access / __ll_member the raw path produced, minus resolveCall's A3:call-dispatch dip.
-        return this.dispatchMemberCall(h.src as ast.ListNode, []);
+        // A3: a modeled field READ `(obj.field)`. classifyCall already decided this is a 2-part field on a
+        // `composite-identifier` receiver and left that callee on `head`; consume it STRAIGHT through
+        // resolveDottedCall -- the exact resolver dispatchMemberCall reaches for a dotted head -- instead of
+        // re-running classifyList on the raw list. Provably byte-identical (a member-read head is always a
+        // composite-identifier, and its 0 args are dead against the empty argVals), minus the double
+        // classification (classifyCall HIR-side vs classifyList C-side) -- the Q5 drain.
+        return this.resolveDottedCall(h.src as ast.ListNode, h.head as ast.CompositeIdentifierNode, [], []);
 
       case "formatted-string": {
         // A2: consume the modeled segments -- an interpolation rides its HExpr (resolveExpr), so neither
