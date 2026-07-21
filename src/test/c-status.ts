@@ -25,7 +25,12 @@ export const C_PASSING: readonly string[] = [
   "02-control-flow/03_flow_cond.lisp",
   "02-control-flow/04_flow_control.lisp",
   "03-loops/00_for_loop.lisp",
-  // 03-loops/01_for.lisp needs closures + the `call` builtin -- Phase B.
+  // 03-loops/01_for.lisp COMPILES since the `for :else` scope fix, but loops forever, so it times out
+  // rather than failing to build. Cause is Phase B, not emission: a `fn` declared inside a `for :init`
+  // is registered as a TOP-LEVEL C function (resolveAstStmt only asks `inFunctionBody`, and a for-init
+  // at module level is not "in a function"), so it closes over a HOISTED GLOBAL `j` while the loop
+  // body reads the same-named block local -- two storages, and the step never moves the one the
+  // condition reads. Wants nested `fn` declarations lowered as closures.
   "03-loops/03_for_each.lisp",
   "03-loops/04_foreach.lisp",
   "03-loops/05_while.lisp",

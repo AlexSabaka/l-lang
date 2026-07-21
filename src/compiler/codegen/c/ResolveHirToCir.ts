@@ -722,8 +722,10 @@ export class ResolveHirToCir {
             test: h.test ? this.resolveExpr(h.test) : null,
             update,
             body: this.resolveBlock(h.body),
+            // On the node, not a trailing sibling: `:else` reads the `:init` bindings, which live in
+            // the block the loop opened. See the raw-structural path for the same reasoning.
+            elseBlock: h.elseBlock ? this.resolveBlock(h.elseBlock) : null,
           }];
-          if (h.elseBlock) out.push({ src: h.src, ctype: C_VOID, kind: "c-block", body: this.resolveBlock(h.elseBlock) });
           return out;
         }
 
@@ -1563,15 +1565,17 @@ export class ResolveHirToCir {
       case "for": {
         this.ledger.record("new", "raw-structural:for", node, "HFor cannot carry a statement-bearing :step; whole for arrives raw");
         const n = node as ast.ForNode;
-        const out: CStmt[] = [{
+        // `:else` rides the node instead of trailing it as a sibling block: it runs after the loop but
+        // is still inside the `:init` scope, and `(for :init (mut sum 0) ... :else (log sum))` is the
+        // normal way to use it. Emitted as a sibling it landed outside the braces holding `sum`.
+        return [{
           src: node, ctype: C_VOID, kind: "c-for",
           init: n.initial ? { stmts: this.resolveAstStmt(n.initial) } : { stmts: [] },
           test: n.condition ? this.resolveAstExpr(n.condition) : null,
           update: n.step ? this.singleStmt(this.resolveAstStmt(n.step), n.step) : null,
           body: this.resolveAstBlock(n.then),
+          elseBlock: n.else ? this.resolveAstBlock(n.else) : null,
         }];
-        if (n.else) out.push({ src: node, ctype: C_VOID, kind: "c-block", body: this.resolveAstBlock(n.else) });
-        return out;
       }
       case "for-each": {
         this.ledger.record("new", "raw-structural:for-each", node, "for-each reached codegen raw (inside a bailed subtree)");

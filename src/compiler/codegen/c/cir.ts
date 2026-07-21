@@ -393,6 +393,9 @@ export interface CFor {
   test: CExpr | null;
   update: CStmt | null;
   body: CBlock;
+  /** D12 `:else`, which runs after the loop and SEES the `:init` bindings -- so it has to be emitted
+   *  inside the same C block, exactly like c-foreach's. As a sibling statement it could not. */
+  elseBlock: CBlock | null;
 }
 
 /** A for-each over a vector/string, lowered to an index loop (iterator protocol is later work). */

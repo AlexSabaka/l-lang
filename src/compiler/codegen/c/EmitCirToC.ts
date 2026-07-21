@@ -392,6 +392,7 @@ export class EmitCirToC {
         this.emitBlockStmts(s.body);
         this.indent--;
         this.line("}");
+        if (s.elseBlock) this.emitBlockStmts(s.elseBlock); // inside the block: `:else` sees `:init`
         this.indent--;
         this.line("}");
         return;

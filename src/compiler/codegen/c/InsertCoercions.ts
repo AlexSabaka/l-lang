@@ -82,6 +82,7 @@ export class InsertCoercions {
           test: s.test ? this.coerce(this.expr(s.test), C_BOOL) : null,
           update: s.update ? this.stmt(s.update, ret) : null,
           body: this.block(s.body, ret),
+          elseBlock: s.elseBlock ? this.block(s.elseBlock, ret) : null,
         };
       case "c-try":
         return {
