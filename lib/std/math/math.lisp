@@ -8,7 +8,7 @@
   ;; `Complex`, which `complex_math_test/main.lisp` constructs. Nine leaked names; the whole corpus
   ;; blast radius of D20 was this one list.
   (export sqr sqrt sin cos tan log exp
-          abs floor ceil round pow min max inc dec
+          abs floor ceil round truncate pow min max inc dec
           E PI TAU
           Complex Vector3)
   ;; NOT `Number`. It belongs to std/types now, and a module cannot re-export a symbol it does not
@@ -28,16 +28,38 @@
   (fn dec [n <- Number] -> Number (- n 1))
 
   (fn abs [n <- Number] -> Number (Math.abs n))
-;; -> Int, not -> Number. `floor`, `ceil` and `round` MAP ONTO THE INTEGERS -- that is what they are
-  ;; for -- and declaring them `Number` (which is `Int | Real`) made every caller's `-> Int` a lie:
-  ;;     (fn random-int [...] -> Int (floor (rand min max)))   ->  LL0213
-  ;; The error was real and had been invisible, because `99-p5js` never resolved `floor` at all: an
-  ;; import earlier in the file errored, and the post-syntax gate then skipped std/math's symbols
-  ;; entirely. Fixing that cascade is what exposed this.
-  (fn floor [n <- Number] -> Int (Math.floor n))
-  (fn ceil [n <- Number] -> Int (Math.ceil n))
-  (fn round [n <- Number] -> Int (Math.round n))
-  
+
+  ;; -> Real, NOT -> Int (D51 amendment (b)). These map onto the integers as VALUES, but their
+  ;; representation stays Real, and the distinction is load-bearing in two places:
+  ;;
+  ;;   * D51's own float->int tie-break rule says `-0.5 -> -0`, and `-0` is not an Int value. The
+  ;;     rule only parses if the result is Real.
+  ;;   * Under D49d (`Int / Int` IS integer division), `-> Int` silently changes what arithmetic
+  ;;     MEANS downstream: the idiomatic round-to-2-places spelling
+  ;;         (/ (round (* x 100)) 100)
+  ;;     becomes integer division and returns 0 instead of 0.87. A silent wrong answer -- the exact
+  ;;     class FLOOR.md exists to eliminate -- introduced by the stdlib's own signature.
+  ;;
+  ;; This also ends a disagreement nobody could see: `codegen/c/intrinsics.ts` has ALWAYS declared
+  ;; `Math.floor : Real -> Real`, while this file said `-> Int`. Neither half could check the other,
+  ;; because `Math` is an untyped extern (lib/std/js/js.lisp), so the checker's return-check bails on
+  ;; Unknown and never compares them. The C backend papered over it with an implicit narrowing cast.
+  ;;
+  ;; Narrowing is now NAMED at the site that wants it, via `truncate` below -- which is what D43
+  ;; ("static types decide") asks for. The previous version of this comment argued the opposite and
+  ;; cited `(fn random-int [...] -> Int (floor (rand min max)))`'s LL0213 as justification; that call
+  ;; site is now `(truncate (rand ...))`, which says what it means.
+  (fn floor [n <- Number] -> Real (Math.floor n))
+  (fn ceil [n <- Number] -> Real (Math.ceil n))
+  (fn round [n <- Number] -> Real (Math.round n))
+
+  ;; The SOLE Real -> Int door (D51 amendment (b)). Truncates toward zero, agreeing with D49d's
+  ;; `Int / Int` and with C's `int64_t` cast. A builtin conversion, so it does not collide with
+  ;; D46/B-3's `(cast<T> x)`, which is the explicit-cast syntax for USER-DEFINED `defcast`s; when
+  ;; Phase Cv lands, `(cast<Int> r)` routes through this rather than competing with it.
+  (fn truncate [n <- Number] -> Int (Math.trunc n))
+
+
   (fn pow [base <- Number exp <- Number] -> Number (Math.pow base exp))
   
   (fn min [a <- Number b <- Number] -> Number (Math.min a b))

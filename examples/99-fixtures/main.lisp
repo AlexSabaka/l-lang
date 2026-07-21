@@ -22,7 +22,9 @@
     ))
 
     (fn random-int [min <- Int max <- Int] -> Int (
-        (floor (rand min (+ max 1)))
+        ;; `truncate`, not `floor`: std/math's `floor` returns Real (D51 amendment (b)), and
+        ;; `truncate` is the sole Real -> Int door. It also says what this line means.
+        (truncate (rand min (+ max 1)))
     ))
 
     (fn clamp [val <- Real min <- Real max <- Real] -> Real (

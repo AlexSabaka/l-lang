@@ -76,7 +76,9 @@
         (board := fresh)
         (lines := (+ lines cleared))
         (score := (+ score (* (line-score cleared) level)))
-        (level := (+ 1 (Math.floor (/ lines 10))))
+        ;; `(/ lines 10)` is Int / Int, i.e. already integer division (D49d) -- the `Math.floor`
+        ;; that used to wrap it was redundant, and now would return Real into an Int binding.
+        (level := (+ 1 (/ lines 10)))
         (return cleared))
 
     ;; ---- the scoring cond, standalone ----

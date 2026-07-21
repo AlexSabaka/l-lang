@@ -77,7 +77,10 @@
         (let n (* WIDTH HEIGHT))
         (while (< i n) (
             (let c cells[i])
-            (if (! c.mine) (c.count := (count-neighbours (% i WIDTH) (Math.floor (/ i WIDTH)))))
+            ;; No `Math.floor` around `(/ i WIDTH)`: both operands are Int, so D49d already makes
+            ;; this integer division. The wrapper was redundant, and under D51 amendment (b) it
+            ;; would now return Real into an Int-typed parameter.
+            (if (! c.mine) (c.count := (count-neighbours (% i WIDTH) (/ i WIDTH))))
             (i := (+ i 1)))))
 
     ;; ---------------- the recursive flood ----------------
