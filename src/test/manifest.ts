@@ -236,19 +236,11 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "15-modules/02_packages/geometry/shapes.lisp": { status: "library" },
   "15-modules/02_packages/geometry/measure.lisp": { status: "library" },
 
-  // --- proposed-examples: regressed since the audit commit (23a24cd -> HEAD) ---
-  "11-comptime/01_comptime_table.lisp": {
-    status: "xfail",
-    reason:
-      "REGRESSION since audit commit 23a24cd (was 10/10 green under bin/verify-examples; broken by " +
-      "HEAD). NEW BUG in the :comptime inliner: a :comptime helper `deg-to-rad` is called by another " +
-      ":comptime fn `cos2`, and `cosines` folds `cos2` five times. Each fold re-inlines `deg-to-rad` " +
-      "into the SAME comptime-eval scope, emitting a duplicate `const __ll_inlined_deg2dto2drad_1` -- " +
-      "the evaluator throws 'Identifier __ll_inlined_deg2dto2drad_1 has already been declared' (LL0099). " +
-      "Squares/triangles/lookup-square fold fine; only the nested comptime-calls-comptime, folded >1x, " +
-      "collides. Same family as ROADMAP-DELTA AF-046 (comptime + inlining). No golden -- would bake a " +
-      "crash. Expected output documented in the writeup.",
-  },
+  // 11-comptime/01_comptime_table.lisp was an xfail here: a `:comptime` helper called by another
+  // `:comptime` fn, folded more than once, emitted a duplicate `const __ll_inlined_<f>_1` into one
+  // eval scope and threw LL0099. The cause was not the inliner but `uniqueIdentifier`, which advanced
+  // its counter on a local and never wrote it back, so every call returned `_1`. Fixed there; the
+  // example now folds and runs, and has a hand-verified golden, so it is an ordinary test.
 
   // --- l-lang-ex games: DROPPED (not node-runnable) after their runnable parts were extracted ---
   // The 7 full games (5 terminal, 2 p5) compiled clean but could never run under the golden harness
