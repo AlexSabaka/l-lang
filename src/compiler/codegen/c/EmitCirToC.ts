@@ -100,7 +100,10 @@ export class EmitCirToC {
     // Forward declarations FIRST: the class method-table adapters (below) call the method functions,
     // so those must be declared before the class descriptors.
     for (const f of m.functions) this.line(this.signature(f) + ";");
-    for (const l of m.lifted) this.line(`static ll_value ${l.liftedName}(void* __env, int __argc, ll_value* __argv);`);
+    for (const l of m.lifted) {
+      if (l.abi === "handler") this.line(`static ll_value ${l.liftedName}(void* __env, ll_value __cond);`);
+      else this.line(`static ll_value ${l.liftedName}(void* __env, int __argc, ll_value* __argv);`);
+    }
     for (const a of m.adapters) this.line(`static ll_value __ll_adapter_${a.forCName}(void* __env, int __argc, ll_value* __argv);`);
     if (m.functions.length || m.lifted.length || m.adapters.length) this.line("");
     // Struct/class descriptors (ll_class): field names in slot order, is_struct, `:extends` parent, and
@@ -128,9 +131,12 @@ export class EmitCirToC {
     // assigned in main at the binding's original position.
     for (const g of m.globals) this.line(`static ${cType(g.ctype)} ${g.cName} = ${staticZero(g.ctype)};`);
     if (m.globals.length) this.line("");
-    // Env struct definitions for lifted closures that capture.
+    // Env struct definitions for lifted closures that capture. Deduped by name: the clauses of one
+    // D47 handle form share ONE struct (the frame has one henv); the first emission defines it for all.
+    const envEmitted = new Set<string>();
     for (const l of m.lifted) {
-      if (!l.envStruct) continue;
+      if (!l.envStruct || envEmitted.has(l.envStruct)) continue;
+      envEmitted.add(l.envStruct);
       this.line(`typedef struct ${l.envStruct} {`);
       this.indent++;
       for (const c of l.captures) this.line(`${c.cell ? "ll_value*" : cType(c.ctype)} ${c.field};`);
@@ -150,8 +156,28 @@ export class EmitCirToC {
     return this.out.join("\n") + "\n";
   }
 
-  /** A lifted closure body: unpack params from argv, captures from env, then the resolved body. */
+  /** A lifted closure body: unpack params from argv, captures from env, then the resolved body.
+   *  abi:"handler" (D47 Cr-1b) is a lifted handle clause instead: `(void* env, ll_value cond)`. */
   private emitLifted(l: CLifted): void {
+    if (l.abi === "handler") {
+      // The trailing return is the DECLINE (ll_signal discards a returning handler's value), and a
+      // `return` inside the clause is likewise a plain C return = decline (fresh tryStack below).
+      this.line(`static ll_value ${l.liftedName}(void* __env, ll_value __cond) {`);
+      this.indent++;
+      if (l.envStruct) this.line(`${l.envStruct}* __e = (${l.envStruct}*)__env; (void)__e;`);
+      else this.line("(void)__env;");
+      if (l.params.length) this.line(`ll_value ${l.params[0].cName} = __cond;`);
+      else this.line("(void)__cond;");
+      for (const c of l.captures) {
+        this.line(`${c.cell ? "ll_value*" : cType(c.ctype)} ${c.field} = __e->${c.field};`);
+      }
+      this.withFreshTryStack(() => this.emitBlockStmts(l.body));
+      this.line("return ll_nil();"); // fall-off-end = decline
+      this.indent--;
+      this.line("}");
+      this.line("");
+      return;
+    }
     this.line(`static ll_value ${l.liftedName}(void* __env, int __argc, ll_value* __argv) {`);
     this.indent++;
     this.line("(void)__argc;");
@@ -484,11 +510,39 @@ export class EmitCirToC {
         this.line("}");
         return;
       }
-      case "c-handle":
-        // D47 `handle` (Cr-1b): still refused by ResolveHirToCir, so never produced. Kept as the
-        // exhaustiveness anchor + stage plumbing until the LL_HANDLER lowering lands.
-        this.line(`/* TODO(Cr-1b): emit ${s.kind} -- LL_HANDLER frame + closure-converted clause handlers */`);
+      case "c-handle": {
+        // D47 (Cr-1b): ONE bookkeeping LL_HANDLER frame -- never a longjmp target (ll_signal walks it
+        // in place), so no setjmp pad. Clause handlers are lifted fns (abi:"handler") sharing one env,
+        // malloc'd + filled here (a fresh snapshot per execution of the form).
+        const hf = `__h${this.fresh++}`;
+        this.line("{");
+        this.indent++;
+        this.line(`ll_frame ${hf}; ${hf}.kind = LL_HANDLER; ${hf}.active = 1;`);
+        if (s.clauses.length) {
+          this.line(`static const char* ${hf}_types[] = {${s.clauses.map((c) => `"${cEscape(c.condType)}"`).join(", ")}};`);
+          this.line(`static ll_value (*${hf}_fns[])(void*, ll_value) = {${s.clauses.map((c) => c.handlerFnName).join(", ")}};`);
+          this.line(`${hf}.cond_types = ${hf}_types; ${hf}.handlers = ${hf}_fns; ${hf}.clause_count = ${s.clauses.length};`);
+        } else {
+          this.line(`${hf}.cond_types = 0; ${hf}.handlers = 0; ${hf}.clause_count = 0;`);
+        }
+        if (s.envStruct) {
+          this.line(`${s.envStruct}* ${hf}_env = (${s.envStruct}*)ll_alloc(sizeof(${s.envStruct}));`);
+          for (const c of s.captures) this.line(`${hf}_env->${c.field} = ${this.expr(c.value)};`);
+          this.line(`${hf}.henv = ${hf}_env;`);
+        } else {
+          this.line(`${hf}.henv = 0;`);
+        }
+        this.line(`${hf}.prev = ll_handler_top; ll_handler_top = &${hf};`);
+        // A `return` in the body must pop this frame (the c-restart-case discipline); non-local exits
+        // pop it for free (every landing pad resets ll_handler_top past the inner frames).
+        this.tryStack.push({ frameVar: hf, finalizer: null });
+        this.emitBlockStmts(s.body); // body assigns the pre-declared result temp
+        this.line(`ll_handler_top = ${hf}.prev;`); // completion: pop
+        this.tryStack.pop();
+        this.indent--;
+        this.line("}");
         return;
+      }
       default: {
         const never: never = s;
         throw new Error(`C emit: unhandled statement kind '${(never as any).kind}'`);
@@ -555,6 +609,9 @@ export class EmitCirToC {
         // D47 (Cr-1a): a diverging transfer to the named restart. The name is a BARE C string (not an
         // ll_str); packedArgs is the boxed positional arg vector (P2 boxed it) or nil.
         return `ll_invoke_restart("${cEscape(e.name)}", ${this.expr(e.packedArgs)})`;
+      case "c-signal":
+        // D47 (Cr-1b): the in-place LL_HANDLER walk; nil on all-decline, diverges on a transfer.
+        return `ll_signal(${this.expr(e.condition)})`;
       case "c-interp": {
         const parts = e.parts.map((p) =>
           typeof p === "string" ? `ll_box_str(ll_str_lit("${cEscape(p)}"))` : this.expr(p)

@@ -26,7 +26,7 @@ import {
 } from "./cir";
 import { CType, C_BOOL, C_INT, C_REAL, C_STR, C_VALUE, C_VOID, mapType, ctypeEquals } from "./ctype";
 import { INTRINSIC_CALLS, NATIVE_METHODS, NATIVE_FIELDS } from "./intrinsics";
-import { freeVariables } from "./freevars";
+import { freeVariables, freeVariablesOfBody } from "./freevars";
 
 const BINARY_OPS = new Set(["+", "-", "*", "/", "%", "==", "!=", "≠", "<", ">", "<=", ">=", "&&", "||"]);
 const NUMERIC = (t: CType) => t.k === "int" || t.k === "real";
@@ -589,6 +589,17 @@ export class ResolveHirToCir {
       for (const n of freeVariables(node as ast.FunctionNode)) into.add(n);
       return;
     }
+    if (node._type === "handle") {
+      // D47 (Cr-1b): a handle clause closure-converts like a nested fn -- a mut it references must
+      // become a cell (shared ll_value*), or the clause would mutate a dead install-time snapshot.
+      const hn = node as ast.HandleNode;
+      this.collectNestedFreeVars(hn.body, into);
+      for (const c of hn.clauses ?? []) {
+        const bound = c.binder ? [(c.binder as any).id ?? ast.symbolName(c.binder as any)] : [];
+        for (const n of freeVariablesOfBody(c.body ?? [], bound)) into.add(n);
+      }
+      return;
+    }
     for (const k of Object.keys(node)) {
       if (k.startsWith("_")) continue;
       this.collectNestedFreeVars(node[k], into);
@@ -735,10 +746,7 @@ export class ResolveHirToCir {
         case "restart-case":
           return this.resolveRestartCase(h);
         case "handle":
-          // D47 `handle` (Cr-1b): still refused. The LL_HANDLER frame + closure-converted clause handlers
-          // (the new (void*, ll_value)->ll_value ABI + ll_signal's in-place walk) land in the next
-          // sub-phase; restart-case/invoke-restart (Cr-1a) do not depend on it. See runtime.c ll_signal.
-          throw this.refuse(h.src, `${h.kind} (TODO Cr-1b: handle/signal)`, "resolveStmt");
+          return this.resolveHandle(h);
 
         case "field-init":
         case "super-call":
@@ -1000,6 +1008,80 @@ export class ResolveHirToCir {
     return { src: h.src, ctype: C_VOID, kind: "c-invoke-restart", name: h.name, packedArgs };
   }
 
+  /** D47 `handle`: ONE bookkeeping LL_HANDLER frame (no setjmp -- ll_signal walks it in place); each
+   *  clause closure-converts to a lifted `(void*, ll_value) -> ll_value` handler (abi:"handler") sharing
+   *  ONE union env (the frame has one henv). A clause that RETURNS declines -- a `return` in a clause
+   *  body returns from the lifted fn, not the user fn (a non-local exit is spelled invoke-restart).
+   *  Clauses close over the scope SURROUNDING the form (captures computed at install, before body locals
+   *  exist -- CL bind-time capture). The value flows via the pre-declared result temp (the body was
+   *  lowered to an assign-dest); clause bodies are EFFECT. */
+  private resolveHandle(h: Extract<HStmt, { kind: "handle" }>): CStmt[] {
+    this.ledger.record("A8", "handle", h.src, "handle lowered to a native LL_HANDLER frame + lifted (void*,ll_value) clause handlers; ll_signal walks in place (JS refuses -- LL0108)");
+    const node = h.src as ast.HandleNode; // AST clauses are index-parallel to the HIR clauses
+    const id = this.liftCounter++;
+
+    // Union captures across ALL clauses (one henv) -- computed BEFORE the body resolves, so body locals
+    // (declared into this flat scope by resolveBlock) cannot leak into the env.
+    const captures: CCapture[] = [];
+    const capType = new Map<string, { ctype: CType; cell: boolean }>();
+    (h.clauses ?? []).forEach((clause, i) => {
+      const astBody = node.clauses?.[i]?.body ?? [];
+      for (const srcName of freeVariablesOfBody(astBody, clause.binder ? [clause.binder] : [])) {
+        const cName = mangleC(srcName);
+        if (capType.has(cName)) continue;
+        const info = this.localInfo(cName);
+        if (!info) continue; // a global / top-level fn / intrinsic -- resolved without capture
+        // For a cell, capture the POINTER (c-ref with cell:false emits the bare `ll_value*` variable).
+        const value: CExpr = { src: h.src, ctype: info.cell ? C_VALUE : info.ctype, kind: "c-ref", cName, cell: false };
+        captures.push({ field: cName, ctype: info.cell ? C_VALUE : info.ctype, value, cell: info.cell });
+        capType.set(cName, { ctype: info.cell ? C_VALUE : info.ctype, cell: info.cell });
+      }
+    });
+    const envStruct = captures.length ? `__ll_env_hnd${id}` : null;
+    if (captures.length) this.ledger.record("A3", "handler-lift", h.src, "handle clauses lifted with a shared captured environment (not in the HIR)");
+
+    const body = this.resolveBlock(h.body);
+
+    // Each clause: resolve its ALREADY-LOWERED HIR body in an ISOLATED scope (binder + the union
+    // captures only) and lift it under the handler ABI -- resolveBlock, not resolveFunctionBody (the
+    // clause is HIR, not an AST fn).
+    const clauses = (h.clauses ?? []).map((clause, i) => {
+      const liftedName = `__ll_hnd_${id}_${i}`;
+      const savedScopes = this.scopes.slice();
+      const savedCells = this.cellVars;
+      const savedInFn = this.inFunctionBody;
+      (this as any).scopes = [new Map<string, VarInfo>()];
+      this.inFunctionBody = true;
+      try {
+        this.cellVars = this.computeCellVars(node.clauses?.[i]?.body ?? []);
+        const params: CParam[] = [];
+        if (clause.binder) {
+          const bc = mangleC(clause.binder);
+          this.declareLocal(bc, C_VALUE);
+          params.push({ cName: bc, ctype: C_VALUE });
+        }
+        // Declare captures in the lifted scope (cells stay cells so reads deref).
+        for (const [cName, info] of capType) this.declareLocal(cName, info.ctype, info.cell, info.cell);
+        const cbody = this.resolveBlock(clause.body);
+        this.lifted.push({
+          liftedName,
+          envStruct,
+          captures: captures.map((c) => ({ field: c.field, ctype: c.ctype, cell: c.cell })),
+          params,
+          body: cbody,
+          abi: "handler",
+        });
+      } finally {
+        (this as any).scopes = savedScopes;
+        this.cellVars = savedCells;
+        this.inFunctionBody = savedInFn;
+      }
+      return { condType: clause.condType, handlerFnName: liftedName };
+    });
+
+    return [{ src: h.src, ctype: C_VOID, kind: "c-handle", body, envStruct, captures, clauses }];
+  }
+
   private resolveForEach(h: Extract<HStmt, { kind: "for-each" }>): CStmt[] {
     const node = h.src as ast.ForEachNode;
     const variable = this.dipAst("A2", "foreach-variable", node, "loop binding read from raw ForEachNode (legacy emitForEach seam)", () => node.variable);
@@ -1156,8 +1238,9 @@ export class ResolveHirToCir {
       case "invoke-restart":
         return this.resolveInvokeRestart(h);
       case "signal":
-        // D47 `signal` (Cr-1b): still refused. ll_signal's in-place LL_HANDLER walk lands with `handle`.
-        throw this.refuse(h.src, `${h.kind} (TODO Cr-1b: handle/signal)`, "resolveExpr");
+        // D47 `signal`: nil-on-all-decline / DIVERGES-on-transfer -- ll_signal's in-place LL_HANDLER
+        // walk. No ledger record (mirrors invoke-restart; the A8 record lives on the installing form).
+        return { src: h.src, ctype: C_VALUE, kind: "c-signal", condition: this.resolveExpr(h.condition) };
 
       default: {
         const never: never = h;

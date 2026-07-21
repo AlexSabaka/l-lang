@@ -283,28 +283,51 @@ static void ll_throw(ll_value err) {
 }
 
 /* ================================================================================================
- * D47 CONDITIONS / RESTARTS -- the remaining stubs (TODO restart-stage2, i.e. Cr-1).
+ * D47 CONDITIONS / RESTARTS -- the resumable kernel (Cr-1, complete).
  *
- * The unified ll_frame + ll_unwind stack above is now LIVE (Cr-0). What remains for the resumable-condition
- * kernel: `signal` walks the LL_HANDLER frames IN PLACE (an ordinary C call, NO longjmp -- the property
- * that makes resumption possible); `invoke-restart` performs a non-local transfer to a marked LL_RESTART
- * frame via ll_unwind(RESTART), which -- crucially -- runs the intervening CLEANUP finallys exactly as a
- * throw does. Both are still refused by ResolveHirToCir (LL0106), so these bodies are unreachable stubs.
+ * The unified ll_frame + ll_unwind stack above (Cr-0) carries both mechanisms: `signal` walks the
+ * LL_HANDLER frames IN PLACE (an ordinary C call, NO longjmp -- the property that makes resumption
+ * possible); `invoke-restart` performs a non-local transfer to a marked LL_RESTART frame via
+ * ll_unwind(RESTART), which -- crucially -- runs the intervening CLEANUP finallys exactly as a
+ * throw does.
  * ============================================================================================== */
 
-/* (signal <cond>) -- walk ll_handler_top's LL_HANDLER frames IN PLACE (no longjmp), trying each frame's
- * clauses in SOURCE order; a matching clause runs as an ORDINARY C call with the handler's cluster marked
- * inert. All decline => RETURN nil (an unhandled signal is NOT an error). A handler that performs a
- * non-local transfer diverges via ll_unwind. STUBBED: returns nil (the all-decline answer). */
+static bool ll_is_type(ll_value v, const char *name, int primitive); /* defined with the D41 type tests below */
+
+/* (signal <cond>) -- walk the LL_HANDLER frames innermost->outermost IN PLACE, trying each frame's
+ * clauses in SOURCE order; the FIRST match runs with the frame inert (re-entry guard -- SIMPLIFIED
+ * from CL: only THIS frame is inert; handlers inner to it stay eligible). A handler that RETURNS
+ * declines -- its value is discarded and the walk continues at the next OUTER frame. All decline =>
+ * nil (an unhandled signal is NOT an error). A handler that transfers (invoke-restart / throw)
+ * diverges through ll_unwind; the pad-CLEANUP below re-arms the frame as the transfer passes the
+ * signal point -- the dynamic-extent restore a raw longjmp would otherwise skip (without it, a
+ * recovered handle frame would stay inert and silently miss every later signal). */
 static ll_value ll_signal(ll_value cond) {
-  (void)cond;
-  /* TODO(restart-stage2): walk ll_handler_top's LL_HANDLER frames; run each clause with its cluster inert. */
+  for (ll_frame *f = ll_handler_top; f; f = f->prev) {
+    if (f->kind != LL_HANDLER || !f->active) continue;
+    for (size_t i = 0; i < f->clause_count; i++) {
+      if (!ll_is_type(cond, f->cond_types[i], 0)) continue;
+      /* The re-arm pad: the same pad-CLEANUP protocol an emitted `finally` uses, its "finalizer"
+       * being `f->active = 1` -- so the guard restores on BOTH exits (decline and divergence).
+       * setjmp-safety: f/i are unmodified between setjmp and any longjmp -> determinate. */
+      ll_frame pad; pad.kind = LL_CLEANUP; pad.dtor = 0; pad.pending = LL_UNWIND_NONE;
+      pad.prev = ll_handler_top; ll_handler_top = &pad;
+      if (setjmp(pad.buf) == 0) {
+        f->active = 0;
+        (void)f->handlers[i](f->henv, cond); /* a RETURN is a decline; the value is discarded */
+        ll_handler_top = pad.prev; f->active = 1;
+      } else {
+        ll_handler_top = pad.prev; f->active = 1;
+        ll_unwind(pad.prev, pad.pending, pad.target, pad.err, pad.which); /* resume; diverges */
+      }
+      break; /* frame consumed (first-written matching :on wins); a decline continues OUTER */
+    }
+  }
   return ll_nil();
 }
 
 /* (invoke-restart :name args) -- find the NEWEST LL_RESTART frame offering `name` and ll_unwind to it
- * (mode=RESTART); no match is a ControlError (an error, distinct from an unhandled signal). DIVERGES.
- * STUBBED. */
+ * (mode=RESTART); no match is a ControlError (an error, distinct from an unhandled signal). DIVERGES. */
 static ll_value ll_invoke_restart(const char *name, ll_value packed_args) {
   /* Newest matching LL_RESTART frame wins (prev-ward walk). `which` = the offer index within that frame,
    * which the emitted restart-case pad switches on. ll_unwind runs intervening CLEANUP finallys en route. */

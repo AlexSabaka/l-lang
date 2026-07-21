@@ -1145,10 +1145,10 @@ export class LowerAstToHirVisitor {
   // -- D47 conditions / restarts --------------------------------------------------------------------
   //
   // These lower to their dedicated HIR nodes (NOT the opaque `throw`-style leaf, which would route JS to
-  // the generic LL0100 instead of the honest LL0108). The C backend lowers them; the JS backend refuses
-  // with LL0108. The destination-driven result temp mirrors lowerTry: a value-position form binds a temp
-  // and each body/arm assigns into it. A full type-inference layer for `resultTemp`'s join and the deep C
-  // signal/invoke-restart lowering are stage-2 work (see runtime.c TODO(restart-stage2)).
+  // the generic LL0100 instead of the honest LL0108). The C backend lowers all four (Cr-1); the JS backend
+  // refuses with LL0108. The destination-driven result temp mirrors lowerTry: a value-position form binds
+  // a temp and each body/arm assigns into it. A full type-inference layer for `resultTemp`'s join is
+  // future work (the temps stay boxed today).
 
   private lowerRestartCase(node: ast.RestartCaseNode, dest: Dest): Lowered {
     if (dest.kind === "value") {

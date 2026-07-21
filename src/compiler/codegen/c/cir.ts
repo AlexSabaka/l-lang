@@ -48,6 +48,7 @@ export type CExpr = CBase & (
   | CCast
   | CCopy
   | CInvokeRestart
+  | CSignal
 );
 
 /** D47 `(invoke-restart :name args)` -- a diverging transfer to the newest LL_RESTART frame offering
@@ -57,6 +58,13 @@ export interface CInvokeRestart {
   kind: "c-invoke-restart";
   name: string;
   packedArgs: CExpr;
+}
+
+/** D47 `(signal <cond>)` -- ll_signal's in-place LL_HANDLER walk. Nil-on-all-decline / DIVERGES on a
+ *  handler's transfer -- but it IS an expression (ctype value). */
+export interface CSignal {
+  kind: "c-signal";
+  condition: CExpr;
 }
 
 /** A pattern binding as an EXPRESSION: `(cName = value)`. Used inside a match pattern test's
@@ -303,10 +311,9 @@ export interface CTry {
 }
 
 /**
- * D47 `restart-case` -- SCAFFOLD (TODO restart-stage2). Lowered to ONE setjmp pad (an LL_RESTART frame on
- * the shared handler stack) whose arms emit INLINE at the `else` branch, keyed by the invoked restart's
- * index. `resultCName` is the value-position result temp (the join of body + arm values). Not yet produced
- * by ResolveHirToCir (which refuses restart forms today); the field shape lands here for stage-2.
+ * D47 `restart-case` (Cr-1a). Lowered to ONE setjmp pad (an LL_RESTART frame on the shared handler
+ * stack) whose arms emit INLINE at the `else` branch, keyed by the invoked restart's index.
+ * `resultCName` is vestigial (the value flows via the pre-declared temp + assign-dests).
  */
 export interface CRestartCase {
   kind: "c-restart-case";
@@ -316,16 +323,18 @@ export interface CRestartCase {
 }
 
 /**
- * D47 `handle` -- SCAFFOLD (TODO restart-stage2). Lowered to ONE bookkeeping LL_HANDLER frame carrying the
- * ORDERED clause list (source order -- first-written matching `:on` wins). Each clause closure-converts to
- * `static ll_value <handlerFnName>(void* env, ll_value cond)` capturing the handle-frame's live locals. Not
- * yet produced by ResolveHirToCir; the field shape lands here for stage-2.
+ * D47 `handle` (Cr-1b). ONE bookkeeping LL_HANDLER frame -- NEVER a longjmp target (signal walks it
+ * in place), so no setjmp pad. Clauses (source order -- first-written matching `:on` wins) closure-
+ * convert to lifted `(void*, ll_value) -> ll_value` handlers (CLifted abi:"handler") sharing ONE env
+ * struct (the frame has one henv): `captures` is the set-union of every clause's captures, filled at
+ * the install site.
  */
 export interface CHandle {
   kind: "c-handle";
   body: CBlock;
-  resultCName?: string;
-  clauses: { condType: string; binderCName?: string; handlerFnName: string; body: CBlock }[];
+  envStruct: string | null;
+  captures: CCapture[];
+  clauses: { condType: string; handlerFnName: string }[];
 }
 
 export interface CExprStmt {
@@ -416,13 +425,17 @@ export interface CFunction {
 }
 
 /** A lifted lambda/closure: `ll_value fn(void* env, int argc, ll_value* argv)`. Params are unboxed
- *  from argv, captures read from the env struct. Always returns boxed (the uniform convention). */
+ *  from argv, captures read from the env struct. Always returns boxed (the uniform convention).
+ *  abi:"handler" (D47 Cr-1b) is a lifted handle clause instead: `ll_value fn(void* env, ll_value cond)`
+ *  -- params is the [binder] (or empty), the trailing `return ll_nil()` is the decline. Clauses of one
+ *  handle form share ONE env struct (the same envStruct name + identical union capture list). */
 export interface CLifted {
   liftedName: string;
   envStruct: string | null; // the C struct name for captures, or null (no captures -> env unused)
   captures: { field: string; ctype: CType; cell: boolean }[];
   params: CParam[];
   body: CBlock;
+  abi?: "argv" | "handler"; // default argv
 }
 
 /** A struct/class descriptor -> an `ll_class` in the emitted runtime (spec A4). */

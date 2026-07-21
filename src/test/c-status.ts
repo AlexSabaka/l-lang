@@ -91,6 +91,15 @@ export const C_PASSING: readonly string[] = [
   "19-conditions/00_restart_value_substitution.lisp",
   "19-conditions/01_restart_crosses_finally.lisp",
   "19-conditions/02_return_in_restart_body.lisp",
+  // Phase Cr-1b -- D47 handle + signal (the condition/handler mechanism): ll_signal's in-place walk
+  // with the re-arm pad, lifted (void*,ll_value) clause handlers sharing one env, decline/re-entry/
+  // cell semantics, and the full finally-during-signal->restart composition. Completes the Cr arc.
+  "19-conditions/03_handle_signal_recover.lisp",
+  "19-conditions/04_signal_no_handler_nil.lisp",
+  "19-conditions/05_handler_declines_to_outer.lisp",
+  "19-conditions/06_finally_runs_on_signal_transfer.lisp",
+  "19-conditions/07_reentry_guard_inert_frame.lisp",
+  "19-conditions/08_clause_reads_capture.lisp",
   "20-algorithms/01_evaluator.lisp",    // unlocked by match binding patterns
   // Phase E broad sweep -- field mutation on boxed receivers (dyn-field store).
   "30-applications/04_flood_fill.lisp", // (c.mine := v) on an array-element struct -> ll_member_slot

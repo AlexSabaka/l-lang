@@ -63,6 +63,15 @@ export function freeVariables(fn: ast.FunctionNode): Set<string> {
   return free;
 }
 
+/** The free variables of a BARE statement sequence with `params` pre-bound -- the D47 handle-clause
+ *  case (a clause is not a FunctionNode; its binder is its only parameter). */
+export function freeVariablesOfBody(body: ast.ASTNode[], params: Iterable<string>): Set<string> {
+  const bound = new Set(params);
+  const free = new Set<string>();
+  collectBody(body, bound, free);
+  return free;
+}
+
 /** A statement sequence: declarations add to `bound` as we go (later statements see earlier binds). */
 function collectBody(items: ast.ASTNode[], bound: Set<string>, free: Set<string>): void {
   const local = new Set(bound);

@@ -100,14 +100,14 @@ export class InsertCoercions {
       }
 
       case "c-restart-case":
-        // D47 SCAFFOLD (TODO restart-stage2). Recurse into the body + each arm so the coercion pass is
-        // correct once ResolveHirToCir actually produces these; stage-2 also coerces every arm value to
-        // the restart-case JOIN CType (mustFix #4.3). Never produced today (restart forms refuse).
+        // D47 (Cr-1a): recurse into the body + each arm. Values join through the boxed result temp
+        // (assign-dests), so there is no arm-value edge to coerce here.
         return { ...s, body: this.block(s.body, ret), arms: s.arms.map((a) => ({ ...a, body: this.block(a.body, ret) })) };
 
       case "c-handle":
-        // D47 SCAFFOLD (TODO restart-stage2). Recurse into the body + each (closure-converted) clause body.
-        return { ...s, body: this.block(s.body, ret), clauses: s.clauses.map((c) => ({ ...c, body: this.block(c.body, ret) })) };
+        // D47 (Cr-1b): recurse into the body only. Clause bodies live in lifted handlers (coerced via
+        // m.lifted); captures are already-typed reads like c-closure-make's -- no edge to coerce.
+        return { ...s, body: this.block(s.body, ret) };
     }
   }
 
@@ -184,6 +184,10 @@ export class InsertCoercions {
       case "c-invoke-restart":
         // D47 (Cr-1a): the packed args are passed as a single boxed value; coerce the vector -> ll_value.
         return { ...e, packedArgs: this.coerce(this.expr(e.packedArgs), C_VALUE) };
+
+      case "c-signal":
+        // D47 (Cr-1b): ll_signal takes a boxed condition value.
+        return { ...e, condition: this.coerce(this.expr(e.condition), C_VALUE) };
 
       case "c-map":
         return {
