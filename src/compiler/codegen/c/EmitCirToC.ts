@@ -119,16 +119,20 @@ export class EmitCirToC {
     // Struct/class descriptors (ll_class): field names in slot order, is_struct, `:extends` parent, and
     // a dynamic-dispatch method table (boxed adapters) for statically-unknown receivers.
     for (const c of m.classes) {
-      const fieldsArr = c.fields.length
-        ? `static const char* __ll_fields_${c.name}[] = {${c.fields.map((f) => `"${f.name}"`).join(", ")}};`
-        : `static const char** __ll_fields_${c.name} = 0;`;
-      this.line(fieldsArr);
+      // A field-less class gets a NULL field table, written inline. It used to emit a `const char**`
+      // VARIABLE initialized to 0 and name it in the descriptor below -- but an array name decays to
+      // an address constant while a pointer OBJECT's value is not one, so cc rejected the descriptor:
+      // "initializer element is not a compile-time constant". Only classes with fields ever worked.
+      const fieldsPtr = c.fields.length ? `__ll_fields_${c.name}` : "0";
+      if (c.fields.length) {
+        this.line(`static const char* __ll_fields_${c.name}[] = {${c.fields.map((f) => `"${f.name}"`).join(", ")}};`);
+      }
       for (const mm of c.methods) this.emitMethodAdapter(mm);
       if (c.methods.length) {
         this.line(`static const ll_method_entry __ll_methods_${c.name}[] = {${c.methods.map((mm) => `{${JSON.stringify(mm.name)}, ${mm.cName}_dyn}`).join(", ")}};`);
       }
       const methodsPtr = c.methods.length ? `__ll_methods_${c.name}` : "0";
-      this.line(`static ll_class __ll_class_${c.name} = {"${c.name}", ${c.isStruct ? "true" : "false"}, ${c.fields.length}, __ll_fields_${c.name}, ${c.parent ? `"${c.parent}"` : "0"}, ${c.methods.length}, ${methodsPtr}};`);
+      this.line(`static ll_class __ll_class_${c.name} = {"${c.name}", ${c.isStruct ? "true" : "false"}, ${c.fields.length}, ${fieldsPtr}, ${c.parent ? `"${c.parent}"` : "0"}, ${c.methods.length}, ${methodsPtr}};`);
     }
     // A registry of every class, for `type-by-name` reflection. External linkage so the prepended
     // runtime's reflection helpers (which forward-declare it `extern`) can reach it in this one TU.
@@ -604,6 +608,10 @@ export class EmitCirToC {
     if (l.kind === "dyn-field") return `*ll_member_slot(${this.expr(l.object)}, ${JSON.stringify(l.fieldName)})`;
     // index store: a partial write into a vector or map.
     if (l.mode === "map") return `*ll_map_slot(${this.expr(l.base)}, ${this.expr(l.index)})`;
+    // A BOXED base (e.g. the result of a dynamic member read) has no static container type, so it
+    // cannot take `->items` -- the runtime picks the container by tag, as the read side already does
+    // with ll_index_dyn. This case used to fall through to the vector spelling and fail to compile.
+    if (l.mode === "boxed") return `*ll_index_slot(${this.expr(l.base)}, ${this.expr(l.index)})`;
     return `(${this.expr(l.base)})->items[${this.expr(l.index)}]`;
   }
 

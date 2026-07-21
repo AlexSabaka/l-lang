@@ -120,6 +120,10 @@ export const C_PASSING: readonly string[] = [
   "19-conditions/18_signal_from_inside_finally.lisp",
   "19-conditions/19_handle_frame_dies_with_its_function.lisp",
   "19-conditions/20_struct_copy_survives_transfer.lisp",
+  // cc-failure sweep -- examples where the backend emitted C that would not BUILD. A field-less class
+  // (an interface-only hierarchy) emitted its field table as a `const char**` variable and then named
+  // it in the descriptor's static initializer, which is not a constant expression.
+  "08-generics/05_covariance.lisp",
   "20-algorithms/01_evaluator.lisp",    // unlocked by match binding patterns
   // Phase E broad sweep -- field mutation on boxed receivers (dyn-field store).
   "30-applications/04_flood_fill.lisp", // (c.mine := v) on an array-element struct -> ll_member_slot

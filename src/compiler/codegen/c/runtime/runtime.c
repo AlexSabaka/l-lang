@@ -788,6 +788,22 @@ static ll_value ll_index_dyn(ll_value base, ll_value idx) {
   }
 }
 
+/* Lvalue for an index STORE on a BOXED container: `(world.boxes[i] := v)`, where the base came back
+ * from a dynamic member read and its static type is only `ll_value`. The write-side analog of
+ * ll_index_dyn, returning a slot pointer the way ll_map_slot / ll_member_slot do. A string index
+ * store has no slot to hand out (ll_str is immutable here), so it traps rather than lying. */
+static ll_value *ll_index_slot(ll_value base, ll_value idx) {
+  switch (base.tag) {
+    case LL_VEC: {
+      int64_t i = ll_unbox_int(idx);
+      if (i < 0 || (size_t)i >= base.as.v->len) ll_trap("RangeError", "vector index out of bounds");
+      return &base.as.v->items[i];
+    }
+    case LL_MAP: return ll_map_slot(base.as.m, idx);
+    default: ll_trap("TypeError", "value is not index-assignable"); return (ll_value *)0;
+  }
+}
+
 /* -- builtins (the SYMBOL_MAP surface) ----------------------------------------------------------- */
 
 static ll_value ll_get(ll_value c, ll_value k) {

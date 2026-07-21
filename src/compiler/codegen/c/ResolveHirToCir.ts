@@ -907,7 +907,14 @@ export class ResolveHirToCir {
       (idx.indices ?? []).forEach((group, g) => {
         for (const ix of group) steps.push({ isMember: idx.members?.[g] === true, index: ix });
       });
-      let obj = this.headObject(node, ast.symbolName(idx.id));
+      // The indexer's HEAD can itself be a dotted path -- `world.boxes[i] := v`. Split it the way the
+      // composite-identifier branch above does (head object, then intermediate field reads); mangling
+      // the whole path as ONE identifier produced `u_world_2eboxes`, which no C scope declares.
+      const headParts = idx.id._type === "composite-identifier"
+        ? (idx.id as ast.CompositeIdentifierNode).parts
+        : [ast.symbolName(idx.id as any)];
+      let obj = this.headObject(node, headParts[0]);
+      for (const mid of headParts.slice(1)) obj = this.memberRead(node, obj, mid);
       for (let i = 0; i < steps.length - 1; i++) {
         obj = steps[i].isMember
           ? this.memberRead(node, obj, this.stepName(steps[i].index))
