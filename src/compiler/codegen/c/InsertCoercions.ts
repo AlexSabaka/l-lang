@@ -10,7 +10,7 @@
 
 import type { GapLedger } from "./GapLedger";
 import { CBlock, CExpr, CStmt, CModule, CFunction, CLifted } from "./cir";
-import { CType, C_BOOL, C_INT, C_REAL, C_STR, C_VALUE, ctypeEquals } from "./ctype";
+import { CType, C_BOOL, C_INT, C_REAL, C_STR, C_VALUE, C_VOID, ctypeEquals } from "./ctype";
 
 export class InsertCoercions {
   private inserted = 0;
@@ -70,6 +70,18 @@ export class InsertCoercions {
         if (!s.value && ret.k === "value") {
           // A bare `return;` in a boxed-return function returns nil.
           return { ...s, value: { src: s.src, ctype: C_VALUE, kind: "c-nil" } };
+        }
+        if (ret.k === "void" && s.value) {
+          // `(fn f [...] -> Void ( ... (return nil)))` is legal l-lang: D9 makes Void and nil the
+          // same bottom value, so returning nil from a Void function is returning nothing. C
+          // disagrees -- `return <expr>;` from a `void` function does not compile -- so drop the
+          // value and return bare, keeping the expression as a statement when it could do work.
+          const v = this.expr(s.value);
+          const bare = { ...s, value: null };
+          const pure = v.kind === "c-nil" || v.kind === "c-lit" || v.kind === "c-ref";
+          return pure
+            ? bare
+            : { src: s.src, ctype: C_VOID, kind: "c-block", body: { stmts: [{ kind: "c-expr-stmt", expr: v } as any, bare] } };
         }
         return { ...s, value: s.value ? this.coerce(this.expr(s.value), ret) : null };
       }

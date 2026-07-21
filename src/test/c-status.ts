@@ -92,6 +92,10 @@ export const C_PASSING: readonly string[] = [
   "18-error-handling/09_finally_return_supersedes_throw.lisp",
   "18-error-handling/10_finally_throw_supersedes.lisp",
   "18-error-handling/11_try_assign_finally.lisp",
+  // `(fn f [...] -> Void ... (return nil))`: D9 makes Void and nil the same bottom value, so a Void
+  // function may legally return nil -- C may not, and P2 now drops the value instead of emitting
+  // `return ll_nil();` from a `static void`.
+  "18-error-handling/02_rpn_error_paths.lisp",
   // Phase Cr-1a -- D47 restart-case + invoke-restart (the restart mechanism) on the native path;
   // JS refuses (LL0108). Includes the finally-runs-on-restart-transfer composition (Cr-0 + Cr-1a).
   "19-conditions/00_restart_value_substitution.lisp",
