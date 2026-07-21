@@ -180,6 +180,9 @@ export const C_PASSING: readonly string[] = [
   // Two imported modules whose MODULE-PRIVATE names collide (D20 makes them distinct bindings).
   // C has one global namespace, so each (defining module, name) pair now gets its own alias.
   "80-adversarial/module_private_collision/main.lisp",
+  // The same collision on the function-as-VALUE path: `(apply-fn label)` never calls `label` by
+  // name, so it resolves through `functionValue` and its boxed adapter rather than a direct call.
+  "80-adversarial/module_private_fnvalue/main.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the

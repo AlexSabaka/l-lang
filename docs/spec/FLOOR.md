@@ -383,10 +383,21 @@ late*: `topLevelFns` and `globalNames` accumulate imported entries, so `topLevel
 short-circuited before module identity was ever consulted. Splitting out `ownFns` / `ownGlobals` —
 written only by the pre-scan — is what actually made the alias reachable.
 
-> **Worth knowing for Phase F:** the C backend's global namespace stays flat, and only the paths that
-> a resolved defining module can reach are aliased. A function used as a *value* still resolves
-> through `topLevelFns` by bare name, so a colliding private import referenced as a value (rather
-> than called) is not covered.
+**And the function-as-VALUE path, the residual of that one — also closed.** `(apply-fn label)` never
+calls `label` by name, so it resolves through `functionValue` and its boxed adapter instead of the
+branch that lowers an imported body. That path was worse than the others: it did not merely pick the
+wrong function, it **crashed** (`topLevelFns.get(name)!` on undefined) whenever the function was only
+ever *referenced*, never called — so a private import used purely as a value had never worked at all.
+`functionValue` now resolves the definition, lowers it under its own module's alias, and builds the
+adapter from that; a name it still cannot resolve is a refusal rather than a `TypeError`.
+`80-adversarial/module_private_fnvalue/` pins it, and the two adapters emit distinctly
+(`__ll_adapter_u_label` / `__ll_adapter_u_label_232`) while both closures keep `label` as their
+display name, so `[Function: label]` output is unaffected.
+
+> **Worth knowing for Phase F:** the C backend's global namespace is still flat underneath — what
+> changed is that every path which can reach a *resolved defining module* now asks for that module's
+> alias. Anything that resolves a cross-module name without a definition node in hand would
+> reintroduce the same class of bug.
 
 ---
 

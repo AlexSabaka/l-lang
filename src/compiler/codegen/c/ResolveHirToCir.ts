@@ -2107,7 +2107,11 @@ export class ResolveHirToCir {
       if (this.isExtern(entry)) throw this.refuseExtern(node, name);
       // An imported/top-level function referenced as a value but not yet registered: treat as a value.
       if (entry?.inferredType?.kind === "function" && this.isLocalDef(entry)) {
-        this.registerTopLevel(entry.value as ast.FunctionNode, name);
+        // Register under the bare name ONLY for a function of this module. For an imported one that
+        // would claim the bare spelling on the wrong module's behalf; `functionValue` resolves the
+        // definition and lowers it under its own module's alias instead.
+        const fnNode = entry.value as ast.FunctionNode;
+        if (ResolveHirToCir.moduleOfNode(fnNode) === (this.rootSource ?? "")) this.registerTopLevel(fnNode, name);
         return this.functionValue(node, name);
       }
       t = entry?.inferredType;
@@ -2119,11 +2123,36 @@ export class ResolveHirToCir {
     return { src: node, ctype, kind: "c-ref", cName, cell: info?.cell };
   }
 
-  /** A top-level function used as a value -> a closure over a boxed-convention adapter (no captures). */
+  /**
+   * A top-level function used as a value -> a closure over a boxed-convention adapter (no captures).
+   *
+   * The name alone is not enough to say WHICH function: an imported module's private `label` shares
+   * its spelling with another import's, and -- unlike a direct call -- a value reference never went
+   * through the branch that lowers an imported body. So this used to do two wrong things at once:
+   * crash outright (`topLevelFns.get(name)!` is undefined when the function was only ever referenced,
+   * never called) or, once some other module had registered the spelling, silently hand back THAT
+   * module's function. Resolve the definition here, lower it under its own module's alias, and build
+   * the adapter from the alias.
+   */
   private functionValue(node: ast.ASTNode, name: string): CExpr {
     this.ledger.record("A3", "function-as-value", node, "function used as a first-class value; boxed-convention adapter synthesized");
-    const sig = this.topLevelFns.get(name)!;
-    const cName = mangleC(name);
+    let alias = name;
+    // Only a function of ANOTHER module needs resolving: this module's own top-level functions are
+    // all registered by the pre-scan and own their bare names, so their path is unchanged.
+    if (!this.ownFns.has(name)) {
+      const entry = this.resolveSymbolSafe(name, node);
+      const fnNode = entry?.value as ast.FunctionNode | undefined;
+      if (fnNode?._type === "function" && !this.isExtern(entry)
+          && ResolveHirToCir.moduleOfNode(fnNode) !== (this.rootSource ?? "")) {
+        alias = this.lowerImportedFunction(name, fnNode);
+      }
+    }
+    const sig = this.topLevelFns.get(alias);
+    // Previously a TypeError from a `!` on undefined. A refusal is the honest form: the backend does
+    // not know what this name denotes, and saying so beats emitting an adapter for a body nothing
+    // defines (which would fail at link time, further from the cause).
+    if (!sig) throw this.refuse(node, `function-value:${name}`, "functionValue");
+    const cName = mangleC(alias);
     this.adapters.set(cName, { forCName: cName, params: sig.params, ret: sig.ret, arity: sig.arity });
     return {
       src: node,
