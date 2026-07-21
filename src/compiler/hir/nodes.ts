@@ -320,8 +320,10 @@ export interface HMatchTest extends HBase {
   kind: "match-test";
   pattern: HPattern;
   scrutName: string;
-  /** `:when <expr>` (D26). Still raw AST -- lowering it is the next increment. */
-  guard?: ast.ASTNode;
+  /** `:when <expr>` (D26), lowered. A guard that cannot be a pure expression (one containing a
+   *  value-position `if`/`match`, say) lowers to an opaque leaf rather than hoisting statements out --
+   *  the guard must evaluate INSIDE the arm's condition, only when this arm is reached. */
+  guard?: HExpr;
 }
 
 /**

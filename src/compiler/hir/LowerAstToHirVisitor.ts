@@ -183,7 +183,19 @@ export class LowerAstToHirVisitor {
   }
 
   private patternTest(pattern: ast.PatternNode, scrutName: string, guard: ast.ASTNode | undefined, src: ast.ASTNode): HExpr {
-    return { ...this.base(src), kind: "match-test", pattern: this.buildPattern(pattern), scrutName, guard };
+    return { ...this.base(src), kind: "match-test", pattern: this.buildPattern(pattern), scrutName, guard: this.lowerGuard(guard) };
+  }
+
+  /**
+   * A `:when` guard, lowered. It is ANDed into the arm's condition, so it may not carry statements --
+   * hoisting them ahead of the `if` would run them for arms that never matched, breaking
+   * first-match-wins. A guard that needs statements stays an opaque leaf, which is exactly what the
+   * whole field used to be.
+   */
+  private lowerGuard(guard: ast.ASTNode | undefined): HExpr | undefined {
+    if (!guard) return undefined;
+    const lowered = this.lowerNode(guard, VALUE);
+    return lowered.stmts.length === 0 && lowered.value ? lowered.value : this.opaqueExpr(guard);
   }
 
   private hoist(src: ast.ASTNode): HStmt {

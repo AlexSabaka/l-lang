@@ -1352,10 +1352,9 @@ export class ResolveHirToCir {
     // Pattern tests operate on a BOXED scrutinee (type test, dynamic length/index all take ll_value).
     let test = this.patternCondition(pattern, this.boxed(scrut), h.src);
     if (h.guard) {
-      const guard = this.dipAst("A7", "pattern-guard", h.src, "guard expression read from raw AST", () => h.guard!);
       test = {
         src: h.src, ctype: C_BOOL, kind: "c-binop", op: "&&", mode: "bool",
-        lhs: test, rhs: this.resolveAstExpr(guard),
+        lhs: test, rhs: this.resolveExpr(h.guard),
       };
     }
     return test;

@@ -734,7 +734,7 @@ export class EmitHirToEstree {
           type: "LogicalExpression",
           operator: "&&",
           left: cond,
-          right: this.legacy.leafExpr(h.guard),
+          right: this.emitExpr(h.guard),
           loc: loc(h.src),
         } as ESTree.LogicalExpression;
       }
