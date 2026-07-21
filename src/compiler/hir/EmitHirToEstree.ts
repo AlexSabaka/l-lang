@@ -9,7 +9,8 @@
 
 import type * as ESTree from "estree";
 import type * as ast from "../frontend/ast";
-import type { HBlock, HExpr, HStmt } from "./nodes";
+import type { HBlock, HExpr, HPattern, HStmt } from "./nodes";
+import { encodeIdentifier } from "../utils/encodeIdentifier";
 
 /**
  * What the emitter is allowed to ask of the legacy JSTransformer. Deliberately narrow: leaves, the nil
@@ -32,10 +33,12 @@ export interface LegacyLeafEmitter {
   storeValue(emitted: ESTree.Expression, src: ast.ASTNode): ESTree.Expression;
   /** The runtime nil literal for the D9 bottom value. */
   nilLiteral(src: ast.ASTNode): ESTree.Expression;
-  /** A match arm's pattern condition against the scrutinee temp (JSTransformer.generateCondition). */
-  patternTest(pattern: ast.PatternNode, scrutName: string): ESTree.Expression;
-  /** The pattern variables a match binds, to hoist (findIdentifiersToDefine). */
-  patternVars(match: ast.MatchNode): string[];
+  /** The runtime type test for a `:of` pattern -- `__ll_is_type(v, "T")` and its union/optional
+   *  shapes, shared with the expression-position `:of` (JSTransformer.typeTest). `undefined` = the
+   *  type is untestable, which the caller reports. */
+  patternTypeTest(type: ast.TypeNode, operand: ESTree.Expression, src: ast.ASTNode): ESTree.Expression | undefined;
+  /** The constant an enum MEMBER reference folds to (JSTransformer's enumKeys table). */
+  enumMemberValue(member: string): string | number | boolean | undefined;
   /** Assemble a for-each (D11 per-iteration copy, D16 destructuring, `__ll_map_copy_each`) over the
    *  HIR-emitted collection / body / else (JSTransformer.assembleForEach). */
   emitForEach(node: ast.ASTNode, collection: ESTree.Expression, bodyStmt: ESTree.Statement, elseFor: ESTree.Statement | null): ESTree.Statement;
@@ -251,7 +254,7 @@ export class EmitHirToEstree {
         return { type: "BlockStatement", body: this.emitBlock(h.body), loc: loc(h.src) } as ESTree.BlockStatement;
 
       case "hoist": {
-        const names = this.legacy.patternVars(h.src as ast.MatchNode);
+        const names = h.names.map(encodeIdentifier);
         if (names.length === 0) return { type: "EmptyStatement", loc: loc(h.src) } as ESTree.EmptyStatement;
         return {
           type: "VariableDeclaration",
@@ -418,6 +421,102 @@ export class EmitHirToEstree {
         const never: never = h;
         throw new Error(`HIR emit: unhandled statement kind '${(never as any).kind}'`);
       }
+    }
+  }
+
+
+  /**
+   * A modeled pattern (A7) -> the ESTree boolean that tests it and binds as it goes.
+   *
+   * Bind-then-test, left to right, folded into a LEFT-associative `&&` chain. Every part of that is
+   * observable: the binds are side effects inside a conjunction, so reordering them or dropping a
+   * trivially-true conjunct (`_` contributes a literal `true`) changes the emitted program.
+   */
+  private patternCond(p: HPattern, scrut: ESTree.Expression, src: ast.ASTNode): ESTree.Expression {
+    const lit = (value: any): ESTree.Expression => ({ type: "Literal", value, loc: loc(src) } as ESTree.Literal);
+    const bindThen = (name: string, value: ESTree.Expression): ESTree.Expression => ({
+      type: "SequenceExpression",
+      expressions: [
+        { type: "AssignmentExpression", operator: "=", left: ident(encodeIdentifier(name), src), right: value } as ESTree.AssignmentExpression,
+        lit(true),
+      ],
+      loc: loc(src),
+    } as ESTree.SequenceExpression);
+    const and = (a: ESTree.Expression, b: ESTree.Expression): ESTree.Expression =>
+      ({ type: "LogicalExpression", operator: "&&", left: a, right: b } as ESTree.LogicalExpression);
+    const eq = (a: ESTree.Expression, b: ESTree.Expression, op: "===" | "!==" | ">=" ): ESTree.Expression =>
+      ({ type: "BinaryExpression", operator: op, left: a, right: b } as ESTree.BinaryExpression);
+    const member = (obj: ESTree.Expression, prop: ESTree.Expression | string, computed: boolean): ESTree.Expression =>
+      ({
+        type: "MemberExpression",
+        object: obj,
+        property: typeof prop === "string" ? ident(prop, src) : prop,
+        computed,
+        optional: false,
+        loc: loc(src),
+      } as ESTree.MemberExpression);
+
+    switch (p.kind) {
+      case "any":
+        return lit(true);
+
+      case "bind":
+        return bindThen(p.name, scrut);
+
+      case "equals":
+        return eq(scrut, this.emitExpr(p.value), "===");
+
+      case "enum-equals": {
+        // The member's constant comes from the backend's enum table (A4); the DECISION to test rather
+        // than bind was already made at lowering.
+        const value = this.legacy.enumMemberValue(p.member);
+        return eq(scrut, lit(value), "===");
+      }
+
+      case "typed": {
+        const isType = this.legacy.patternTypeTest(p.type, scrut, src);
+        if (isType === undefined) return lit(false); // untestable -- the hook reported it
+        return and(bindThen(p.name, scrut), isType);
+      }
+
+      case "vector": {
+        const parts: ESTree.Expression[] = [
+          {
+            type: "CallExpression",
+            callee: member(ident("Array", src), "isArray", false),
+            arguments: [scrut],
+            optional: false,
+          } as ESTree.CallExpression,
+          // A rest makes the length a FLOOR; without one the shape is exact.
+          eq(member(scrut, "length", false), lit(p.elements.length), p.rest ? ">=" : "==="),
+        ];
+        p.elements.forEach((el, i) => parts.push(this.patternCond(el, member(scrut, lit(i), true), src)));
+        if (p.rest) {
+          parts.push(
+            bindThen(p.rest.name, {
+              type: "CallExpression",
+              callee: member(scrut, "slice", false),
+              arguments: [lit(p.elements.length)],
+              optional: false,
+            } as ESTree.CallExpression)
+          );
+        }
+        return parts.reduce(and);
+      }
+
+      case "map": {
+        const parts: ESTree.Expression[] = [
+          and(
+            eq({ type: "UnaryExpression", operator: "typeof", argument: scrut, prefix: true } as ESTree.UnaryExpression, lit("object"), "==="),
+            eq(scrut, lit(null), "!==")
+          ),
+        ];
+        for (const en of p.entries) parts.push(this.patternCond(en.pattern, member(scrut, lit(en.key), true), src));
+        return parts.reduce(and);
+      }
+
+      case "unsupported":
+        return lit(false);
     }
   }
 
@@ -627,8 +726,8 @@ export class EmitHirToEstree {
         return expr;
       }
 
-      case "pattern-test": {
-        const cond = this.legacy.patternTest(h.pattern, h.scrutName);
+      case "match-test": {
+        const cond = this.patternCond(h.pattern, ident(h.scrutName, h.src), h.src);
         if (!h.guard) return cond;
         // `:when` (D26): ANDed AFTER the pattern so the guard sees the bindings the pattern made.
         return {

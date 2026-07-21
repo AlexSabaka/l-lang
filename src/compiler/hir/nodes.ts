@@ -51,7 +51,7 @@ export type HExpr =
   | HInvokeRestart
   | HTernary
   | HSeq
-  | HPatternTest
+  | HMatchTest
   | HVector
   | HMatrix
   | HMap
@@ -274,16 +274,53 @@ export interface HSeq extends HBase {
 }
 
 /**
- * A `match` arm's test against the scrutinee temp -- the pattern condition, optionally ANDed with a
- * `:when` guard. Built at EMIT time by the legacy `generateCondition` (patterns are not re-modelled in
- * S3; that is R2). The pattern condition may BIND pattern variables as a side effect, so these tests
- * live in an if/ELSE chain (never sequential ifs) -- a later arm's test must not run once one matched.
+ * A modeled match pattern (spec A7) -- the test SHAPE, decided ONCE at lowering.
+ *
+ * The HIR owns what is a DECISION: which tests run, in what order, what each one binds, and whether an
+ * identifier arm is a binder or an enum equality. Each backend materializes only the mechanics: how to
+ * reach a sub-value (JS `s[0]` / `s["k"]`, C `ll_index_dyn` / `ll_get`) and which primitive tests an
+ * equality or a container check (`===` vs `ll_deep_eq`, `typeof x === "object"` vs `ll_is_type "Map"`).
+ *
+ * ORDERING IS LOAD-BEARING: bind-then-test, left to right, short-circuiting. A pattern test MUTATES
+ * while looking like a boolean, which is exactly why match arms must sit in an if/ELSE chain -- a later
+ * arm's test must not run once one matched. Do not reorder, and do not fold away a trivially-true
+ * sub-test: `_` contributes a literal `true` to the conjunction, and both backends emit it.
+ *
+ * Names are SOURCE names; each backend applies its own mangling.
  */
-export interface HPatternTest extends HBase {
-  kind: "pattern-test";
-  pattern: ast.PatternNode;
+export type HPattern =
+  /** `_` -- matches anything, binds nothing. */
+  | { kind: "any" }
+  /** A bare name: binds the whole scrutinee and always matches. */
+  | { kind: "bind"; name: string }
+  /** A literal arm: equality against a constant. */
+  | { kind: "equals"; value: HExpr }
+  /** An ENUM MEMBER arm (`HttpMethod:GET`). Structurally an identifier-pattern, semantically an
+   *  equality TEST -- the decision that used to be made three different ways. The member's constant
+   *  VALUE is still folded per backend (it is an A4 concern: the enum table is a backend's, and the
+   *  HIR keeps no enum node); what moves here is the test-vs-bind decision. */
+  | { kind: "enum-equals"; member: string }
+  /** `x :of T` (D27): binds, then tests the runtime type. */
+  | { kind: "typed"; name: string; type: ast.TypeNode }
+  /** `[a b ...rest]`: is-array, then a length check (exact, or a floor when a rest is present),
+   *  then each fixed element. `rest` binds the tail slice; a rest is only ever trailing (LL0029). */
+  | { kind: "vector"; elements: HPattern[]; rest: { name: string } | null }
+  /** `{:k pat}`: is-map, then each key's value against its sub-pattern, in source order. */
+  | { kind: "map"; entries: { key: string; pattern: HPattern }[] }
+  /** A pattern no backend can test -- `functional-pattern`, or a rest outside the trailing position
+   *  (LL0029 rejects the latter upstream). Kept as a node rather than dropped so each backend keeps
+   *  the answer it already gives: JS a literal `false`, C an LL0106 refusal. */
+  | { kind: "unsupported"; what: string };
+
+/**
+ * A `match` arm's test against the scrutinee temp, optionally ANDed with a `:when` guard (D26), which
+ * is ANDed AFTER the pattern so the guard can read what the pattern bound.
+ */
+export interface HMatchTest extends HBase {
+  kind: "match-test";
+  pattern: HPattern;
   scrutName: string;
-  /** `:when <expr>` (D26) -- emitted as `<patternCond> && <guard>` so the guard sees the bindings. */
+  /** `:when <expr>` (D26). Still raw AST -- lowering it is the next increment. */
   guard?: ast.ASTNode;
 }
 
@@ -446,11 +483,13 @@ export interface HReturn extends HBase {
 
 /**
  * Hoisted `match` pattern-variable declarations (`let a, b;`) at the top of the match's block scope.
- * The names are computed at EMIT from `src` (the MatchNode) via the legacy findIdentifiersToDefine,
- * so lowering and legacy stay single-sourced. Emits nothing when the match binds no variables.
+ * The set is the union of every arm's bindings, in first-occurrence order across the arms -- the
+ * declaration order is byte-visible, so it is decided here rather than recomputed per backend. Emits
+ * nothing when the match binds no variables.
  */
 export interface HHoist extends HBase {
   kind: "hoist";
+  names: string[];
 }
 
 /** One `catch e :of T (...)` clause. `filterTypeName` undefined = the default catch; `errorName` binds `e`. */

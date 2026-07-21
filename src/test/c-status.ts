@@ -135,6 +135,9 @@ export const C_PASSING: readonly string[] = [
   // A `member` callee is a METHOD CALL: the pipeline `(x |> (.m a))` shape reached the generic
   // computed-callee path, which resolved the member as a VALUE and applied the args to its result.
   "04-pattern-matching/02_map_patterns.lisp",
+  // Rest patterns bind on C now that the pattern SHAPE is modeled once (HMatchTest): the two backends
+  // used to disagree -- JS bound the tail slice, C declared the name and left it nil.
+  "04-pattern-matching/05_rest_patterns.lisp",
   // An imported `let`/`mut` used as a value now hoists to a C global initialized at the top of main
   // (the value analog of on-demand imported-function/class lowering). 06_multiple_interfaces was an
   // EXAMPLE bug: a method written `(fn toJson [] Any` without the `->`, so the return type parsed as

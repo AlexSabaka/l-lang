@@ -30,6 +30,7 @@ import { classifyCall } from "./classifyCall";
 import { shouldCopyOnStore, shouldCopyParam } from "./valueCopy";
 import { HirModule } from "./HirModule";
 import { TempAllocator } from "./TempAllocator";
+import { RuntimeProvider } from "../runtime";
 import {
   HBase,
   HBlock,
@@ -41,6 +42,7 @@ import {
   HFormatSegment,
   HIf,
   HMapEntry,
+  HPattern,
   HReturn,
   HStmt,
 } from "./nodes";
@@ -181,11 +183,102 @@ export class LowerAstToHirVisitor {
   }
 
   private patternTest(pattern: ast.PatternNode, scrutName: string, guard: ast.ASTNode | undefined, src: ast.ASTNode): HExpr {
-    return { ...this.base(src), kind: "pattern-test", pattern, scrutName, guard };
+    return { ...this.base(src), kind: "match-test", pattern: this.buildPattern(pattern), scrutName, guard };
   }
 
   private hoist(src: ast.ASTNode): HStmt {
-    return { ...this.base(src), kind: "hoist" };
+    return { ...this.base(src), kind: "hoist", names: this.matchBindNames(src as ast.MatchNode) };
+  }
+
+  /**
+   * AST pattern -> the modeled test shape (spec A7). Every DECISION happens here: binder vs enum
+   * equality, which sub-tests run and in what order, and what each binds. The backends keep only the
+   * mechanics of reaching a sub-value and spelling a primitive test.
+   */
+  private buildPattern(p: ast.PatternNode): HPattern {
+    switch (p._type) {
+      case "any-pattern":
+        return { kind: "any" };
+
+      case "constant-pattern": {
+        // Grammar-guaranteed a literal (string / number / nil), so lowering it yields no statements.
+        const c = (p as ast.ConstantPatternNode).constant as unknown as ast.ASTNode;
+        const lowered = this.lowerNode(c, VALUE);
+        return lowered.value ? { kind: "equals", value: lowered.value } : { kind: "unsupported", what: "constant" };
+      }
+
+      case "identifier-pattern": {
+        // A name carrying a `:` is an enum MEMBER reference, never a binder -- the same syntactic test
+        // the hoist side has always used to exclude it. Keeping the discrimination syntactic means the
+        // lowering needs no enum table, so an imported enum cannot silently become a catch-all binder.
+        const name = ast.symbolName((p as ast.IdentifierPatternNode).id);
+        return name.includes(":") ? { kind: "enum-equals", member: name } : { kind: "bind", name };
+      }
+
+      case "type-pattern": {
+        const tp = p as ast.TypePatternNode;
+        return { kind: "typed", name: ast.symbolName(tp.id), type: tp.type };
+      }
+
+      case "vector-pattern":
+      case "list-pattern": {
+        // A rest only counts as one in the TRAILING position (LL0029 rejects it anywhere else). A rest
+        // elsewhere stays an ordinary element and lands on `unsupported`, which is what both backends
+        // already did with it.
+        const els = (p as ast.VectorPatternNode).elements ?? [];
+        const restIdx = els.findIndex((e) => e._type === "rest-pattern");
+        const trailing = restIdx >= 0 && restIdx === els.length - 1;
+        const fixed = trailing ? els.slice(0, restIdx) : els;
+        const rest = trailing ? { name: ast.symbolName((els[restIdx] as ast.RestPatternNode).id) } : null;
+        return { kind: "vector", elements: fixed.map((e) => this.buildPattern(e)), rest };
+      }
+
+      case "map-pattern":
+        return {
+          kind: "map",
+          entries: ((p as ast.MapPatternNode).pairs ?? []).map((pr) => ({
+            key: ast.keyName(pr.key as any),
+            pattern: this.buildPattern(pr.pattern),
+          })),
+        };
+
+      default:
+        return { kind: "unsupported", what: p._type };
+    }
+  }
+
+  /**
+   * The names a match hoists, in FIRST-OCCURRENCE order across its arms -- the `let a, b;` declaration
+   * order is byte-visible, so it is decided once here instead of being recomputed per backend.
+   *
+   * Excludes enum members (they test, they do not bind) and runtime references, matching what the JS
+   * hoist has always done. A name is emitted in SOURCE form; each backend applies its own mangling.
+   */
+  private matchBindNames(match: ast.MatchNode): string[] {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const add = (name: string) => {
+      if (name.includes(":") || RuntimeProvider.isRuntimeReference(name)) return;
+      if (seen.has(name)) return;
+      seen.add(name);
+      out.push(name);
+    };
+    const walk = (hp: HPattern): void => {
+      switch (hp.kind) {
+        case "bind": add(hp.name); return;
+        case "typed": add(hp.name); return;
+        case "vector":
+          for (const el of hp.elements) walk(el);
+          if (hp.rest) add(hp.rest.name);
+          return;
+        case "map":
+          for (const en of hp.entries) walk(en.pattern);
+          return;
+        default: return;
+      }
+    };
+    for (const c of match.cases ?? []) walk(this.buildPattern(c.pattern));
+    return out;
   }
 
   // -- the driver -----------------------------------------------------------------------------------

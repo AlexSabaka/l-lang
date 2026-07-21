@@ -32,53 +32,6 @@ import { formatWithOptions } from "util";
 import { DesugarAstVisitor } from "../../../transformation/visitors/DesugarAstVisitor";
 
 /**
- * Helper to extract variable names declared within a pattern match
- */
-function findIdentifiersToDefine(node: ast.MatchNode): string[] {
-  const predefinedVariables: string[] = [];
-  const walkPattern = (p: ast.PatternNode): boolean => {
-    switch (p._type) {
-      case "identifier-pattern":
-        const id = p.id.id;
-        // Skip enum references (e.g., HttpMethod:GET) and runtime references
-        if (!id.includes(":") && !RuntimeProvider.isRuntimeReference(id)) {
-          predefinedVariables.push(encodeIdentifier(id));
-        }
-        return true;
-      case "type-pattern": {
-        // `x :of T` binds `x` too (D27), so it must be declared alongside the identifier-pattern
-        // bindings -- otherwise the `x = value` that codegen emits assigns to an undeclared global.
-        const tid = (p as ast.TypePatternNode).id.id;
-        if (!tid.includes(":") && !RuntimeProvider.isRuntimeReference(tid)) {
-          predefinedVariables.push(encodeIdentifier(tid));
-        }
-        return true;
-      }
-      case "map-pattern":
-        return (p as ast.MapPatternNode).pairs.every((x) =>
-          walkPattern(x.pattern)
-        );
-      case "list-pattern":
-      case "vector-pattern":
-        return (p as ast.ListPatternNode).elements.every((x) => walkPattern(x));
-      case "rest-pattern": {
-        // `[a ...rest]` binds `rest` to the tail slice (D28); declare it like any other binding, or the
-        // `rest = matchVar.slice(...)` codegen emits assigns to a global.
-        const rid = (p as ast.RestPatternNode).id.id;
-        if (!rid.includes(":") && !RuntimeProvider.isRuntimeReference(rid)) {
-          predefinedVariables.push(encodeIdentifier(rid));
-        }
-        return true;
-      }
-      default:
-        return true;
-    }
-  };
-  node.cases.every((x) => walkPattern(x.pattern));
-  return Array.from(new Set(predefinedVariables));
-}
-
-/**
  * ESTree node creation helpers with location tracking
  */
 class ESTreeBuilder {
@@ -1820,8 +1773,19 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         leafStmt: (n) => this.asStatement(this.visit(n) as ESTree.Node, n),
         storeValue: (e, src) => this.asValue(e, src),
         nilLiteral: (src) => this.nilLiteral(src),
-        patternTest: (pattern, scrutName) => this.generateCondition(pattern, scrutName),
-        patternVars: (match) => findIdentifiersToDefine(match),
+        patternTypeTest: (type, operand, src) => {
+          const test = this.typeTest(src, type, operand);
+          // The untestable-type report lived inside generateCondition; it has to survive the move, and
+          // the TYPE node is a better location for it than the arm.
+          if (test === undefined) {
+            this.report(CD.UntestableType, (type as any) ?? src, {
+              type: this.describeTypeNode(type as any),
+              position: "in a `:of` match pattern",
+            });
+          }
+          return test;
+        },
+        enumMemberValue: (member) => this.enumKeys[member],
         emitForEach: (node, collection, bodyStmt, elseFor) =>
           this.assembleForEach(node as ast.ForEachNode, collection, bodyStmt, elseFor),
         emitVarDecl: (node, initES) => this.emitVarDecl(node as ast.VariableNode, initES),
@@ -2465,237 +2429,6 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     }
   }
 
-  private generateCondition(
-    pattern: ast.PatternNode,
-    matchVar: string
-  ): ESTree.Expression {
-    const matchVarId = ESTreeBuilder.identifier(pattern, matchVar);
-
-    switch (pattern._type) {
-      case "any-pattern":
-        return ESTreeBuilder.literal(pattern, true);
-
-      case "identifier-pattern":
-        if (pattern.id.id in this.enumKeys) {
-          return {
-            type: "BinaryExpression",
-            operator: "===",
-            left: matchVarId,
-            right: ESTreeBuilder.literal(pattern, this.enumKeys[pattern.id.id]),
-          } as ESTree.BinaryExpression;
-        }
-        return ESTreeBuilder.sequenceExpression(pattern, [
-          {
-            type: "AssignmentExpression",
-            operator: "=",
-            left: this.visit(pattern.id) as ESTree.Identifier,
-            right: matchVarId,
-          } as ESTree.AssignmentExpression,
-          ESTreeBuilder.literal(pattern, true),
-        ]);
-
-      case "constant-pattern":
-        return {
-          type: "BinaryExpression",
-          operator: "===",
-          left: matchVarId,
-          right: this.visitExpr(pattern.constant),
-        } as ESTree.BinaryExpression;
-
-      // `x :of T` (D27). Test the type AND bind the value -- `x` is usable in the body and in a `:when`
-      // guard, exactly like a bare identifier-pattern, but only when the value is a T.
-      //
-      // Dead until now: this landed on the `default: false` below, so every type pattern fell through.
-      // The runtime check was never missing -- `__ll_is_type` (in the always-on LL_RUNTIME preamble,
-      // and already live via the operator registry) handles primitives by `typeof` and classes by
-      // walking the prototype chain on `__ll_name`. RuntimeProvider even records the intended wiring:
-      // "generateCondition calling __ll_is_type". This is that call, finally made.
-      case "type-pattern": {
-        const tp = pattern as ast.TypePatternNode;
-        // `typeTest`, not `getTypeName` -- the SAME helper `visitTypeGuard` uses, so the two `:of`
-        // positions cannot answer one question differently. `matchVarId` is already a temp, so the
-        // per-member repetition a union needs is free here.
-        const isType = this.typeTest(tp, tp.type, matchVarId);
-        if (isType === undefined) {
-          this.report(CD.UntestableType, tp, {
-            type: this.describeTypeNode(tp.type),
-            position: "in a `:of` match pattern",
-          });
-          return ESTreeBuilder.literal(pattern, false);
-        }
-        // `(x = v, true) && __ll_is_type(v, "T")` -- bind first (findIdentifiersToDefine declared `x`),
-        // then test. The bind is a side effect that always yields true, so the AND reduces to the type
-        // test, and `x` holds the value in whatever runs to the right.
-        return {
-          type: "LogicalExpression",
-          operator: "&&",
-          left: ESTreeBuilder.sequenceExpression(pattern, [
-            {
-              type: "AssignmentExpression",
-              operator: "=",
-              left: this.visit(tp.id) as ESTree.Identifier,
-              right: matchVarId,
-            } as ESTree.AssignmentExpression,
-            ESTreeBuilder.literal(pattern, true),
-          ]),
-          right: isType,
-        } as ESTree.LogicalExpression;
-      }
-
-      case "list-pattern":
-      case "vector-pattern":
-        return this.generateArrayPatternCondition(
-          pattern as ast.ListPatternNode,
-          matchVar
-        );
-
-      case "map-pattern":
-        return this.generateMapPatternCondition(
-          pattern as ast.MapPatternNode,
-          matchVar
-        );
-
-      default:
-        return ESTreeBuilder.literal(pattern, false);
-    }
-  }
-
-  private generateArrayPatternCondition(
-    pattern: ast.ListPatternNode | ast.VectorPatternNode,
-    matchVar: string
-  ): ESTree.Expression {
-    const matchVarId = ESTreeBuilder.identifier(pattern, matchVar);
-    const conditions: ESTree.Expression[] = [];
-
-    // A trailing rest -- `[a ...rest]` -- changes two things: the length is a FLOOR, not an equality,
-    // and the rest element binds the SLICE rather than one index. Only the last position is a rest
-    // (a rest in the middle is a different, harder feature); anything else there stays exact.
-    const restIdx = pattern.elements.findIndex((e) => e._type === "rest-pattern");
-    const hasRest = restIdx === pattern.elements.length - 1 && restIdx >= 0;
-    const fixedCount = hasRest ? restIdx : pattern.elements.length;
-
-    conditions.push(
-      ESTreeBuilder.callExpression(
-        pattern,
-        ESTreeBuilder.memberExpression(
-          pattern,
-          ESTreeBuilder.identifier(pattern, "Array"),
-          ESTreeBuilder.identifier(pattern, "isArray")
-        ),
-        [matchVarId]
-      )
-    );
-
-    conditions.push({
-      type: "BinaryExpression",
-      // `>=` with a rest (at least the fixed elements), `===` without (exact shape). This was
-      // unconditionally `===`, so a rest pattern demanded an exact length and never matched a longer
-      // array -- and then failed on the rest element too, which was double-dead.
-      operator: hasRest ? ">=" : "===",
-      left: ESTreeBuilder.memberExpression(
-        pattern,
-        matchVarId,
-        ESTreeBuilder.identifier(pattern, "length")
-      ),
-      right: ESTreeBuilder.literal(pattern, fixedCount),
-    } as ESTree.BinaryExpression);
-
-    pattern.elements.forEach((elem, idx) => {
-      if (elem._type === "rest-pattern") {
-        // `rest = matchVar.slice(fixedCount)`, always true -- a binding, not a test. The length floor
-        // above already guaranteed the slice is valid (possibly empty). An anonymous rest would bind
-        // nothing, but the grammar requires a name, so there is always an id here.
-        const restId = this.visit((elem as ast.RestPatternNode).id) as ESTree.Identifier;
-        const slice = ESTreeBuilder.callExpression(
-          elem,
-          ESTreeBuilder.memberExpression(
-            elem,
-            matchVarId,
-            ESTreeBuilder.identifier(elem, "slice")
-          ),
-          [ESTreeBuilder.literal(elem, fixedCount)]
-        );
-        conditions.push(
-          ESTreeBuilder.sequenceExpression(elem, [
-            {
-              type: "AssignmentExpression",
-              operator: "=",
-              left: restId,
-              right: slice,
-            } as ESTree.AssignmentExpression,
-            ESTreeBuilder.literal(elem, true),
-          ])
-        );
-        return;
-      }
-      conditions.push(this.generateCondition(elem, `${matchVar}[${idx}]`));
-    });
-
-    return conditions.reduce(
-      (acc, cond) =>
-        ({
-          type: "LogicalExpression",
-          operator: "&&",
-          left: acc,
-          right: cond,
-        } as ESTree.LogicalExpression)
-    );
-  }
-
-  private generateMapPatternCondition(
-    pattern: ast.MapPatternNode,
-    matchVar: string
-  ): ESTree.Expression {
-    const matchVarId = ESTreeBuilder.identifier(pattern, matchVar);
-    const conditions: ESTree.Expression[] = [];
-
-    conditions.push({
-      type: "LogicalExpression",
-      operator: "&&",
-      left: {
-        type: "BinaryExpression",
-        operator: "===",
-        left: {
-          type: "UnaryExpression",
-          operator: "typeof",
-          argument: matchVarId,
-          prefix: true,
-        },
-        right: ESTreeBuilder.literal(pattern, "object"),
-      } as ESTree.BinaryExpression,
-      right: {
-        type: "BinaryExpression",
-        operator: "!==",
-        left: matchVarId,
-        right: ESTreeBuilder.literal(pattern, null),
-      } as ESTree.BinaryExpression,
-    } as ESTree.LogicalExpression);
-
-    pattern.pairs.forEach((pair) => {
-      let keyStr: string;
-      if (pair.key._type === "simple-identifier") {
-        keyStr = (pair.key as ast.SimpleIdentifierNode).id;
-      } else if (pair.key._type === "string") {
-        keyStr = (pair.key as ast.StringNode).value;
-      } else {
-        keyStr = this.visit(pair.key).toString();
-      }
-
-      conditions.push(
-        this.generateCondition(pair.pattern, `${matchVar}["${keyStr}"]`)
-      );
-    });
-
-    return conditions.reduce(
-      (acc, cond) =>
-        ({
-          type: "LogicalExpression",
-          operator: "&&",
-          left: acc,
-          right: cond,
-        } as ESTree.LogicalExpression)
-    );
-  }
 
   // =========================================================================
   // Identifiers / Literals

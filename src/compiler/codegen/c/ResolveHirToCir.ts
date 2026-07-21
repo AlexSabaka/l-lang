@@ -17,7 +17,7 @@ import { classifyList } from "../../analysis/listForm";
 import { DesugarAstVisitor } from "../../transformation/visitors/DesugarAstVisitor";
 import type { HirModule } from "../../hir";
 import { LowerAstToHirVisitor } from "../../hir";
-import type { HBlock, HExpr, HStmt } from "../../hir/nodes";
+import type { HBlock, HExpr, HPattern, HStmt } from "../../hir/nodes";
 import { report, CBackendDiagnostics } from "../../rules/diagnostics";
 import { GapLedger, Assumption } from "./GapLedger";
 import {
@@ -742,14 +742,11 @@ export class ResolveHirToCir {
           return this.resolveForEach(h);
 
         case "hoist": {
-          // Declare the match's pattern variables (all arm bindings) at the top of its block scope,
-          // boxed -- the A7 hoist. The name SET is computed here from the raw MatchNode (the legacy
-          // patternVars seam), which is itself a dip below the HIR.
-          const match = this.dipAst("A7", "hoist", h.src, "pattern variable set computed from the raw MatchNode (legacy patternVars seam)", () => h.src as ast.MatchNode);
-          const names = new Set<string>();
-          for (const c of match.cases ?? []) this.patternBindNames(c.pattern, names);
+          // The match's pattern variables, declared boxed at the top of its block scope. The name SET
+          // (and its order) is decided at lowering now -- this used to recompute it from the raw
+          // MatchNode with a walk that quietly disagreed with the JS one about rest bindings.
           const out: CStmt[] = [];
-          for (const n of names) {
+          for (const n of h.names) {
             const cName = mangleC(n);
             this.declareLocal(cName, C_VALUE);
             out.push({ src: h.src, ctype: C_VOID, kind: "c-decl", cName, declCType: C_VALUE, init: null });
@@ -1263,7 +1260,7 @@ export class ResolveHirToCir {
       case "index":
         return this.resolveIndexChain(h);
 
-      case "pattern-test":
+      case "match-test":
         return this.resolvePatternTest(h);
 
       case "invoke-restart":
@@ -1342,10 +1339,10 @@ export class ResolveHirToCir {
     return { src, ctype: elem, kind: "c-index", base, index, mode, checked };
   }
 
-  private resolvePatternTest(h: Extract<HExpr, { kind: "pattern-test" }>): CExpr {
-    // The HIR carries the raw PatternNode + scrutinee name; the test decomposition happens HERE,
-    // below the HIR -- exactly the A7 seam the spec names (legacy generateCondition).
-    const pattern = this.dipAst("A7", "pattern-test", h.src, "pattern decomposed from raw PatternNode (legacy generateCondition seam)", () => h.pattern);
+  private resolvePatternTest(h: Extract<HExpr, { kind: "match-test" }>): CExpr {
+    // The test SHAPE is modeled on the HIR (A7): which tests, in what order, what binds. What is left
+    // here is purely mechanical -- how C reaches a sub-value and spells each primitive test.
+    const pattern = h.pattern;
     const scrut: CExpr = {
       src: h.src,
       ctype: this.localCType(h.scrutName) ?? C_VALUE,
@@ -1372,49 +1369,49 @@ export class ResolveHirToCir {
     return { src: e.src, ctype: C_VALUE, kind: "c-box", inner: e, from: e.ctype };
   }
 
-  /** Decompose a match pattern into a boolean test that may BIND pattern variables as a side effect,
-   *  in bind-then-test order (spec A7). A binding is `(name = value)` sequenced before the test. */
-  private patternCondition(p: ast.PatternNode, scrut: CExpr, src: ast.ASTNode): CExpr {
-    switch (p._type) {
-      case "any-pattern":
+  /**
+   * A modeled pattern (A7) -> the C boolean that tests it and binds as it goes.
+   *
+   * The DECISIONS are already made on the node; this spells them in C: `ll_deep_eq` for an equality,
+   * `ll_is_type` for a container/type check, `ll_index_dyn` / `ll_get` to reach a sub-value. Order is
+   * the node's order -- bind-then-test, left to right -- and a trivially-true conjunct is kept, since
+   * dropping it would change the emitted C for no gain.
+   */
+  private patternCondition(p: HPattern, scrut: CExpr, src: ast.ASTNode): CExpr {
+    switch (p.kind) {
+      case "any":
         return this.TRUE(src);
-      case "functional-pattern":
-        // A closure-shape pattern -- untestable at run time (D: functional-pattern is dead). Refuse.
-        throw this.refuse(src, "pattern:functional", "patternCondition");
-      case "constant-pattern": {
-        const lit = this.resolveAstExpr((p as ast.ConstantPatternNode).constant);
+
+      case "equals": {
+        const lit = this.resolveExpr(p.value);
         return { src, ctype: C_BOOL, kind: "c-binop", op: "==", mode: "eq-deep", lhs: scrut, rhs: lit };
       }
-      case "identifier-pattern": {
-        // An enum member `HttpMethod:GET =>` is an equality TEST, not a binding (mirrors JS, which
-        // special-cases `pattern.id.id in enumKeys`).
-        const idName = ast.symbolName((p as ast.IdentifierPatternNode).id);
-        const enumEntry = this.enumValues.get(idName);
-        if (enumEntry) {
-          const lit = this.enumValueExpr(enumEntry, src);
-          return { src, ctype: C_BOOL, kind: "c-binop", op: "==", mode: "eq-deep", lhs: scrut, rhs: lit };
-        }
-        // A bare name binds the whole scrutinee and always matches.
-        const cName = mangleC(idName);
-        return this.bindThen(cName, scrut, this.TRUE(src), src);
+
+      case "enum-equals": {
+        // The test-vs-bind decision came from the HIR; the member's constant is still folded here,
+        // where the enum table lives (A4 -- the HIR keeps no enum node).
+        const entry = this.enumValues.get(p.member);
+        const lit = entry ? this.enumValueExpr(entry, src) : this.resolveAstExpr({ _type: "simple-identifier", id: p.member } as any);
+        return { src, ctype: C_BOOL, kind: "c-binop", op: "==", mode: "eq-deep", lhs: scrut, rhs: lit };
       }
-      case "type-pattern": {
-        // `v :of T`: bind v = scrut, then test the runtime type (D41).
-        const tp = p as ast.TypePatternNode;
-        const cName = mangleC(ast.symbolName(tp.id));
-        const info = this.typeTestName(tp.type) ?? { name: "?", primitive: false };
+
+      case "bind":
+        return this.bindThen(mangleC(p.name), scrut, this.TRUE(src), src);
+
+      case "typed": {
+        const info = this.typeTestName(p.type) ?? { name: "?", primitive: false };
         const test: CExpr = { src, ctype: C_BOOL, kind: "c-type-test", operand: scrut, typeName: info.name, primitive: info.primitive };
-        return this.bindThen(cName, scrut, test, src);
+        return this.bindThen(mangleC(p.name), scrut, test, src);
       }
-      case "vector-pattern":
-      case "list-pattern": {
-        const elements = (p as ast.VectorPatternNode).elements ?? [];
-        return this.vectorPattern(elements, scrut, src);
-      }
-      case "map-pattern":
-        return this.mapPattern(p as ast.MapPatternNode, scrut, src);
-      default:
-        throw this.refuse(src, `pattern:${p._type}`, "patternCondition");
+
+      case "vector":
+        return this.vectorPattern(p, scrut, src);
+
+      case "map":
+        return this.mapPattern(p, scrut, src);
+
+      case "unsupported":
+        throw this.refuse(src, `pattern:${p.what}`, "patternCondition");
     }
   }
 
@@ -1424,64 +1421,51 @@ export class ResolveHirToCir {
     return { src, ctype: C_BOOL, kind: "c-seq", exprs: [bind, test] };
   }
 
-  /** `[p0 p1 ...]` -- is-array && length-match && each element sub-pattern (against the boxed elem). */
-  private vectorPattern(elements: ast.PatternNode[], scrut: CExpr, src: ast.ASTNode): CExpr {
-    const hasRest = elements.some((e) => e._type === "rest-pattern");
-    const fixed = elements.filter((e) => e._type !== "rest-pattern");
+  /** `[p0 p1 ...rest]` -- is-array && length (a floor with a rest, exact without) && each element,
+   *  then the rest binding, which is a binding rather than a test. */
+  private vectorPattern(p: Extract<HPattern, { kind: "vector" }>, scrut: CExpr, src: ast.ASTNode): CExpr {
     let test: CExpr = { src, ctype: C_BOOL, kind: "c-type-test", operand: scrut, typeName: "Array", primitive: false };
     const lenExpr: CExpr = { src, ctype: C_INT, kind: "c-member", object: scrut, fieldName: "length", runtimeFn: "ll_dyn_length" };
-    const lenLit: CExpr = { src, ctype: C_INT, kind: "c-lit", lit: "int", value: String(fixed.length) };
-    const lenCmp: CExpr = { src, ctype: C_BOOL, kind: "c-binop", op: hasRest ? ">=" : "==", mode: "int", lhs: lenExpr, rhs: lenLit };
-    test = this.and(test, lenCmp, src);
-    fixed.forEach((el, i) => {
-      // The scrutinee is boxed, and the length check already guaranteed the index is in range.
+    const lenLit: CExpr = { src, ctype: C_INT, kind: "c-lit", lit: "int", value: String(p.elements.length) };
+    test = this.and(test, { src, ctype: C_BOOL, kind: "c-binop", op: p.rest ? ">=" : "==", mode: "int", lhs: lenExpr, rhs: lenLit }, src);
+    p.elements.forEach((el, i) => {
+      // The length check already guaranteed the index is in range.
       const idx: CExpr = { src, ctype: C_INT, kind: "c-lit", lit: "int", value: String(i) };
       const elem: CExpr = { src, ctype: C_VALUE, kind: "c-index", base: scrut, index: idx, mode: "boxed", checked: false };
       test = this.and(test, this.patternCondition(el, elem, src), src);
     });
+    if (p.rest) {
+      // The tail slice. C had no binding here at all -- the name was declared and left nil -- because
+      // its bound-name walk read a field the rest node does not have. Modeled, both backends bind it.
+      const VEC_VALUE: CType = { k: "vec", elem: C_VALUE };
+      const from: CExpr = { src, ctype: C_INT, kind: "c-lit", lit: "int", value: String(p.elements.length) };
+      // `LL_END` is the runtime's "end omitted" sentinel, the same one `xs.slice(n)` lowers to. P2
+      // unboxes the scrutinee into the vec param and boxes the result back for the binding.
+      const end: CExpr = { src, ctype: C_INT, kind: "c-lit", lit: "int", value: "LL_END" };
+      const slice: CExpr = {
+        src, ctype: VEC_VALUE, kind: "c-call",
+        callee: { kind: "intrinsic", runtimeFn: "ll_vec_slice", variadic: false, params: [VEC_VALUE, C_INT, C_INT], ret: VEC_VALUE },
+        args: [scrut, from, end],
+      };
+      test = this.and(test, this.bindThen(mangleC(p.rest.name), slice, this.TRUE(src), src), src);
+    }
     return test;
   }
 
   /** `{:k pat ...}` -- is-map && each key's value matches its sub-pattern (total lookup, no trap). */
-  private mapPattern(p: ast.MapPatternNode, scrut: CExpr, src: ast.ASTNode): CExpr {
+  private mapPattern(p: Extract<HPattern, { kind: "map" }>, scrut: CExpr, src: ast.ASTNode): CExpr {
     let test: CExpr = { src, ctype: C_BOOL, kind: "c-type-test", operand: scrut, typeName: "Map", primitive: false };
-    for (const pair of p.pairs ?? []) {
-      const key = ast.keyName(pair.key as any);
-      const keyLit: CExpr = { src, ctype: C_STR, kind: "c-lit", lit: "str", value: key };
+    for (const en of p.entries) {
+      const keyLit: CExpr = { src, ctype: C_STR, kind: "c-lit", lit: "str", value: en.key };
       // Total map access (`ll_get`): an absent key is nil, not a trap.
       const val: CExpr = { src, ctype: C_VALUE, kind: "c-call", callee: { kind: "intrinsic", runtimeFn: "ll_get", variadic: false, params: [C_VALUE, C_VALUE], ret: C_VALUE }, args: [scrut, keyLit] };
-      test = this.and(test, this.patternCondition(pair.pattern, val, src), src);
+      test = this.and(test, this.patternCondition(en.pattern, val, src), src);
     }
     return test;
   }
 
   private and(a: CExpr, b: CExpr, src: ast.ASTNode): CExpr {
     return { src, ctype: C_BOOL, kind: "c-binop", op: "&&", mode: "bool", lhs: a, rhs: b };
-  }
-
-  /** The names a match pattern binds (identifier / type / destructuring binders). */
-  private patternBindNames(p: ast.PatternNode | undefined, into: Set<string>): void {
-    if (!p) return;
-    switch (p._type) {
-      case "identifier-pattern": {
-        const nm = ast.symbolName((p as ast.IdentifierPatternNode).id);
-        if (!this.enumValues.has(nm)) into.add(nm); // an enum-member arm binds nothing
-        return;
-      }
-      case "type-pattern": into.add(ast.symbolName((p as ast.TypePatternNode).id)); return;
-      case "vector-pattern":
-      case "list-pattern":
-        for (const el of (p as ast.VectorPatternNode).elements ?? []) this.patternBindNames(el, into);
-        return;
-      case "map-pattern":
-        for (const pr of (p as ast.MapPatternNode).pairs ?? []) this.patternBindNames(pr.pattern, into);
-        return;
-      case "rest-pattern":
-        this.patternBindNames((p as any).pattern, into);
-        return;
-      default:
-        return;
-    }
   }
 
   // -- raw-AST resolution (the opaque-leaf half; every entry point is a dip) ------------------------
