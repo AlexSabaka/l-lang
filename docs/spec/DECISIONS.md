@@ -4155,7 +4155,7 @@ question, not part of this ruling.
 
 ---
 
-## D50–D54 — the intrinsic floor (Phase F)
+## D50–D55 — the intrinsic floor (Phase F)
 
 > **Ruled 2026-07.** The runtime-boundary companion to D19–D22 (the stdlib) and D48 (the HIR core
 > tail). Full evidence and worklist in [`FLOOR.md`](./FLOOR.md); these are the rulings themselves.
@@ -4182,13 +4182,48 @@ conformance-tested. The floor is a cost (each entry must be tested for parity), 
 This completes the D43 → D49d arc: the static type decides **representation**, not just operations. C
 uses `int64_t` under `-fwrapv`; JS moves `Int` off f64 onto `BigInt` normalised with
 `BigInt.asIntN(64, …)` — a real migration of the working JS backend, ruled explicitly because it
-cannot be drifted into (output stays golden-stable, `String(5n) === "5"`). `number->string` is
-shortest-round-trip (JS `toString` is the spec; C vendors Ryū). Division truncates per D49d; modulo
-is truncated (sign-of-dividend); mixed `Int`/`Real` promotes to `Real`; a `.`-bearing literal is
-`Real`; bitwise ops are defined on `Int`; transcendentals use host libm/`Math` with a documented
-last-ULP tolerance; `string->number` on bad input is nil (D9). Chosen over f64-unified (loses 2⁵³
-precision) and bignum (viral BigInt without int64's C-family fit): l-lang "thinks it's C#", and int64
-is free and correct on the native endgame, taxing only the transient JS backend.
+cannot be drifted into. Division truncates per D49d; modulo is truncated (sign-of-dividend); mixed
+`Int`/`Real` promotes to `Real`; a `.`-bearing literal is `Real`; bitwise ops are defined on `Int`;
+transcendentals use host libm/`Math` with a documented last-ULP tolerance; `string->number` on bad
+input is nil (D9). Chosen over f64-unified (loses 2⁵³ precision) and bignum (viral BigInt without
+int64's C-family fit): l-lang "thinks it's C#", and int64 is free and correct on the native endgame,
+taxing only the transient JS backend.
+
+**Amended 2026-07-21 — three corrections, all found by reading this ruling against the working tree.**
+
+**(a) The BigInt-suffix hazard is real, and D55 dissolves it.** This ruling originally claimed Fe was
+golden-stable by citing `String(5n) === "5"`. That is the *coercion* path. The **display** path is
+what the goldens are made of, and on node `console.log(1n)` prints `1n`, `console.log([1n, 2n])`
+prints `[ 1n, 2n ]`, `util.inspect(1n)` is `1n` (verified, node 20.18) — only `` `${1n}` `` gives
+`1`. Under the original D54 (display *is* `util.inspect`) Fe would therefore have churned nearly every
+golden in the corpus. The fix is not a special case that strips the suffix: **D55 makes the formatter
+ours**, so an `Int` renders by our rule and the suffix never exists to strip. Recorded because the
+contradiction is instructive — "the output is stable" was a claim about the wrong function.
+
+**(b) `floor`/`ceil`/`round` return `Real`. `truncate : Number -> Int` is the sole Real→Int door.**
+The two halves of the boundary had always disagreed — `intrinsics.ts` says `Math.floor : Real -> Real`
+while `lib/std/math/math.lisp` declared `-> Int` — and nothing caught it because `Math` is an untyped
+extern, so the checker's return-check bails on `Unknown` and can never compare them. `Real` is the
+correct side of that disagreement, for two independent reasons:
+
+- This ruling's own float→int tie-break bullet says `-0.5 → -0`. **`-0` is not an `Int` value.** The
+  bullet only parses if the result is `Real`.
+- Under D49d, `-> Int` makes `(/ (round (* x 100)) 100)` **integer division** — the idiomatic
+  round-to-2-places spelling silently returns `0` instead of `0.87`. A *silent* wrong answer is the
+  exact class the floor exists to eliminate, and it would have been introduced by the floor itself.
+
+So the conversion is **named at every site it happens**, which is what D43 ("static types decide")
+wants. `truncate` truncates toward zero, agreeing with D49d's `Int / Int` and with C's `int64_t` cast.
+It is a *builtin* conversion and therefore not in tension with D46/B-3 `(cast<T> x)`, which is the
+explicit-cast syntax for **user-defined** `defcast`s; when Cv lands, `(cast<Int> r)` routes through
+this primitive rather than competing with it.
+
+**(c) `number->string` does not need a vendored Ryū.** `runtime.c`'s `ll_fmt_double` already generates
+shortest-round-trip digits by trying `%.15g`/`%.16g`/`%.17g` and keeping the first that round-trips
+through `strtod`. The residual divergence is not digit *generation* but **exponent-notation
+thresholds**: JS switches to exponential at ≥1e21 and <1e-6, whereas `%g` switches on precision — so
+`1e-7` prints `1e-07` on C and `1e-7` on JS. Fe's number-formatting item is therefore "match the
+threshold and exponent spelling", a far smaller job than vendoring Ryū.
 
 ### D52 — `String` is Unicode codepoints
 
@@ -4207,11 +4242,45 @@ spec'd because the corpus already bakes it into goldens. `equals` is a structura
 primitive (`[1 2]` equals `[1 2]`). All of `pop/reverse/slice/concat/join/index-of/includes/map/
 filter/reduce/zip/range/sort` (a **stable l-lang mergesort**) are l-lang on top.
 
-### D54 — display is `util.inspect`; reflection has one shape
+### D54 — reflection has one shape
 
-The canonical display of a value (interpolation, `console.log`, `inspect`) is node's `util.inspect`
-exactly — `[ 1, 2, 3 ]`, `{ a: 1 }`, single-quoted strings — both backends reproduce it, chosen for
-golden-stability over a cleaner l-lang format. Reflection: the backend emits the metadata **graph**
-into the runtime, but the accessor **shape is the spec, not per-backend** — the JS `type`/
-`type-by-name` object (`{name, kind, params, returns, nullable}` / `{name, kind, properties, methods,
-…}`) is canonical, pinned by `reflection_metadata_depth.lisp`.
+The backend emits the metadata **graph** into the runtime, but the accessor **shape is the spec, not
+per-backend** — the JS `type`/`type-by-name` object (`{name, kind, params, returns, nullable}` /
+`{name, kind, properties, methods, …}`) is canonical, pinned by `reflection_metadata_depth.lisp`.
+
+> **Amended 2026-07-21.** D54 originally also ruled that display is node's `util.inspect` exactly.
+> That half is **superseded by D55** and has been removed here rather than left to contradict it.
+
+### D55 — display is l-lang's own format, specified by transcription
+
+The canonical rendering of a value is **l-lang's own**, written out as a rule in
+[`FLOOR.md`](./FLOOR.md) §3.5 and implemented from that text by both backends. It is *not* node's
+`util.inspect`, and this reverses D54's original rationale (which chose node for zero golden churn).
+
+*Why the reversal.* "Reproduce `util.inspect` exactly" has **no fixed referent**. `util.inspect` is a
+moving implementation — it changes across node majors — so conformance would mean the C backend
+chasing a version of node forever, and "both backends agree" would mean "both agree with whatever node
+does this month". Worse, the rule is not even *recoverable*: node's line-breaking is `compact: 3`
+interacting with `breakLength: 80`, and in the existing goldens a 74-char form breaks while a 71-char
+one stays inline, because the decision is made on the would-be-joined length the golden no longer
+contains. A specification you cannot read off the artifact is not a specification.
+
+*The discipline this changes, and it is the important part.* The standing rule has been **JS is the
+oracle; never bless unchecked output**. Once the format is ours, **JS stops being an oracle for
+display** — both backends become implementations of a written standard, and neither one's output is
+evidence that the standard was met. Display goldens are therefore **hand-derived from the §3.5 rule**
+and reasoned in the commit, exactly as the D47 condition/restart expectations were (JS refuses those,
+so it could not be the oracle there either). Capturing a display golden from a run is now the same
+error as blessing unchecked output.
+
+*What it costs.* 18 of 130 `.expect` files contain inspect-shaped output; 14 of them (~36 lines) are
+flat containers that a faithful transcription leaves alone. The other 4 (~87 lines, all reflection
+dumps) depend on node's wrapping and get re-derived once. `runtime.c`'s `ll_inspect_sb` already
+implements 12 of the 12 distinct shapes — the C side is missing only a depth policy and wrapping.
+
+*Two substantive departures from node,* both spec'd in §3.5: **one depth policy, unlimited**, so
+`[Object]`/`[Array]` truncation never appears (it exists in today's goldens only because bare
+`console.log` uses depth 2 while interpolation uses depth `null` — the same "display" concept behaving
+two ways); and **`[Circular]`** on revisiting an in-progress container, which closes a latent hang —
+`ll_inspect_sb` recurses unbounded with no visited set today, so unlimited depth without it would spin
+forever on a cyclic structure.

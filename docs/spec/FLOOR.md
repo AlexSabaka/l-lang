@@ -6,7 +6,7 @@
 > This document is the ruling that turns that accident into a specification, plus the worklist that
 > Phase F executes against.
 >
-> Rulings live in [`DECISIONS.md`](./DECISIONS.md) as **D50–D54**. This is their evidence and their
+> Rulings live in [`DECISIONS.md`](./DECISIONS.md) as **D50–D55**. This is their evidence and their
 > expansion. It is the runtime-boundary companion to [`STDLIB.md`](./STDLIB.md) (Phase S): Phase S
 > decides *where the library lives and what it exports*; Phase F decides *what sits below it that a
 > library cannot be written without*.
@@ -64,7 +64,7 @@ source, both backends run it.
 |---|---|---|
 | strings | `codepoint-at` `codepoint-length` `string-from-codepoints` `concat` | codepoint model; a codepoint is the existing `Char` (`uint32_t`) |
 | case | `codepoint-upcase` `codepoint-downcase` | one **vendored** simple-case table, compiled into both runtimes |
-| numbers | `number->string` `string->number` `truncate` | `number->string` is shortest-round-trip (Ryū on C, `.toString` on JS) |
+| numbers | `number->string` `string->number` `truncate` | `number->string` is shortest-round-trip; `truncate` is the SOLE `Real -> Int` door (D51 amendment (b)) |
 | math | `sqrt sin cos tan asin acos atan atan2 exp log pow` | host libm / `Math`; last-ULP tolerance documented |
 | vectors | `vec-new` `vec-push!` `vec-get` `vec-set!` `vec-length` | the growable-array representation |
 | maps | `map-new` `map-get` `map-set!` `map-has` `map-delete` `map-keys` | insertion-ordered; **String** keys |
@@ -76,7 +76,7 @@ source, both backends run it.
 **Pure l-lang, on the floor (portable by construction):** all of `std/core`
 (`head tail cons elem get empty`), `std/seq` (`map filter reduce zip range reverse flatten sort first
 last at`), `std/string` (`starts-with ends-with includes index-of trim split join substr pad* repeat
-replace upcase downcase`), `std/io` (`print println prn` + the `{0}` substitution), `std/fn`, the
+replace upcase downcase`), `std/io` (`print prn` + the `{N}` substitution, §3.6), `std/fn`, the
 display/`inspect` formatter, the number predicates, and the derived math
 (`abs min max round floor ceil sign inc dec`).
 
@@ -109,9 +109,12 @@ decide *operations* (D49d gave `Int / Int` integer division), it decides **repre
   signed overflow is UB and would not *be* wrapping. JS: `BigInt`, normalised with
   `BigInt.asIntN(64, …)` after each op. This is a **real migration of the working JS backend** off
   f64 for `Int`; it is the most expensive item in Phase F and is why it is ruled explicitly rather
-  than drifted into. Output is golden-stable — `String(5n)` is `"5"`, no `n`.
+  than drifted into. *Amended:* the original "output is golden-stable, `String(5n)` is `"5"`" was a
+  claim about the **coercion** path — the *display* path prints `1n` / `[ 1n, 2n ]`. Under D55 the
+  formatter is ours and renders an `Int` as digits, so the suffix never arises; see §3.5 "Numbers".
 - **`number->string`** is shortest-round-trip (the JS `Number.prototype.toString` result is the
-  spec; C vendors a Ryū/Grisu snippet to match). `0.1` prints `0.1`, not `0.100000`.
+  spec). `0.1` prints `0.1`, not `0.100000`. *Amended:* `ll_fmt_double` already generates the digits;
+  the residual is the exponent threshold and spelling — see §3.5 "Numbers".
 - **Division** per D49d: `Int / Int` truncates toward zero; a `Real` operand promotes to `Real`.
   **Modulo** matches — truncated, sign-of-dividend (`-7 % 2 = -1`).
 - **Mixed** `Int`/`Real` arithmetic promotes to `Real`; a numeric literal with a `.` is `Real`,
@@ -119,8 +122,10 @@ decide *operations* (D49d gave `Int / Int` integer division), it decides **repre
 - **Bitwise** (`<< >> & | ^ ~`) is well-defined on `Int` because `Int` is now genuinely `int64`.
 - **Transcendentals** use host libm / `Math`; a last-ULP mismatch is a documented tolerance caught
   by a not-yet guard, not a vendored correctly-rounded library.
-- **Derived** math (`abs min max round floor ceil sign`) is l-lang on `truncate` + comparison;
-  `round`/float→int tie-breaks adopt the JS rule (`2.5 → 3`, `-0.5 → -0`).
+- **Derived** math (`abs min max round floor ceil sign`) is l-lang on `truncate` + comparison, and
+  every one of them returns **`Real`** — `truncate : Number -> Int` is the only narrowing door
+  (D51 amendment (b)). The `round` tie-break adopts the JS rule (`2.5 → 3`, `-0.5 → -0`), which is
+  itself the proof that `round` cannot return `Int`: `-0` is not an `Int` value.
 - `string->number` on malformed input is **nil** (a [D9](./DECISIONS.md) optional), not `NaN`.
 
 ### D52 — the string floor: Unicode codepoints
@@ -153,12 +158,10 @@ so `codepoint-at` returns a `Char` with no new type.
   `equals` recursing on reflection tags was the alternative; a floor primitive is chosen for speed
   and one canonical spec.)
 
-### D54 — display is node's `util.inspect`; reflection has one metadata shape
+### D54 — reflection has one metadata shape
 
-- **Display.** The canonical rendering of a value in interpolation, `console.log`, and `inspect`
-  is **node's `util.inspect`** — `[ 1, 2, 3 ]`, `{ a: 1, b: 2 }`, single-quoted `'a'`, its depth
-  and wrapping rules. Both backends reproduce it exactly. Chosen for golden-stability (zero corpus
-  churn); the C side mimics node rather than the two agreeing on a cleaner l-lang format.
+*(D54 originally also ruled display; that half is superseded by **D55** and now lives in §3.5.)*
+
 - **Reflection.** The backend **emits the metadata graph** (a class's fields/methods/params, a
   function's params/returns/nullable) into the runtime; the **accessor shape is the spec, not
   per-backend**. The JS `type`/`type-by-name` object is that spec — `{name, kind, params:[{name,
@@ -166,6 +169,138 @@ so `codepoint-at` returns a `Char` with no new type.
   nullable}` for a class — and `reflection_metadata_depth.lisp` pins it. [D48-Q5](./DECISIONS.md)
   put field types on the HIR class node (`af6047e`); the residual is purely that the C *runtime*
   descriptor does not yet emit them.
+
+### D55 — display is l-lang's own format (see §3.5)
+
+The canonical rendering of a value is **ours**, transcribed in §3.5 below and implemented from that
+text by both backends. Not node's `util.inspect`. See [`DECISIONS.md`](./DECISIONS.md) for the ruling
+and its rationale; §3.5 is the normative text.
+
+---
+
+## 3.5 The display format — the normative rule
+
+> This section **is** the specification. It is written to be executable from the text alone, because
+> under D55 neither backend is the oracle: both are implementations, and a golden is derived from
+> *this* rule, never captured from a run.
+
+### Three names, two of them distinct operations
+
+```
+to-string(v)        the `+` string-concat context, and ONLY that context.
+                      Int      -> decimal digits
+                      Real     -> shortest round-trip (see "numbers" below)
+                      String   -> the raw characters
+                      Bool     -> true / false
+                      nil      -> null
+                      vec      -> elements to-string'd, joined with "," (no spaces)
+                      map      -> [object Object]
+                      obj      -> [object]
+                    (These are JS ToString shapes. They are kept because the corpus bakes them in
+                    and because C's `ll_to_string_sb` already implements exactly this.)
+
+display(v)          every human-facing rendering: `console.log`, `print`'s {N} substitution, and
+                    `'"...{(expr)}"` interpolation.
+                      = the raw characters, if v is a String at the TOP level
+                      = inspect(v, 0) otherwise
+                    (The top-level-bare rule is what `ll_console_write` already does, and it is what
+                    keeps `(print "Hello, {0}!" "World")` printing `Hello, World!` rather than
+                    `Hello, 'World'!`.)
+
+inspect(v, indent)  the structural rendering, defined below.
+```
+
+**Unifying `print`'s `{N}` onto `display`** is a deliberate change: today it goes through
+`(+ "" value)`, i.e. `to-string`, so `(print "{0}" ["a" "b"])` prints `a,b` while
+`(console.log ["a" "b"])` prints `[ 'a', 'b' ]` — the same value, two renderings, for no reason a user
+could predict. After this, `+` is the *only* `to-string` context and everything that shows a value to
+a person uses `display`. Cost: a handful of golden lines in `16-stdlib/test_stdlib.expect` where an
+array is printed through `{0}`.
+
+### `inspect`
+
+```
+inspect(v, indent):
+  nil                -> null
+  Bool               -> true | false
+  Int                -> decimal digits
+  Real               -> shortest round-trip
+  Char, String       -> single-quoted:  'a'
+  Closure            -> [Function: name]  |  [Function (anonymous)]  when unnamed
+  vec, empty         -> []
+  map, empty         -> {}
+  obj, no fields     -> ClassName {}
+  vec                -> entries are inspect(elem)
+  map                -> entries are `key: inspect(value)`; the key is bare when it is
+                        identifier-like, else single-quoted
+  obj                -> `ClassName ` followed by the map form over its fields
+
+  CONTAINER LAYOUT (vec, map, obj -- the only place indent matters):
+    Render the one-line form first, recursively:
+        vec  ->  "[ " + entries joined ", " + " ]"
+        map  ->  "{ " + entries joined ", " + " }"
+        obj  ->  ClassName + " " + the map form
+    Let TEXT be that one-line form PLUS its own line prefix -- the `key: ` when this container is a
+    map value, empty otherwise. (The prefix counts: it occupies the same line.)
+    If  indent + length(TEXT)  <=  80   ->  emit the one-line form.
+    Otherwise emit the broken form:
+        the opening bracket, newline,
+        each entry rendered by this same rule at indent+2, preceded by (indent+2) spaces,
+        "," after every entry but the last, newline after each,
+        (indent) spaces, the closing bracket.
+    The trailing "," of a broken entry does NOT count toward the budget; it may land at column 81.
+
+  DEPTH   -> unlimited. `[Object]` and `[Array]` never appear.
+  CYCLES  -> a container already being rendered higher in the current recursion renders
+             as `[Circular]`.
+```
+
+Worked example. The outer map's one-line form is **114** chars at `indent = 0`, so `0 + 114 > 80` and
+it breaks. Its `params:` entry is **38** chars at `indent = 2` (`params: [ { name: 'x', type: 'Any' } ]`,
+prefix included), so `2 + 38 = 40 ≤ 80` and it stays inline:
+
+```
+{
+  name: 'is-null',
+  kind: 'function',
+  params: [ { name: 'x', type: 'Any' } ],
+  returns: 'Boolean',
+  nullable: false
+}
+```
+
+### Numbers
+
+`Real` renders shortest-round-trip. `runtime.c`'s `ll_fmt_double` already produces the digits
+(`%.15g`/`%.16g`/`%.17g`, first that round-trips through `strtod`); what must be matched is the
+**exponent threshold and spelling** — exponential form at ≥1e21 and <1e-6, spelled `1e-7` / `1e+21`,
+not `%g`'s `1e-07`. `NaN`, `Infinity`, `-Infinity` render as those words. Under D51 an `Int` is a
+`BigInt` on JS; it renders as digits with **no `n` suffix** — which is automatic here, not a special
+case, because the formatter is ours rather than `util.inspect`.
+
+### What this deliberately does not cover
+
+**Format specifiers** — `{0:F2}`, alignment, culture — are *deferred, not dropped*. They need
+number-formatting rules D51 has not spec'd. `print` accepts `{N}` and the `{{` / `}}` escapes only;
+anything else in the braces is an error (§3.6).
+
+### 3.6 `print` — C# `string.Format` positional substitution
+
+`print`'s first argument is a template scanned left to right:
+
+```
+"{{"            ->  emit a literal {
+"}}"            ->  emit a literal }
+"{" digits "}"  ->  the argument at that 0-based index, rendered by display()
+                    index >= argument count  ->  THROW
+anything else   ->  emitted verbatim
+```
+
+Every occurrence of an index is substituted, not just the first — today's first-match-only behaviour
+is an artifact of `String.prototype.replace` with a string needle, not a decision. A placeholder whose
+index has no argument **throws**, following C#'s `FormatException` rather than silently printing the
+template or an empty string: a format bug that prints something plausible is the silent-wrong class
+this whole document exists to eliminate.
 
 ---
 
@@ -177,24 +312,39 @@ prove parity, then collapses the corresponding `std/*` module to l-lang on top o
 - **Fa — the shared typed surface (D50).** One typed floor contract; retire `intrinsics.ts`'s private
   table and fold the typed slice of `std/js` into it. Unblocks D49b's void-in-value residual (the
   boundary now declares return types both backends read). *No behaviour change; the plumbing.*
-- **Fb — the i/o + format base.** `write-string` as the only sink; `print`/`println`/`prn` and the
-  `{0}` substitution become l-lang on it. **Greens §5.2 cluster 1.**
-- **Fc — the display formatter (D54).** l-lang `inspect` reproducing `util.inspect`, on
-  `number->string` + reflection tag. **Greens §5.2 cluster 2.**
+- **Fe — the numeric floor (D51).** JS `Int` → `BigInt` + `BigInt.asIntN(64)`, C `-fwrapv`, and the
+  `number->string` exponent thresholds. Guarded by an overflow/precision differential and a
+  float-formatting differential (both currently latent).
+- **Fb — the i/o + format base.** `write-string` as the only sink; `print`/`prn` and the `{N}`
+  substitution (§3.6) become l-lang on it. **Greens §5.2 cluster 1.**
+- **Fc — the display formatter (D55).** l-lang `inspect` implementing **§3.5**, on `number->string`
+  + reflection tag. **Greens §5.2 cluster 2.** Re-derives the ~87 wrapping-dependent golden lines
+  from the §3.5 rule, and adds the `[Circular]` guard.
 - **Fd — reflection depth (D54).** C runtime emits the metadata graph now on the HIR class node.
   **Greens §5.2 cluster 3.**
-- **Fe — the numeric floor (D51).** The hard one: JS `Int` → `BigInt`, C `-fwrapv` + vendored Ryū
-  for `number->string`. Guarded by an overflow/precision differential and a float-formatting
-  differential (both currently latent).
 - **Ff — the string floor (D52).** C UTF-8 decode, JS scalar-value iteration, the vendored case
   table; `std/string` collapses to l-lang. Guarded by a non-ASCII length/case/index differential;
   re-capture the affected goldens once.
 - **Fg — containers + equality (D53).** `vec`/`map` primitives, structural `equals`; `std/seq`
   collapses to l-lang.
 
-**The three hard, up-front items** — vendored **Ryū**, **UTF-8 decode**, the vendored **case table**
-— are each real work and each, until done, is exactly one named not-yet guard, the same pattern the
-§5.2 three already establish. Nothing is silently deferred.
+**Why Fe is second and not last.** It was originally sequenced after Fb/Fc/Fd because it is the most
+expensive item. But it rewrites how the **JS backend produces numbers**, and JS output is what every
+downstream golden is graded against — landing it after three sub-phases of goldens have been built on
+the old oracle means re-validating all of them. Its blast radius only grows with what sits on top, so
+it goes early, right after the no-behaviour-change plumbing.
+
+**The two hard, up-front items** — **UTF-8 decode** and the vendored **case table** — are each real
+work and each, until done, is exactly one named not-yet guard, the same pattern the §5.2 three already
+establish. Nothing is silently deferred. (Ryū was a third until D51's amendment (c) showed
+`ll_fmt_double` already generates shortest-round-trip digits; what remains is threshold matching.)
+
+**Two corrections to this document's own first draft.** `println` is listed above and in §2 as part of
+the `std/io` surface; it **does not exist** anywhere in `lib/` — it is aspirational, and Fb either
+writes it or the mention goes. And §5.2 cluster 1 may not need Fb at all: `ResolveHirToCir` consults
+`INTRINSIC_CALLS` *before* the branch that lowers an imported l-lang body, so `print` matches the
+table and io.lisp's body is simply unreachable. Removing that one table entry may green the cluster on
+its own; it is worth trying before building on the assumption that it cannot.
 
 ---
 
