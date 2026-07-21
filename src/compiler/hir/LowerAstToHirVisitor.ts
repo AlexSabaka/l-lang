@@ -1181,7 +1181,7 @@ export class LowerAstToHirVisitor {
 
   private buildHandle(node: ast.HandleNode, bodyDest: Dest): HStmt {
     const body: HBlock = { stmts: node.body ? this.lowerNode(node.body, bodyDest).stmts : [] };
-    // Clauses stay in SOURCE order (first-written matching `:on` wins). The clause body lowers in EFFECT
+    // Clauses stay in SOURCE order (each matching `:on` tried in turn; a decline falls to the next). EFFECT
     // position for the scaffold (a clause typically declines / invokes a restart / exits non-locally).
     const clauses = (node.clauses ?? []).map((c) => ({
       condType: c.condType,

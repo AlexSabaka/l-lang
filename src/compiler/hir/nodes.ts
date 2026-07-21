@@ -490,8 +490,10 @@ export interface HRestartCase extends HBase {
 
 /**
  * D47 `handle` -- an HStmt, sibling of HTry but the OPPOSITE mechanism (in-place, non-unwinding). Clauses
- * stay in SOURCE order (the first-written matching `:on` wins). On C each clause body closure-converts into
- * one handler frame per `handle` form carrying the ordered clause list; the JS backend refuses (LL0108).
+ * stay in SOURCE order: every matching `:on` is tried in turn, first-written first, and one that RETURNS
+ * declines to the next (D47 "decline -> next handler") before the walk moves outward. On C each clause body
+ * closure-converts into one handler frame per `handle` form carrying the ordered clause list; the JS
+ * backend refuses (LL0108).
  */
 export interface HHandle extends HBase {
   kind: "handle";

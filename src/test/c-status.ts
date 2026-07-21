@@ -100,6 +100,9 @@ export const C_PASSING: readonly string[] = [
   "19-conditions/06_finally_runs_on_signal_transfer.lisp",
   "19-conditions/07_reentry_guard_inert_frame.lisp",
   "19-conditions/08_clause_reads_capture.lisp",
+  // Pins D47's "decline -> next handler": within ONE handle form, a declining clause hands off to the
+  // next matching clause (:extends-aware) before the walk moves outward.
+  "19-conditions/13_clause_order_and_decline_chain.lisp",
   "20-algorithms/01_evaluator.lisp",    // unlocked by match binding patterns
   // Phase E broad sweep -- field mutation on boxed receivers (dyn-field store).
   "30-applications/04_flood_fill.lisp", // (c.mine := v) on an array-element struct -> ll_member_slot

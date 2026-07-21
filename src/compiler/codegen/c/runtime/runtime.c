@@ -294,14 +294,16 @@ static void ll_throw(ll_value err) {
 
 static bool ll_is_type(ll_value v, const char *name, int primitive); /* defined with the D41 type tests below */
 
-/* (signal <cond>) -- walk the LL_HANDLER frames innermost->outermost IN PLACE, trying each frame's
- * clauses in SOURCE order; the FIRST match runs with the frame inert (re-entry guard -- SIMPLIFIED
- * from CL: only THIS frame is inert; handlers inner to it stay eligible). A handler that RETURNS
- * declines -- its value is discarded and the walk continues at the next OUTER frame. All decline =>
- * nil (an unhandled signal is NOT an error). A handler that transfers (invoke-restart / throw)
- * diverges through ll_unwind; the pad-CLEANUP below re-arms the frame as the transfer passes the
- * signal point -- the dynamic-extent restore a raw longjmp would otherwise skip (without it, a
- * recovered handle frame would stay inert and silently miss every later signal). */
+/* (signal <cond>) -- walk the LL_HANDLER frames innermost->outermost IN PLACE, trying every matching
+ * clause in SOURCE order (first-written gets first crack) with the frame inert while one runs
+ * (re-entry guard -- SIMPLIFIED from CL: only THIS frame is inert; handlers inner to it stay
+ * eligible). A handler that RETURNS declines: its value is discarded and the walk continues at the
+ * NEXT HANDLER -- the next matching clause of this same frame, then outward (D47: "decline -> next
+ * handler"), so a specific clause can hand off to a general one written after it. All decline => nil
+ * (an unhandled signal is NOT an error). A handler that transfers (invoke-restart / throw) diverges
+ * through ll_unwind; the pad-CLEANUP below re-arms the frame as the transfer passes the signal
+ * point -- the dynamic-extent restore a raw longjmp would otherwise skip (without it, a recovered
+ * handle frame would stay inert and silently miss every later signal). */
 static ll_value ll_signal(ll_value cond) {
   for (ll_frame *f = ll_handler_top; f; f = f->prev) {
     if (f->kind != LL_HANDLER || !f->active) continue;
@@ -320,7 +322,7 @@ static ll_value ll_signal(ll_value cond) {
         ll_handler_top = pad.prev; f->active = 1;
         ll_unwind(pad.prev, pad.pending, pad.target, pad.err, pad.which); /* resume; diverges */
       }
-      break; /* frame consumed (first-written matching :on wins); a decline continues OUTER */
+      /* declined -- fall through to this frame's NEXT matching clause, then to the outer frames */
     }
   }
   return ll_nil();

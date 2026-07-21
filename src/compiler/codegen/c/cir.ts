@@ -324,7 +324,7 @@ export interface CRestartCase {
 
 /**
  * D47 `handle` (Cr-1b). ONE bookkeeping LL_HANDLER frame -- NEVER a longjmp target (signal walks it
- * in place), so no setjmp pad. Clauses (source order -- first-written matching `:on` wins) closure-
+ * in place), so no setjmp pad. Clauses (source order; a decline falls to the next matching one) closure-
  * convert to lifted `(void*, ll_value) -> ll_value` handlers (CLifted abi:"handler") sharing ONE env
  * struct (the frame has one henv): `captures` is the set-union of every clause's captures, filled at
  * the install site.
