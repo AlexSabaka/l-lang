@@ -505,7 +505,10 @@ const CASES: Case[] = [
           "lib.lisp":
             `(\n` +
             `  (fn exp [x <- Int] -> Int (return (* x 100)))\n` +
-            `  (fn pw [base <- Int exp <- Int] -> Int (return (Math.pow base exp)))\n` +
+            // `-> Real`, not `-> Int`: the intrinsic floor (D50) types `Math.pow` as Real -> Real,
+            // so `-> Int` is an LL0213 now. Irrelevant to what this fixture tests, but it has to be
+            // type-correct to reach the shadowing question at all.
+            `  (fn pw [base <- Int exp <- Int] -> Real (return (Math.pow base exp)))\n` +
             `  (export exp pw)\n` +
             `)\n`,
           "main.lisp":

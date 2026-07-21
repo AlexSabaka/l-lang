@@ -19,7 +19,10 @@
     ;;
     ;; `Math.random` takes no arguments and returns [0, 1), so `n` is always in [0, 1): `(< n 0)` is
     ;; false and `(< n 10)` is true. The second arm wins, deterministically.
-    (match (Math.random 0 100)
+    ;; `(Math.random)`, no arguments -- it never took any. JS ignores extras silently, and the
+    ;; `std/js` extern was untyped, so nothing could say so until the intrinsic floor (D50) gave the
+    ;; name a real signature. The comment above has described the correct behaviour all along.
+    (match (Math.random)
         {
             n :when (< n 0)  => (console.log "unborn")
             n :when (< n 10) => (console.log "just a baby")

@@ -2,6 +2,7 @@ import * as ast from "../frontend/ast";
 import { InferredType, SymbolTable, TypeParameter } from "../analysis/SymbolTable";
 import { nativeFieldType } from "./nativeMembers";
 import { TypeChecker } from "./TypeChecker";
+import { floorEntry } from "../floor/floor";
 
 /**
  * TypeEnvironment - Manages type inference and binds inferred types to the symbol table
@@ -190,6 +191,23 @@ export class TypeEnvironment {
     // keyword like `:host`) yields an empty base and falls through to undefined, unchanged.
     if ((name.includes('.') || name.includes(':')) && !name.startsWith(':')) {
         const parts = name.split(/[.:]/);
+
+        // The intrinsic floor (D50): `Math.sqrt` is `Real -> Real` because the shared contract in
+        // compiler/floor/floor.ts says so -- the same entry the C backend derives its runtime call
+        // from. Without this the name resolved through `(let :extern Math)`, which is Unknown, so
+        // the checker could not compare its own view of `Math.floor` against the C table's. They
+        // disagreed for as long as both existed (D51 amendment (b)).
+        //
+        // Applied ONLY when the base is untyped. A floor name is a HOST global, so anything that
+        // gives the base a real type -- a user's own `Math` object, an imported class -- is a
+        // different thing that happens to share a spelling, and wins.
+        const fe = floorEntry(name);
+        if (fe) {
+          const baseT = this.resolveIdentifier(parts[0], from);
+          if (!baseT || baseT.kind === "unknown") {
+            return { kind: "function", name, params: fe.params, returns: fe.ret, isVariadic: !!fe.variadic };
+          }
+        }
         // The BASE is a value -- a local, a parameter -- so it is resolved from `from` like any
         // other. The member names after it are not; they are looked up in the base's type.
         let currentType = this.resolveIdentifier(parts[0], from);

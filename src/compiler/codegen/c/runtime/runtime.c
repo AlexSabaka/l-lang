@@ -1323,13 +1323,25 @@ static double ll_math_hypot(double a, double b) { return hypot(a, b); }
 static double ll_math_abs(double x) { return fabs(x); }
 static double ll_math_floor(double x) { return floor(x); }
 static double ll_math_ceil(double x) { return ceil(x); }
-static double ll_math_round(double x) { return floor(x + 0.5); } /* JS Math.round semantics */
+/* JS Math.round: ties go toward +Infinity (so -1.5 -> -1, not C round()'s -2), and any x in
+   [-0.5, -0] yields NEGATIVE zero. `floor(x + 0.5)` gets the ties right but returns +0 there, and the
+   sign is OBSERVABLE: `console.log(-0)` prints `-0`. D51's own tie-break rule cites this case, and it
+   is why `round` returns Real -- `-0` is not an Int value. */
+static double ll_math_round(double x) {
+  double r = floor(x + 0.5);
+  if (r == 0.0 && (x < 0.0 || signbit(x))) return -0.0;
+  return r;
+}
 static double ll_math_pow(double a, double b) { return pow(a, b); }
 static double ll_math_min(double a, double b) { return a < b ? a : b; }
 static double ll_math_max(double a, double b) { return a > b ? a : b; }
 static double ll_math_random(void) { return (double)rand() / ((double)RAND_MAX + 1.0); }
 static double ll_math_sign(double x) { return x > 0 ? 1.0 : x < 0 ? -1.0 : x; }
 static double ll_math_trunc(double x) { return trunc(x); }
+/* The sole Real -> Int door (D51 amendment (b)). Returns int64_t, not double, because that IS the
+   conversion: `truncate` is where a Real becomes an Int, and every other numeric floor op stays
+   Real-valued so the narrowing is always written down at the site that wants it. */
+static int64_t ll_truncate(double x) { return (int64_t)trunc(x); }
 
 /* Look up a class descriptor by name in the module registry (for the :extends chain walk). */
 static const ll_class *ll_class_by_name(const char *name) {

@@ -89,7 +89,11 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   ["Math.max", fn("ll_math_max", [Real, Real], Real)],
   ["Math.random", fn("ll_math_random", [], Real)],
   ["Math.sign", fn("ll_math_sign", [Real], Real)],
-  ["Math.trunc", fn("ll_math_trunc", [Real], Real)],
+  // THE conversion. `Math.trunc` is the spelling programs write for D51's `truncate`, and it is the
+  // one floor op that narrows: Real in, Int out. Everything else numeric stays Real-valued precisely
+  // so that the narrowing has to be written down at the site that wants it (D51 amendment (b)), and
+  // `lib/std/math`'s `truncate` wrapper is only honest about `-> Int` because of this line.
+  ["Math.trunc", fn("ll_truncate", [Real], Int)],
 
   // -- container/sequence primitives the runtime provides (the SYMBOL_MAP surface).
   ["get", fn("ll_get", [Any, Any], Any)],

@@ -202,6 +202,10 @@ export const C_PASSING: readonly string[] = [
   // spelling that invokes one -- and the C backend was re-applying the read rule to the core
   // CallNode the desugarer builds precisely to say "this is a call".
   "80-adversarial/call_zero_arg_closure.lisp",
+  // The numeric floor's one narrowing door (D51 amendment (b)): floor/ceil/round are Real-valued,
+  // `truncate` is the only Real -> Int conversion. Also pins JS `Math.round`'s NEGATIVE ZERO, which
+  // C's floor(x+0.5) silently lost -- the guard caught it on its first run.
+  "80-adversarial/numeric_floor_narrowing.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the
