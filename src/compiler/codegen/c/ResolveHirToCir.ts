@@ -27,6 +27,7 @@ import {
 import { CType, C_BOOL, C_INT, C_REAL, C_STR, C_VALUE, C_VOID, mapType, ctypeEquals } from "./ctype";
 import { INTRINSIC_CALLS, NATIVE_METHODS, NATIVE_FIELDS } from "./intrinsics";
 import { freeVariables, freeVariablesOfBody } from "./freevars";
+import { isBuiltinModifier } from "../../helpers/modifiers";
 
 const BINARY_OPS = new Set(["+", "-", "*", "/", "%", "==", "!=", "≠", "<", ">", "<=", ">=", "&&", "||"]);
 const NUMERIC = (t: CType) => t.k === "int" || t.k === "real";
@@ -107,6 +108,9 @@ export class ResolveHirToCir {
   private readonly globalNames = new Set<string>();
   private readonly globalDecls: { cName: string; ctype: CType }[] = [];
   private readonly globalDeclared = new Set<string>();
+  /** `defmodifier` names whose body is EMPTY -- a genuine identity, safe to ignore. Anything else
+   *  refuses (see refuseCustomModifier); the C backend cannot apply a decorator. */
+  private readonly emptyModifiers = new Set<string>();
   /** Imported module-level bindings already hoisted to C globals (dedup for ensureImportedValue). */
   private readonly importedValues = new Set<string>();
   /** Their initializers, spliced in FRONT of `main` -- an import is evaluated before the importer. */
@@ -218,6 +222,11 @@ export class ResolveHirToCir {
     this.collectClassesAndOperators(items);
     // Register every top-level function first, so forward references (call before declaration, or a
     // function used as a value) resolve regardless of order.
+    for (const n of items) {
+      if (n?._type === "modifier-def" && ((n as ast.ModifierDefNode).body ?? []).length === 0) {
+        this.emptyModifiers.add((n as ast.ModifierDefNode).name);
+      }
+    }
     this.registerModuleFunctions(items);
     // A module-level binding referenced by any top-level function must be a C global.
     this.computeGlobals(items);
@@ -2493,6 +2502,29 @@ export class ResolveHirToCir {
   // -- functions ------------------------------------------------------------------------------------
 
   /** Refuse a coroutine (A8); returns true if refused. */
+  /**
+   * A user `defmodifier` applied to a declaration -- refuse rather than silently drop it.
+   *
+   * A custom modifier is a DECORATOR: `(fn :retry[4] task [] ...)` means
+   * `__ll_modifier_retry(4)(task)`, which is what the JS backend emits. The C backend has no
+   * application mechanism at all, and was quietly emitting the UNDECORATED function -- so `:retry`
+   * never retried, `:logged` never logged, and `:memoized` recomputed on what its own golden calls a
+   * cache hit. Silent wrong answers, and exactly what this pass's hard-fail posture exists to prevent.
+   *
+   * A modifier declared with an EMPTY body is a genuine identity -- there is nothing to apply, so
+   * ignoring it is correct rather than a guess, and `(defmodifier identity [])` still compiles. Any
+   * modifier with a body, or one this module cannot see to prove empty, refuses.
+   */
+  private refuseCustomModifier(fn: ast.FunctionNode, name: string): boolean {
+    for (const m of fn.modifiers ?? []) {
+      if (isBuiltinModifier(m.modifier)) continue;
+      if (this.emptyModifiers.has(m.modifier)) continue;
+      this.refuse(fn, `modifier:${m.modifier} on '${name}'`, "collectFunction");
+      return true;
+    }
+    return false;
+  }
+
   private refuseCoroutine(fn: ast.FunctionNode, name: string): boolean {
     if (!fn.generator && !fn.async) return false;
     report(this.context, CBackendDiagnostics.CoroutineRefused, fn, {
@@ -2562,6 +2594,7 @@ export class ResolveHirToCir {
     if (!fn.name) { this.refuse(fn, "lambda", "collectFunction"); return; }
     // A top-level `:operator` function compiles under its operator symbol, not its `+` name.
     if (fn.modifiers?.some((m) => m.modifier === "operator")) { this.collectOperatorFn(fn); return; }
+    if (this.refuseCustomModifier(fn, name)) return;
     this.registerTopLevel(fn, name);
     const sig = this.topLevelFns.get(name)!;
     this.isolated(fn, () => {
