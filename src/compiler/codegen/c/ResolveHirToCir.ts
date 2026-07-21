@@ -733,13 +733,12 @@ export class ResolveHirToCir {
           return this.resolveTry(h);
 
         case "restart-case":
+          return this.resolveRestartCase(h);
         case "handle":
-          // D47 conditions/restarts. The CIR node defs (CRestartCase / CHandle), the EmitCirToC emission
-          // skeletons, and the runtime.c handler-stack/restart-registry structs all exist as scaffold, but
-          // the RESOLUTION that produces them -- the setjmp-pad inline arms, the closure-converted handler
-          // frames, and the shared ll_unwind cleanup-stack hook -- is TODO(restart-stage2). Refuse honestly
-          // (a tracked gap that nulls the C output) rather than fake a half-lowering. See runtime.c.
-          throw this.refuse(h.src, `${h.kind} (TODO restart-stage2)`, "resolveStmt");
+          // D47 `handle` (Cr-1b): still refused. The LL_HANDLER frame + closure-converted clause handlers
+          // (the new (void*, ll_value)->ll_value ABI + ll_signal's in-place walk) land in the next
+          // sub-phase; restart-case/invoke-restart (Cr-1a) do not depend on it. See runtime.c ll_signal.
+          throw this.refuse(h.src, `${h.kind} (TODO Cr-1b: handle/signal)`, "resolveStmt");
 
         case "field-init":
         case "super-call":
@@ -975,6 +974,32 @@ export class ResolveHirToCir {
     }];
   }
 
+  /** D47 `restart-case`: an LL_RESTART frame (a setjmp pad) offering the arm names; the body runs with it
+   *  installed, an `invoke-restart` transfers into the pad and dispatches on `which` to the chosen arm.
+   *  The value flows via the pre-declared result temp -- the body + each arm were lowered to the same
+   *  assign-dest -- so there is no `resultCName` to plumb. Each arm's params are unpacked from the packed
+   *  restart args at the pad (see EmitCirToC). */
+  private resolveRestartCase(h: Extract<HStmt, { kind: "restart-case" }>): CStmt[] {
+    this.ledger.record("A8", "restart-case", h.src, "restart-case lowered to a native setjmp LL_RESTART frame + ll_unwind (JS refuses -- LL0108)");
+    const body = this.resolveBlock(h.body);
+    const arms = (h.arms ?? []).map((a) => {
+      const paramCNames = (a.params ?? []).map((p) => mangleC(p));
+      for (const pc of paramCNames) this.declareLocal(pc, C_VALUE);
+      return { name: a.name, paramCNames, body: this.resolveBlock(a.body) };
+    });
+    return [{ src: h.src, ctype: C_VOID, kind: "c-restart-case", body, arms }];
+  }
+
+  /** D47 `invoke-restart`: pack the args into a boxed positional vector (nil for none) and emit the
+   *  diverging ll_invoke_restart call. P2 boxes the vector to a value; the target arm unpacks by index. */
+  private resolveInvokeRestart(h: Extract<HExpr, { kind: "invoke-restart" }>): CExpr {
+    const args = (h.args ?? []).map((a) => this.resolveExpr(a));
+    const packedArgs: CExpr = args.length
+      ? { src: h.src, ctype: { k: "vec", elem: C_VALUE }, kind: "c-vector", elements: args }
+      : { src: h.src, ctype: C_VALUE, kind: "c-nil" };
+    return { src: h.src, ctype: C_VOID, kind: "c-invoke-restart", name: h.name, packedArgs };
+  }
+
   private resolveForEach(h: Extract<HStmt, { kind: "for-each" }>): CStmt[] {
     const node = h.src as ast.ForEachNode;
     const variable = this.dipAst("A2", "foreach-variable", node, "loop binding read from raw ForEachNode (legacy emitForEach seam)", () => node.variable);
@@ -1128,12 +1153,11 @@ export class ResolveHirToCir {
       case "pattern-test":
         return this.resolvePatternTest(h);
 
-      case "signal":
       case "invoke-restart":
-        // D47. The eventual C shape is a c-call to the runtime `ll_signal` / `ll_invoke_restart` (see the
-        // runtime.c skeleton), but that hangs off the handler-stack + restart-registry that resolveStmt's
-        // restart-case/handle lowering installs -- all TODO(restart-stage2). Refuse honestly for now.
-        throw this.refuse(h.src, `${h.kind} (TODO restart-stage2)`, "resolveExpr");
+        return this.resolveInvokeRestart(h);
+      case "signal":
+        // D47 `signal` (Cr-1b): still refused. ll_signal's in-place LL_HANDLER walk lands with `handle`.
+        throw this.refuse(h.src, `${h.kind} (TODO Cr-1b: handle/signal)`, "resolveExpr");
 
       default: {
         const never: never = h;

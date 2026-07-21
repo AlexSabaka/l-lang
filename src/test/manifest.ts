@@ -286,6 +286,11 @@ export const MANIFEST: Record<string, ManifestEntry> = {
     status: "negative", codes: ["LL0005"],
     reason: "`(let)` with no binding. Reports LL0005 (+LL0006); pins the never-exercised LL0005.",
   },
+  "90-diagnostics/ll0108_restarts_refused.lisp": {
+    status: "negative", codes: ["LL0108"],
+    reason: "D47 restart forms are refused on the JS backend (no native handler/restart stack). Pins " +
+      "LL0108 -- the mirror of the C band's LL0105-07 refusals. Compile with --language c to use them.",
+  },
   "90-diagnostics/ll0008_two_default_catch.lisp": {
     status: "negative", codes: ["LL0008"],
     reason:

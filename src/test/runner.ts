@@ -272,6 +272,14 @@ function runTest(lispPath: string): TestResult {
       const result = context.process(lispPath);
 
       if (context.results.hasErrors) {
+        // D47 conditions/restarts are refused on the JS backend with LL0108 (the mirror of the C
+        // backend's LL0105-07 refusals). A C-only positive example reports `refused` here, not a hard
+        // error, so `npm test` stays green while `npm run test:c` runs it. Only LL0108-and-nothing-else
+        // qualifies -- a real type/syntax error alongside it is still an error.
+        const codes = [...new Set(context.results.all.map((m: any) => String(m.code)).filter((c: string) => c.startsWith('LL')))];
+        if (codes.length > 0 && codes.every((c) => c === 'LL0108')) {
+          return { name: fileName, status: 'refused', message: codes.join(', ') };
+        }
         return {
           name: fileName,
           status: 'error',

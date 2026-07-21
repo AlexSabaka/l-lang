@@ -86,6 +86,11 @@ export const C_PASSING: readonly string[] = [
   "18-error-handling/09_finally_return_supersedes_throw.lisp",
   "18-error-handling/10_finally_throw_supersedes.lisp",
   "18-error-handling/11_try_assign_finally.lisp",
+  // Phase Cr-1a -- D47 restart-case + invoke-restart (the restart mechanism) on the native path;
+  // JS refuses (LL0108). Includes the finally-runs-on-restart-transfer composition (Cr-0 + Cr-1a).
+  "19-conditions/00_restart_value_substitution.lisp",
+  "19-conditions/01_restart_crosses_finally.lisp",
+  "19-conditions/02_return_in_restart_body.lisp",
   "20-algorithms/01_evaluator.lisp",    // unlocked by match binding patterns
   // Phase E broad sweep -- field mutation on boxed receivers (dyn-field store).
   "30-applications/04_flood_fill.lisp", // (c.mine := v) on an array-element struct -> ll_member_slot

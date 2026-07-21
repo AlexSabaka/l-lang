@@ -181,6 +181,10 @@ export class InsertCoercions {
         // Uniform boxed element storage (the documented v0 repr choice; inflates A6 counts, flagged).
         return { ...e, elements: e.elements.map((el) => this.coerce(this.expr(el), C_VALUE)) };
 
+      case "c-invoke-restart":
+        // D47 (Cr-1a): the packed args are passed as a single boxed value; coerce the vector -> ll_value.
+        return { ...e, packedArgs: this.coerce(this.expr(e.packedArgs), C_VALUE) };
+
       case "c-map":
         return {
           ...e,

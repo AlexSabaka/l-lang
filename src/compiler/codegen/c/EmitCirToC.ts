@@ -437,15 +437,57 @@ export class EmitCirToC {
         this.line("}");
         return;
       }
-      case "c-restart-case":
+      case "c-restart-case": {
+        // D47 (Cr-1a): an LL_RESTART frame (a setjmp pad) offering the arm names. Body runs installed; an
+        // invoke-restart longjmps into the else-branch and switches on `which` to the chosen arm, which
+        // unpacks its params from the packed args (rc.err). Mirrors c-try's frame install/pop + tryStack.
+        const rc = `__rc${this.fresh++}`;
+        this.line("{");
+        this.indent++;
+        this.line(`ll_frame ${rc}; ${rc}.kind = LL_RESTART;`);
+        if (s.arms.length) {
+          this.line(`static const char* ${rc}_names[] = {${s.arms.map((a) => `"${cEscape(a.name)}"`).join(", ")}};`);
+          this.line(`${rc}.names = ${rc}_names; ${rc}.name_count = ${s.arms.length};`);
+        } else {
+          this.line(`${rc}.names = 0; ${rc}.name_count = 0;`);
+        }
+        this.line(`${rc}.prev = ll_handler_top; ll_handler_top = &${rc};`);
+        // A `return` in the body must pop this frame (else ll_handler_top dangles at a dead C frame).
+        this.tryStack.push({ frameVar: rc, finalizer: null });
+        this.line(`if (setjmp(${rc}.buf) == 0) {`);
+        this.indent++;
+        this.emitBlockStmts(s.body); // body assigns the pre-declared result temp
+        this.line(`ll_handler_top = ${rc}.prev;`); // normal completion: pop
+        this.indent--;
+        this.line("} else {");
+        this.indent++;
+        this.line(`ll_handler_top = ${rc}.prev;`); // restart landing: pop
+        if (s.arms.length) {
+          this.line(`switch (${rc}.which) {`);
+          this.indent++;
+          s.arms.forEach((arm, i) => {
+            this.line(`case ${i}: {`);
+            this.indent++;
+            arm.paramCNames.forEach((pc, j) => this.line(`ll_value ${pc} = ll_index_vec(ll_unbox_vec(${rc}.err), ${j});`));
+            this.emitBlockStmts(arm.body); // arm assigns the same result temp
+            this.line("break;");
+            this.indent--;
+            this.line("}");
+          });
+          this.indent--;
+          this.line("}");
+        }
+        this.indent--;
+        this.line("}");
+        this.tryStack.pop();
+        this.indent--;
+        this.line("}");
+        return;
+      }
       case "c-handle":
-        // D47 SCAFFOLD (TODO restart-stage2). ResolveHirToCir refuses restart forms today, so these CIR
-        // nodes are never actually produced -- this case exists as plumbing for the stage-2 lowering, and
-        // as the exhaustiveness anchor keeping the `never` check honest once the union carries them. When
-        // stage-2 lands, this emits the setjmp-pad inline arms (restart-case) / ordered handler frame
-        // (handle) against the runtime.c handler stack. Emitting a TODO marker keeps any accidental
-        // reach loud rather than silently wrong.
-        this.line(`/* TODO(restart-stage2): emit ${s.kind} -- D47 setjmp/handler-stack lowering */`);
+        // D47 `handle` (Cr-1b): still refused by ResolveHirToCir, so never produced. Kept as the
+        // exhaustiveness anchor + stage plumbing until the LL_HANDLER lowering lands.
+        this.line(`/* TODO(Cr-1b): emit ${s.kind} -- LL_HANDLER frame + closure-converted clause handlers */`);
         return;
       default: {
         const never: never = s;
@@ -509,6 +551,10 @@ export class EmitCirToC {
         return e.name;
       case "c-nil":
         return "ll_nil()";
+      case "c-invoke-restart":
+        // D47 (Cr-1a): a diverging transfer to the named restart. The name is a BARE C string (not an
+        // ll_str); packedArgs is the boxed positional arg vector (P2 boxed it) or nil.
+        return `ll_invoke_restart("${cEscape(e.name)}", ${this.expr(e.packedArgs)})`;
       case "c-interp": {
         const parts = e.parts.map((p) =>
           typeof p === "string" ? `ll_box_str(ll_str_lit("${cEscape(p)}"))` : this.expr(p)

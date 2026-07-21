@@ -47,7 +47,17 @@ export type CExpr = CBase & (
   | CUnbox
   | CCast
   | CCopy
+  | CInvokeRestart
 );
+
+/** D47 `(invoke-restart :name args)` -- a diverging transfer to the newest LL_RESTART frame offering
+ *  `name`. Emits `ll_invoke_restart("name", packedArgs)` where `packedArgs` is a boxed positional vector
+ *  of the args (or nil for none); ctype is `void` (it never returns a value). */
+export interface CInvokeRestart {
+  kind: "c-invoke-restart";
+  name: string;
+  packedArgs: CExpr;
+}
 
 /** A pattern binding as an EXPRESSION: `(cName = value)`. Used inside a match pattern test's
  *  bind-then-test sequence (spec A7 -- the bind-then-test ordering the JS emitter fuses with commas). */

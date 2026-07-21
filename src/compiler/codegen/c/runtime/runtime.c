@@ -257,18 +257,24 @@ static void ll_uncaught(ll_value err) {
  * Cr-1 (unused on the THROW path today). */
 static void ll_unwind(ll_frame *from, ll_unwind_mode mode, ll_frame *target, ll_value payload, int which) {
   for (ll_frame *f = from; f; f = f->prev) {
+    if (f == target && mode != LL_UNWIND_THROW) {
+      /* RESTART/RETURN destination: intervening CLEANUP finallys have already run on the way here. */
+      f->err = payload; f->which = which;
+      longjmp(f->buf, 1); /* into the RESTART pad's else-branch (dispatches on which) */
+    }
     if (f->kind == LL_CLEANUP) {
       if (f->dtor) { ll_handler_top = f->prev; f->dtor(f->self); continue; } /* D15 function-cleanup (Cr-1) */
       f->pending = mode; f->err = payload; f->target = target; f->which = which;
-      longjmp(f->buf, 1); /* into the inline finally pad; never returns */
+      longjmp(f->buf, 1); /* into the inline finally pad; runs `finally`, then resumes ll_unwind (any mode) */
     }
     if (f->kind == LL_CATCH && mode == LL_UNWIND_THROW) {
       f->err = payload;
       longjmp(f->buf, 1); /* into the emitted catch-filter/rethrow pad */
     }
-    /* LL_HANDLER / LL_RESTART / LL_BOUNDARY: not a THROW landing -- skipped (Cr-1 handles RESTART/RETURN). */
+    /* LL_HANDLER / non-target LL_RESTART / LL_BOUNDARY: not a landing for this transfer -- skipped. */
   }
-  ll_uncaught(payload);
+  if (mode == LL_UNWIND_THROW) ll_uncaught(payload);
+  else ll_trap("ControlError", "unwind ran off the stack with no target (invoke-restart / return)");
 }
 
 /* `throw` is a thin unwind: hand the payload to ll_unwind in THROW mode. */
@@ -300,11 +306,18 @@ static ll_value ll_signal(ll_value cond) {
  * (mode=RESTART); no match is a ControlError (an error, distinct from an unhandled signal). DIVERGES.
  * STUBBED. */
 static ll_value ll_invoke_restart(const char *name, ll_value packed_args) {
-  (void)name; (void)packed_args;
-  /* TODO(restart-stage2): scan ll_handler_top for the restart, pack args into target->err, then
-   * ll_unwind(ll_handler_top, LL_UNWIND_RESTART, target, packed_args, which). */
-  ll_trap("ControlError", "ll_invoke_restart: D47 restart lowering not implemented (restart-stage2)");
-  return ll_nil();
+  /* Newest matching LL_RESTART frame wins (prev-ward walk). `which` = the offer index within that frame,
+   * which the emitted restart-case pad switches on. ll_unwind runs intervening CLEANUP finallys en route. */
+  for (ll_frame *f = ll_handler_top; f; f = f->prev) {
+    if (f->kind != LL_RESTART) continue;
+    for (size_t i = 0; i < f->name_count; i++) {
+      if (strcmp(f->names[i], name) == 0) {
+        ll_unwind(ll_handler_top, LL_UNWIND_RESTART, f, packed_args, (int)i); /* diverges */
+      }
+    }
+  }
+  ll_trap("ControlError", "invoke-restart: no restart with that name is in scope");
+  return ll_nil(); /* unreachable */
 }
 
 /* -- closures (the env the HIR does not model -- spec A3) ----------------------------------------- */
