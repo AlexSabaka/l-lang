@@ -29,9 +29,16 @@ export const INTRINSIC_CALLS: ReadonlyMap<string, IntrinsicDef> = new Map<string
   // -- the std/js host boundary (A9) --
   ["console.log", def("ll_console_log", [], C_VOID, true)],
   ["console.error", def("ll_console_error", [], C_VOID, true)],
-  // -- lib/std/io (l-lang bodies shadowed in v0; A9) --
-  ["print", def("ll_console_log", [], C_VOID, true)],
-  ["prn", def("ll_console_log", [], C_VOID, true)],
+  // -- lib/std/io -- deliberately ABSENT.
+  //
+  // `print`/`prn` used to map straight to `ll_console_log` (a plain space-join), which is what made
+  // C print `x={0} 5` instead of `x=5`: this table is consulted BEFORE the branch that lowers an
+  // imported l-lang body, so io.lisp's actual body was unreachable for any name listed here.
+  // Removing them lets the real body lower, so `print` on C runs the same FLOOR.md 3.6 scanner JS
+  // runs -- one source, both backends. It needed rest-parameter packing first (packRestArgs in
+  // ResolveHirToCir): `print` is `[msg <- String ...args <- Any[]]`, and the old entry only ever
+  // worked because `variadic: true` makes a C VARARGS call, which never builds the array a lowered
+  // l-lang body indexes.
   // -- number parsing / predicates (host globals, A9) --
   ["Number", def("ll_number", [C_VALUE], C_VALUE)],
   ["parseInt", def("ll_parse_int", [C_VALUE], C_VALUE)],

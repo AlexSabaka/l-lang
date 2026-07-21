@@ -166,14 +166,21 @@ export const C_PASSING: readonly string[] = [
   "15-modules/02_packages/main.lisp",
   "20-algorithms/07_tokenizer.lisp",
   "20-algorithms/08_state_machine.lisp",
+  // REST-PARAMETER PACKING (packRestArgs in ResolveHirToCir) + `print`/`prn` off the intrinsic
+  // table: C now lowers lib/std/io's ACTUAL body, so `print`'s {N} substitution is the same l-lang
+  // source on both backends. §5.2 cluster 1, closed -- and the ratchet is what surfaced the other
+  // two, which had been silently mis-printing `{0}` templates for as long as the table shadowed the
+  // library.
+  "80-adversarial/print_positional_format.lisp",
+  "16-stdlib/01_main.lisp",
+  "10-modifiers/06_extension_methods.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the
   // §5.2 silent-divergence clusters from docs/inbox/c-backend-gap-ledger.md. They exist so the C fix
   // has a crisp target: when C reaches parity the ratchet turns RED ("newly passing -- add it"),
   // which is the signal to MOVE the corresponding line down into the array above.
-  //   80-adversarial/print_positional_format.lisp   -- cluster 1: std/io `print` {N} positional format
-  //                                                    (intrinsics.ts maps print->ll_console_log; bind io.lisp's body)
+  //   (cluster 1 -- print_positional_format -- PROMOTED above; the mechanism worked as designed.)
   //   80-adversarial/interp_container_format.lisp    -- cluster 2: container interpolation depth
   //                                                    (EmitCirToC routes interp through ToString, not ll_inspect_sb)
   //   80-adversarial/reflection_metadata_depth.lisp  -- cluster 3: reflection metadata depth

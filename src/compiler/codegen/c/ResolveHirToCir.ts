@@ -31,6 +31,8 @@ import { isBuiltinModifier } from "../../helpers/modifiers";
 
 const BINARY_OPS = new Set(["+", "-", "*", "/", "%", "==", "!=", "≠", "<", ">", "<=", ">=", "&&", "||"]);
 const NUMERIC = (t: CType) => t.k === "int" || t.k === "real";
+/** The vec-of-boxed-values type: what a REST parameter receives, and what `ll_list` returns. */
+const VEC_OF_VALUE: CType = { k: "vec", elem: C_VALUE };
 
 /** Mangle an l-lang identifier into a collision-free C identifier. Lowering temps pass through. */
 export function mangleC(name: string): string {
@@ -79,8 +81,10 @@ export class ResolveHirToCir {
   private readonly functions: CFunction[] = [];
   private readonly lifted: CLifted[] = [];
   private readonly adapters = new Map<string, { forCName: string; params: CType[]; ret: CType; arity: number }>();
-  /** Top-level user function signatures, by SOURCE name -- direct-call targets. */
-  private readonly topLevelFns = new Map<string, { params: CType[]; ret: CType; arity: number }>();
+  /** Top-level user function signatures, by SOURCE name -- direct-call targets.
+   *  `restAt` is the index of a REST parameter (`[a ...xs]`) when the function has one: from that
+   *  position on, the call site packs its trailing arguments into one vec (see `packRestArgs`). */
+  private readonly topLevelFns = new Map<string, { params: CType[]; ret: CType; arity: number; restAt?: number }>();
   /** Imported (non-intrinsic) l-lang bodies lowered on demand, by source name (dedup). */
   private readonly importedLowered = new Set<string>();
   /** Struct/class descriptors, by source name (spec A4). */
@@ -2248,7 +2252,7 @@ export class ResolveHirToCir {
       if (this.topLevelFns.has(name)) {
         const sig = this.topLevelFns.get(name)!;
         const cArgs = args.map((a) => this.resolveAstExpr(a));
-        return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: cArgs };
+        return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: this.packRestArgs(node, sig, cArgs) };
       }
       const entry = this.dipSymbols("A3", "callee-identity", node, "callee resolved through the symbol table (spec wants it on the call node)", name);
       const symT = entry?.inferredType;
@@ -2269,7 +2273,7 @@ export class ResolveHirToCir {
         // already refused, so return a placeholder rather than crash on a missing signature.
         if (!sig) return { src: node, ctype: C_VALUE, kind: "c-nil" };
         const cArgs = args.map((a) => this.resolveAstExpr(a));
-        return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: cArgs };
+        return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: this.packRestArgs(node, sig, cArgs) };
       }
       if (args.length === 0) {
         // `(x)` where x is not a function: redundant parens around a value (D1).
@@ -2551,16 +2555,26 @@ export class ResolveHirToCir {
     const symT = this.dipSymbols("A3", "function-signature", fn, "signature resolved through the symbol table (not on the HIR)", name)?.inferredType;
     const symParams: any[] = symT?.kind === "function" ? symT.params ?? [] : [];
     const params = fn.params.map((p, i) => {
+      // A REST parameter is always the vec the call site packs -- never whatever the annotation or
+      // the checker says the ELEMENTS are. `[...args <- Any[]]` happens to agree; `[...args]` (no
+      // annotation) would otherwise land on boxed `value` and the packed vec would not fit.
+      if (p.spread) return VEC_OF_VALUE;
       const sigT = symParams[i] ? mapType(symParams[i]) : undefined;
       return (sigT && sigT.k !== "value" ? sigT : undefined) ?? this.ctypeFromAnnotation(p) ?? sigT ?? C_VALUE;
     });
+    const restAt = fn.params.findIndex((p) => p.spread);
     const ret = this.userFnRet(symT, fn) ;
     // Prefer a CONCRETE annotated return over a boxed symbol type -- but NEVER downgrade to `void`:
     // a `-> Void` (or inferred-Void) function may still return values the checker missed, so it stays
     // boxed `ll_value` (userFnRet already yielded that). A void C return would reject `return <v>`.
     const annotatedRet = this.typeNodeToCType(fn.returns);
     const useAnnotated = ret.k === "value" && annotatedRet && annotatedRet.k !== "void";
-    this.topLevelFns.set(name, { params, ret: useAnnotated ? annotatedRet! : ret, arity: fn.params.length });
+    this.topLevelFns.set(name, {
+      params,
+      ret: useAnnotated ? annotatedRet! : ret,
+      arity: fn.params.length,
+      restAt: restAt >= 0 ? restAt : undefined,
+    });
   }
 
   /** Pre-scan the module body: register every top-level function BEFORE resolving (forward refs).
@@ -2731,8 +2745,10 @@ export class ResolveHirToCir {
     }
     // Prefer a CONCRETE signature type; when the checker only offers a boxed/Unknown type, the AST
     // annotation wins (the symbol table erases an inferred struct type to Unknown -- spec A1).
+    // A REST parameter overrides both: it receives the vec the call site packs (see packRestArgs),
+    // and must match `registerTopLevel`'s view of the same parameter.
     const annotated = this.ctypeFromAnnotation(p);
-    const ctype = (sigT && sigT.k !== "value" ? sigT : undefined) ?? annotated ?? sigT ?? C_VALUE;
+    const ctype = p.spread ? VEC_OF_VALUE : (sigT && sigT.k !== "value" ? sigT : undefined) ?? annotated ?? sigT ?? C_VALUE;
     if (ctype.k === "value") this.ledger.record("A1", "param-untyped", p, "parameter type unavailable; boxed");
     const cName = mangleC(ast.symbolName(p.name as ast.IdentifierNode));
     // A param captured mutably by a nested closure must be a cell (the mut-capture channel again).
@@ -2744,6 +2760,36 @@ export class ResolveHirToCir {
   /** Map a parameter's AST type annotation to a CType -- a known struct/class -> obj, else primitive. */
   private ctypeFromAnnotation(p: ast.ParameterNode): CType | undefined {
     return this.typeNodeToCType(p.type);
+  }
+
+  /**
+   * REST-parameter packing: `(f a b c)` against `(fn f [x ...rest])` becomes `f(a, ll_list(2, {b, c}))`.
+   *
+   * C has no rest parameter, so the callee takes a plain vec and the CALL SITE builds it -- which is
+   * also what the JS backend gets for free from a `RestElement`. `ll_list` is the existing variadic
+   * `list` intrinsic: it already returns a vec and, being variadic, makes P2 box every packed
+   * argument to `ll_value` (InsertCoercions), which is exactly the element type a rest vec holds.
+   *
+   * Packing is UNCONDITIONAL, including when the sole trailing argument is itself a vec: `(f arr)`
+   * binds `rest` to `[arr]`, not to `arr`, matching JS's `f(arr)` against `(...rest)`. Forwarding it
+   * instead would be a silent one-element-off bug in exactly the case that looks like it should work.
+   *
+   * Note this is a lowering of the CALL, not a variadic C function: the emitted callee has a fixed
+   * arity. That is the difference from an `intrinsic` marked `variadic`, which becomes a genuine C
+   * varargs call and boxes at the call site without ever building an array -- the mechanism `print`
+   * used to ride, and the reason it appeared to work while io.lisp's body was unreachable.
+   */
+  private packRestArgs(node: ast.ASTNode, sig: { restAt?: number }, cArgs: CExpr[]): CExpr[] {
+    const at = sig.restAt;
+    if (at === undefined) return cArgs;
+    const packed: CExpr = {
+      src: node,
+      ctype: VEC_OF_VALUE,
+      kind: "c-call",
+      callee: { kind: "intrinsic", runtimeFn: "ll_list", variadic: true, params: [], ret: VEC_OF_VALUE },
+      args: cArgs.slice(at),
+    };
+    return [...cArgs.slice(0, at), packed];
   }
 
   /** D11 copy-on-entry (A5): a struct-typed or boxed param is copied (passed by value). A native
@@ -2915,7 +2961,7 @@ export class ResolveHirToCir {
     // (2) A top-level function in this module -> a direct typed C call.
     if (this.topLevelFns.has(name)) {
       const sig = this.topLevelFns.get(name)!;
-      return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: cArgs };
+      return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: this.packRestArgs(node, sig, cArgs) };
     }
     // (3) An intrinsic (a std/js host global with a simple name, e.g. `print`) or an imported l-lang
     // function whose body is lowered on demand. Which of the two is still a symbol-table question --
@@ -2933,7 +2979,7 @@ export class ResolveHirToCir {
       this.lowerImportedFunction(name, cb.fnNode);
       const sig = this.topLevelFns.get(name);
       if (!sig) return { src: node, ctype: C_VALUE, kind: "c-nil" };
-      return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: cArgs };
+      return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName, params: sig.params, ret: sig.ret }, args: this.packRestArgs(node, sig, cArgs) };
     }
     throw this.refuseExtern(node, name);
   }

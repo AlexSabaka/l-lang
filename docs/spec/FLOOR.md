@@ -343,23 +343,32 @@ establish. Nothing is silently deferred. (Ryū was a third until D51's amendment
 the `std/io` surface; it **does not exist** anywhere in `lib/` — it is aspirational, and Fb either
 writes it or the mention goes.
 
-**What Fb actually needs, measured.** §5.2 cluster 1 looked like it might be pure lookup order:
+**§5.2 cluster 1 — CLOSED, and what it actually took.** It looked like pure lookup order:
 `ResolveHirToCir` consults `INTRINSIC_CALLS` *before* the branch that lowers an imported l-lang body,
 so `print` matched the table and io.lisp's body was unreachable. Removing the `print`/`prn` entries
-was tried, and it is **necessary but not sufficient** — the guard moves from "output mismatch" to a
-*compile* error, `C emit: no cast int -> vec`, at the first `(print "x={0}" 5)`. The real blocker is
-one layer down:
+turned out to be **necessary but not sufficient** — it exposed a second gap one layer down:
 
-> **The C backend cannot pack a rest parameter.** `print`'s signature is
-> `[msg <- String ...args <- Any[]]`, and lowering its body means materialising `5` into the `Any[]`
-> slot. There is no rest-argument packing anywhere in `ResolveHirToCir`. The reason C ever appeared to
-> handle `print` is that `ll_console_log` is declared `variadic: true`, i.e. a **C varargs call** —
-> a different mechanism entirely, which boxes arguments at the call site instead of building an array
-> the callee can index.
+> **The C backend could not pack a rest parameter.** `print` is `[msg <- String ...args <- Any[]]`,
+> so lowering its body means materialising `5` into the `Any[]` slot, and there was no rest-argument
+> packing anywhere in `ResolveHirToCir`. The reason C *appeared* to handle `print` is that
+> `ll_console_log` is declared `variadic: true` — a **C varargs call**, which boxes at the call site
+> and never builds the array a lowered l-lang body indexes. Two mechanisms that looked alike from
+> outside.
 
-So Fb's first item is rest-parameter packing for lowered l-lang bodies; the table entries come out
-*after* that, not before. Both `print` and `prn` therefore stay in `intrinsics.ts` for now, and the
-guard stays a soft `not-yet` — which is exactly the ratchet doing its job.
+Fixed by `packRestArgs`: the callee takes a plain vec and the CALL SITE builds it with the existing
+variadic `list` intrinsic, so `(print "x={0}" 5)` emits
+`u_print(ll_str_lit("x={0}"), ll_list(1, (ll_value[]){ll_box_int(INT64_C(5))}))`. Packing is
+unconditional — `(f arr)` against `[...rest]` binds `rest` to `[arr]`, matching JS.
+
+**A third gap, found on the way and NOT fixed** — named here so it is a target rather than a
+surprise:
+
+> **`lowerImportedFunction` lowers a function's body but not the module-level bindings that body
+> references.** A `(let DIGITS "0123456789")` at the top of `std/io` emits a call to an undeclared
+> `u_DIGITS`. No corpus example exercised it, because no C-passing example uses an imported
+> module-level constant — `std/math`'s `E`/`PI`/`TAU` are never read from a C-reached path. `io.lisp`
+> sidesteps it by keeping the table function-local; the gap itself is untouched and will bite the
+> first stdlib module that needs a shared constant.
 
 ---
 
