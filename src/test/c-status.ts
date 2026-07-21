@@ -127,6 +127,9 @@ export const C_PASSING: readonly string[] = [
   // A hoisted module global is file-scope storage: never a heap cell, never captured into a closure
   // env, and its DECLARED ctype wins at every reference site (store, receiver, and member-read head).
   "30-applications/05_snake_tick.lisp",
+  // A `member` callee is a METHOD CALL: the pipeline `(x |> (.m a))` shape reached the generic
+  // computed-callee path, which resolved the member as a VALUE and applied the args to its result.
+  "04-pattern-matching/02_map_patterns.lisp",
   "20-algorithms/01_evaluator.lisp",    // unlocked by match binding patterns
   // Phase E broad sweep -- field mutation on boxed receivers (dyn-field store).
   "30-applications/04_flood_fill.lisp", // (c.mine := v) on an array-element struct -> ll_member_slot

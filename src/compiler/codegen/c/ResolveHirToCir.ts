@@ -1718,6 +1718,13 @@ export class ResolveHirToCir {
     if (callee._type === "function") {
       return this.closureCall(node, this.resolveLambda(callee as ast.FunctionNode), args);
     }
+    // A `member` callee is a METHOD CALL, not a call through a member's value -- `(x |> (.m a))`
+    // desugars to exactly this shape (D17). resolveCall already dispatches it properly, so reuse it:
+    // falling through to the computed-callee case below resolved the member as a VALUE, which invokes
+    // a zero-arg method and then applies the real arguments to whatever it returned.
+    if (callee._type === "member") {
+      return this.resolveCall(node as ast.ListNode, callee, args);
+    }
     // Any other computed callee: evaluate it to a closure value and call through it.
     return this.closureCall(node, this.resolveAstExpr(callee), args);
   }
