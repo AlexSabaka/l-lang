@@ -1,4 +1,14 @@
 (
+  ;; The digit table. `indexOf` returns -1 for a non-digit, so validating a character and converting
+  ;; it to its value are the SAME lookup -- the trick 20-algorithms/07_tokenizer.lisp uses, and it
+  ;; avoids `parseInt` (an untyped extern that would infer Unknown).
+  ;;
+  ;; Module-level, and that is load-bearing as a test: reading it from `format-args` is a dotted-head
+  ;; read of an imported module's own constant, which the C backend hoists via `ensureImportedValue`.
+  ;; That path was broken until 8f1f0a0's follow-up; `80-adversarial/imported_module_constant.lisp`
+  ;; is the deliberate guard, so this file is not the only thing holding the coverage.
+  (let DIGITS "0123456789")
+
   ;; C# `string.Format` positional substitution -- FLOOR.md 3.6. One left-to-right scan:
   ;;
   ;;     "{{"            -> a literal {
@@ -26,16 +36,6 @@
   ;; O(n^2) on immutable concat -- fine at `print` sizes, worth revisiting if it ever grows a caller
   ;; that formats in a loop.
   (fn format-args [msg <- String args <- Any[]] -> String (
-    ;; The digit table. `indexOf` returns -1 for a non-digit, so validating a character and
-    ;; converting it to its value are the SAME lookup -- the trick 20-algorithms/07_tokenizer.lisp
-    ;; uses, and it avoids `parseInt` (an untyped extern that would infer Unknown).
-    ;;
-    ;; Function-LOCAL rather than module-level on purpose: `lowerImportedFunction` on the C backend
-    ;; lowers an imported function's BODY but not the module-level bindings that body references, so
-    ;; a module-level `(let DIGITS ...)` emits a call to an undeclared `u_DIGITS`. That gap is real
-    ;; and now named (see FLOOR.md), but it is a different gap from this file's job, and DIGITS has
-    ;; exactly one use anyway.
-    (let DIGITS "0123456789")
     (mut out <- String "")
     (mut i <- Int 0)
     (let n msg.length)

@@ -360,15 +360,20 @@ variadic `list` intrinsic, so `(print "x={0}" 5)` emits
 `u_print(ll_str_lit("x={0}"), ll_list(1, (ll_value[]){ll_box_int(INT64_C(5))}))`. Packing is
 unconditional — `(f arr)` against `[...rest]` binds `rest` to `[arr]`, matching JS.
 
-**A third gap, found on the way and NOT fixed** — named here so it is a target rather than a
-surprise:
+**A third gap, found on the way — since FIXED.** A `(let DIGITS "0123456789")` at the top of `std/io`
+emitted a reference to an undeclared `u_DIGITS`. The hoisting machinery (`ensureImportedValue`)
+already existed and was wired into the plain-identifier read path, but **not** into the dotted-head
+path — so `(DIGITS.indexOf c)` inside a lowered imported body built a bare `c-ref` that no C scope
+declared. One `ensureImportedValue` call in `resolveDottedCall` closes it. No corpus example had ever
+caught it because no C-passing example read an imported module-level constant at all; `std/math`'s
+`E`/`PI`/`TAU` existed but were never reached from a C path. That coverage is now deliberate:
+`80-adversarial/imported_module_constant.lisp` pins both shapes.
 
-> **`lowerImportedFunction` lowers a function's body but not the module-level bindings that body
-> references.** A `(let DIGITS "0123456789")` at the top of `std/io` emits a call to an undeclared
-> `u_DIGITS`. No corpus example exercised it, because no C-passing example uses an imported
-> module-level constant — `std/math`'s `E`/`PI`/`TAU` are never read from a C-reached path. `io.lisp`
-> sidesteps it by keeping the table function-local; the gap itself is untouched and will bite the
-> first stdlib module that needs a shared constant.
+> **Still open, and worth knowing before Phase F adds stdlib modules:** hoisted imported bindings are
+> keyed by their **bare source name** (`importedValues`, and `mangleC` is not module-qualified), so
+> two modules that each define a *private* `(let DIGITS …)` would collide on one `u_DIGITS` global —
+> the second silently reuses the first's value. Harmless at today's one-such-binding scale, a
+> silent-wrong bug the moment two stdlib modules pick the same private constant name.
 
 ---
 

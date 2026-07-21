@@ -2353,12 +2353,26 @@ export class ResolveHirToCir {
     const localEntry = (() => { try { return this.context.symbolTable.resolveSymbol(headName, callee); } catch { return undefined; } })();
     const localVar = this.localInfo(mangleC(headName));
 
+    // A module-level binding of ANOTHER module, reached as a dotted HEAD -- `(DIGITS.indexOf c)`
+    // inside a lowered imported body. It resolves in the SYMBOL table but is a local of no C scope,
+    // so the bare `u_DIGITS` built below would be a reference nothing declares. Hoist it to a C
+    // global first, exactly as `resolveIdentifier` does for the non-dotted read of the same binding
+    // -- that path had the ensure and this one did not, which is the whole of the bug.
+    if (localVar === undefined && !this.globalNames.has(headName) && !this.isExtern(localEntry)) {
+      this.ensureImportedValue(headName, callee);
+    }
+    // Once hoisted (here or by the module-global pass), the GLOBAL's declared ctype is what C sees;
+    // `mapType(inferredType)` is only the fallback for a binding that is neither local nor global.
+    const globalT = this.globalNames.has(headName)
+      ? this.globalDecls.find((d) => d.cName === mangleC(headName))?.ctype
+      : undefined;
+
     // A local binding wins over a host global of the same spelling -- but an `:extern` entry IS the
     // host global (the std/js prelude declares `console`, `Math`, ... into the symbol table).
-    if (!this.isExtern(localEntry) && (localEntry?.inferredType !== undefined || localVar !== undefined)) {
+    if (!this.isExtern(localEntry) && (localEntry?.inferredType !== undefined || localVar !== undefined || globalT !== undefined)) {
       let recv: CExpr = {
         src: callee,
-        ctype: localVar?.ctype ?? mapType(localEntry?.inferredType),
+        ctype: localVar?.ctype ?? globalT ?? mapType(localEntry?.inferredType),
         kind: "c-ref",
         cName: mangleC(headName),
         cell: localVar?.cell,
