@@ -3961,7 +3961,12 @@ a named-and-later thing.
 
 ## D47 — conditions / restarts: a resumable second exception mechanism (Phase Cr; C-native, JS-refused)
 
-> **Ratified in the 2026-07 design round; not yet built.** Source: `docs/inbox/hir-design-round-brief.md` §D.
+> **Ratified in the 2026-07 design round; BUILT on the C backend (Phase Cr, 2026-07).** Source:
+> `docs/inbox/hir-design-round-brief.md` §D. All four forms lower natively; JS refuses with LL0108.
+> Conformance suite: `examples/19-conditions/` (21 programs). Two rulings were settled by building it:
+> a declining handler falls to the **next matching clause of the same form** before the walk moves
+> outward (the brief's "decline -> next handler"), and `signal` re-arms its frame's re-entry guard via
+> a pad-CLEANUP frame, so a handler that transfers away does not leave the frame permanently inert.
 
 The Common Lisp condition/restart system — **resumable exceptions**, a *second* mechanism **beside**
 `try`/`catch`, not a replacement. `try`/`catch` unwinds *up* to the handler; a restart runs the handler

@@ -425,11 +425,14 @@ proven by a characterization snapshot (`test:diagnostics`, 42 probes, byte-for-b
         Remaining: R3 (explicit stores/copy-insertion) and R4 (dispatch-at-HIR).
 *   [x] **IR Codegen:** HIR → ESTree, mechanical, and now the **only** value-lowering path. The flag
         (`--no-hir`/`LL_HIR`) and the legacy IIFE/LL0103/`visitIf`-`visitMatch` machinery were cut.
-*   [ ] **The core tail (D48).** The readiness report's remaining dips resolved *onto* nodes — cheap
-        drains (`HCopyStore` for the A5 copy-decision, the field-get slot on `HMemberRead`,
-        callee-identity on call nodes) → `HMatchTest` (patterns as an IR fact) → the **closure
-        representation** (the one real design commitment left). Governed by A-0: nodify what *both*
-        backends decide; reclassify only genuine single-backend passes (A6 coercions leave core).
+*   [ ] **The core tail (D48).** The readiness report's remaining dips resolved *onto* nodes. Step 1,
+        the cheap drains, is **done** — the A5 copy-decision (as `copies` fields on `HReturn`/`HVarDecl`
+        rather than a distinct `HCopyStore`), the field-get slot on `HMemberRead`, and callee-identity
+        on the call nodes. Remaining, in order: **`HMatchTest`** (patterns as an IR fact — still the
+        last opaque-leaf class: `HPatternTest.pattern` is a raw `ast.PatternNode` and the test is built
+        at emit time by the legacy `generateCondition`) → the **closure representation** (the one real
+        design commitment left) → A1 field types. Governed by A-0: nodify what *both* backends decide;
+        reclassify only genuine single-backend passes (A6 coercions leave core).
 
 ## 🔮 The language-feature lane (2026-07 design round)
 
@@ -457,12 +460,25 @@ The coercion pass reframed as the type system's checked-conversion layer. In ord
         (`:with Flags`), `with`-copy (`(with s :field v)`), `:readonly` fields, attributes → reflection
         (`:with Attr`, wired into `type`), `:stack` allocation (needs escape analysis).
 
-### 🔮 Phase Cr — conditions / restarts (D47)
-*   [ ] **The resumable kernel** — `restart-case` / `handle` / `signal` / `invoke-restart`: a second,
+### ✅ Phase Cr — conditions / restarts (D47) — DONE
+*   [x] **The resumable kernel** — `restart-case` / `handle` / `signal` / `invoke-restart`: a second,
         *resumable* exception mechanism beside `try`/`catch`. **C-native, JS-refused** (the mirror of
-        C-refused coroutines). Known hard part: a restart transfer must run intervening `finally` /
-        `:destructor` cleanups — it hooks the **same** cleanup stack as `try`/`catch`, not a raw
-        `longjmp`. Parallel worktree, C-targeted.
+        C-refused coroutines). The known hard part landed first: Cr-0 unified `try`/`catch`/`finally`
+        onto one `ll_frame` stack walked by one `ll_unwind`, so a restart transfer runs intervening
+        `finally` cleanups **by construction** rather than by a parallel mechanism. Then Cr-1a
+        (`restart-case` + `invoke-restart`) needed a single `f == target` branch, and Cr-1b (`handle`
+        + `signal`) added `ll_signal`'s in-place LL_HANDLER walk plus a new lifted-handler ABI
+        (`(void*, ll_value) -> ll_value`) with one shared env per form.
+*   [x] **Conformance suite** — `examples/19-conditions/`, 21 programs, expectations hand-derived from
+        D47 (JS refuses these, so it is not the oracle) and confirmed against C. Beyond the mechanism
+        itself they pin the compositions: a signal never fires an intervening `catch`; a restart unwind
+        runs CLEANUPs but skips CATCHes; a handler's `throw` propagates from the *signal's* context;
+        frame-pop discipline on `return` and on normal function exit; recovery on every loop iteration.
+*   [x] **Two correctness finds from adversarially probing it** — a declining handler was skipping the
+        remaining clauses of its own `handle` form; and, wider than D47, the C11 7.13.2.1p3
+        setjmp-clobber (a local written in a protected body and read after a landing is indeterminate
+        unless `volatile`) affected **plain `try`/`catch` too** — silently wrong at any `-O` above 0.
+        Both fixed; `npm run test:c:o2` now fences the second, which `-O0` structurally cannot.
 
 ## 🚀 Phase 7: The Speed of Light (v1.0.0)
 **Theme:** "The Sloth becomes a Cheetah."

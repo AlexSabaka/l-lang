@@ -1,5 +1,57 @@
 # 📜 Changelog & Implementation History
 
+## 🚀 Recent Major Changes (July 2026)
+
+### D47 conditions / restarts, native on C (Phase Cr, July 2026)
+**Status**: ✅ Complete
+
+A second, *resumable* exception mechanism beside `try`/`catch` — the Common Lisp condition system's
+tractable subset. `restart-case` / `handle` / `signal` / `invoke-restart` lower natively on the C
+backend; the JS backend refuses all four with **LL0108** (no native handler/restart stack), the exact
+mirror of the C band's LL0105-07 coroutine/extern refusals.
+
+Built in dependency order, the hard part first:
+
+- **Cr-0 — the keystone.** `try`/`catch`/`finally` were unified onto ONE `ll_frame` handler stack
+  walked by ONE `ll_unwind` primitive. This is what makes the rest sound: D47's stated hard part is
+  that a restart transfer must run intervening `finally` cleanups, and hooking the *same* stack makes
+  that true by construction rather than by a parallel mechanism that could silently skip them.
+- **Cr-1a — the restart half.** `restart-case` becomes an `LL_RESTART` setjmp pad offering its arm
+  names; `invoke-restart` packs its args and unwinds to the newest matching frame. Reusing Cr-0 cost a
+  single `f == target` branch in `ll_unwind`.
+- **Cr-1b — the condition half.** `handle` installs one bookkeeping `LL_HANDLER` frame (never a
+  longjmp target, so no setjmp); `signal` walks those frames **in place** — an ordinary call, which is
+  the property that makes resumption possible. Each clause closure-converts to a lifted
+  `(void* env, ll_value cond) -> ll_value` handler, a new ABI alongside the argv one, with a single
+  shared env per form.
+
+**Conformance**: `examples/19-conditions/`, 21 programs. Expectations are hand-derived from D47 and
+confirmed against C — JS refuses these, so it cannot serve as the oracle.
+
+**Two correctness finds from adversarially probing the result**, both fixed:
+
+- A declining handler skipped the remaining clauses of its own `handle` form and jumped straight
+  outward. The design brief spells a handler's options as "invoke a restart / return (**decline → next
+  handler**) / non-locally exit", and its own example form carries two clauses — so a specific clause
+  must be able to fall back to a general one written after it.
+- **C11 7.13.2.1p3**: a local of a `setjmp`-containing function that is modified between the `setjmp`
+  and the `longjmp` is *indeterminate* unless `volatile`. This was **not** D47-specific — plain
+  `try`/`catch` had it too, silently returning stale values at any `-O` above 0. The corpus only ever
+  built `-O0`, the one level where the reads happen to work, which is why it went unseen. The emitter
+  now `volatile`-qualifies exactly the at-risk locals (one variable across the whole corpus), and
+  `npm run test:c:o2` runs the same goldens optimized as the permanent fence.
+
+### Name-checking the dark bodies (July 2026)
+**Status**: ✅ Complete
+
+A few AST fields are **records** rather than nodes — no `_type`, so `ast.isAstNode` is false. Every
+generic walk tested exactly that and stepped over them: `catch` bodies, `handle` clause bodies,
+`restart-case` arm bodies, `deftype :where` constraints. Nothing inside was ever resolved or typed, so
+an undefined name in a `catch` body reported **nothing at all** and reached run time. The blind spot
+had been copied into three walkers (parent linkage, the shared tree walker, and the type pass's own),
+each of which needed the same descent — parent linkage being load-bearing, since `_parent` is how
+`SymbolTable.scopeOf` finds the enclosing scope for a binder.
+
 ## 🚀 Recent Major Changes (January 2026)
 
 ### Generics & Interfaces - Runtime Type Metadata (January 17, 2026)
