@@ -4,6 +4,7 @@
 
 import { CBlock, CExpr, CStmt, CFunction, CModule, CLValue, CLifted, CParam } from "./cir";
 import { CType } from "./ctype";
+import { computeVolatileLocals } from "./volatiles";
 
 function cType(t: CType): string {
   switch (t.k) {
@@ -94,9 +95,18 @@ export class EmitCirToC {
   // a raw C `return`/`ll_throw` would jump past both. Every try frame is tracked, even finalizer-less
   // ones: a `return` out of any try still has to pop the handler stack, or it dangles at a dead frame.
   private tryStack: { frameVar: string; finalizer: CBlock | null }[] = [];
+  // The locals of the CURRENT C function that must be `volatile` (C11 7.13.2.1p3 -- see volatiles.ts).
+  // Swapped per emitted function; `signature()` serves both the forward decl and the definition, so
+  // every function's set is computed up front in emitModule rather than at its emit point.
+  private volatiles: Set<string> = new Set();
+  private volatilesByFn: Map<CFunction | CLifted, Set<string>> = new Map();
 
   emitModule(m: CModule): string {
     this.out = [];
+    // Which locals are clobberable across a setjmp landing, per C function (spec: volatiles.ts).
+    this.volatilesByFn = new Map();
+    for (const f of m.functions) this.volatilesByFn.set(f, computeVolatileLocals(f.body));
+    for (const l of m.lifted) this.volatilesByFn.set(l, computeVolatileLocals(l.body));
     // Forward declarations FIRST: the class method-table adapters (below) call the method functions,
     // so those must be declared before the class descriptors.
     for (const f of m.functions) this.line(this.signature(f) + ";");
@@ -148,6 +158,7 @@ export class EmitCirToC {
     for (const l of m.lifted) this.emitLifted(l);
     for (const a of m.adapters) this.emitAdapter(a);
     this.line("int main(void) {");
+    this.volatiles = computeVolatileLocals(m.main); // top-level statements are main's locals
     this.indent++;
     this.withFreshTryStack(() => this.emitBlockStmts(m.main));
     this.line("return 0;");
@@ -159,6 +170,7 @@ export class EmitCirToC {
   /** A lifted closure body: unpack params from argv, captures from env, then the resolved body.
    *  abi:"handler" (D47 Cr-1b) is a lifted handle clause instead: `(void* env, ll_value cond)`. */
   private emitLifted(l: CLifted): void {
+    this.volatiles = this.volatilesByFn.get(l) ?? new Set();
     if (l.abi === "handler") {
       // The trailing return is the DECLINE (ll_signal discards a returning handler's value), and a
       // `return` inside the clause is likewise a plain C return = decline (fresh tryStack below).
@@ -166,10 +178,10 @@ export class EmitCirToC {
       this.indent++;
       if (l.envStruct) this.line(`${l.envStruct}* __e = (${l.envStruct}*)__env; (void)__e;`);
       else this.line("(void)__env;");
-      if (l.params.length) this.line(`ll_value ${l.params[0].cName} = __cond;`);
+      if (l.params.length) this.line(`${this.declType(l.params[0].ctype, l.params[0].cName)} ${l.params[0].cName} = __cond;`);
       else this.line("(void)__cond;");
       for (const c of l.captures) {
-        this.line(`${c.cell ? "ll_value*" : cType(c.ctype)} ${c.field} = __e->${c.field};`);
+        this.line(`${c.cell ? "ll_value*" : this.declType(c.ctype, c.field)} ${c.field} = __e->${c.field};`);
       }
       this.withFreshTryStack(() => this.emitBlockStmts(l.body));
       this.line("return ll_nil();"); // fall-off-end = decline
@@ -184,11 +196,11 @@ export class EmitCirToC {
     if (l.envStruct) this.line(`${l.envStruct}* __e = (${l.envStruct}*)__env; (void)__e;`);
     else this.line("(void)__env;");
     l.params.forEach((p, i) => {
-      if (p.ctype.k === "value") this.line(`ll_value ${p.cName} = __argv[${i}];`);
-      else this.line(`${cType(p.ctype)} ${p.cName} = ${UNBOX_FN[p.ctype.k]}(__argv[${i}]);`);
+      if (p.ctype.k === "value") this.line(`${this.declType(p.ctype, p.cName)} ${p.cName} = __argv[${i}];`);
+      else this.line(`${this.declType(p.ctype, p.cName)} ${p.cName} = ${UNBOX_FN[p.ctype.k]}(__argv[${i}]);`);
     });
     for (const c of l.captures) {
-      this.line(`${c.cell ? "ll_value*" : cType(c.ctype)} ${c.field} = __e->${c.field};`);
+      this.line(`${c.cell ? "ll_value*" : this.declType(c.ctype, c.field)} ${c.field} = __e->${c.field};`);
     }
     this.withFreshTryStack(() => this.emitBlockStmts(l.body));
     this.line("return ll_nil();"); // closures always return boxed; unreachable when the body returned
@@ -227,14 +239,24 @@ export class EmitCirToC {
     this.line("");
   }
 
+  /** A declaration's type, `volatile`-qualified when the local is clobberable across a setjmp landing
+   *  (C11 7.13.2.1p3 -- see volatiles.ts). The qualifier goes AFTER the type so a pointer local reads
+   *  `ll_str* volatile p` (a volatile POINTER -- the clobberable slot), not a pointer-to-volatile. */
+  private declType(t: CType, cName: string): string {
+    return this.volatiles.has(cName) ? `${cType(t)} volatile` : cType(t);
+  }
+
   private signature(f: CFunction): string {
+    // Params are locals too: a `:mut`/`:ref`/`:out` param assigned inside a pad is clobberable.
+    const vol = this.volatilesByFn.get(f) ?? new Set<string>();
     const params = f.params.length
-      ? f.params.map((p) => `${cType(p.ctype)} ${p.cName}`).join(", ")
+      ? f.params.map((p) => `${vol.has(p.cName) ? `${cType(p.ctype)} volatile` : cType(p.ctype)} ${p.cName}`).join(", ")
       : "void";
     return `static ${cType(f.ret)} ${f.cName}(${params})`;
   }
 
   private emitFunction(f: CFunction): void {
+    this.volatiles = this.volatilesByFn.get(f) ?? new Set();
     this.line(`${this.signature(f)} {`);
     this.indent++;
     this.withFreshTryStack(() => this.emitBlockStmts(f.body));
@@ -313,7 +335,7 @@ export class EmitCirToC {
           // A mutable-captured binding: a heap cell shared with escaping closures.
           this.line(`ll_value* ${s.cName} = ll_cell(${s.init ? this.expr(s.init) : "ll_nil()"});`);
         } else {
-          this.line(`${cType(s.declCType)} ${s.cName} = ${s.init ? this.expr(s.init) : defaultInit(s.declCType)};`);
+          this.line(`${this.declType(s.declCType, s.cName)} ${s.cName} = ${s.init ? this.expr(s.init) : defaultInit(s.declCType)};`);
         }
         return;
       case "c-assign":

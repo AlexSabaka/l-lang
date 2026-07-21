@@ -81,7 +81,8 @@ export const C_PASSING: readonly string[] = [
   "18-error-handling/06_nested_finally_return.lisp",
   "18-error-handling/07_return_in_try_then_outer_throw.lisp",
   // Cr-0 refactor safety net (all behavior-preserving, green on Phase-0): nested catch+finally rethrow,
-  // finally return/throw superseding an in-flight throw, and a mutable-scalar clobber pin at -O0.
+  // finally return/throw superseding an in-flight throw, and the mutable-scalar setjmp-clobber pin
+  // (11 -- now volatile-qualified, and fenced at every -O level by `npm run test:c:o2`).
   "18-error-handling/08_nested_catch_finally_rethrow.lisp",
   "18-error-handling/09_finally_return_supersedes_throw.lisp",
   "18-error-handling/10_finally_throw_supersedes.lisp",

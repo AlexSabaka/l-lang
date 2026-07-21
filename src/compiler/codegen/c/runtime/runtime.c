@@ -311,7 +311,13 @@ static ll_value ll_signal(ll_value cond) {
       if (!ll_is_type(cond, f->cond_types[i], 0)) continue;
       /* The re-arm pad: the same pad-CLEANUP protocol an emitted `finally` uses, its "finalizer"
        * being `f->active = 1` -- so the guard restores on BOTH exits (decline and divergence).
-       * setjmp-safety: f/i are unmodified between setjmp and any longjmp -> determinate. */
+       * setjmp-safety (C11 7.13.2.1p3): f/i are unmodified between setjmp and any longjmp ->
+       * determinate, no volatile needed. `pad` itself IS modified in between (ll_unwind writes
+       * pending/err/target/which through the pointer), as is every emitted ll_frame -- but a frame's
+       * address escapes to an external function (ll_handler_top = &pad), which forces it to memory on
+       * any real compiler; qualifying it would mean threading `volatile ll_frame*` through every
+       * runtime signature for no measured gain. USER locals get no such guarantee, so the emitter
+       * volatile-qualifies the clobberable ones (see codegen/c/volatiles.ts). */
       ll_frame pad; pad.kind = LL_CLEANUP; pad.dtor = 0; pad.pending = LL_UNWIND_NONE;
       pad.prev = ll_handler_top; ll_handler_top = &pad;
       if (setjmp(pad.buf) == 0) {
