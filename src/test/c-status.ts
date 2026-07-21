@@ -100,9 +100,25 @@ export const C_PASSING: readonly string[] = [
   "19-conditions/06_finally_runs_on_signal_transfer.lisp",
   "19-conditions/07_reentry_guard_inert_frame.lisp",
   "19-conditions/08_clause_reads_capture.lisp",
-  // Pins D47's "decline -> next handler": within ONE handle form, a declining clause hands off to the
-  // next matching clause (:extends-aware) before the walk moves outward.
+  // D47 conformance sweep -- adversarial compositions of the two mechanisms against each other and
+  // against try/catch/finally, loops, recursion and D11 value semantics. Each pins one rule: signal
+  // never consults CATCH frames (09), a restart unwind runs CLEANUPs but skips CATCHes (10), a handler
+  // throws from the SIGNAL's context (11), frame-pop discipline on `return` (12) and on normal function
+  // exit (19), :extends matching + decline-to-the-next-clause (13), a restart outside the handle (14),
+  // a handle nested inside a handler (15), recovery on every loop iteration (16), depth (17),
+  // signalling from inside a finally (18), and a value-copy across the raw jump (20).
+  "19-conditions/09_signal_never_fires_catch.lisp",
+  "19-conditions/10_restart_skips_catch_runs_finally.lisp",
+  "19-conditions/11_handler_throws_from_signal_point.lisp",
+  "19-conditions/12_return_out_of_handle_pops_frame.lisp",
   "19-conditions/13_clause_order_and_decline_chain.lisp",
+  "19-conditions/14_restart_outside_the_handle.lisp",
+  "19-conditions/15_nested_handle_inside_handler.lisp",
+  "19-conditions/16_loop_recovers_every_iteration.lisp",
+  "19-conditions/17_deep_recursion_restart.lisp",
+  "19-conditions/18_signal_from_inside_finally.lisp",
+  "19-conditions/19_handle_frame_dies_with_its_function.lisp",
+  "19-conditions/20_struct_copy_survives_transfer.lisp",
   "20-algorithms/01_evaluator.lisp",    // unlocked by match binding patterns
   // Phase E broad sweep -- field mutation on boxed receivers (dyn-field store).
   "30-applications/04_flood_fill.lisp", // (c.mine := v) on an array-element struct -> ll_member_slot
