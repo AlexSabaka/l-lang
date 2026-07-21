@@ -425,6 +425,13 @@ proven by a characterization snapshot (`test:diagnostics`, 42 probes, byte-for-b
         Remaining: R3 (explicit stores/copy-insertion) and R4 (dispatch-at-HIR).
 *   [x] **IR Codegen:** HIR → ESTree, mechanical, and now the **only** value-lowering path. The flag
         (`--no-hir`/`LL_HIR`) and the legacy IIFE/LL0103/`visitIf`-`visitMatch` machinery were cut.
+*   [x] **The contract questions are ruled (D49).** The gap ledger's `new:` band asked for four
+        language rulings. Two were not questions: `void-in-value-position` was a JS bug report wearing a
+        C ledger row (D9 already answers it, and says JS is the non-compliant backend), and
+        `module-global` was a tautological row measuring corpus shape. The two real ones: `-> Void` now
+        BINDS (it suppresses the implicit return, as `:gen` does), and `Int / Int` is integer division
+        (D43 applied literally, once its "JS has one number type" premise was seen to be false on a
+        native target). Implementation follows; see D49.
 *   [ ] **The core tail (D48).** The readiness report's remaining dips resolved *onto* nodes. Step 1,
         the cheap drains, is **done** — the A5 copy-decision (as `copies` fields on `HReturn`/`HVarDecl`
         rather than a distinct `HCopyStore`), the field-get slot on `HMemberRead`, and callee-identity

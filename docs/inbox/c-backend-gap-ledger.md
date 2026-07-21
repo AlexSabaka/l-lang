@@ -284,12 +284,12 @@ These are things the C backend had to decide that the spec's A1–A8 frame doesn
 
 | finding | dips | files | what it means for the spec |
 |---|--:|--:|---|
-| `void-fn-boxed` | 19 | 8 | the checker types a function `-> Void` but its body *returns values*; the backend must keep it boxed rather than emit a C `void` return. **The `Void` type is not a reliable "returns nothing" signal.** |
-| `void-in-value-position` | 13 | 9 | a `void` call used as a value; JS yields `undefined`, the C backend sequences with nil. A layout question the HIR doesn't answer. |
-| `module-global` | 11 | 11 | a module-level binding referenced by a top-level function; hoisted to a C global with external linkage. The HIR has no module-global concept. |
+| `void-fn-boxed` | 19 | 8 | **RULED (D49a).** `-> Void` BINDS: it suppresses the implicit-return desugar, as `:gen` already does. Every dip came from source that explicitly wrote `-> Void`, so this was never sloppy annotation -- it was an annotation nothing enforced. C can emit a real `void` return; the row drains. |
+| `void-in-value-position` | 13 | 9 | **RULED (D49b).** A `Void` expression in value position is **nil** -- which follows from D9 (one bottom value, `nil` its spelling, `undefined` deleted). So C is right and this is a **JS bug report** wearing a C ledger row: JS yields `undefined` and must yield nil. Refiled against JS. |
+| `module-global` | 11 | 11 | **RETIRED (D49c) -- never a contract question.** The row fires ONCE PER MODULE with any module state (keyed on the first top-level node), so the count measures corpus shape, not decisions. The semantics are settled three ways (P6 top-level-only resolution, D6 import scope-merge, D20 module-private). Both backends agree. (Also: the emitted global is `static`, i.e. INTERNAL linkage -- "external" here was wrong.) The real finding inside it is the A1 channel-vs-layout type bug. |
 | `raw-structural:assign` | 10 | 2 | an assignment reached codegen raw inside a subtree that bailed to opaque. |
 | `raw-structural:for` | 9 | 2 | **`HFor` cannot carry a statement-bearing `:step`** — when the step is not a simple expression, the whole `for` arrives raw. A concrete HIR node-shape deficiency. |
-| `int-division` | 2 | 2 | **the checker types `Int/Int` as `Int`, but the JS runtime yields `Real`** (`5/2 == 2.5`). A real static-vs-runtime *semantic divergence* — the backend must pick one and diverges from a golden if it picks wrong. |
+| `int-division` | 2 | 2 | **RULED (D49d).** `Int / Int` IS integer division -- D43 applied literally (static type decides), now that D43's premise ("JS has one number type") is known false natively. Both corpus sites already wrap in `Math.floor`, i.e. they asked for this by hand; no golden changes. JS must truncate. The backend had been contradicting D43 in a `binopMode` `if`. |
 
 The two bolded rows (`void-fn-boxed`, `int-division`) are the kind of finding only a typed backend can
 produce: places where the *type the checker assigned* is not the type the *value actually has*. On JS
@@ -550,7 +550,10 @@ Ordered by measured dip weight — this is the empirical argument for sequencing
    all implemented now — including cross-module class registration (§5.3, `A9-extern:imported-class`),
    which was the natural next increment and is done. Lift the whole boundary into the contract.
 
-7. **Track `void-fn-boxed`, `int-division`, and `HFor`-with-statement-step as contract questions.**
+7. **DONE -- `void-fn-boxed`, `int-division` and `HFor`-with-statement-step were tracked as contract
+   questions and are now ruled (D49) or fixed.** `HFor` gained a statement-bearing `:step`, which drained
+   the `raw-structural` family to zero. The original note follows, for the record.
+   **Track `void-fn-boxed`, `int-division`, and `HFor`-with-statement-step as contract questions.**
    Low volume, high signal: the checker's type is not always the value's type, and `HFor` structurally
    cannot carry a statement-bearing `:step` (every C-style `for` in the corpus bails to raw because of
    it — §4, `raw-structural:for`). A native backend needs rulings on all three.

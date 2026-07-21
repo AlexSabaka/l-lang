@@ -4050,3 +4050,89 @@ This is the instrument; keep it.
 callee-identity on call nodes (all `HRef`-style; big dip drop, closes the A5 divergence hole). (2)
 `HMatchTest`. (3) Closure representation (the one real design commitment). (4) A1 field types + residue
 as they surface.
+
+---
+
+## D49 — the contract questions the C probe surfaced: Void, void-in-value, module scope, `/`
+
+> **Ruled 2026-07**, from the gap ledger's `new:` band — the rows it had flagged as needing a language
+> ruling rather than a code fix. Each is grounded in corpus evidence gathered before the ruling, not in
+> what the backend happened to do.
+
+**The framing that changed two of them.** Two rows turned out not to be open questions at all: one is
+already answered by D9 and the answer says a *backend* is non-compliant, and one was never a semantic
+question — it was a tautological ledger row. A dip is evidence, not automatically a question.
+
+### D49a — `-> Void` BINDS: it suppresses the implicit return
+
+**Ruling.** `-> Void` is a constraint, not documentation. The implicit-return desugar (`wrapTail`) does
+**not** wrap the tail of a function declared `-> Void`, exactly as it already declines to wrap a `:gen`
+body (D31: "a generator's tail value is not a sequence element").
+
+**Evidence.** All 26 `void-fn-boxed` dips come from source that *explicitly wrote* `-> Void` — an
+unannotated function maps to boxed without a dip, so "sloppy source" was not the cause. Meanwhile D9
+(`Void ≡ Nil`) made `checkReturns` bail on a `-> Void` declaration entirely, so the annotation asserted
+something nothing enforced, and `wrapTail` then returned the tail anyway. `(fn add [x] -> Void
+(this.items.push x))` compiled to `return this.items.push(x)` — a `-> Void` function returning an Int.
+
+**Consequence.** C can emit a real `void` return instead of widening to `ll_value`; the
+`new:void-fn-boxed` row drains. Every corpus call site already discards the value, so behaviour is
+unchanged — only the emitted code is.
+
+### D49b — a `Void` expression in VALUE position is `nil`, and JS is the non-compliant backend
+
+**Ruling.** A `Void`-typed expression used where a value is required evaluates to **nil**. D9 already
+ruled there is ONE bottom value, that `nil` is its spelling, and that `undefined` is not a spelling of
+the language — so this follows from D9 rather than adding to it.
+
+**Evidence.** The two backends disagree today on the same program: for `(fn check [n] (if (> n 0)
+(console.log "pos")))`, JS emits `return __ll_copy(console.log(...))` → `undefined`, while C emits
+`return (ll_console_log(...), ll_nil())` → nil. No golden catches it because no corpus program prints
+the value. Under D9 the C answer is correct.
+
+**Consequence.** `new:void-in-value-position` is a **JS bug report** that was wearing a C ledger row:
+the fix belongs in the JS emitter, which must yield nil where it currently yields `undefined`. Filed
+against JS, not tracked as a C gap.
+
+### D49c — module scope is settled language semantics; `new:module-global` is retired
+
+**Ruling.** A module-level binding is visible to that module's top-level functions. This was never
+open. It is retired from the ledger as a contract question and demoted to an implementation note.
+
+**Evidence.** The row is tautological: `computeGlobals` records **once per module** that has any module
+state at all, keyed on the first top-level node — so "12 dips / 12 files" counts files with module
+state, not decisions. The semantics are already fixed three ways: P6 makes symbol resolution
+top-level-only, D6 merges a module's top-level scope on import, and D20 makes an unexported top-level
+symbol module-*private* (which presupposes module-*visible*). Both backends implement it and agree —
+JS by wrapping the module body in an IIFE the top-level functions close over, C by hoisting to a
+file-scope `static`. The only theoretical divergence, JS's TDZ vs C's zero-init, is already outlawed by
+D24 (a value must be declared before it is evaluated).
+
+**The real finding inside the row** is not semantic: it is the A1 channel-vs-layout type bug (a hoisted
+global's declared ctype disagreeing with the channel's re-inferred type at a store site). That belongs
+under A1, where its twin already sits.
+
+### D49d — `/` on two `Int`s is INTEGER division
+
+**Ruling.** When both operands are statically `Int`, `/` is integer division. This follows D43 literally
+— the static type decides and the runtime never gets a vote — and it is what a native target does for
+free.
+
+**Why D43 needed re-examining rather than re-applying.** D43's stated justification is *"JavaScript has
+one number type and `5.0 === 5`"*. That premise is false on a typed native target, where `int64_t` and
+`double` are different widths in different registers. The C backend had been quietly contradicting D43
+for `/`: `binopMode` discarded the checker's `Int` and forced `real`, on the grounds that "the golden
+(JS) semantics win". A backend `if` was deciding a language question.
+
+**Blast radius, measured.** Exactly two corpus sites type as `Int / Int`
+(`30-applications/04_flood_fill.lisp:80`, `30-applications/07_line_clear.lisp:79`) — and **both already
+wrap the result in `Math.floor`**, because their authors wanted integer division and had to say so by
+hand. That is the feature request, written twice in the corpus. Neither golden changes. The common
+round-to-N-decimals idiom `(/ (Math.round (* x 100)) 100)` is unaffected: `Math.round` is typed Real,
+so those sites are Real division and stay so.
+
+**Consequences.** The JS backend must TRUNCATE when both operands are statically Int (`Math.trunc`, not
+`Math.floor` — they differ for negatives), or the two backends diverge. The checker keeps typing
+`Int / Int` as `Int`, which is now true rather than a claim the backend overrides, and
+`new:int-division` drains. A separate named operator for the *other* rounding mode is a future
+question, not part of this ruling.
