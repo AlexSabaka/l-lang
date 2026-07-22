@@ -369,6 +369,17 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "`(import \"\")` empty source -> LL0217 from the dependency-graph builder (NOT LL0003, which " +
       "COVERAGE-MATRIX:129 shows is masked/unobservable).",
   },
+  "90-diagnostics/ll0235_import_name_not_found/provider.lisp": { status: "library" },
+  "90-diagnostics/ll0235_import_name_not_found/main.lisp": {
+    status: "negative", codes: ["LL0235"],
+    reason:
+      "The import LIST was checked against nothing. LL0215 (does the module export it?) and LL0216 " +
+      "(did this file ask for it?) are both driven from a USE, so `(import { typo } from \"m\")` was " +
+      "accepted in silence -- at best an LL0210 at each use, naming the use rather than the typo, " +
+      "and nothing at all for a name imported but never used. Both arms are pinned: absent from the " +
+      "module, and present but unexported. They are separate messages because the FIX differs -- a " +
+      "spelling problem here vs. a change to the other module.",
+  },
   "90-diagnostics/ll0203_real_container_key.lisp": {
     status: "negative", codes: ["LL0203"],
     reason:

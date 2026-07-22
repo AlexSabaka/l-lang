@@ -1,7 +1,9 @@
+import * as path from "node:path";
 import * as ast from "../../frontend/ast";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { ModuleDiagnostics as MD } from "../../rules/diagnostics";
 import { ModuleResolver } from "../ModuleResolver";
+import { PackageRegistry } from "../PackageRegistry";
 
 export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
 
@@ -75,6 +77,83 @@ export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
     // process() defaults stopAt to "codegen".
     this.context.process(resolvedFile, "types");
     this.context.dependencyGraph.add(resolvedFile, currentFile, this.context);
+
+    // AFTER processing, because the module's symbols do not exist until then.
+    this.checkImportedNamesExist(import_, resolvedFile, currentFile);
+  }
+
+  /**
+   * LL0235 -- does the module actually OFFER each name this import asked for?
+   *
+   * The missing half of the boundary. LL0216 asks "did this file bind the name it USED?", and LL0215
+   * asks "does that module export it?" -- but both are driven from a USE. The import LIST itself was
+   * checked against nothing, so `(import { typo } from "m")` was accepted in silence: no diagnostic
+   * at the import, and at best an LL0210 at each use naming the use rather than the typo. A name
+   * imported and never used reported nothing at all.
+   *
+   * Every clause below is a way of NOT reporting, the same posture as `isVisibleFrom`: this runs on
+   * every import in the program, including the stdlib's, so it must never invent a diagnostic out of
+   * missing information.
+   */
+  private checkImportedNamesExist(
+    import_: ast.ImportDefinition,
+    resolvedFile: string,
+    currentFile: string
+  ): void {
+    const symbols = import_.symbols;
+    if (!symbols || symbols.length === 0) return; // whole-module import names nothing to check
+
+    const table = this.context.getModule(resolvedFile)?.symbols;
+    if (!table) return; // the module failed to process -- its own diagnostics are the report
+
+    // Within one package there is no boundary at all (Phase M / Mb): sibling files see each other's
+    // names directly, exported or not, so "not exported" is not a defect there. Being DEFINED is
+    // still required, so only the export half is relaxed.
+    const samePackage = this.samePackage(resolvedFile, currentFile);
+
+    for (const s of symbols) {
+      const name = s.symbol ? ast.symbolName(s.symbol) : undefined;
+      if (!name) continue;
+
+      const entry = table.resolveSymbol(name);
+
+      // `resolveSymbol` unions every module merged into that table, so a hit is not proof the name
+      // came from THIS module. Provenance decides; no provenance means not judgeable.
+      const declaredIn = (entry?.value as any)?._location?.source;
+      const fromThisModule =
+        entry !== undefined &&
+        declaredIn !== undefined &&
+        path.resolve(declaredIn) === path.resolve(resolvedFile);
+
+      if (!fromThisModule) {
+        this.report(MD.ImportNameNotFound, (s.symbol as any) ?? import_.source, {
+          name,
+          source: path.basename(resolvedFile),
+          defined: false,
+        });
+        continue;
+      }
+
+      // An OPERATOR is exempt for the same reason it is exempt from LL0215/LL0216 (W): it is found
+      // by dispatch, never by name, so it has no export and cannot appear in an import list.
+      if (entry!.isOperator || samePackage) continue;
+
+      if (entry!.exportName === undefined) {
+        this.report(MD.ImportNameNotFound, (s.symbol as any) ?? import_.source, {
+          name,
+          source: path.basename(resolvedFile),
+          defined: true,
+        });
+      }
+    }
+  }
+
+  private samePackage(a: string, b: string): boolean {
+    if (path.resolve(a) === path.resolve(b)) return true;
+    const registry = PackageRegistry.forPaths(this.context.libPaths);
+    const pa = registry.packageOf(a);
+    const pb = registry.packageOf(b);
+    return pa !== undefined && pa === pb;
   }
 
   /**

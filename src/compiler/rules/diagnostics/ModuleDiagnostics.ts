@@ -39,6 +39,24 @@ export const ModuleDiagnostics = {
       `usually a sign the modules want splitting.`
   ),
 
+  // LL0235 -- an import list naming something the module does not offer.
+  //
+  // The symmetric twin of LL0232, and it was the missing half of the boundary. LL0216 already asks
+  // "did this file bind the name it USED?" -- but the import list itself was never checked against
+  // the module, so `(import { typo } from "m")` was accepted in full silence. A misspelled import
+  // therefore reported nothing at the import, and the only symptom was an LL0210 at each USE, naming
+  // the use rather than the typo -- or, if the name was never used, nothing at all.
+  ImportNameNotFound: def<{ name: string; source: string; defined: boolean }>(
+    "LL0235",
+    Error,
+    (p) =>
+      p.defined
+        ? `'${p.name}' is defined in '${p.source}' but not exported from it, so this import cannot ` +
+          `bind it. Add it to that module's exports.`
+        : `'${p.name}' is not defined in '${p.source}'. Check the spelling, or import it from the ` +
+          `module that defines it.`
+  ),
+
   // LL0232
   CannotExportUndefined: def<{ name: string }>(
     "LL0232",
