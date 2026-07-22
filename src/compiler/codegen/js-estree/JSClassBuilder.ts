@@ -35,9 +35,9 @@ interface CtorParam {
 }
 
 /**
- * Helper function to extract constructor parameters from a class node
+ * The constructor parameters a class node declares IN ITS OWN BODY -- its `:ctor` fields, in order.
  */
-function getCtorParamsFromClassNode(classNode: ast.ClassNode): CtorParam[] {
+function getOwnCtorParams(classNode: ast.ClassNode): CtorParam[] {
   const result: CtorParam[] = [];
 
   const bodyNodes = classNode.body
@@ -61,6 +61,43 @@ function getCtorParamsFromClassNode(classNode: ast.ClassNode): CtorParam[] {
   }
 
   return result;
+}
+
+/**
+ * The constructor parameters a class INHERITS -- its whole `:extends` chain flattened, ancestor-first.
+ *
+ * This must be TRANSITIVE, and it was not, which is the bug it now fixes. `buildConstructor` asked the
+ * direct parent for its OWN ctor params to know what `super(...)` should forward -- correct only when
+ * the parent DECLARES those fields itself. The moment a field is inherited through TWO levels
+ * (`KeyError :extends ValueError :extends Error`, `message` declared on `Error`), the middle class has
+ * no own ctor params, so the grandchild forwarded NOTHING: `constructor() { super(); }`, and the field
+ * arrived `undefined`. It was invisible until now because the corpus's own hierarchies were one level
+ * deep (`:extends Error` where `Error` was a host global that swallowed the argument), and the error
+ * tower this feeds -- `Error -> ValueError -> KeyError` -- is the first thing to go two deep. The C
+ * backend flattens the whole chain and was correct throughout; this is JS catching up.
+ *
+ * Ancestor-first, matching the pass-through order `buildConstructor` builds `super` args in, and
+ * guarded against a cyclic `:extends` (the checker rejects those before codegen, but a code generator
+ * that can infinite-loop on malformed input is its own defect).
+ */
+function getInheritedCtorParams(
+  classNode: ast.ClassNode,
+  symbolTable: any,
+  seen: Set<string> = new Set()
+): CtorParam[] {
+  if (!classNode.extends || classNode.extends.length === 0) return [];
+  const parentTypeNode = classNode.extends[0];
+  const parentName = parentTypeNode.type.name;
+  if (seen.has(parentName)) return []; // cyclic :extends -- stop rather than spin
+  seen.add(parentName);
+
+  const parentSymbol = symbolTable.resolveSymbol(parentTypeNode.type);
+  if (!parentSymbol || !parentSymbol.value || parentSymbol.value._type !== "class") return [];
+  const parentNode = parentSymbol.value as ast.ClassNode;
+
+  // The grandparent's flattened params, THEN the parent's own -- ancestor-first, so the deepest
+  // declaration leads the list exactly as it does when the chain is only one level.
+  return [...getInheritedCtorParams(parentNode, symbolTable, seen), ...getOwnCtorParams(parentNode)];
 }
 
 /**
@@ -172,9 +209,11 @@ export class ClassBuilder {
       );
 
       if (parentSymbol && parentSymbol.value && parentSymbol.value._type === "class") {
-        parentArgs = getCtorParamsFromClassNode(
-          parentSymbol.value as ast.ClassNode
-        );
+        const parentNode = parentSymbol.value as ast.ClassNode;
+        // The parent's FULL flattened ctor params -- what it inherits, then what it declares -- so a
+        // grandchild forwards a grandparent's field. Its OWN params alone forwarded nothing past
+        // depth one (see getInheritedCtorParams).
+        parentArgs = [...getInheritedCtorParams(parentNode, this.context.symbolTable), ...getOwnCtorParams(parentNode)];
       }
     }
 

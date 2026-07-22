@@ -602,3 +602,47 @@ npm run test:diagnostics                          # LL0105/07 negatives pinned; 
 Every A1–A9 count in §3 is an aggregation of `GapEntry` rows from `--gap-ledger`. The C backend never
 guesses: where it cannot resolve a construct it refuses (LL0106/07) rather than emit wrong code, so a
 green file is a *true* positive and the frontier in §6 is exhaustive.
+
+---
+
+## 9. Latent inheritance bugs, surfaced by the error tower (2026-07-23)
+
+`std/core/errors` is the first DEEP class hierarchy the language has carried (`Error -> ValueError ->
+KeyError`, three levels). The corpus's own hierarchies were all one level deep — almost all
+`:extends Error`, where `Error` was a *host global* that absorbed whatever l-lang did or did not
+forward — so a whole class of multi-level inheritance bug was untested on both backends. Building the
+tower surfaced them. One is fixed; one is open and lives here.
+
+### 9.1 FIXED — JS forwarded no `super` args past depth one
+
+A `:ctor` field inherited through two-plus `:extends` levels arrived **nil on JS**. The lowering
+forwarded to `super(...)` only what the DIRECT parent declared in its own body, so an empty
+intermediate broke the chain (`constructor() { super(); }`). C flattened the whole chain and was
+correct. Fixed in `LowerAstToHirVisitor.inheritedCtorParamsOf` (and its dead mirror in
+`JSClassBuilder`); pinned by `80-adversarial/inherited_ctor_fields.lisp`.
+
+### 9.2 OPEN — C field-layout trap: inherited plain-default field + inherited ctor field + local ctor field, ≥2 levels
+
+The C backend traps (`TypeError: expected an Int`, exit 70) on this exact shape:
+
+```
+(defclass A (mut :ctor tag <- String) (mut seen <- Int 0))   ; ctor field AND a plain default field
+(defclass B :extends A)                                       ; empty intermediate
+(defclass C :extends B (mut :ctor extra <- Int))              ; a LOCAL ctor field, two levels down
+(let c (C "c" 7))                                             ; -> TypeError: expected an Int on C; fine on JS
+```
+
+Minimal triggers, all three required: the plain-default field (`seen`) on the ancestor, the local
+ctor field (`extra`) on the descendant, and at least one empty intermediate level (`B`). Remove any
+one and C is correct:
+
+- drop `seen` (the plain field) → both correct;
+- drop the intermediate `B`, make `C :extends A` → both correct;
+- drop `extra` (the local ctor field) → both correct.
+
+So it is the *interaction* of an inherited plain-default field with a mixed inherited/local ctor
+parameter list across a level boundary — a C field-slot ordering or plain-field-init offset that goes
+wrong only when the flattened ctor params and the flattened field list disagree in a particular way.
+JS is correct on this shape. Not yet fixed; it blocks giving `std/core/errors` classes plain fields
+(e.g. `Error`'s `cause`) while the hierarchy is deep. The error module can dodge it for now by keeping
+plain fields off the deep nodes, but the C layout is the real fix.

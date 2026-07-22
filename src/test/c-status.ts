@@ -366,6 +366,9 @@ export const C_PASSING: readonly string[] = [
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.
   "80-adversarial/portable_type_predicates.lisp",
+  // Lg -- a `:ctor` field inherited through 2+ `:extends` levels was nil on JS; C flattened the
+  // whole chain and was right. Fixed in the HIR lowering; this pins the multi-level forwarding.
+  "80-adversarial/inherited_ctor_fields.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the

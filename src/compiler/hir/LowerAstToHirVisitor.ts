@@ -579,14 +579,44 @@ export class LowerAstToHirVisitor {
     );
   }
 
-  /** A class's `:ctor` parameters as {name, default, type}. Mirrors getCtorParamsFromClassNode /
-   *  localCtorParams (they are the same computation) -- used for both this class and a resolved parent. */
+  /** A class's OWN `:ctor` parameters as {name, default, type} -- its body, not what it inherits. */
   private ctorParamsOf(cls: ast.ClassNode): Array<{ name: string; defaultValue: ast.ASTNode | undefined; type: ast.TypeNode | undefined }> {
     return this.ctorVarsOf(cls).map((v) => ({
       name: (v.name as any).id ?? (v.name as any).name,
       defaultValue: (v as any).value ?? undefined,
       type: v.type,
     }));
+  }
+
+  /**
+   * A class's INHERITED `:ctor` parameters -- its whole `:extends` chain flattened, ancestor-first.
+   *
+   * TRANSITIVE, which the direct-parent lookup was not, and that was a live JS miscompile. `lowerCtor`
+   * forwarded to `super(...)` whatever the DIRECT parent declared in its own body -- correct only until
+   * a field is inherited through two levels. `KeyError :extends ValueError :extends Error` with
+   * `message` on `Error`: `ValueError` declares no ctor field of its own, so `KeyError` forwarded
+   * nothing (`constructor() { super(); }`) and `message` arrived nil on JS while C, which flattens the
+   * whole chain, was right. Invisible until now because every corpus hierarchy was one level deep
+   * (`:extends Error`, a host global), and the error tower this feeds is the first to go two deep.
+   *
+   * Guarded against a cyclic `:extends`; the checker rejects those, but a lowering that can spin on
+   * malformed input is its own defect.
+   */
+  private inheritedCtorParamsOf(
+    cls: ast.ClassNode,
+    seen: Set<string> = new Set()
+  ): Array<{ name: string; defaultValue: ast.ASTNode | undefined; type: ast.TypeNode | undefined }> {
+    if (!cls.extends || cls.extends.length === 0) return [];
+    const parentTypeNode = cls.extends[0];
+    const parentName = parentTypeNode.type.name;
+    if (seen.has(parentName)) return [];
+    seen.add(parentName);
+    const parentSymbol = this.context.symbolTable.resolveSymbol(parentTypeNode.type);
+    if (!parentSymbol || !parentSymbol.value || (parentSymbol.value as ast.ASTNode)._type !== "class") return [];
+    const parentNode = parentSymbol.value as ast.ClassNode;
+    // Grandparent's flattened params, then the parent's own -- ancestor-first, matching the order
+    // `super` args are built in, so the deepest declaration leads exactly as at depth one.
+    return [...this.inheritedCtorParamsOf(parentNode, seen), ...this.ctorParamsOf(parentNode)];
   }
 
   /**
@@ -604,7 +634,11 @@ export class LowerAstToHirVisitor {
       parentClassName = parentTypeNode.type.name;
       const parentSymbol = this.context.symbolTable.resolveSymbol(parentTypeNode.type);
       if (parentSymbol && parentSymbol.value && (parentSymbol.value as ast.ASTNode)._type === "class") {
-        parentArgs = this.ctorParamsOf(parentSymbol.value as ast.ClassNode);
+        const parentNode = parentSymbol.value as ast.ClassNode;
+        // The parent's FULL flattened params -- what it inherits, then what it declares -- so a
+        // grandchild forwards a grandparent's field through `super`. Its own params alone stopped
+        // at depth one (see inheritedCtorParamsOf).
+        parentArgs = [...this.inheritedCtorParamsOf(parentNode), ...this.ctorParamsOf(parentNode)];
       }
     }
 
