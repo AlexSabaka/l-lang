@@ -33,14 +33,7 @@
         (mut out [])
         (mut line (stdin.read-line))
         (while (!= line nil) (
-            ;; Bound to a local first, and not for readability. Narrowing from the `if` does not reach
-            ;; inside a METHOD-CALL ARGUMENT -- `(out.push (+ "" line))` is an LL0205 on the `+` -- but
-            ;; the same expression as a `let` initializer is accepted. Third time this has bitten in
-            ;; this phase; the argument position is the one that does not narrow.
-            (if (!= line nil) (
-                (let text (+ "" line))
-                (out.push text)
-            ))
+            (if (!= line nil) (out.push line))
             (line := (stdin.read-line))
         ))
         (return out)

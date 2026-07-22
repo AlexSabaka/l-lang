@@ -3664,6 +3664,33 @@ the type question in both pattern and expression position; a second `-> Type` sp
 
 ---
 
+> **BUG, logged 2026-07-22 — narrowing is discarded for a whole loop body once the binding is
+> reassigned in it.** Not a ruling; a defect, recorded here because this is where narrowing is
+> specified and there is nowhere better yet.
+>
+> ```lisp
+> (mut piece (r.get 4))
+> (while (!= piece nil) (
+>     (if (!= piece nil) (put piece))   ;; ELL0203: expected String, got String?
+>     (piece := (r.get 4))              ;; <- this line is what breaks the line above
+> ))
+> ```
+>
+> The inner `if` plainly re-establishes the fact, and the checker does not accept it. Reduced to 20
+> lines and the trigger isolated: **the reassignment**. The same loop without it narrows correctly,
+> and it is nothing to do with interfaces, methods, or the argument position — a plain function
+> argument fails identically. A binding that is a `let` per iteration rather than a reassigned `mut`
+> narrows normally, which is the workaround used in `std/io/stream`'s `copy`.
+>
+> Two false trails worth recording, because both cost time and both were stated confidently before
+> being checked. It is NOT "operator operands narrow but method arguments do not" — that was inferred
+> from two failures without an isolating test, and is wrong in both directions. And a *native* member
+> like `.push` appears to narrow only because `nativeMembers` records return types only, so its
+> arguments are never checked at all; the narrowing was never consulted.
+>
+> A related, smaller thing found the same way: the ELSE branch of `(if (== x nil) A B)` does not
+> narrow `x` in `B`. Two positive tests do.
+
 ## D42 — types are nominal, interfaces are structural (the Go model; sub-phases Zf–Zg)
 
 **Ruling:** A class or struct keeps its **identity**: `Dog` is not a `Cat`, however identical their

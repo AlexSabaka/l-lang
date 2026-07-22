@@ -119,9 +119,12 @@
                     (return (strip-cr rest))
                 ))
                 (let chunk (file-read this.fd 65536))
-                (if (== chunk nil)
-                    (this.drained := true)
-                    (this.pending := (+ this.pending (+ "" chunk))))
+                ;; Two positive tests rather than an if/else. The ELSE branch of `(== chunk nil)` does
+                ;; not narrow `chunk` to non-optional, so appending there is a type error -- and that
+                ;; error then suppresses narrowing in OTHER functions in this module, which is how it
+                ;; was originally mistaken for a narrowing bug in `copy`.
+                (if (== chunk nil) (this.drained := true))
+                (if (!= chunk nil) (this.pending := (+ this.pending chunk)))
                 (idx := (this.pending.indexOf "\n"))
             ))
             (let line (this.pending.slice 0 idx))
@@ -152,20 +155,20 @@
     ;; Pump everything from `r` into `w`, `chunk` bytes at a time. Answers how many chunks moved.
     (fn copy [r <- Reader w <- Writer chunk <- Int] -> Int (
         (mut n 0)
-        (mut piece (r.read chunk))
-        ;; The narrowing from the `while` condition does not reach the body -- nothing stops the body
-        ;; reassigning `piece` -- so the inner test is load-bearing, not defensive.
-        (while (!= piece nil) (
+        (mut going true)
+        ;; `piece` is a fresh `let` PER ITERATION rather than a `mut` reassigned at the bottom, and
+        ;; that is not a style choice. Reassigning a `mut` anywhere in a loop body makes the checker
+        ;; discard its narrowing for the WHOLE body -- an inner `(if (!= piece nil) ...)` does not
+        ;; re-establish it -- so `(w.write piece)` becomes "expected String, got String?" even though
+        ;; it is plainly guarded. A binding that is never reassigned narrows normally.
+        ;; See DECISIONS.md, D41's 2026-07-22 amendment.
+        (while going (
+            (let piece (r.read chunk))
+            (if (== piece nil) (going := false))
             (if (!= piece nil) (
-                ;; `(+ "" piece)` is not decoration. Narrowing from the `if` reaches an OPERATOR
-                ;; operand but not a METHOD ARGUMENT -- `(w.write piece)` is an LL0203, "expected
-                ;; String, got String?" -- so the concat is what produces a non-optional to pass on.
-                ;; Worth knowing: the two positions do not narrow alike.
-                (let text (+ "" piece))
-                (w.write text)
+                (w.write piece)
                 (n := (+ n 1))
             ))
-            (piece := (r.read chunk))
         ))
         (return n)
     ))
