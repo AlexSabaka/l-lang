@@ -323,6 +323,10 @@ export const C_PASSING: readonly string[] = [
   // hosts already hand out -- and the chunked-read lines pin the UTF-8 boundary extension, without
   // which a chunked read corrupts one codepoint per boundary on any non-ASCII file.
   "80-adversarial/file_io_floor.lisp",
+  // `Writer`/`Reader`: one interface over a file and a standard stream. Also the proof that
+  // INTERFACE-TYPED dispatch works here -- the ledger's "witness-table case, deferred" row cites an
+  // example whose real blocker is an EXTENSION method on a class receiver, a different thing.
+  "80-adversarial/stream_interfaces/main.lisp",
   // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
   // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.
   "80-adversarial/display_source_names/main.lisp",

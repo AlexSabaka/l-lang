@@ -1,0 +1,9 @@
+via Writer
+interleaved
+via Writer again
+file:       alpha
+beta
+
+alpha
+beta
+chunks:     3
