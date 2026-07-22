@@ -13,9 +13,13 @@
 >   [`FLOOR.md`](./FLOOR.md), Phase F, which is complete. That phase also collapsed `std/seq`,
 >   `std/string` and `std/io` from native implementations to l-lang written on the floor.
 >
-> Still open, and the reason this document is not archived: **Se** (`std/core`), **Sf** (the
-> cstd-shaped modules, typed and actually *executed* rather than `status: "library"`), **Sg**
-> (retirement). §5 is the note that matters most for those.
+> - **Se is done (2026-07-22), but not as written** — see §4. `SYMBOL_MAP` does not leave the code
+>   generator, because it *is* the floor's JS backend; what it gained is a conformance check against
+>   the floor, and its four unmodelled orphans are now modelled.
+>
+> Still open, and the reason this document is not archived: **Sf** (the cstd-shaped modules, typed and
+> actually *executed* rather than `status: "library"`) and **Sg** (retirement). §5 is the note that
+> matters most for those.
 >
 > Rulings live in [`DECISIONS.md`](./DECISIONS.md) as **D19–D22**. This is their evidence and their
 > expansion.
@@ -237,9 +241,44 @@ In dependency order. Each is a sub-phase of Phase S.
   (`String`/`Boolean`/`Number`) remains, named as what it is: l-lang resolves types and values from
   one namespace, and declaring `Number` as a value silently breaks `<- Number` **across a module
   boundary**. Declarations are **untyped** — typing them is a separate measured pass.
-- **Se — `std/core`.** `SYMBOL_MAP`'s library half leaves the code generator and becomes typed
-  l-lang. D9's optionals already make `head`/`first` typable honestly (`T?`) — that was the stated
-  reason D9 had to precede D7.
+- ✅ **Se — the runtime surface is MODELED, and `SYMBOL_MAP` does not leave. Measured 2026-07-22.**
+  The plan was "`SYMBOL_MAP`'s library half leaves the code generator and becomes typed l-lang".
+  Measuring it changed the target. Of 43 entries:
+
+  | | |
+  |---|---|
+  | **15 operators** | **language**, per W/D21 — found by dispatch, never by name. Can never be a library. |
+  | **24 floor implementations** | the JS half of a floor entry. `SYMBOL_MAP` *is* the floor's JS backend, exactly as `runtime.c` is its C one. Deleting them deletes the JS backend. |
+  | **4 orphans** | `iter`, `next`, `deep-copy`, `eval` — on no floor, in no spec. The actual work. |
+
+  And 28 floor entries have **no** shim entry at all (`Math.*`, `console.*`, `Number`, `parseInt`…) —
+  correctly, since those resolve to genuine host globals.
+
+  `RuntimeProvider.isRuntimeFunction`'s own comment had already argued most of this half *cannot*
+  leave, for better reasons than duplication: `get`/`head`/`elem` are the language's only producers of
+  `T?`, and merely **declaring** them in a library silently deletes every optional check in the
+  language, because `inferTotalAccessorType` disables itself the moment the name resolves to a symbol.
+  `tail`/`empty`/`list`/`call` are loaded by the comptime sandbox and the REPL, which have no import
+  pipeline.
+
+  So the defect was never duplication — it was that **nothing checked the two halves line up**.
+  `intrinsics.ts` derives C's view from the floor; the JS side had no such link, and a floor entry
+  with no JS implementation was a `ReferenceError` found by running a program. `test:codegen` now
+  checks both directions, plus that no operator ever acquires a floor entry.
+
+  What the check found and what it cost:
+
+  - **`iter`/`next`** were JS-only, so **the C backend had no iteration protocol at all** — a String
+    or a hand-written `Iterable` *crashed the emitter*, and an `Iterable<T>` parameter compiled clean
+    and trapped on data. Now on the floor, with `ll_iter`/`ll_next` and a protocol arm in `c-foreach`.
+  - **`deep-copy`** is **not** D11's store copy: it recurses through arrays where the store copy
+    shares them. C had only the store copy, so pointing the floor entry at it would have created a
+    divergence *by the act of naming the operation*.
+  - **`eval`** was the empty string, so on JS it compiled to the **host's** `eval` — evaluating
+    JavaScript, not l-lang — and C refused it. Now LL0236 on both.
+  - The **native member tables** merged the same way: 27 members byte-identical, 7 declared by the
+    checker and refused by C, and three of those seven C could already do *dynamically* — so typing
+    the receiver had been **losing** capability.
 - **Sf — the cstd-shaped modules**, typed, and **actually tested**: goldens, `status: "test"`.
 - **Sg — retire** what remains; close D7.
 

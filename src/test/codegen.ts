@@ -5417,6 +5417,29 @@ function main() {
       (n) => !RuntimeProvider.isOperatorSymbol(n) && !FLOOR.has(n) && !(n in NOT_FLOOR)
     );
 
+    // THE OPERATORS ARE LANGUAGE, NOT LIBRARY, and must never acquire a floor entry.
+    //
+    // W and D21: an operator "cannot be shadowed, imported or redefined -- only OVERLOADED". It is
+    // found by DISPATCH, never by name, which is why `isVisibleFrom` exempts it from LL0215, why the
+    // import list cannot mention it, and why the JS inliner keeps its source name instead of a unique
+    // one. Putting one on the floor would make it an ordinary importable name and quietly undo all
+    // three.
+    //
+    // Stated as a test rather than a comment because the pressure runs the other way: SYMBOL_MAP looks
+    // like a table of library functions, so "finish moving it to the floor" is the obvious next step
+    // for anyone reading it, and 15 of its 43 entries must never move.
+    const operatorsOnFloor = RuntimeProvider.definedSymbols().filter(
+      (n) => RuntimeProvider.isOperatorSymbol(n) && FLOOR.has(n)
+    );
+    if (operatorsOnFloor.length) {
+      failed++;
+      console.log(`  FAIL  operators stay LANGUAGE, off the floor`);
+      console.log(`          on the floor, but an operator: ${operatorsOnFloor.join(" ")}`);
+      console.log(`          W/D21: an operator is found by dispatch, never by name -- a floor entry makes it importable`);
+    } else {
+      console.log(`  PASS  operators stay LANGUAGE, off the floor (${RuntimeProvider.definedSymbols().filter((n) => RuntimeProvider.isOperatorSymbol(n)).length} of them)`);
+    }
+
     if (missingOnJs.length === 0 && undeclared.length === 0) {
       console.log(`  PASS  the floor and the JS shim cover the same names`);
     } else {
@@ -5434,7 +5457,7 @@ function main() {
   }
 
   console.log(`\n=== summary ===`);
-  console.log(`  cases : ${CASES.length + 2}`);
+  console.log(`  cases : ${CASES.length + 3}`);
   console.log(`  failed: ${failed}   (target: 0)`);
 
   process.exit(failed === 0 ? 0 : 1);
