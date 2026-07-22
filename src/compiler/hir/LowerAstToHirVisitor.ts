@@ -1045,7 +1045,17 @@ export class LowerAstToHirVisitor {
     if (first.value === null) return { stmts: first.stmts, value: null }; // a0 diverges
 
     const t = this.temps.fresh();
-    const stmts: HStmt[] = [...first.stmts, this.declTempInit(t, first.value, args[0])];
+    // `let t; t = <first>` and NOT `const t = <first>`: every arm below ASSIGNS to this temp, and
+    // `declTempInit` emits a `const`. That was a latent miscompile -- `Assignment to constant
+    // variable` at run time -- and it was unreachable only by accident: a lazy logical whose RHS needs
+    // a prelude appears most often in a `while` condition, and a statement-bearing while condition
+    // used to bail to the legacy emitter before ever reaching this code. Rotating the loop instead of
+    // bailing made this path live and the bug surfaced immediately, in `std/string`'s `trim`.
+    const stmts: HStmt[] = [
+      this.declTemp(t, args[0]),
+      ...first.stmts,
+      this.assignTemp(t, first.value, args[0]),
+    ];
     for (let i = 1; i < lowered.length; i++) {
       const l = lowered[i];
       const evalBlock: HStmt[] = [...l.stmts];
@@ -1345,9 +1355,49 @@ export class LowerAstToHirVisitor {
 
   private lowerWhile(node: ast.WhileNode, dest: Dest): Lowered {
     const cond = this.lowerNode(node.condition, VALUE);
-    // The test re-evaluates each iteration, so it cannot carry a hoisted prelude -- a statement-bearing
-    // condition (rare) falls back to the legacy emitter.
-    if (cond.stmts.length > 0 || cond.value === null) return this.leaf(node, dest);
+    if (cond.value === null) return this.leaf(node, dest); // the condition diverges -- legacy
+
+    // A STATEMENT-BEARING CONDITION IS ROTATED, NOT REFUSED.
+    //
+    // The test re-evaluates every iteration, so it cannot sit in the `while (...)` slot while also
+    // needing hoisted statements. This used to bail to the legacy emitter with the comment "(rare)".
+    // It is not rare: ANY CALL in the condition hoists a temp, so `(while (< i (pack.count)) ...)`
+    // -- an entirely ordinary loop -- took the fallback. And the fallback does not work: the legacy
+    // JS visitor has no `visitIf`, so a `while` with a call in its condition and ANY `if` in its body
+    // failed with `ELL0100 visitIf is not implemented`. A real program found it (a dungeon-crawler
+    // sample), not a test.
+    //
+    // Rotated instead, which is the classic transformation:
+    //
+    //     <prelude>                     while (t) {
+    //     t = <test>            ==>         <body>
+    //                                       <prelude'>      // re-evaluated
+    //                                       t = <test'>
+    //                                   }
+    //
+    // The condition is lowered TWICE so the second copy allocates its own temps -- emitting the same
+    // prelude twice would redeclare them. Rotation rather than `while (true) { ...; if (!t) break; }`
+    // because the HIR HAS NO `break` NODE; this needs only decl-temp/assign-temp, which it has.
+    if (cond.stmts.length > 0) {
+      const t = this.temps.fresh();
+      const body = this.lowerNode(node.then, EFFECT).stmts;
+      const again = this.lowerNode(node.condition, VALUE);
+      if (again.value === null) return this.leaf(node, dest);
+      const hwr: HStmt = {
+        ...this.base(node),
+        kind: "while",
+        test: this.temp(t, node),
+        body: { stmts: [...body, ...again.stmts, this.assignTemp(t, again.value, node)] },
+      };
+      // `let t; t = <test>` for the same reason the lazy-logical temp above needs it: the loop body
+      // reassigns this temp every iteration, and `declTempInit` emits a `const`.
+      return this.loopResult(hwr, node, dest, [
+        this.declTemp(t, node),
+        ...cond.stmts,
+        this.assignTemp(t, cond.value, node),
+      ]);
+    }
+
     const hw: HStmt = {
       ...this.base(node),
       kind: "while",

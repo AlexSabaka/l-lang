@@ -331,6 +331,10 @@ export const C_PASSING: readonly string[] = [
   // the buffering and splitting are l-lang. Reads a FILE rather than stdin on purpose -- the runner
   // inherits stdio, and `fs.readSync` on a live TTY can raise EAGAIN.
   "80-adversarial/line_reader.lisp",
+  // A `while` whose CONDITION contains a call -- refused by the HIR as "(rare)" and broken in the
+  // legacy fallback it deferred to. Rotated now; the guard also pins the const-assignment miscompile
+  // in the lazy-logical lowering that rotation made reachable.
+  "80-adversarial/while_call_condition.lisp",
   // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
   // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.
   "80-adversarial/display_source_names/main.lisp",

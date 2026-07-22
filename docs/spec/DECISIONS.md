@@ -3691,6 +3691,31 @@ the type question in both pattern and expression position; a second `-> Type` sp
 > A related, smaller thing found the same way: the ELSE branch of `(if (== x nil) A B)` does not
 > narrow `x` in `B`. Two positive tests do.
 
+> **OPEN QUESTION, logged 2026-07-22 — what does l-lang do about EVENTS?** Not a ruling; the question
+> itself, written down because the stdlib is about to walk into it and there is no answer yet.
+>
+> The game samples in `l-lang-ex` are all event-driven: `setInterval` for the tick, `process.stdin.on`
+> for input. Measured across them — `setInterval`/`clearInterval` 8 uses each, `process.stdin.on` 4,
+> `setRawMode` 5. That shape assumes an **event loop**, and the C backend has none. Every stdlib
+> decision so far has been held to both-backends parity, so this needs deciding rather than drifting:
+>
+> - **Callback scheduling** (`setInterval`, `.on`, promises resolving later) is an event-loop model.
+>   It is JS-only unless the native runtime grows a loop, which is a phase of its own.
+> - **A fixed loop** — `while running { update(); render(); sleep(dt) }` — needs only `sleep` and a
+>   monotonic `now`, and BOTH ARE PORTABLE. `nanosleep` on C; on JS `Atomics.wait` on a
+>   SharedArrayBuffer blocks synchronously and is standard. That is why `std/sys/timers` can be a real
+>   both-backends module: the answer to "can timers work on C?" is yes, *for the fixed-loop model*.
+>
+> So the fork is not "timers or not" but **which concurrency model the language commits to**. A fixed
+> loop is portable, testable by golden output, and enough for the game samples if they are rewritten
+> around it. An event loop is what JS programs expect and what `:async`/`:await` already imply — D32
+> defines `Task`/`Awaitable` with no scheduler behind them on either backend, which is the same
+> question wearing a different hat.
+>
+> Related and unresolved in the same place: the C backend refuses `:async`/`:gen` outright, and its
+> refusal message blames the HIR when the real gap is a backend pipeline pass. Whatever answers the
+> events question should answer that too — they are one decision, not two.
+
 ## D42 — types are nominal, interfaces are structural (the Go model; sub-phases Zf–Zg)
 
 **Ruling:** A class or struct keeps its **identity**: `Dog` is not a `Cat`, however identical their
