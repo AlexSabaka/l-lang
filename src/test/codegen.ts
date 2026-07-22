@@ -31,6 +31,8 @@ import { spawnSync } from "node:child_process";
 import { CHILD_ENV } from "./childEnv";
 import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
 import * as genRuntime from "../compiler/codegen/c/runtime/gen-runtime-text";
+import { FLOOR } from "../compiler/floor/floor";
+import { RuntimeProvider } from "../compiler/runtime/RuntimeProvider";
 
 const VERBOSE = process.argv.includes("--verbose");
 const RUN_TIMEOUT_MS = 10_000;
@@ -5380,8 +5382,67 @@ function main() {
     }
   }
 
+  // THE FLOOR'S JS HALF, made checkable -- the mirror of the C check above.
+  //
+  // `intrinsics.ts` DERIVES C's view from the floor, so a floor entry cannot be unknown to the C code
+  // generator; that is what D50 bought. The JS side had no such link. SYMBOL_MAP is the floor's JS
+  // BACKEND, exactly as `runtime.c` is its C one, and nothing checked the two halves cover the same
+  // names -- a floor entry with no JS implementation was a ReferenceError found by running a program.
+  //
+  // Two directions, and both matter:
+  //
+  //   floor -> JS   every floor entry must be implemented by the shim OR resolve to a genuine host
+  //                 global. `Math.sqrt` and `console.log` need no shim because they really exist in
+  //                 JS; `head` does not exist and must be defined.
+  //   JS -> floor   every non-operator shim entry should BE a floor entry, or be listed below as a
+  //                 deliberate language-runtime exception. Without this half the shim can grow a
+  //                 private name that no spec mentions, which is how `iter`/`next` came to be a
+  //                 JS-only iteration protocol that the C backend simply did not have.
+  {
+    // Resolved by the HOST, so the shim correctly defines nothing for them.
+    const HOST_RESOLVED = new Set([
+      "Number", "parseInt", "parseFloat", "isNaN", "isFinite",
+    ]);
+    // Language runtime, deliberately NOT floor entries. Each is a standing debt with a named reason;
+    // this list shrinking is the measure of progress.
+    const NOT_FLOOR: Record<string, string> = {
+      // D30's iteration protocol, JS-only. This is the entry that justifies the JS -> floor direction
+      // of this check: `for :each` on C special-cases vec and str and has no protocol path at all, so
+      // a hand-written `Iterable` CRASHES the emitter and an `Iterable<T>`-typed parameter silently
+      // emits `ll_unbox_vec` and traps. S-a2 moves them and deletes these two lines.
+      iter: "D30's cursor primitive -- JS-only; S-a2 puts it on the floor and gives C ll_iter",
+      next: "D30's cursor primitive -- JS-only; S-a2 puts it on the floor and gives C ll_next",
+      "deep-copy": "D11's copy decision -- both backends make it, so it belongs on the floor (S-a3)",
+      eval: "the empty string; needs a runtime AST interpreter (S-a4 makes it throw)",
+    };
+
+    const floorNames = [...FLOOR.keys()];
+    const shim = new Set(RuntimeProvider.definedSymbols());
+    const missingOnJs = floorNames.filter(
+      (n) => !shim.has(n) && !HOST_RESOLVED.has(n) && !n.includes(".")
+    );
+    const undeclared = RuntimeProvider.definedSymbols().filter(
+      (n) => !RuntimeProvider.isOperatorSymbol(n) && !FLOOR.has(n) && !(n in NOT_FLOOR)
+    );
+
+    if (missingOnJs.length === 0 && undeclared.length === 0) {
+      console.log(`  PASS  the floor and the JS shim cover the same names`);
+    } else {
+      failed++;
+      console.log(`  FAIL  the floor and the JS shim cover the same names`);
+      if (missingOnJs.length) {
+        console.log(`          on the floor, no JS implementation: ${missingOnJs.join(", ")}`);
+        console.log(`          add it to RuntimeProvider.SYMBOL_MAP, or to HOST_RESOLVED if the host really provides it`);
+      }
+      if (undeclared.length) {
+        console.log(`          in the JS shim, on no floor: ${undeclared.join(", ")}`);
+        console.log(`          model it on the floor so C gets it too, or declare it in NOT_FLOOR with a reason`);
+      }
+    }
+  }
+
   console.log(`\n=== summary ===`);
-  console.log(`  cases : ${CASES.length + 1}`);
+  console.log(`  cases : ${CASES.length + 2}`);
   console.log(`  failed: ${failed}   (target: 0)`);
 
   process.exit(failed === 0 ? 0 : 1);

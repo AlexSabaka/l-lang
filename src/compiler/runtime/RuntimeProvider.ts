@@ -846,6 +846,22 @@ ${metadataInit}
     return symbol in this.SYMBOL_MAP && !this.isOperatorSymbol(symbol);
   }
 
+  /**
+   * Every name the JS shim DEFINES. The other half of the floor's conformance question.
+   *
+   * `intrinsics.ts` derives C's view from the floor, so a floor entry cannot be unknown to the C code
+   * generator -- that is what D50 bought. The JS side had no such link: SYMBOL_MAP is the floor's JS
+   * BACKEND, exactly as `runtime.c` is its C one, and nothing checked that the two halves cover the
+   * same names. A floor entry with no JS implementation was a ReferenceError at run time, found by
+   * running the program.
+   *
+   * Exposed so `test:codegen` can ask. Not used at compile time -- the shim is selected by name as it
+   * always was.
+   */
+  public static definedSymbols(): string[] {
+    return Object.keys(this.SYMBOL_MAP);
+  }
+
   public static isRuntimeReference(symbol: SymbolName): boolean {
     return symbol in this.SYMBOL_MAP;
   }
