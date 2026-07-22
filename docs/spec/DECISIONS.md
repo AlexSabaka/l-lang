@@ -4242,6 +4242,20 @@ thresholds**: JS switches to exponential at ≥1e21 and <1e-6, whereas `%g` swit
 `1e-7` prints `1e-07` on C and `1e-7` on JS. Fe's number-formatting item is therefore "match the
 threshold and exponent spelling", a far smaller job than vendoring Ryū.
 
+> **Amended 2026-07-22 — inferring is not checking.** An integer literal emits as a BigInt only when
+> `intLiteral` finds an `Int` **type** on its node, and a type only gets there by inference. The
+> checker's native-method branch returned its result *without inferring the arguments*, on the correct
+> grounds that a native method's parameters are the host's business and must not be arity-checked
+> (`nativeMembers` records return types only, so modelling a method as a function type makes the arity
+> check fire on `csv.split(",")`).
+>
+> Those are two different things, and collapsing them opted **every native-method argument out of the
+> numeric floor**: `(nums.includes 2)` on an `Int[]` compared a host Number against BigInt elements
+> and answered `false`, while `(nums.includes needle)` with an `Int`-typed variable answered `true` —
+> so the result was never a function of the values, only of which nodes inference had reached. The
+> arguments are now inferred and still not checked. Pinned by
+> `80-adversarial/native_search_numeric.lisp`, which was a listed JS gap and is now green on both.
+
 ### D52 — `String` is Unicode codepoints
 
 A `String` is a sequence of Unicode scalar values, not UTF-16 code units (JS's accident) and not

@@ -1,30 +1,23 @@
-;; ADVERSARIAL (parity guard -- C-correct, JS-divergent): a native container search with a numeric
-;; needle must find the element.
+;; CONFORMANCE guard: a native container search with a numeric needle finds the element.
 ;;
-;; `(let nums [1 2 3])` then `(nums.includes 2)` answers **false** on JS, and `(nums.indexOf 2)`
-;; answers **-1**. The array holds BigInts, because the checker typed its elements `Int` and D51 makes
-;; an Int a BigInt -- but the LITERAL needle at a native-member argument position is not given that
-;; type, so it arrives as a host Number, and `Array.prototype.includes` uses SameValueZero, which is
-;; false across BigInt and Number. C's `ll_strict_eq` promotes both to a double and finds it.
+;;     (let nums [1 2 3])
+;;     (nums.includes 2)      ->  true      on both backends
 ;;
-;; The line that isolates it is `var-includes`: bind the same 2 to an `Int`-typed variable and JS gets
-;; it RIGHT. So this is not about the values at all -- it is about which of them the checker reached.
-;; `EmitHirToEstree`'s `NUMERIC_HOST_PARAMS` coerces `indexOf`'s argument 1 (the from-index) and says
-;; in as many words "never the needle", which was the correct call for a from-index and left the
-;; needle behind.
+;; This answered FALSE on JS. The array holds BigInts -- the checker typed its elements `Int`, and
+;; D51 makes an Int a BigInt -- while the LITERAL needle stayed a host Number, and SameValueZero is
+;; false across BigInt and Number. C promoted both and found it, which is also what D51's numeric
+;; `==` says the answer is.
 ;;
-;; C is the reference here, and is right on the language's own terms: D51 rules `==` numeric across
-;; Int and Real, so a search for a value equal to an element has to find it. The obvious repair --
-;; coercing the needle with `__ll_hostnum` -- goes the WRONG WAY: it would turn a BigInt needle into a
-;; Number and give back exactly the above-2^53 collapse that Fg-1 removed from `ll_deep_eq`. A real
-;; fix has to lift the needle TO BigInt when the receiver holds them, which is not statically knowable
-;; in general, so this is listed in `js-status.ts` rather than patched.
+;; The cause was not the runtime and not `NUMERIC_HOST_PARAMS`. An integer literal only EMITS as a
+;; BigInt when `intLiteral` finds an `Int` type on the node, and a type only gets there by inference
+;; -- and the native-method branch of the checker returned its result WITHOUT inferring the
+;; arguments, on the (correct) grounds that a native method's parameters are the host's business and
+;; must not be arity-checked. Inferring and checking are different things, and collapsing them opted
+;; every native-method argument out of the numeric floor.
 ;;
-;; Nothing in the corpus is hit: every other `.includes`/`.indexOf` call site is on a STRING.
-;; `std/seq`'s `includes`/`index-of` are unaffected -- they route through `==`, which is numeric on
-;; both backends (see `seq_structural_search.lisp`).
-;;
-;; EXPECTED == golden. ACTUAL under JS today: the two `lit-` lines answer `false` and `-1`.
+;; The `var-` lines are what isolated it: bind the same 2 to an `Int` variable and JS always got it
+;; right, because a variable's type comes from its declaration rather than from the call site. So the
+;; answer was never a function of the values -- only of which nodes inference had reached.
 (
     (let nums [1 2 3])
     (mut needle <- Int 2)

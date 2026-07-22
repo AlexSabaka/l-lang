@@ -3751,6 +3751,18 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           // host runtime's business (modelling it as a function would arity-check `csv.split(",")`).
           const nativeMethod = this.inferNativeMethodType(funcName, firstNode);
           if (nativeMethod) {
+            // The arguments are still INFERRED, even though they are not CHECKED.
+            //
+            // Those are two different things, and collapsing them cost D51 its representation. An
+            // integer literal only emits as a BigInt if `intLiteral` finds an `Int` TYPE on the node
+            // (EmitHirToEstree), and a type only gets there by inference -- so skipping inference
+            // here silently opted every native-method argument out of the numeric floor. That is the
+            // whole of `native_search_numeric.lisp`: `(nums.includes 2)` on an `Int[]` compared a
+            // host Number against BigInt elements and answered false.
+            //
+            // What must NOT come back is the CHECK: `nativeMembers` records return types only, so
+            // modelling a method as a function type makes the arity check fire on `csv.split(",")`.
+            for (const a of listNode.nodes.slice(1)) this.inferExpressionType(a);
             inferredType = nativeMethod;
             break;
           }

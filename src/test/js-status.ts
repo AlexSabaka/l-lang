@@ -28,17 +28,6 @@ export const JS_NOT_YET: readonly string[] = [
   // instrumenting every map write. Nothing in the corpus iterates an integer-keyed map, so both cost
   // far more than the case is worth -- but it is D53's ruling, so it is pinned rather than hidden.
   "80-adversarial/map_insertion_order.lisp",
-  // Fg-4 (D51/D53) -- a native container search with a numeric needle. `(nums.includes 2)` on an
-  // `Int[]` is FALSE on JS: the array holds BigInts, the LITERAL needle at a native-member argument
-  // position never gets the Int type, and SameValueZero is false across BigInt/Number. C promotes
-  // both and finds it, which is also what D51's numeric `==` says the answer is.
-  //
-  // Not patched, because the obvious repair goes the wrong way: coercing the needle with
-  // `__ll_hostnum` turns a BigInt into a Number and restores exactly the above-2^53 collapse Fg-1
-  // removed from `ll_deep_eq`. A real fix lifts the needle TO BigInt when the receiver holds them,
-  // which is not statically knowable in general. `std/seq`'s `includes`/`index-of` are unaffected --
-  // they route through `==` -- and every corpus call site of `.includes`/`.indexOf` is on a String.
-  "80-adversarial/native_search_numeric.lisp",
   // Ff-3 (D52) -- native string members past U+FFFF. C's surface counts CHARACTERS as of Ff-3; JS's
   // still counts UTF-16 CODE UNITS, so the two agree below U+10000 and part company on a surrogate
   // pair: `"a😀b".length` is 3 on C and 4 here.
