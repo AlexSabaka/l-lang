@@ -11,7 +11,7 @@ floor(3.7) = 3
 round(3.5) = 4
 
 --- Collections ---
-[ 1, 2, 3, 4, 5 ]
+[1 2 3 4 5]
 length: 5
 first: 1
 last: 5

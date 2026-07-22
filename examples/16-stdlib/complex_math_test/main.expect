@@ -6,8 +6,8 @@ Vector C: 3 4 0
 Magnitude of C: 5
 --- Matrix Test ---
 Matrix:
-[ 1, 0, 0 ]
-[ 0, 1, 0 ]
-[ 0, 0, 1 ]
+[1 0 0]
+[0 1 0]
+[0 0 1]
 --- Complex Number Test ---
 Complex Addition Result: 4 + 6 i

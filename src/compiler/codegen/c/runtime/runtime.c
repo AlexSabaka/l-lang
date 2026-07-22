@@ -546,84 +546,144 @@ static bool ll_ident_like(const ll_str *s) {
   return true;
 }
 
-static void ll_inspect_sb(ll_sb *sb, ll_value v) {
+/* -- l-lang display (FLOOR.md 3.5, D55) ---------------------------------------------------------
+   l-lang's OWN reader syntax, not node's: [1 2 3], {:a 1 :b 2}, "strings", nil, Point{:x 3},
+   #<fn f>. A separate implementation of the same written rule the JS runtime implements; the two
+   are kept in step by conformance guards, never by reading one off the other. */
+#define LL_WIDTH 80
+
+typedef struct { const void *items[256]; size_t len; } ll_seen;
+
+static bool ll_seen_has(const ll_seen *s, const void *p) {
+  for (size_t i = 0; i < s->len; i++) if (s->items[i] == p) return true;
+  return false;
+}
+static void ll_seen_push(ll_seen *s, const void *p) { if (s->len < 256) s->items[s->len++] = p; }
+static void ll_seen_pop(ll_seen *s) { if (s->len) s->len--; }
+
+/* l-lang string syntax: double quotes, and the escapes the reader would need to take it back. The
+   old formatter emitted single quotes and escaped NOTHING, which read-back forbids. */
+static void ll_sb_put_quoted(ll_sb *sb, const ll_str *s) {
+  ll_sb_puts(sb, "\"");
+  for (size_t i = 0; i < s->len; i++) {
+    char c = s->data[i];
+    switch (c) {
+      case '\\': ll_sb_puts(sb, "\\\\"); break;
+      case '"':  ll_sb_puts(sb, "\\\""); break;
+      case '\n': ll_sb_puts(sb, "\\n"); break;
+      case '\t': ll_sb_puts(sb, "\\t"); break;
+      case '\r': ll_sb_puts(sb, "\\r"); break;
+      default:   ll_sb_put(sb, &c, 1); break;
+    }
+  }
+  ll_sb_puts(sb, "\"");
+}
+
+static void ll_inspect_at(ll_sb *sb, ll_value v, int indent, int prefix, ll_seen *seen, int flat);
+
+static void ll_inspect_container(ll_sb *sb, ll_value v, int indent, int prefix, ll_seen *seen, int flat) {
+  const char *tag = "";
+  char open = '[', close = ']';
+  size_t n = 0;
+  ll_vec *vec = NULL; ll_map *map = NULL; ll_obj *obj = NULL;
+  if (v.tag == LL_VEC) { vec = v.as.v; n = vec->len; }
+  else if (v.tag == LL_MAP) { map = v.as.m; n = map->len; open = '{'; close = '}'; }
+  else { obj = v.as.o; n = obj->cls->field_count; open = '{'; close = '}'; tag = obj->cls->name; }
+
+  ll_sb_puts(sb, tag);
+  if (n == 0) { char b[3] = { open, close, 0 }; ll_sb_puts(sb, b); return; }
+
+  /* Render flat first, to measure it -- exactly what the rule says to do. */
+  ll_sb one; ll_sb_init(&one);
+  ll_sb_put(&one, &open, 1);
+  for (size_t i = 0; i < n; i++) {
+    if (i) ll_sb_puts(&one, " ");
+    if (map) {
+      if (ll_ident_like(map->keys[i])) { ll_sb_puts(&one, ":"); ll_sb_put(&one, map->keys[i]->data, map->keys[i]->len); }
+      else ll_sb_put_quoted(&one, map->keys[i]);
+      ll_sb_puts(&one, " ");
+      ll_inspect_at(&one, map->vals[i], 0, 0, seen, 1);
+    } else if (obj) {
+      ll_sb_puts(&one, ":"); ll_sb_puts(&one, obj->cls->field_names[i]); ll_sb_puts(&one, " ");
+      ll_inspect_at(&one, obj->fields[i], 0, 0, seen, 1);
+    } else {
+      ll_inspect_at(&one, vec->items[i], 0, 0, seen, 1);
+    }
+  }
+  ll_sb_put(&one, &close, 1);
+
+  if (flat || (size_t)(indent + prefix) + one.len <= LL_WIDTH) {
+    ll_sb_put(sb, one.data, one.len);
+    free(one.data);
+    return;
+  }
+  free(one.data);
+
+  /* Broken: the newline IS the separator. */
+  ll_sb_put(sb, &open, 1);
+  for (size_t i = 0; i < n; i++) {
+    ll_sb_puts(sb, "\n");
+    for (int p = 0; p < indent + 2; p++) ll_sb_puts(sb, " ");
+    int head = 0;
+    if (map) {
+      if (ll_ident_like(map->keys[i])) {
+        ll_sb_puts(sb, ":"); ll_sb_put(sb, map->keys[i]->data, map->keys[i]->len);
+        head = 1 + (int)map->keys[i]->len;
+      } else {
+        ll_sb head_sb; ll_sb_init(&head_sb); ll_sb_put_quoted(&head_sb, map->keys[i]);
+        ll_sb_put(sb, head_sb.data, head_sb.len); head = (int)head_sb.len; free(head_sb.data);
+      }
+      ll_sb_puts(sb, " "); head += 1;
+      ll_inspect_at(sb, map->vals[i], indent + 2, head, seen, 0);
+    } else if (obj) {
+      ll_sb_puts(sb, ":"); ll_sb_puts(sb, obj->cls->field_names[i]); ll_sb_puts(sb, " ");
+      head = 2 + (int)strlen(obj->cls->field_names[i]);
+      ll_inspect_at(sb, obj->fields[i], indent + 2, head, seen, 0);
+    } else {
+      ll_inspect_at(sb, vec->items[i], indent + 2, 0, seen, 0);
+    }
+  }
+  ll_sb_puts(sb, "\n");
+  for (int p = 0; p < indent; p++) ll_sb_puts(sb, " ");
+  ll_sb_put(sb, &close, 1);
+}
+
+static void ll_inspect_at(ll_sb *sb, ll_value v, int indent, int prefix, ll_seen *seen, int flat) {
   char buf[64];
   switch (v.tag) {
-    case LL_NIL: ll_sb_puts(sb, "null"); return;
+    case LL_NIL: ll_sb_puts(sb, "nil"); return;              /* D9: the bottom value is spelled nil */
     case LL_INT: snprintf(buf, sizeof buf, "%" PRId64, v.as.i); ll_sb_puts(sb, buf); return;
     case LL_REAL: ll_fmt_double(buf, sizeof buf, v.as.d); ll_sb_puts(sb, buf); return;
     case LL_BOOL: ll_sb_puts(sb, v.as.b ? "true" : "false"); return;
     case LL_CHAR: {
-      ll_sb_puts(sb, "'");
+      /* PROVISIONAL: the reader has no Char literal yet (FLOOR.md 3.5). */
       char c = (char)v.as.ch;
-      ll_sb_put(sb, &c, 1);
-      ll_sb_puts(sb, "'");
+      ll_sb_puts(sb, "#\\"); ll_sb_put(sb, &c, 1);
       return;
     }
-    case LL_STR:
-      ll_sb_puts(sb, "'");
-      ll_sb_put(sb, v.as.s->data, v.as.s->len);
-      ll_sb_puts(sb, "'");
-      return;
-    case LL_VEC: {
-      ll_vec *vec = v.as.v;
-      if (vec->len == 0) { ll_sb_puts(sb, "[]"); return; }
-      ll_sb_puts(sb, "[ ");
-      for (size_t i = 0; i < vec->len; i++) {
-        if (i) ll_sb_puts(sb, ", ");
-        ll_inspect_sb(sb, vec->items[i]);
-      }
-      ll_sb_puts(sb, " ]");
-      return;
-    }
-    case LL_MAP: {
-      ll_map *m = v.as.m;
-      if (m->len == 0) { ll_sb_puts(sb, "{}"); return; }
-      ll_sb_puts(sb, "{ ");
-      for (size_t i = 0; i < m->len; i++) {
-        if (i) ll_sb_puts(sb, ", ");
-        if (ll_ident_like(m->keys[i])) {
-          ll_sb_put(sb, m->keys[i]->data, m->keys[i]->len);
-        } else {
-          ll_sb_puts(sb, "'");
-          ll_sb_put(sb, m->keys[i]->data, m->keys[i]->len);
-          ll_sb_puts(sb, "'");
-        }
-        ll_sb_puts(sb, ": ");
-        ll_inspect_sb(sb, m->vals[i]);
-      }
-      ll_sb_puts(sb, " }");
-      return;
-    }
+    case LL_STR: ll_sb_put_quoted(sb, v.as.s); return;
     case LL_CLOSURE: {
-      /* node util.inspect of a function: `[Function: name]`, or `[Function (anonymous)]`. */
       const char *nm = v.as.fn->name;
-      if (nm && nm[0]) {
-        ll_sb_puts(sb, "[Function: ");
-        ll_sb_puts(sb, nm);
-        ll_sb_puts(sb, "]");
-      } else {
-        ll_sb_puts(sb, "[Function (anonymous)]");
-      }
+      if (nm && nm[0]) { ll_sb_puts(sb, "#<fn "); ll_sb_puts(sb, nm); ll_sb_puts(sb, ">"); }
+      else ll_sb_puts(sb, "#<fn>");
       return;
     }
-    case LL_OBJ: {
-      /* node prints a class instance as `ClassName { field: value, ... }`. */
-      const ll_obj *o = v.as.o;
-      ll_sb_puts(sb, o->cls->name);
-      if (o->cls->field_count == 0) { ll_sb_puts(sb, " {}"); return; }
-      ll_sb_puts(sb, " { ");
-      for (size_t i = 0; i < o->cls->field_count; i++) {
-        if (i) ll_sb_puts(sb, ", ");
-        ll_sb_puts(sb, o->cls->field_names[i]);
-        ll_sb_puts(sb, ": ");
-        ll_inspect_sb(sb, o->fields[i]);
-      }
-      ll_sb_puts(sb, " }");
+    case LL_VEC: case LL_MAP: case LL_OBJ: {
+      const void *p = v.tag == LL_VEC ? (const void *)v.as.v
+                    : v.tag == LL_MAP ? (const void *)v.as.m : (const void *)v.as.o;
+      if (ll_seen_has(seen, p)) { ll_sb_puts(sb, "#<circular>"); return; }
+      ll_seen_push(seen, p);
+      ll_inspect_container(sb, v, indent, prefix, seen, flat);
+      ll_seen_pop(seen);
       return;
     }
-    default: ll_sb_puts(sb, "[object]"); return;
+    default: ll_sb_puts(sb, "#<object>"); return;
   }
+}
+
+static void ll_inspect_sb(ll_sb *sb, ll_value v) {
+  ll_seen seen; seen.len = 0;
+  ll_inspect_at(sb, v, 0, 0, &seen, 0);
 }
 
 static void ll_console_write(FILE *out, int n, ll_value *vals) {

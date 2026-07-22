@@ -1,8 +1,8 @@
 --- optional vs mutable ---
 let String : always here, never changes
-let String?: null
+let String?: nil
 mut String : always here, may be replaced
-mut String?: null
+mut String?: nil
 rebound to : replaced / no longer nil
 --- a promise, not a restriction ---
 double 21: 42
@@ -14,9 +14,9 @@ Hello, Alice
 Hello, Bob
 no such user
 --- rebinding vs mutating ---
-collected:  [ 10, 20, 30, 40 ]
-first-list: [ 1, 2, 3, 999 ]
-alias:      [ 1, 2, 3, 999 ]
+collected:  [10 20 30 40]
+first-list: [1 2 3 999]
+alias:      [1 2 3 999]
 --- a mutable optional ---
 empty
 holding: some-value

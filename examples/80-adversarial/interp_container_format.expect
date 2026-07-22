@@ -1,5 +1,5 @@
-ints:   [ 1, 2, 3 ]
-nested: [ [ 1, 2 ], [ 3, 4 ] ]
-words:  [ 'a', 'b', 'c' ]
+ints:   [1 2 3]
+nested: [[1 2] [3 4]]
+words:  ["a" "b" "c"]
 empty:  []
-map:    { a: 1, b: 2 }
+map:    {:a 1 :b 2}

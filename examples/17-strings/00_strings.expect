@@ -11,7 +11,7 @@ Lower: hello world
 Index of 'fox': 16
 Slice [0:4]: Java
 Slice [4:]: Script
-Split by comma: [ 'apple', 'banana', 'orange' ]
+Split by comma: ["apple" "banana" "orange"]
 Before: '   hello   ' Length: 9
 After: ' hello ' Length: 5
 Valid email format indicator

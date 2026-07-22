@@ -1,11 +1,11 @@
 Testing multiple modifiers:
 First call square(8) -- misses the cache, so it logs and computes:
-[log] call: [ 8 ]
+[log] call: [8]
   computing 8
 64
 Second call square(8) -- cache HIT, so no log and no compute:
 64
 A different argument -- misses again, so it logs and computes:
-[log] call: [ 3 ]
+[log] call: [3]
   computing 3
 9

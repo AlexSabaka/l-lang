@@ -1,5 +1,6 @@
 import { VERSION } from "../Context";
 import { encodeIdentifier } from "../utils/encodeIdentifier";
+import { LL_INSPECT_JS } from "./inspectJs";
 
 type SymbolName = string;
 
@@ -34,8 +35,6 @@ export class RuntimeProvider {
   private static readonly LL_RUNTIME: string = `let ${RuntimeProvider.TYPES_METADATA_VAR} = {};
 let _readline = null;
 try { _readline = require("readline-sync"); } catch (e) { /* optional */ }
-let _util = null;
-try { _util = require("util"); } catch (e) { console.log("util module unavailable"); _util = { formatWithOptions: (opts, obj) => obj.toString() }; }
 function __ll_deep_eq(a, b) {
   if (a === b) return true;
   // D9: ONE bottom value in the language, TWO representations at the JS boundary.
@@ -193,7 +192,6 @@ function __ll_index(obj, key) {
   }
   return obj[key];
 }
-function __ll_format_object(obj) { return _util.formatWithOptions({ depth: null, colors: false }, obj !== undefined && obj !== null ? obj : ""); }
 const __ll_op_registry = {
   operators: {},
   register: function(symbol, params, fn) {
@@ -561,6 +559,7 @@ function __ll_is_type(val, type) {
  */
 "use strict";
 ${this.LL_RUNTIME}
+${LL_INSPECT_JS}
 ${symbolDefinitions}
 ${metadataInit}
 `;

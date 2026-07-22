@@ -1,10 +1,10 @@
 Testing logged functions:
-[log] call: [ 5, 3 ]
+[log] call: [5 3]
 [log] result: 8
 5 + 3 = 8
-[log] call: [ 7 ]
+[log] call: [7]
 [log] result: 14
 double 7 = 14
-[log] call: [ 2, 8 ]
+[log] call: [2 8]
 [log] result: 10
 2 + 8 = 10

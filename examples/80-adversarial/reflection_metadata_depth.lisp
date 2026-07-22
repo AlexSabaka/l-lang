@@ -7,7 +7,10 @@
 ;; `name` + `parent` on `ll_class`, so `ll_type`/`ll_class_meta`/`ll_type_by_name` can emit at most
 ;; `{ name, extends }` -- and have NO function arm at all, so `type-by-name` of a function returns nil.
 ;; The field/param/method graph is never emitted into the C module, so the runtime physically cannot
-;; deepen it. EXPECTED == golden (the full JS util.inspect dump). ACTUAL under C: a shallow stub.
+;; deepen it. EXPECTED == golden (the full graph, in l-lang's own notation -- FLOOR.md 3.5). Note the
+;; golden no longer contains node's `[Object]`/`[Array]` depth-2 truncation: D55 rules ONE depth
+;; policy, unlimited, so the constructor params and nested method params are visible at last.
+;; ACTUAL under C: a shallow stub.
 ;; Whole-object dumps (matching examples/07-types/01) so the full depth is what the guard pins.
 (
     (fn add [a <- Int b <- Int] -> Int

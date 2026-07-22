@@ -172,7 +172,7 @@ const CASES: Case[] = [
     // Was `undefined` until D9c. `when` has no else (WhenNode {condition, then[]}), so a false
     // condition yields the bottom value -- and the bottom value is nil, spelled `null`, the same one
     // the `nil` literal produces. That it used to be a DIFFERENT bottom is the bug D9 exists to kill.
-    expect: ["null"],
+    expect: ["nil"],
     wasBroken: "`when` has no else; a false condition yielded `undefined` -- the second bottom value",
   },
   {
@@ -253,7 +253,7 @@ const CASES: Case[] = [
       (original ...args))))
 (fn :logged add [a <- Int b <- Int] -> Int (+ a b))
 (console.log (add 2 3))`,
-    expect: ["calling with [ 2, 3 ]", "5"],
+    expect: ["calling with [2 3]", "5"],
     wasBroken:
       "a defmodifier with a non-empty body CRASHED the compiler: 'Already at the root scope. Cannot exit.'",
   },
@@ -594,7 +594,7 @@ const CASES: Case[] = [
     source: `(let a (when false 1))
 (let b (if false 1))
 (console.log a b nil)`,
-    expect: ["null null null"],
+    expect: ["nil nil nil"],
     wasBroken: "`undefined undefined null` -- two bottoms, visible in the output",
   },
   {
@@ -698,7 +698,7 @@ const CASES: Case[] = [
     name: "T? parses, and accepts nil",
     source: `(let x <- String? nil)
 (console.log x)`,
-    expect: ["null"],
+    expect: ["nil"],
     wasBroken:
       "NOT a parse error, which is what I expected and is why the case got written. `?` is absent " +
       "from the type grammar, so the annotation ends at `String` and the stray `?` is taken as an " +
@@ -726,7 +726,7 @@ const CASES: Case[] = [
     name: "an optional array is T[]?, and a spaced `?` is not optionality at all",
     source: `(mut xs <- Int[]? nil)
 (console.log xs)`,
-    expect: ["null"],
+    expect: ["nil"],
     wasBroken:
       "unparseable. `?` binds OUTSIDE `[]`, so `T[]?` is an optional array and an array of optionals " +
       "is `(T?)[]`. Adjacency-gated exactly like the `[]` suffix: `String?` is optional, `String ?` " +
@@ -799,7 +799,7 @@ const CASES: Case[] = [
     source: `(let xs [1 2 3])
 (let m {"host" "localhost"})
 (console.log (get xs 9999) (get m "absent") (get xs 0))`,
-    expect: ["null null 1"],
+    expect: ["nil nil 1"],
     wasBroken:
       "`undefined undefined 1`. After D9 this is the ONLY way to ask 'is it there?' -- and it is what " +
       "gives T? a PRODUCER. Without it, an optional only ever arises where someone typed a `?`",
@@ -1360,7 +1360,7 @@ const CASES: Case[] = [
     // `[ 1, 4, 9 ]`, not `1,4,9`: an interpolated value goes through the runtime's
     // `__ll_format_object`, not JS's bare `${}` stringification. Not what this case is about, but it
     // is what the language actually prints, and a golden says what IS.
-    expect: ["squares: [ 1, 4, 9 ] total: 14"],
+    expect: ["squares: [1 4 9] total: 14"],
     wasBroken:
       "not broken -- THE GUARD that makes D1's answer the right one. `(squares)` must read and " +
       "`(total)` must call, in the same expression. An 'always a call' rule was measured and it " +
@@ -1419,7 +1419,7 @@ const CASES: Case[] = [
     source: `(let squares [1 4 9])
 (let n 7)
 (console.log '"squares: {(squares)} n: {(n)}")`,
-    expect: ["squares: [ 1, 4, 9 ] n: 7"],
+    expect: ["squares: [1 4 9] n: 7"],
     wasBroken:
       "not broken -- the guard. If lambda inference ever typed a non-function as a function, or if " +
       "the rule slipped to 'always a call', this reads as a TypeError instead of a value",

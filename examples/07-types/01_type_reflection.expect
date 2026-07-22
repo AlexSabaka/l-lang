@@ -2,16 +2,16 @@ is-null nil (should be true): true
 is-null 42 (should be false): false
 2nd element is (should be 3): 3
 Type of is-null: {
-  name: 'is-null',
-  kind: 'function',
-  params: [ { name: 'x', type: 'Any' } ],
-  returns: 'Boolean',
-  nullable: false
+  :name "is-null"
+  :kind "function"
+  :params [{:name "x" :type "Any"}]
+  :returns "Boolean"
+  :nullable false
 }
 Type of n-th: {
-  name: 'n-th',
-  kind: 'function',
-  params: [ { name: 'a', type: 'Int[]' }, { name: 'n', type: 'Int' } ],
-  returns: 'Real',
-  nullable: false
+  :name "n-th"
+  :kind "function"
+  :params [{:name "a" :type "Int[]"} {:name "n" :type "Int"}]
+  :returns "Real"
+  :nullable false
 }

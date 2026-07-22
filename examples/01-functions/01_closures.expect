@@ -4,6 +4,6 @@
 15 + 20 = 35
 2^4 = 16
 (5 * 2) + 1 = 11
-Count: [Function: increment]
-Count: [Function: increment]
-Count: [Function: increment]
+Count: #<fn increment>
+Count: #<fn increment>
+Count: #<fn increment>

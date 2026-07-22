@@ -1,9 +1,9 @@
 Value x: 10 Value y: 20
-[ 1, 2, 3 ]
+[1 2 3]
 First element from a vector v[0]: 1
 First element from a vector (head v): 1
-{ a: 1, b: 2 }
+{:a 1 :b 2}
 Value a: 1 Value b: 2
 1
-[ [ 1, 2 ], [ 3, 4 ] ]
+[[1 2] [3 4]]
 4

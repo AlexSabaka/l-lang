@@ -1,22 +1,19 @@
 42
 {
-  name: 'Container',
-  kind: 'class',
-  properties: [
-    {
-      name: 'value',
-      type: 'T',
-      isPublic: true,
-      isPrivate: false,
-      isStatic: false
-    }
-  ],
-  methods: [
-    { name: 'get', params: [], returns: 'T' },
-    { name: 'set', params: [Array], returns: 'Void' }
-  ],
-  constructor: { params: [ [Object] ], requiredCount: 1 },
-  generics: [ 'T' ],
-  implements: [ 'GenericContainer' ],
-  nullable: false
+  :name "Container"
+  :kind "class"
+  :properties [
+    {:name "value" :type "T" :isPublic true :isPrivate false :isStatic false}
+  ]
+  :methods [
+    {:name "get" :params [] :returns "T"}
+    {:name "set" :params [{:name "item" :type "T"}] :returns "Void"}
+  ]
+  :constructor {
+    :params [{:name "value" :type "T" :hasDefault false}]
+    :requiredCount 1
+  }
+  :generics ["T"]
+  :implements ["GenericContainer"]
+  :nullable false
 }

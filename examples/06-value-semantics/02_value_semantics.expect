@@ -5,7 +5,7 @@ class   n1: changed  n2: changed
 returned: 105  caller's x is still: 5
 --- what a copy copies ---
 struct field a.start.x: 0   (b's change did not reach it)
-array  field a.tags:   [ 'red', 'blue' ]   (b's push DID reach it -- a reference is shared)
+array  field a.tags:   ["red" "blue"]   (b's push DID reach it -- a reference is shared)
 --- collections hold copies ---
 saved[0].x: 0  origin.x: 42
 after the loop: 1 2
