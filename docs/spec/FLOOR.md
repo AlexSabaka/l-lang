@@ -62,13 +62,13 @@ source, both backends run it.
 
 | group | primitives | note |
 |---|---|---|
-| strings | `codepoint-at` `codepoint-length` `string-from-codepoints` `concat` | codepoint model; a codepoint is the existing `Char` (`uint32_t`) |
-| case | `codepoint-upcase` `codepoint-downcase` | one **vendored** simple-case table, compiled into both runtimes |
+| strings | `codepoint-at` `codepoint-length` `string-to-codepoints` `string-from-codepoints` | codepoint model; a codepoint is an **`Int`**, not a `Char` (Ff-1). `concat` is **not** here — `+` already is it |
+| case | *(none — ASCII, in l-lang)* | the vendored table is **deferred**; `std/string` maps `a-z`/`A-Z` and passes the rest through (Ff-2) |
 | numbers | `number->string` `string->number` `truncate` | `number->string` is shortest-round-trip; `truncate` is the SOLE `Real -> Int` door (D51 amendment (b)) |
 | math | `sqrt sin cos tan asin acos atan atan2 exp log pow` | host libm / `Math`; last-ULP tolerance documented |
-| vectors | `vec-new` `vec-push!` `vec-get` `vec-set!` `vec-length` | the growable-array representation |
-| maps | `map-new` `map-get` `map-set!` `map-has` `map-delete` `map-keys` | insertion-ordered; **String** keys |
-| equality | `equals` | structural, deep |
+| vectors | *(none)* | **unspent** (Fg-3): `.length`/`.push`/`.slice`/the indexer already carry both backends |
+| maps | `map-get` `map-set` `map-has` `map-delete` `map-keys` | String keys; no `map-new` (`{}` is the literal, and D1 makes a zero-arg call a *read*); insertion order holds on C only — see D53 |
+| equality | *(none)* | **unspent** (Fg-4): `==` already lowers to `ll_deep_eq` / `__ll_deep_eq`, structural and deep on both |
 | reflection | *(backend emits the metadata graph)* | shape is spec'd, not per-backend (§D54) |
 | i/o sink | `write-string` `write-string-err` | raw stdout/stderr; **no** formatting |
 | host | `random` `now` `clock` `args` `env` `exit` | syscalls / entropy |
@@ -79,6 +79,15 @@ last at`), `std/string` (`starts-with ends-with includes index-of trim split joi
 replace upcase downcase`), `std/io` (`print prn` + the `{N}` substitution, §3.6), `std/fn`, the
 display/`inspect` formatter, the number predicates, and the derived math
 (`abs min max round floor ceil sign inc dec`).
+
+> **As built (Phase F).** The table above is the plan; these rows are what the floor actually holds
+> after Fa–Ff. Three planned groups turned out to be **unnecessary** rather than unfinished, each for
+> the same reason: the primitive already existed under another name. `flatten` needed an array test
+> and `(x :of Array)` is one; `includes`/`index-of` needed structural equality and `==` is it;
+> `concat` needed string joining and `+` is it. Only the **codepoint** group was genuinely
+> irreducible — nothing in the language could ask what a string's third character is, because every
+> spelling answered in the host's own units. That is the shape D50 predicts and the reason it says
+> the floor is a cost: an entry is worth adding only when nothing above it can express the operation.
 
 `intrinsics.ts` goes from **~90 entries to ~28** — and each of the ~28 is a *typed* signature both
 backends read, not a name C maps in private.
@@ -375,6 +384,43 @@ because the formatter is ours rather than `util.inspect`.
 number-formatting rules D51 has not spec'd. `print` accepts `{N}` and the `{{` / `}}` escapes only.
 
 ---
+
+> **Amended 2026-07-22 (the formatter) — four divergences, all live, none guarded.**
+>
+> §3.5 was implemented twice on the argument that conformance guards keep the two in step. **The
+> guards did not exist**, and every one of these was live; every existing display golden was blind to
+> all of them, because each concerns a shape the corpus never prints.
+>
+> *The ident-like key test is the READER's, not a judgement call.* Both sides had invented one and
+> disagreed in **both directions** — C allowed `$` and rejected `-`, JS the reverse, so `{"a-b" 1
+> :a$b 2}` on one was `{:a-b 1 "a$b" 2}` on the other. Since D55 rules this to be l-lang's own reader
+> syntax, the only defensible rule is the tokenizer's `Identifier` pattern, and both now transcribe
+> it: `-` is in (D21's kebab-case), `$` is out (it lexes as an *operator*), a leading digit is out,
+> and **non-ASCII is in** — which neither implementation had.
+>
+> *The class tag counts toward the width budget.* C wrote it straight to the output and measured only
+> the braces, so a tagged instance was measured without its own name and stayed flat at 84 columns
+> where JS broke it.
+>
+> *The cycle set grows.* C's was 256 fixed slots whose push silently did nothing once full, so a
+> cycle nested deeper went undetected and the renderer recursed until the process died — a measured
+> **segfault**, not a mis-render.
+>
+> *An imported class displays under its SOURCE name.* JS read `__ll_name` off the **instance**, where
+> it is never present (it is stamped static on the constructor), and fell through to
+> `constructor.name` — the mangler's name. `__ll_inlined_Money_1{...}` reached user-facing output.
+> This is the Zh bug, already fixed once for `type`/`__ll_is_type`; Fc reintroduced it by writing a
+> third copy from scratch instead of following the two that were right.
+>
+> *Char is the fifth item on that list and is NOT fixed, because it is not reachable.* C renders a
+> Char as `#\c`; JS has no Char at runtime at all (a Char *is* a one-character string). But the
+> grammar has no Char literal, so no `LL_CHAR` value can be constructed — the arm is unreachable, and
+> `#\c` is in any case syntax the reader cannot take back, which §3.5 already marks provisional.
+> Whoever adds a Char literal must decide this; there is nothing to conform to today.
+>
+> Guarded by `80-adversarial/display_conformance.lisp` and `display_imported_class_tag/`.
+> **Full retirement of the duplicate implementation stays deferred**, still blocked on a portable
+> `kind-of` and on `console.log` leaving the floor.
 
 ## 3.6 `print` — C# `string.Format` positional substitution
 

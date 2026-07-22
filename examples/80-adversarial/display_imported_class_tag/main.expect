@@ -1,0 +1,4 @@
+Money{:amount 5 :currency "USD"}
+[Money{:amount 5 :currency "USD"}]
+{:held Money{:amount 5 :currency "USD"}}
+{:amount 5 :currency "USD"}

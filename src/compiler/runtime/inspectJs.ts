@@ -17,7 +17,14 @@
 export const LL_INSPECT_JS: string = String.raw`
 /* -- l-lang display (FLOOR.md 3.5) ------------------------------------------------------------- */
 var __LL_WIDTH = 80;
-function __ll_ident_like(k) { return /^[A-Za-z_][A-Za-z0-9_\-]*$/.test(k); }
+/* "Would the READER lex this as an identifier?" -- the only question the rule is asking when it
+   chooses between :key and "key", since D55 makes this l-lang's own reader syntax. So it is not a
+   judgement call: it is the tokenizer's Identifier pattern, transcribed from
+   frontend/grammar_v2/tokens.ts. The non-ASCII range was missing here, and runtime.c had invented a
+   different rule again -- it allowed $ (not an identifier character in l-lang at all; it lexes as an
+   operator) and rejected - (the whole of D21's kebab-case). No u flag, deliberately: that is how the
+   tokenizer matches, so a surrogate pair is two code units both inside the range. */
+function __ll_ident_like(k) { return /^[A-Za-z_\u0080-\uFFFF][A-Za-z0-9_\-\u0080-\uFFFF]*$/.test(k); }
 function __ll_esc(s) {
   var out = "";
   for (var i = 0; i < s.length; i++) {
@@ -38,10 +45,18 @@ function __ll_num(n) {
   if (Object.is(n, -0)) return "-0";
   return String(n);
 }
+/* __ll_name lives on the CONSTRUCTOR, not the instance -- it is stamped static. Reading it off the
+   instance therefore always found undefined and fell through to constructor.name, which for an
+   INLINED IMPORT is the mangler's name: a Money imported from another module printed
+   __ll_inlined_Money_1{:amount 5 ...}, i.e. a compiler internal, in user-facing output.
+   That is the Zh bug, which this codebase had already found and fixed once for type and
+   __ll_is_type -- and which Fc reintroduced here by reasoning from scratch instead of copying the
+   two places that get it right. Same order as those: __ll_name first, name only as a fallback. */
 function __ll_class_tag(v) {
   var proto = Object.getPrototypeOf(v);
   if (proto === Object.prototype || proto === null) return "";
-  return v.__ll_name || (v.constructor && v.constructor.name) || "";
+  var ctor = v.constructor;
+  return (ctor && (ctor.__ll_name || ctor.name)) || "";
 }
 /* flat forces the one-line form: the layout rule renders a container flat FIRST to measure it, then
    decides. prefixLen is the ":key " that shares the line, which counts toward the budget. */

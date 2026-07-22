@@ -587,13 +587,35 @@ static ll_str *ll_str_concat_n(int n, ll_value *vals) {
 
 /* -- inspect (node util.formatWithOptions parity -- what console.log and the goldens use) -------- */
 
+static int64_t ll_utf8_next(const ll_str *s, size_t *i); /* defined with the codepoint floor below */
+
+/* "Would the READER lex this as an identifier?" -- which is the only question §3.5 is actually
+ * asking when it decides between `:key` and `"key"`, since D55 rules the display format to be
+ * l-lang's own reader syntax. So it is not a judgement call: it is the tokenizer's `Identifier`
+ * pattern, transcribed from frontend/grammar_v2/tokens.ts --
+ *
+ *     /[a-zA-Z_-￿][a-zA-Z0-9_\--￿]* /
+ *
+ * Both implementations had invented their own instead, and disagreed in BOTH directions: this one
+ * allowed `$` and rejected `-`, the JS one the reverse, so `{"a-b" 1 :a$b 2}` here was `{:a-b 1
+ * "a$b" 2}` there. Neither matched the reader -- `$` is not an identifier character in l-lang at all
+ * (it lexes as an operator), `-` is the whole of D21's kebab-case, and NEITHER allowed the non-ASCII
+ * the pattern has always permitted.
+ *
+ * The `>= 0x80` arm is that last clause. It deliberately admits astral codepoints too: the pattern is
+ * matched by a JS regex without the `u` flag, so a surrogate PAIR is two code units both inside
+ * `-￿`, and the reader accepts it. Answering differently here would be a divergence
+ * invented to satisfy a range that JavaScript does not actually apply. */
 static bool ll_ident_like(const ll_str *s) {
   if (s->len == 0) return false;
-  for (size_t i = 0; i < s->len; i++) {
-    char c = s->data[i];
-    bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' ||
-              (i > 0 && c >= '0' && c <= '9');
+  size_t i = 0;
+  bool first = true;
+  while (i < s->len) {
+    int64_t c = ll_utf8_next(s, &i);
+    bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c >= 0x80 ||
+              (!first && ((c >= '0' && c <= '9') || c == '-'));
     if (!ok) return false;
+    first = false;
   }
   return true;
 }
@@ -604,14 +626,32 @@ static bool ll_ident_like(const ll_str *s) {
    are kept in step by conformance guards, never by reading one off the other. */
 #define LL_WIDTH 80
 
-typedef struct { const void *items[256]; size_t len; } ll_seen;
+/* The cycle set GROWS. It was a fixed 256 slots whose push silently did nothing once full -- so a
+   structure nested deeper than 256 stopped being tracked, a cycle below that line went undetected,
+   and `ll_inspect_at` recursed until the process died. Measured: a 300-deep cycle SEGFAULTED (exit
+   139) where JS rendered it. A silent cap on a correctness mechanism is not a cap, it is a crash
+   with extra steps. */
+typedef struct { const void **items; size_t len, cap; } ll_seen;
 
+static void ll_seen_init(ll_seen *s) {
+  s->len = 0;
+  s->cap = 32;
+  s->items = (const void **)ll_alloc(s->cap * sizeof(const void *));
+}
 static bool ll_seen_has(const ll_seen *s, const void *p) {
   for (size_t i = 0; i < s->len; i++) if (s->items[i] == p) return true;
   return false;
 }
-static void ll_seen_push(ll_seen *s, const void *p) { if (s->len < 256) s->items[s->len++] = p; }
+static void ll_seen_push(ll_seen *s, const void *p) {
+  if (s->len == s->cap) {
+    s->cap *= 2;
+    s->items = (const void **)realloc(s->items, s->cap * sizeof(const void *));
+    if (!s->items) ll_trap("OutOfMemory", "inspect cycle set grow failed");
+  }
+  s->items[s->len++] = p;
+}
 static void ll_seen_pop(ll_seen *s) { if (s->len) s->len--; }
+static void ll_seen_free(ll_seen *s) { free(s->items); s->items = (const void **)0; }
 
 /* l-lang string syntax: double quotes, and the escapes the reader would need to take it back. The
    old formatter emitted single quotes and escaped NOTHING, which read-back forbids. */
@@ -642,11 +682,14 @@ static void ll_inspect_container(ll_sb *sb, ll_value v, int indent, int prefix, 
   else if (v.tag == LL_MAP) { map = v.as.m; n = map->len; open = '{'; close = '}'; }
   else { obj = v.as.o; n = obj->cls->field_count; open = '{'; close = '}'; tag = obj->cls->name; }
 
-  ll_sb_puts(sb, tag);
-  if (n == 0) { char b[3] = { open, close, 0 }; ll_sb_puts(sb, b); return; }
+  if (n == 0) { ll_sb_puts(sb, tag); char b[3] = { open, close, 0 }; ll_sb_puts(sb, b); return; }
 
-  /* Render flat first, to measure it -- exactly what the rule says to do. */
+  /* Render flat first, to measure it -- exactly what the rule says to do. THE TAG IS PART OF THE
+     MEASUREMENT. It used to be written straight to `sb` above and left out of `one`, so a tagged
+     instance was measured without its own name: `Wide{...}` whose braces span 78 columns stayed flat
+     here at 82 columns wide, while JS -- which measures `tag + open + ... + close` -- broke it. */
   ll_sb one; ll_sb_init(&one);
+  ll_sb_puts(&one, tag);
   ll_sb_put(&one, &open, 1);
   for (size_t i = 0; i < n; i++) {
     if (i) ll_sb_puts(&one, " ");
@@ -671,7 +714,8 @@ static void ll_inspect_container(ll_sb *sb, ll_value v, int indent, int prefix, 
   }
   free(one.data);
 
-  /* Broken: the newline IS the separator. */
+  /* Broken: the newline IS the separator. The tag leads here too, matching `tag + open + "\n" ...`. */
+  ll_sb_puts(sb, tag);
   ll_sb_put(sb, &open, 1);
   for (size_t i = 0; i < n; i++) {
     ll_sb_puts(sb, "\n");
@@ -734,17 +778,23 @@ static void ll_inspect_at(ll_sb *sb, ll_value v, int indent, int prefix, ll_seen
 }
 
 static void ll_inspect_sb(ll_sb *sb, ll_value v) {
-  ll_seen seen; seen.len = 0;
+  ll_seen seen;
+  ll_seen_init(&seen);
   ll_inspect_at(sb, v, 0, 0, &seen, 0);
+  ll_seen_free(&seen);
 }
 
 /* display(v) as a STRING (FLOOR.md 3.5): a String at top level is itself, anything else is inspected.
    Same rule ll_console_write applies per argument -- exposed so l-lang above the floor can call it. */
 static ll_str *ll_display_str(ll_value v) {
   if (v.tag == LL_STR) return v.as.s;
+  /* Through `ll_inspect_sb`, which owns the cycle set's lifetime -- this used to open-code
+     `ll_seen seen; seen.len = 0;` and call `ll_inspect_at` directly. That was fine while `ll_seen`
+     was a fixed array and `len = 0` was the whole of its initialization; the moment it grew a heap
+     pointer, the duplicate left `items` wild and `(display [[1] [2]])` segfaulted at nesting depth
+     TWO. One construction site, so there is nothing to keep in step. */
   ll_sb sb; ll_sb_init(&sb);
-  ll_seen seen; seen.len = 0;
-  ll_inspect_at(&sb, v, 0, 0, &seen, 0);
+  ll_inspect_sb(&sb, v);
   ll_str *out = ll_str_from(sb.data, sb.len);
   free(sb.data);
   return out;
