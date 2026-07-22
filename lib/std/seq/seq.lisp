@@ -243,7 +243,18 @@
   ;; The PARTIAL counterpart is the indexer `coll[i]`, which throws (D9). The pair is the whole ruling.
   (fn at<T> [coll <- T[] i <- Int] -> T? (elem coll i))
 
-  (fn length [coll] -> Int coll.length)
+  ;; A String's length is its CHARACTER count (D52), and this had to say so explicitly.
+  ;;
+  ;; It was `coll.length`, which answers in the host's units: `(length "café")` was 5 on C (bytes) and
+  ;; 4 on JS (UTF-16 code units), and `(length "a😀b")` was 6 and 4 where D52 says 3. C's native
+  ;; `.length` counts characters as of Ff-3, but JS's cannot be moved without rewriting every member
+  ;; read -- so the dispatch is HERE, in the language's own `length`, where one rule covers both.
+  ;;
+  ;; `(coll :of String)` is the D41 runtime type test, the same portable primitive `flatten` uses for
+  ;; arrays. On a statically-typed receiver D43 folds it at compile time, so this costs nothing where
+  ;; the checker already knows.
+  (fn length [coll] -> Int
+    (if (coll :of String) (codepoint-length coll) coll.length))
 
   (export range zip map filter reduce flatten reverse sort sort-by
           index-of includes first last at length)

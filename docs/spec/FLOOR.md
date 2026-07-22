@@ -207,6 +207,35 @@ so `codepoint-at` returns a `Char` with no new type.
 > `ll_str_replace` does not have. Both need their own ruling rather than whichever spelling was
 > convenient.
 
+> **Amended 2026-07-22 (Ff-3) — the native members, and the one gap that stays.**
+>
+> `.length`, `.charAt`, `.slice`, `.indexOf`, `.padStart`/`.padEnd`, `.split ""` and the indexer
+> `s[i]` now count **characters on C**. They counted bytes, which matches *neither* JS nor D52 —
+> `"café".length` was 5 here and 4 there, `"Привіт".length` 12 and 6 — and that made bytes strictly
+> the worst of the three options available: a codepoint count agrees with JS for everything below
+> U+10000 and with D52 always. Byte offsets no longer leave `runtime.c`.
+>
+> **`std/seq`'s `length` dispatches on `(coll :of String)`** and answers `codepoint-length`. It was
+> `coll.length`, so the language's own measurement inherited whichever host unit the backend used.
+> The dispatch lives there, in one place, rather than in each backend.
+>
+> *The residual gap is astral-only and JS's, and it is listed rather than closed.* JS's members still
+> count UTF-16 code units, so they agree with D52 below U+10000 and part company on a surrogate pair.
+> The fix has no good shape: C's members are *our* implementation, so moving them touched one file;
+> JS's are the *host's*, and `s.length` is a property read. Routing it through a receiver-aware helper
+> only where the checker typed the receiver `String` would be **worse than the gap** — a typed
+> receiver answering 3 and an untyped one 4 is the language disagreeing with itself depending on
+> inference, the same failure `native_search_numeric.lisp` pins for `.includes`. Doing it
+> unconditionally puts a runtime type test on all 78 `.length` sites in the corpus, most of them
+> arrays. Guarded by `native_string_astral.lisp`, listed in `js-status.ts`, and the language's own
+> spellings — `std/string`'s and `std/seq`'s — are correct on both backends and are the supported
+> answer.
+>
+> *Unrelated gap found while probing, flagged not fixed:* `(expr).field` does not chain. `((mk).slice
+> 0 2)` is a method call on a call result and works; `(mk).length` parses `length` as a separate
+> identifier and reports `ELL0210 'length' is not defined`. Method suffixes chain, field suffixes do
+> not.
+
 ### D53 — the container floor: primitive `vec` and `map`, structural `equals`
 
 - **Vectors** are a floor representation (`vec-new/push!/get/set!/length`); `pop shift unshift

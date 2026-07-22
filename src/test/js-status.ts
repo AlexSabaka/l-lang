@@ -39,4 +39,20 @@ export const JS_NOT_YET: readonly string[] = [
   // which is not statically knowable in general. `std/seq`'s `includes`/`index-of` are unaffected --
   // they route through `==` -- and every corpus call site of `.includes`/`.indexOf` is on a String.
   "80-adversarial/native_search_numeric.lisp",
+  // Ff-3 (D52) -- native string members past U+FFFF. C's surface counts CHARACTERS as of Ff-3; JS's
+  // still counts UTF-16 CODE UNITS, so the two agree below U+10000 and part company on a surrogate
+  // pair: `"a😀b".length` is 3 on C and 4 here.
+  //
+  // Not fixed, because the fix has no good shape. C's members are OUR implementation -- moving them
+  // touched runtime.c and nothing else. JS's are the HOST's: `s.length` is a property read, so
+  // counting characters means routing every member read through a receiver-aware helper. Doing that
+  // only where the checker typed the receiver String would be WORSE than the gap -- a typed receiver
+  // would answer 3 and an untyped one 4, i.e. the language disagreeing with itself depending on
+  // inference, which is exactly the failure `native_search_numeric` above documents. Doing it
+  // unconditionally puts a runtime type test on all 78 `.length` sites in the corpus, most arrays.
+  //
+  // The language's own spellings are correct on both: `std/string`'s strlen/char-at/substr/pad-start
+  // and `std/seq`'s `length`, which dispatches on `(coll :of String)` precisely so this cannot reach
+  // it. The guard's `seq-len` line is that control, green on both in the same file.
+  "80-adversarial/native_string_astral.lisp",
 ];

@@ -253,6 +253,12 @@ export const C_PASSING: readonly string[] = [
   // ASCII-only case and trim. C was already ASCII-cased (`ll_str_upper` maps a-z and nothing else),
   // so this is JS narrowing to a stated rule rather than C growing to match a host library.
   "80-adversarial/string_codepoints.lisp",
+  // Ff-3 -- the NATIVE string members move to codepoints on C: `.length`, `.charAt`, `.slice`,
+  // `.indexOf`, `.padStart/End`, `.split ""` and the indexer `s[i]` all counted BYTES, which matches
+  // neither JS nor D52. A codepoint count agrees with JS below U+10000 and with D52 always, so bytes
+  // were strictly the worst of the three. The astral file is C-reference / JS-gap; see js-status.ts.
+  "80-adversarial/native_string_codepoints.lisp",
+  "80-adversarial/native_string_astral.lisp",
   // Fd -- the reflection metadata GRAPH is emitted into the C module from the shared builder both
   // backends read (D54), so `type`/`type-by-name` answer with real properties, methods, constructor
   // params, generics and interfaces instead of a {name, extends} stub. Closes §5.2 cluster 3.

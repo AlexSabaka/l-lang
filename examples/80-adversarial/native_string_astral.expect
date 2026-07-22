@@ -1,0 +1,8 @@
+seq-len:       3
+native-len:    3
+native-char:   😀
+native-index:  😀
+native-slice:  😀
+native-of:     2
+native-pad:    --a😀b
+native-split:  3

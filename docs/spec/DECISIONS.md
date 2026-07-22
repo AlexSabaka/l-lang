@@ -4278,6 +4278,19 @@ change from the JS-UTF-16 count to the correct codepoint count — a one-time, g
 > the replacement string special meaning, `$&`/`$1`/`$$`; C does not). Pinned by
 > `80-adversarial/string_codepoints.lisp`.
 
+> **Amended 2026-07-22 (Ff-3) — the native members.** `.length`, `.charAt`, `.slice`, `.indexOf`,
+> `.padStart`/`.padEnd`, `.split ""` and the indexer `s[i]` count **characters on C**; they counted
+> bytes, which matched neither JS nor D52 (`"café".length` was 5 here and 4 there), making bytes
+> strictly the worst of the three available answers. `std/seq`'s `length` now dispatches on
+> `(coll :of String)`, so the language's own measurement no longer inherits a host unit. **The
+> residual gap is astral-only and JS's**, and is listed rather than closed: JS's members count UTF-16
+> code units, agreeing with D52 below U+10000 and parting company on a surrogate pair. Fixing it would
+> mean routing every member read through a receiver-aware helper — done only where the checker typed
+> the receiver `String`, that is *worse* than the gap (a typed receiver answering 3 and an untyped one
+> 4 is the language disagreeing with itself by inference, cf. `native_search_numeric.lisp`); done
+> unconditionally it puts a runtime type test on all 78 `.length` sites, most of them arrays. See
+> `native_string_codepoints.lisp` (green on both) and `native_string_astral.lisp` (C-reference).
+
 ### D53 — primitive `vec`/`map`, structural `equals`
 
 > **Amended 2026-07-22 (Fg), two corrections.** *(a) The names drop the bang.* D21 rejects Scheme

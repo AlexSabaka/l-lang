@@ -1,0 +1,16 @@
+len-latin:  4
+len-cyril:  6
+char-at:    é
+indexer:    é
+get:        é
+slice:      caf
+slice-cyr:  ив
+slice-neg:  іт
+index-of:   3
+index-miss: -1
+pad-start:  --café
+pad-end:    café--
+split-emp:  ["c" "a" "f" "é"]
+includes:   true
+starts:     true
+split-sep:  ["Прив" "т"]

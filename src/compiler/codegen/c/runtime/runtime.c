@@ -957,9 +957,22 @@ static ll_vec *ll_map_keys(ll_map *m) {
 }
 
 
+/* The codepoint decoder, declared here and defined with the rest of the string surface below (the
+ * same forward-declaration pattern `ll_is_type` uses). Everything from here down that takes or
+ * returns a string POSITION or WIDTH counts codepoints, per D52 -- byte offsets do not leave
+ * runtime.c. */
+static int64_t ll_cp_length(ll_str *s);
+static size_t ll_cp_offset(const ll_str *s, int64_t k);
+static size_t ll_cp_next_offset(const ll_str *s, size_t at);
+
+/* `s[i]` is PARTIAL (D9): an out-of-range index is a bug, not a value, so it traps rather than
+   answering "". The total form is `(get s i)` below. Both index CHARACTERS now -- indexing bytes
+   handed back half of a multi-byte character, which is not a value the language has. */
 static ll_str *ll_index_str(ll_str *s, int64_t i) {
-  if (i < 0 || (size_t)i >= s->len) ll_trap("RangeError", "string index out of bounds");
-  return ll_str_from(s->data + i, 1);
+  if (i < 0) ll_trap("RangeError", "string index out of bounds");
+  size_t a = ll_cp_offset(s, i);
+  if (a >= s->len) ll_trap("RangeError", "string index out of bounds");
+  return ll_str_from(s->data + a, ll_cp_next_offset(s, a) - a);
 }
 
 static ll_value ll_index_dyn(ll_value base, ll_value idx) {
@@ -1001,8 +1014,10 @@ static ll_value ll_get(ll_value c, ll_value k) {
     case LL_STR: {
       if (k.tag != LL_INT) return ll_nil();
       int64_t i = k.as.i;
-      if (i < 0 || (size_t)i >= c.as.s->len) return ll_nil();
-      return ll_box_str(ll_str_from(c.as.s->data + i, 1));
+      if (i < 0) return ll_nil();
+      size_t a = ll_cp_offset(c.as.s, i);
+      if (a >= c.as.s->len) return ll_nil();
+      return ll_box_str(ll_str_from(c.as.s->data + a, ll_cp_next_offset(c.as.s, a) - a));
     }
     default: return ll_nil();
   }
@@ -1043,7 +1058,9 @@ static int ll_str_cmp(ll_str *a, ll_str *b) {
   return a->len < b->len ? -1 : a->len > b->len ? 1 : 0;
 }
 
-static int64_t ll_str_len(ll_str *s) { return (int64_t)s->len; }
+/* `.length` on a String answers in CHARACTERS (D52), not bytes. This used to be `s->len` -- so
+   `"café".length` was 5 here and 4 on JS, and `"Привіт".length` was 12 and 6. */
+static int64_t ll_str_len(ll_str *s);
 
 /* -- the CODEPOINT floor (D52) -------------------------------------------------------------------
  *
@@ -1091,6 +1108,34 @@ static int64_t ll_cp_length(ll_str *s) {
   size_t i = 0;
   int64_t n = 0;
   while (i < s->len) { ll_utf8_next(s, &i); n++; }
+  return n;
+}
+
+/* `.length` on a String, and the whole reason it moved: characters, not bytes. */
+static int64_t ll_str_len(ll_str *s) { return ll_cp_length(s); }
+
+/* Byte offset of codepoint index k. Clamps to s->len, so `k == cp_length` yields the end and any k
+   past that yields the end too -- which is what makes the slice/pad clamping below total. */
+static size_t ll_cp_offset(const ll_str *s, int64_t k) {
+  size_t i = 0;
+  int64_t n = 0;
+  while (i < s->len && n < k) { ll_utf8_next(s, &i); n++; }
+  return i;
+}
+
+/* Byte offset just past the character starting at `at`. */
+static size_t ll_cp_next_offset(const ll_str *s, size_t at) {
+  size_t i = at;
+  if (i < s->len) ll_utf8_next(s, &i);
+  return i;
+}
+
+/* Codepoint index of a BYTE offset -- the conversion `index-of` needs, since the search itself runs
+   on bytes (and may: UTF-8 is self-synchronizing, so a valid needle cannot match mid-character). */
+static int64_t ll_cp_index_of_offset(const ll_str *s, size_t at) {
+  size_t i = 0;
+  int64_t n = 0;
+  while (i < at && i < s->len) { ll_utf8_next(s, &i); n++; }
   return n;
 }
 
@@ -1193,11 +1238,16 @@ static int64_t ll_slice_clamp(int64_t i, size_t len) {
   return i;
 }
 
+/* Codepoint indices in, and the SAME negative/clamping rules as before -- `ll_slice_clamp` just
+   works against the character count instead of the byte count now. */
 static ll_str *ll_str_slice(ll_str *s, int64_t start, int64_t end) {
-  int64_t a = ll_slice_clamp(start, s->len);
-  int64_t b = ll_slice_clamp(end, s->len);
+  size_t n = (size_t)ll_cp_length(s);
+  int64_t a = ll_slice_clamp(start, n);
+  int64_t b = ll_slice_clamp(end, n);
   if (b < a) b = a;
-  return ll_str_from(s->data + a, (size_t)(b - a));
+  size_t ba = ll_cp_offset(s, a);
+  size_t bb = ll_cp_offset(s, b);
+  return ll_str_from(s->data + ba, bb - ba);
 }
 
 static int64_t ll_str_find(ll_str *s, ll_str *needle, int64_t from) {
@@ -1208,7 +1258,14 @@ static int64_t ll_str_find(ll_str *s, ll_str *needle, int64_t from) {
   return -1;
 }
 
-static int64_t ll_str_index_of(ll_str *s, ll_str *needle) { return ll_str_find(s, needle, 0); }
+/* The SEARCH runs on bytes and may: UTF-8 is self-synchronizing, so a valid encoded needle cannot
+   match starting inside a character. What had to change is the answer -- a byte offset is not a
+   position in a string of characters. `("café".indexOf "f")` was 2 on both by luck (all-ASCII
+   prefix) and would have been 4-vs-3 the moment the prefix was not. */
+static int64_t ll_str_index_of(ll_str *s, ll_str *needle) {
+  int64_t at = ll_str_find(s, needle, 0);
+  return at < 0 ? -1 : ll_cp_index_of_offset(s, (size_t)at);
+}
 
 static int64_t ll_str_last_index_of(ll_str *s, ll_str *needle) {
   int64_t found = -1, at = 0;
@@ -1267,10 +1324,15 @@ static ll_str *ll_str_repeat(ll_str *s, int64_t n) {
 
 static ll_vec *ll_str_split(ll_str *s, ll_str *sep) {
   ll_vec *out = ll_vec_new(4);
+  /* An empty separator splits into CHARACTERS, not bytes. (JS splits into UTF-16 code units here,
+     which breaks a surrogate pair -- the residual astral-only gap noted in js-status.ts.) */
   if (sep->len == 0) {
-    for (size_t i = 0; i < s->len; i++) {
+    size_t i = 0;
+    while (i < s->len) {
+      size_t next = ll_cp_next_offset(s, i);
       ll_vec_grow(out, out->len + 1);
-      out->items[out->len++] = ll_box_str(ll_str_from(s->data + i, 1));
+      out->items[out->len++] = ll_box_str(ll_str_from(s->data + i, next - i));
+      i = next;
     }
     return out;
   }
@@ -1287,9 +1349,14 @@ static ll_vec *ll_str_split(ll_str *s, ll_str *sep) {
   }
 }
 
+/* "" past either end rather than a trap -- that is what lets a scanner look one character ahead with
+   no bounds test, and `io.lisp`'s format scanner leans on it. Characters, not bytes: this used to
+   hand back one byte, i.e. half of an "é". */
 static ll_str *ll_str_char_at(ll_str *s, int64_t i) {
-  if (i < 0 || (size_t)i >= s->len) return ll_str_lit("");
-  return ll_str_from(s->data + i, 1);
+  if (i < 0) return ll_str_lit("");
+  size_t a = ll_cp_offset(s, i);
+  if (a >= s->len) return ll_str_lit("");
+  return ll_str_from(s->data + a, ll_cp_next_offset(s, a) - a);
 }
 
 static ll_str *ll_str_concat2(ll_str *a, ll_str *b) {
@@ -1300,31 +1367,36 @@ static ll_str *ll_str_concat2(ll_str *a, ll_str *b) {
   return ll_sb_finish(&sb);
 }
 
-static ll_str *ll_str_pad_start(ll_str *s, int64_t width, ll_str *pad) {
-  if ((int64_t)s->len >= width || pad->len == 0) return s;
-  ll_sb sb;
-  ll_sb_init(&sb);
-  size_t need = (size_t)width - s->len;
+/* Width is a count of CHARACTERS, and so is the amount of filler taken from `pad`. Measured in bytes
+   -- which is what both of these did -- `("café".padStart 6 "-")` produced `-café` here and `--café`
+   on JS, because a 4-character string was measured as 5. */
+static void ll_sb_put_pad(ll_sb *sb, ll_str *pad, int64_t need) {
+  int64_t pad_n = ll_cp_length(pad);
   while (need > 0) {
-    size_t take = need < pad->len ? need : pad->len;
-    ll_sb_put(&sb, pad->data, take);
+    int64_t take = need < pad_n ? need : pad_n;
+    size_t upto = ll_cp_offset(pad, take);
+    ll_sb_put(sb, pad->data, upto);
     need -= take;
   }
+}
+
+static ll_str *ll_str_pad_start(ll_str *s, int64_t width, ll_str *pad) {
+  int64_t n = ll_cp_length(s);
+  if (n >= width || pad->len == 0) return s;
+  ll_sb sb;
+  ll_sb_init(&sb);
+  ll_sb_put_pad(&sb, pad, width - n);
   ll_sb_put(&sb, s->data, s->len);
   return ll_sb_finish(&sb);
 }
 
 static ll_str *ll_str_pad_end(ll_str *s, int64_t width, ll_str *pad) {
-  if ((int64_t)s->len >= width || pad->len == 0) return s;
+  int64_t n = ll_cp_length(s);
+  if (n >= width || pad->len == 0) return s;
   ll_sb sb;
   ll_sb_init(&sb);
   ll_sb_put(&sb, s->data, s->len);
-  size_t need = (size_t)width - s->len;
-  while (need > 0) {
-    size_t take = need < pad->len ? need : pad->len;
-    ll_sb_put(&sb, pad->data, take);
-    need -= take;
-  }
+  ll_sb_put_pad(&sb, pad, width - n);
   return ll_sb_finish(&sb);
 }
 
@@ -1407,7 +1479,7 @@ static bool ll_vec_includes(ll_vec *v, ll_value x) { return ll_vec_index_of(v, x
 
 static int64_t ll_dyn_length(ll_value v) {
   switch (v.tag) {
-    case LL_STR: return (int64_t)v.as.s->len;
+    case LL_STR: return ll_str_len(v.as.s);
     case LL_VEC: return (int64_t)v.as.v->len;
     case LL_MAP: return (int64_t)v.as.m->len;
     default: ll_trap("TypeError", "value has no length"); return 0;
