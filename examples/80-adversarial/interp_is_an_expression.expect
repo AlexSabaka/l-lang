@@ -1,0 +1,6 @@
+int64 plain:  9007199254740993
+int64 interp: 9007199254740993
+includes plain:  true
+includes interp: true
+intdiv plain:  3
+intdiv interp: 3

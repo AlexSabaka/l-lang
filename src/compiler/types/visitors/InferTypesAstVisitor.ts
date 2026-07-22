@@ -3536,9 +3536,44 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         break;
       
       case "string":
-      case "formatted-string":
         inferredType = TypeEnvironment.primitive("String");
         break;
+
+      // An INTERPOLATION IS AN EXPRESSION, and this used to be the one place in the language where
+      // that was not true. A formatted string is a String -- that part was always right -- but the
+      // case returned it WITHOUT DESCENDING, so every `{...}` segment was never inferred and, because
+      // the checker's reports ride inference, never checked. `'"{(f 1 2 3)}"` on a one-parameter `f`
+      // compiled clean; so did an undefined name, a String passed where an Int was declared, and a
+      // name the file's import list never bound (which is how this was found).
+      //
+      // Silence was the smaller half. A node inference never reaches carries NO TYPE, and three
+      // separate rulings decide representation from exactly that type, so the same expression meant
+      // different things depending on whether it was written inside quotes:
+      //
+      //     (+ 9007199254740992 1)          9007199254740993      D51: Int is int64
+      //     '"{(+ 9007199254740992 1)}"'    9007199254740992      untyped -> f64, lossy
+      //     (nums.includes 2)               true                  D51 via the literal's Int type
+      //     '"{(nums.includes 2)}"'         false                 untyped -> host Number vs BigInt
+      //     (/ 7 2)                         3                     D49d: Int / Int truncates
+      //     '"{(/ 7 2)}"'                   3.5                   untyped -> Real division
+      //
+      // The first two are JS-only, so a parity guard could have caught them. The THIRD IS WRONG ON
+      // BOTH BACKENDS -- C reads the same missing static types and makes the same choice -- so no
+      // amount of cross-backend grading would ever have found it. That is the argument for fixing
+      // this in the checker rather than anywhere downstream.
+      //
+      // Inferring, not checking-as-a-special-case: each segment goes through the ordinary
+      // `inferExpressionType`, which is what carries the diagnostics with it. Same distinction, and
+      // the same fix, as D51's native-method arguments.
+      case "formatted-string": {
+        for (const seg of (node as ast.FormattedStringNode).value ?? []) {
+          if (!seg || seg._type === "string") continue;
+          const expr = seg._type === "format-expression" ? (seg as ast.FormatExpressionNode).expression : seg;
+          if (expr) this.inferExpressionType(expr);
+        }
+        inferredType = TypeEnvironment.primitive("String");
+        break;
+      }
       
       case "boolean":
         inferredType = TypeEnvironment.primitive("Boolean");

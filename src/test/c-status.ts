@@ -283,6 +283,11 @@ export const C_PASSING: readonly string[] = [
   // C agreeing is the non-obvious half: `ll_dyn_method`'s vec arm is our code imitating a surface that
   // does not exist below it, and could as easily have copied.
   "80-adversarial/native_member_boundary.lisp",
+  // An interpolation is an EXPRESSION: the checker's `formatted-string` case returned String without
+  // descending, so no `{...}` segment was inferred and none was checked. Untyped nodes then made
+  // `(/ 7 2)` REAL division inside a string and integer division outside it -- on BOTH backends, the
+  // one class of bug cross-backend grading can never find.
+  "80-adversarial/interp_is_an_expression.lisp",
   // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
   // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.
   "80-adversarial/display_source_names/main.lisp",
