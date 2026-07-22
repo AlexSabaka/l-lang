@@ -15,5 +15,6 @@ elem int:  20
 elem str:  nil
 vec oob:   nil
 map miss:  nil
+trunc key: 20
 map int:   one
 map as-s:  one

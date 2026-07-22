@@ -1781,13 +1781,21 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    */
   private inferTotalAccessorType(
     funcName: string,
-    args: ast.ASTNode[]
+    args: ast.ASTNode[],
+    /**
+     * The arguments' types, inferred ONCE by the caller.
+     *
+     * They used to be inferred here, which meant the caller could not also check them against the
+     * floor signature without inferring a second time -- and `inferExpressionType` reports
+     * diagnostics, so a second pass would have duplicated them.
+     */
+    argTypes: InferredType[]
   ): InferredType | undefined {
     if (funcName !== "get" && funcName !== "elem" && funcName !== "head") return undefined;
     if (this.symbolTable.resolveSymbol(funcName)) return undefined;
     if (!args.length) return undefined;
 
-    const container = this.inferExpressionType(args[0] as any);
+    const container = argTypes[0];
     const element = this.containerElementType(container);
     if (!element || TypeChecker.isUnknown(element)) return TypeEnvironment.unknown();
 
@@ -3710,10 +3718,32 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           if (funcName === "type") this.hintTypeOfStringLiteral(listNode.nodes.slice(1), listNode);
 
           // The TOTAL container accessors are the ONLY things in the language that PRODUCE a `T?`.
-          const totalAccessor = this.inferTotalAccessorType(funcName, listNode.nodes.slice(1));
-          if (totalAccessor) {
-            inferredType = totalAccessor;
-            break;
+          //
+          // Their RETURN type comes from the container's element type rather than from the floor
+          // signature -- that is what this branch is for. Their ARGUMENTS still have to be judged,
+          // and were not: this branch `break`s before the `funcType.kind === "function"` case below,
+          // which is where `checkCallArguments` lives. So `(get xs (Math.floor i))` passed a `Real`
+          // as a key in silence, and the two backends then invented different answers for it (JS
+          // coerced to 20, C answered nil). The floor types the key `Int | String` precisely so this
+          // is a diagnostic at the call site instead. D51 amendment (b) makes every `Math.*` but
+          // `trunc` return `Real` for exactly this reason: the narrowing gets written down.
+          // NAME-GATED, and it has to be. Inferring the arguments unconditionally here -- before
+          // knowing whether this is even an accessor -- types every call's arguments EARLIER than
+          // before, and that is observable: an integer literal argument to `.includes` started
+          // emitting as a BigInt, which silently flipped `native_search_numeric.lisp` from a listed
+          // JS gap to passing. Possibly a real improvement, but an accidental one with an unmeasured
+          // blast radius; it wants its own investigation, not a side effect of this fix.
+          if (funcName === "get" || funcName === "elem" || funcName === "head") {
+            const accessorArgs = listNode.nodes.slice(1);
+            const accessorArgTypes = accessorArgs.map((a) => this.inferExpressionType(a));
+            const totalAccessor = this.inferTotalAccessorType(funcName, accessorArgs, accessorArgTypes);
+            if (totalAccessor) {
+              if (funcType && funcType.kind === "function") {
+                this.checkCallArguments(funcType, funcName, accessorArgs, accessorArgTypes, listNode);
+              }
+              inferredType = totalAccessor;
+              break;
+            }
           }
 
           // A native METHOD on a String/Array receiver -- `(s.toUpperCase)`, `(arr.shift)` (Phase T /

@@ -277,7 +277,6 @@ export const C_PASSING: readonly string[] = [
   // non-vector used to TRAP and kill the process here (`(head (get m "missing"))` reaches it from
   // ordinary nil-propagating code); `(get v "1")` answered 20 on JS by host key stringification.
   "80-adversarial/container_accessors.lisp",
-  "80-adversarial/container_key_real.lisp",
   "80-adversarial/floor_simple_name_types.lisp",
   // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
   // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.

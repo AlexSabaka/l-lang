@@ -4318,9 +4318,18 @@ change from the JS-UTF-16 count to the correct codepoint count — a one-time, g
 > same concession `__ll_is_type`'s `case 'int'` already makes. The fix belongs in the **checker**:
 > `get`/`elem` now declare their key `Int | String` on the floor, but the argument is not yet checked,
 > because `inferTotalAccessorType` intercepts these names before `checkCallArguments`. Nor is any
-> other floor call's arguments checked for a simple name — `(codepoint-length 5)` is silent too. F.1
-> connected the floor to the checker for *return* types and left the argument path. Guarded by
-> `container_key_real.lisp`, listed in `js-status.ts`.
+> other floor call's arguments checked for a simple name. **Both halves of that sentence were wrong**
+> — see the correction below.
+>
+> **Correction 2026-07-22.** Floor-call arguments *were* already checked for simple names;
+> `(codepoint-length 5)` reports `ELL0203` and always did. The measurement that said otherwise was
+> taken with the wrong working directory, so the compiler failed to start and a `grep ELL0` over its
+> output found nothing. The real gap was narrow: only the **total accessors** bypassed the check,
+> because `inferTotalAccessorType` returns their `T?` before the branch that calls
+> `checkCallArguments`. Fixed — `(get xs (Math.floor i))` is now `ELL0203 Argument 2 of 'get':
+> expected Int | String, got Real`, which is what closes (d) rather than leaving it divergent.
+> Pinned as a negative test, `90-diagnostics/ll0203_real_container_key.lisp`; the supported spelling
+> `(get v (Math.trunc 1.7))` is green on both backends in `container_accessors.lisp`.
 
 
 

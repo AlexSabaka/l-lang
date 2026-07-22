@@ -369,6 +369,15 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "`(import \"\")` empty source -> LL0217 from the dependency-graph builder (NOT LL0003, which " +
       "COVERAGE-MATRIX:129 shows is masked/unobservable).",
   },
+  "90-diagnostics/ll0203_real_container_key.lisp": {
+    status: "negative", codes: ["LL0203"],
+    reason:
+      "D53/F.5: a key is an Int or a String, and `get`/`elem` declare that on the floor. This was a " +
+      "silent cross-backend divergence -- (get v (Math.floor 1.7)) answered 20 on JS and nil on C -- " +
+      "and NO runtime could converge it, because JS cannot distinguish an Int from an integral Real " +
+      "at runtime (D51: a literal is a BigInt only where the checker typed it). So it is a checker " +
+      "question, and this pins the diagnostic. `(get v (Math.trunc 1.7))` is the supported spelling.",
+  },
   "90-diagnostics/ll0100_hex_number.lisp": {
     status: "negative", codes: ["LL0100"],
     reason:

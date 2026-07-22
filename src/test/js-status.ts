@@ -55,15 +55,4 @@ export const JS_NOT_YET: readonly string[] = [
   // and `std/seq`'s `length`, which dispatches on `(coll :of String)` precisely so this cannot reach
   // it. The guard's `seq-len` line is that control, green on both in the same file.
   "80-adversarial/native_string_astral.lisp",
-  // F.5 -- a REAL is not a key. `(get v (Math.floor 1.7))` answers nil on C (`ll_get` tests
-  // `k.tag != LL_INT`) and 20 here. JS cannot make that test: after D51 an Int is a BigInt only
-  // where the CHECKER typed it, so an untyped integral value arrives as a plain Number and
-  // `__ll_container_get` must accept an integral Number as an index or `(get v 1)` stops working
-  // in untyped code -- the same concession `__ll_is_type`'s `case 'int'` already makes.
-  //
-  // The fix belongs in the CHECKER and is half-built: `get`/`elem` declare their key `Int | String`
-  // on the floor, but the argument is not checked, because `inferTotalAccessorType` intercepts
-  // these names before `checkCallArguments`. No floor call has its arguments checked for a simple
-  // name -- `(codepoint-length 5)` is silent too. F.1 connected RETURN types and left this half.
-  "80-adversarial/container_key_real.lisp",
 ];

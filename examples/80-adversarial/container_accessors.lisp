@@ -71,6 +71,11 @@
     (console.log "vec oob:  " (get v 99))
     (console.log "map miss: " (get m "zz"))
 
+    ;; The WRITTEN NARROWING, which is what D51 amendment (b) is for: `Math.trunc` is the floor's sole
+    ;; Real -> Int door, so this is the supported spelling of an index computed from a Real. A bare
+    ;; `(Math.floor 1.7)` key is now an ELL0203 -- see 90-diagnostics/ll0203_real_container_key.lisp.
+    (console.log "trunc key:" (get v (Math.trunc 1.7)))
+
     ;; An INT key on a MAP still stringifies (D53). Not undone by the no-coercion ruling.
     (let n {})
     (n[1] := "one")
