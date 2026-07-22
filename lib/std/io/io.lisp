@@ -30,11 +30,12 @@
   ;; `ll_str_char_at`), so the one-character lookahead needs no bounds guard. `s[i]` would raise a
   ;; RangeError on JS.
   ;;
-  ;; DEBT (Fc): the substituted value goes through `+`, i.e. `to-string`, so a container renders
-  ;; `a,b` here while `console.log` renders `[ 'a', 'b' ]`. FLOOR.md 3.5 rules that `{N}` should use
-  ;; `display`; that unification lands with Fc, when `display` exists as something callable. Also
-  ;; O(n^2) on immutable concat -- fine at `print` sizes, worth revisiting if it ever grows a caller
-  ;; that formats in a loop.
+  ;; The substituted value renders with `display` (FLOOR.md 3.5/3.6), NOT with `+` concat: `+` is the
+  ;; one to-string context, and using it here made `{0}` on a container print `4,5` while console.log
+  ;; printed `[4 5]` -- the same value, two renderings, for no reason a reader could predict.
+  ;;
+  ;; DEBT: O(n^2) on immutable concat. Fine at `print` sizes; worth revisiting if a caller ever
+  ;; formats in a loop.
   (fn format-args [msg <- String args <- Any[]] -> String (
     (mut out <- String "")
     (mut i <- Int 0)
@@ -69,7 +70,7 @@
             (throw (Error "format: empty placeholder, an index is required")))
           (if (>= idx args.length)
             (throw (Error "format: placeholder index has no argument")))
-          (out := (+ out args[idx]))
+          (out := (+ out (display args[idx])))
           (i := (+ j 1))
         ))
         (true (

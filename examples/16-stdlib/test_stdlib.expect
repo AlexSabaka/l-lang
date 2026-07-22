@@ -16,18 +16,18 @@ length: 5
 first: 1
 last: 5
 at 2: 3
-map inc: 2,3,4,5,6
-filter > 3: 4,5
+map inc: [2 3 4 5 6]
+filter > 3: [4 5]
 reduce +: 15
-reverse [1 2 3]: 3,2,1
-flatten [[1 2] [3 4]]: 1,2,3,4
+reverse [1 2 3]: [3 2 1]
+flatten [[1 2] [3 4]]: [1 2 3 4]
 
 --- Strings ---
 strlen('hello') = 5
 upcase('hello') = HELLO
 downcase('HELLO') = hello
 trim('  hi  ') = 'hi'
-split('a,b,c', ',') = a,b,c
+split('a,b,c', ',') = ["a" "b" "c"]
 join(['a', 'b'], '-') = a-b
 contains('hello', 'ell') = true
 starts-with('hello', 'he') = true

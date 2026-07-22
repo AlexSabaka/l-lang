@@ -206,6 +206,9 @@ export const C_PASSING: readonly string[] = [
   // `truncate` is the only Real -> Int conversion. Also pins JS `Math.round`'s NEGATIVE ZERO, which
   // C's floor(x+0.5) silently lost -- the guard caught it on its first run.
   "80-adversarial/numeric_floor_narrowing.lisp",
+  // Fb -- `write-string`, the i/o SINK: raw bytes, no newline, on both backends. console.log and
+  // print are layers over it, and a PARTIAL line is expressible for the first time.
+  "80-adversarial/write_string_sink.lisp",
   // Fd -- the reflection metadata GRAPH is emitted into the C module from the shared builder both
   // backends read (D54), so `type`/`type-by-name` answer with real properties, methods, constructor
   // params, generics and interfaces instead of a {name, extends} stub. Closes §5.2 cluster 3.

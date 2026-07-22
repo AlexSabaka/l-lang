@@ -686,6 +686,23 @@ static void ll_inspect_sb(ll_sb *sb, ll_value v) {
   ll_inspect_at(sb, v, 0, 0, &seen, 0);
 }
 
+/* display(v) as a STRING (FLOOR.md 3.5): a String at top level is itself, anything else is inspected.
+   Same rule ll_console_write applies per argument -- exposed so l-lang above the floor can call it. */
+static ll_str *ll_display_str(ll_value v) {
+  if (v.tag == LL_STR) return v.as.s;
+  ll_sb sb; ll_sb_init(&sb);
+  ll_seen seen; seen.len = 0;
+  ll_inspect_at(&sb, v, 0, 0, &seen, 0);
+  ll_str *out = ll_str_from(sb.data, sb.len);
+  free(sb.data);
+  return out;
+}
+
+/* THE i/o sink (Fb, FLOOR.md 2): raw bytes to the stream. No newline, no formatting, no join --
+   everything above it is a layer, on this backend exactly as on the other. */
+static void ll_write_string(ll_str *s) { fwrite(s->data, 1, s->len, stdout); }
+static void ll_write_string_err(ll_str *s) { fwrite(s->data, 1, s->len, stderr); }
+
 static void ll_console_write(FILE *out, int n, ll_value *vals) {
   ll_sb sb;
   ll_sb_init(&sb);
@@ -698,8 +715,10 @@ static void ll_console_write(FILE *out, int n, ll_value *vals) {
       ll_inspect_sb(&sb, vals[i]);
     }
   }
-  fwrite(sb.data, 1, sb.len, out);
-  fputc('\n', out);
+  ll_sb_puts(&sb, "\n");
+  /* through the sink, not straight to the stream: one primitive, one place bytes leave. */
+  if (out == stderr) { ll_str tmp; tmp.data = sb.data; tmp.len = sb.len; ll_write_string_err(&tmp); }
+  else { ll_str tmp; tmp.data = sb.data; tmp.len = sb.len; ll_write_string(&tmp); }
   free(sb.data);
 }
 

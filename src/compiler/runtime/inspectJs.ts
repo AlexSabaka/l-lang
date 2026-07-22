@@ -99,21 +99,32 @@ function __ll_display(v) {
   return typeof v === "string" ? v : __ll_inspect(v, 0, 0, [], false);
 }
 function __ll_format_object(obj) { return __ll_display(obj); }
-/* Shadows the host console for all emitted code, so console.log renders through OUR formatter rather
-   than node's. Same join and same top-level-bare rule as runtime.c's ll_console_write. The real one
-   is reached through globalThis: "var console" hoists, so the bare identifier is already shadowed
-   (and undefined) by the time this line runs. */
+/* THE i/o sink (Fb) -- raw bytes out, no formatting and no newline. Everything that prints goes
+   through here, so there is exactly one place the language leaves for a stream. The host console is
+   reached through globalThis because "var console" below hoists: the bare identifier is already
+   shadowed (and undefined) by the time these run. */
 var __ll_host_console = globalThis.console;
+function __ll_write_string(s) {
+  if (typeof process !== "undefined" && process.stdout && process.stdout.write) process.stdout.write(s);
+  else __ll_host_console.log(s.replace(/\n$/, ""));
+}
+function __ll_write_string_err(s) {
+  if (typeof process !== "undefined" && process.stderr && process.stderr.write) process.stderr.write(s);
+  else __ll_host_console.error(s.replace(/\n$/, ""));
+}
+/* console.log is now a LAYER over the sink, not a host call: join the displayed arguments with a
+   space and add the newline. Same rule as runtime.c's ll_console_write, which is a layer over the
+   same primitive on that side. */
 var console = {
   log: function () {
     var parts = [];
     for (var i = 0; i < arguments.length; i++) parts.push(__ll_display(arguments[i]));
-    __ll_host_console.log(parts.join(" "));
+    __ll_write_string(parts.join(" ") + "\n");
   },
   error: function () {
     var parts = [];
     for (var i = 0; i < arguments.length; i++) parts.push(__ll_display(arguments[i]));
-    __ll_host_console.error(parts.join(" "));
+    __ll_write_string_err(parts.join(" ") + "\n");
   }
 };
 `;

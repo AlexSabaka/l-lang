@@ -329,9 +329,19 @@ prove parity, then collapses the corresponding `std/*` module to l-lang on top o
   answer with real properties, methods, constructor params, generics and interfaces instead of
   `{name, extends}`. **§5.2 cluster 3 closed** — and with it the last of the four parity clusters that
   had a silent-wrong to guard.
-- **Fb — the i/o + format base.** `write-string` as the only sink; `print`/`prn` and the `{N}`
-  substitution (§3.6) become l-lang on it. Cluster 1 is already green (rest-param packing let C lower
-  io.lisp's real body), so what remains here is the sink itself.
+- ✅ **Fb — the i/o + format base. DONE.** `write-string` / `write-string-err` are the floor's only
+  route out to a stream — raw bytes, no newline, no join, no formatting — and `console.log` is now a
+  LAYER over the sink on both backends rather than a host call. A partial line is expressible for the
+  first time. `display` is exposed alongside them, which closed the last Fc debt: `print`'s `{N}` was
+  still rendering through `+` (to-string), so `(print "{0}" [4 5])` printed `4,5` while
+  `(console.log [4 5])` printed `[4 5]` — one value, two renderings. §3.6 says `display`, and now it
+  is.
+
+  *Not done, and deliberately:* §2 lists the display/`inspect` formatter itself as pure l-lang, and it
+  is native in both runtimes. An l-lang formatter needs `map-keys` (Fg) and `number->string` (D51) as
+  floor primitives, and neither exists yet — so this is sequencing, not an oversight. Until then the
+  two implementations are held together by the §5.2 guards, which is the weaker instrument D50 warns
+  about and the reason to finish the job after Fg.
 - **Fe — the numeric floor (D51).** JS `Int` → `BigInt` + `BigInt.asIntN(64)`, C `-fwrapv`, and the
   `number->string` exponent thresholds. Guarded by an overflow/precision differential and a
   float-formatting differential (both currently latent).

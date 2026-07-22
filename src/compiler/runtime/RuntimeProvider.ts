@@ -414,6 +414,14 @@ function __ll_is_type(val, type) {
     // no longer a value this language has.
     "elem": `const elem = (a, i) => a?.[i] ?? null;`,
     "list": `const list = (...args) => [...args];`,
+    // The i/o SINK (Fb, FLOOR.md 2). Raw bytes, no newline -- `console.log` and `print` are layers
+    // over it. This is what makes a PARTIAL line expressible at all: before it, every route out of
+    // the language appended a newline.
+    // The renderer (FLOOR.md 3.5), so l-lang above the floor renders the spec'd way rather than
+    // falling back to `+` concat's ToString shapes.
+    "display": `const display = (v) => __ll_display(v);`,
+    "write-string": `const write2dstring = (s) => { __ll_write_string(String(s)); };`,
+    "write-string-err": `const write2dstring2derr = (s) => { __ll_write_string_err(String(s)); };`,
 
     // Phase L / La: the UNIFORM CURSOR. `iter` turns ANY iterable into an l-lang `Iterator<T>` --
     // `next() -> T?`, nil = done (D9/D30). It cannot be written in l-lang: it reaches through

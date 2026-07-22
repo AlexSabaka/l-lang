@@ -40,6 +40,7 @@ const Int: InferredType = { kind: "primitive", name: "Int" };
 const Real: InferredType = { kind: "primitive", name: "Real" };
 const Bool: InferredType = { kind: "primitive", name: "Boolean" };
 const Void: InferredType = { kind: "primitive", name: "Void" };
+const Str: InferredType = { kind: "primitive", name: "String" };
 const Any: InferredType = { kind: "unknown", name: "Any" };
 const arr = (t: InferredType): InferredType => ({ kind: "array", name: "Array", inner: t });
 
@@ -95,6 +96,17 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   // `lib/std/math`'s `truncate` wrapper is only honest about `-> Int` because of this line.
   ["Math.trunc", fn("ll_truncate", [Real], Int)],
 
+  // -- the i/o SINK, and the only one. Raw bytes to the stream: no formatting, no newline, no
+  //    join. Everything above it -- console.log's space-join, print's {N} substitution, the display
+  //    formatter -- is a layer, not a primitive. Writing a partial line was simply impossible before
+  //    this existed: every path out of the language appended a newline.
+  // The renderer, exposed so l-lang code above the floor can use it. FLOOR.md 3.6 says print's {N}
+  // substitution renders with display(); without this entry the only thing io.lisp could reach was
+  // `+` concat, i.e. to-string, so a container came out `4,5` instead of `[4 5]`.
+  ["display", fn("ll_display_str", [Any], Str)],
+  ["write-string", fn("ll_write_string", [Str], Void)],
+  ["write-string-err", fn("ll_write_string_err", [Str], Void)],
+
   // -- container/sequence primitives the runtime provides (the SYMBOL_MAP surface).
   ["get", fn("ll_get", [Any, Any], Any)],
   ["head", fn("ll_head", [Any], Any)],
@@ -115,4 +127,4 @@ export function floorEntry(name: string): FloorEntry | undefined {
 
 // `Int` is exported only so a future entry can use it without re-declaring the shorthand; it is not
 // referenced by any current signature (the numeric floor is Real-valued -- D51 amendment (b)).
-export const FLOOR_TYPES = { Int, Real, Bool, Void, Any, arr };
+export const FLOOR_TYPES = { Int, Real, Str, Bool, Void, Any, arr };
