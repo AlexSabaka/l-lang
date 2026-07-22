@@ -815,6 +815,14 @@ export class EmitCirToC {
       }
       case "c-cast": {
         const inner = this.expr(e.inner);
+        // An IDENTITY cast is a no-op, and it reached here as a crash. Every arm below converts
+        // between two DIFFERENT representations, so a same-kind cast fell off the end into
+        // `no cast closure -> closure` -- an uncaught exception with a bare stack trace rather than a
+        // diagnostic. P2 can legitimately produce one: it inserts a cast wherever the declared and
+        // actual ctypes are not identical OBJECTS, and two structurally equal `closure` types are not.
+        // Emitting the operand unchanged is correct for any kind, which is what makes this safe as a
+        // blanket case rather than one more pair in the table.
+        if (e.to.k === e.from.k) return inner;
         if (e.to.k === "real" && e.from.k === "int") return `(double)(${inner})`;
         if (e.to.k === "int" && e.from.k === "real") return `(int64_t)(${inner})`;
         if (e.to.k === "str") {

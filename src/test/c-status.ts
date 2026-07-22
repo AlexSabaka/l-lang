@@ -58,7 +58,12 @@ export const C_PASSING: readonly string[] = [
   "01-functions/00_function_types.lisp",
   "01-functions/01_closures.lisp",
   "01-functions/02_recursion.lisp",
-  // 01-functions/03_higher_order_functions.lisp is an xfail (parse failure, form layer).
+  // Promoted by the `call`/closure work. The comment here used to say "an xfail (parse failure, form
+  // layer)", which had stopped being true -- it passes on JS and now on C. Two fixes reached it: the
+  // identity cast (`closure -> closure` threw `no cast`, an uncaught exception rather than a
+  // diagnostic) and the closure-call return convention (`ll_call` yields a boxed `ll_value`, so the
+  // node may not claim the closure's declared return ctype).
+  "01-functions/03_higher_order_functions.lisp",
   "01-functions/04_pipelines.lisp",
   "15-modules/00_main.lisp", // unlocked by on-demand imported-body lowering (a real multi-module program)
   // Phase C -- structs/classes, CP3 value semantics (struct copies, class aliases, recursive-into-
@@ -294,6 +299,10 @@ export const C_PASSING: readonly string[] = [
   // from `values()`, writing one descriptor out twice; and the spelled alias reached the emitter as
   // `__ll_class_Gadget`, a name no declaration produces.
   "80-adversarial/import_export_aliases/main.lisp",
+  // `call` -- D1's escape hatch -- reaching the native backend. Two fixes, neither about `call`: the
+  // identity cast (`closure -> closure` threw, an uncaught exception rather than a diagnostic) and a
+  // closure call claiming the closure's DECLARED return ctype where `ll_call` yields a boxed value.
+  "80-adversarial/call_nullary_c.lisp",
   // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
   // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.
   "80-adversarial/display_source_names/main.lisp",

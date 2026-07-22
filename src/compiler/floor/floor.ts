@@ -167,6 +167,21 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   ["elem", fn("ll_elem", [Any, Key], Any)],
   ["list", fn("ll_list", [], arr(Any), true)],
 
+  // -- `call`: D1's escape hatch, and a floor entry because BOTH backends need it.
+  //
+  // D1 rules that `(x)` is a READ of `x` rather than a zero-argument call, which makes `call` the
+  // only way to invoke a nullary function from source. That is a LANGUAGE primitive, not a host
+  // convenience -- and it lived only in the JS shim's SYMBOL_MAP, unmodelled, so every nullary API
+  // was simply unreachable on the native backend (`ELL0107: 'call' resolves to a JavaScript host
+  // global`). Exactly the unchecked, single-backend boundary D50 exists to close.
+  //
+  // `ll_call` was already in `runtime.c` -- the machinery was there, nothing named it.
+  //
+  // Variadic, so `(call f)` and `(call f [a b])` both work; `Any` in and out, because the callee's
+  // signature is not knowable here. Typing it more precisely would need a function type the caller
+  // does not have.
+  ["call", fn("ll_call_dyn", [], Any, true)],
+
   // -- reflection: the backend emits the metadata graph, the accessor shape is spec (D54).
   ["type", fn("ll_type", [Any], Any)],
   ["type-by-name", fn("ll_type_by_name", [Any], Any)],

@@ -3143,7 +3143,17 @@ export class ResolveHirToCir {
   private closureCallResolved(node: ast.ASTNode, fnv: CExpr, cArgs: CExpr[]): CExpr {
     this.ledger.record("A3", "closure-call", node, "call through a closure value (boxed calling convention; JS gets this free)");
     const ret = fnv.ctype.k === "closure" ? fnv.ctype.ret : C_VALUE;
-    return { src: node, ctype: ret, kind: "c-call", callee: { kind: "closure", fn: fnv }, args: cArgs };
+    // `ll_call` returns a BOXED `ll_value` -- that is what "the uniform boxed calling convention"
+    // means -- so this node must SAY `value`, not the closure's declared return ctype. It used to
+    // claim `ret`, and the lie surfaced as the emitter boxing an already-boxed value with the wrong
+    // boxer: `ll_box_str(ll_call(...))`, passing an `ll_value` where `ll_str*` was expected. P2 is the
+    // coercion pass, so the unbox belongs to it and is inserted at the CONSUMER -- building it here
+    // would fuse cast insertion into resolution, which InsertCoercions' own header rules out.
+    //
+    // Only reachable through a closure with a CONCRETE return ctype, which is why `(call f)` on a
+    // `-> String` lambda found it and every `-> Void` or already-boxed one did not.
+    void ret;
+    return { src: node, ctype: C_VALUE, kind: "c-call", callee: { kind: "closure", fn: fnv }, args: cArgs };
   }
 
   /** HFreeCall (dev A3, step 2): a resolved FREE call `(f a ...)` -- classifyCall already decided the

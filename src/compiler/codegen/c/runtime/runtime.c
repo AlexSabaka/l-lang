@@ -384,6 +384,25 @@ static ll_value ll_call(ll_value fn, int argc, ll_value *argv) {
   return c->fn(c->env, argc, argv);
 }
 
+/* `(call f)` / `(call f [a b])` -- D1's escape hatch, made available to the native backend.
+ *
+ * D1 rules that `(x)` is a READ of `x`, not a zero-argument call, which leaves `call` as the ONLY way
+ * to invoke a nullary function from source. That made it a language primitive rather than a host
+ * convenience -- and it existed only in the JS shim, so every nullary API was unreachable on C
+ * (`ELL0107: 'call' resolves to a JavaScript host global`).
+ *
+ * Variadic in the floor's sense -- (argc, argv), not C varargs. argv[0] is the callee; an optional
+ * argv[1] is a VECTOR of arguments, matching the JS shim's `f(...args)` rather than spreading the
+ * remaining slots. Anything else is a nil second argument, treated as "no arguments", so `(call f)`
+ * and `(call f nil)` agree. */
+static ll_value ll_call_dyn(int argc, ll_value *argv) {
+  if (argc < 1) ll_trap("TypeError", "call: no function given");
+  ll_value fn = argv[0];
+  if (argc < 2 || argv[1].tag != LL_VEC) return ll_call(fn, 0, (ll_value *)0);
+  ll_vec *a = argv[1].as.v;
+  return ll_call(fn, (int)a->len, a->items);
+}
+
 /* A heap cell for a mutable-captured binding, shared between the origin frame and every closure that
  * captured it (spec A5 -- the shared mutable state the HIR does not express). */
 static ll_value *ll_cell(ll_value initial) {
