@@ -362,6 +362,10 @@ export const C_PASSING: readonly string[] = [
   // Scheduler in l-lang. Deterministic because a `Clock` owns sleeping, so a ManualClock advances
   // when something waits on it -- the whole example is exact except the three real-clock bounds.
   "16-stdlib/04_timers.lisp",
+  // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
+  // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
+  // everything under lib/ is `library` -- compiled, never run.
+  "80-adversarial/portable_type_predicates.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the

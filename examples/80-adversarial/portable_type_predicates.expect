@@ -1,0 +1,27 @@
+--- type-name ---
+int:      Int
+real:     Real
+string:   String
+boolean:  Boolean
+nil:      Nil
+array:    Array
+map:      Map
+instance: Point
+function: add
+--- Int vs Real ---
+is-int 5:     true
+is-int 5.0:   false
+is-real 5.0:  true
+is-number 5:  true
+--- map vs instance ---
+map is-map:        true
+map is-array:      false
+map is-instance:   false
+point is-instance: true
+point is-map:      false
+--- the rest ---
+is-string:   true false
+is-bool:     true false
+is-array:    true false
+is-nil:      true false
+is-function: true false
