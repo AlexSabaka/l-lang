@@ -35,8 +35,79 @@ export class RuntimeProvider {
   private static readonly LL_RUNTIME: string = `let ${RuntimeProvider.TYPES_METADATA_VAR} = {};
 let _readline = null;
 try { _readline = require("readline-sync"); } catch (e) { /* optional */ }
+/* D51 -- the numeric floor. 'Int' is a wrapping 64-bit integer (a BigInt); 'Real' is f64 (a Number).
+   JavaScript refuses to mix them in arithmetic ('1n + 1' throws), so these two helpers are what every
+   arithmetic shim funnels through.
+
+   '__ll_mix' implements D51's promotion rule and nothing else: mixed Int/Real promotes to REAL. That
+   is what makes '(fn inc [n <- Number] -> Number (+ n 1))' work for both arms of the 'Int | Real'
+   union with the literal always emitted as a BigInt -- Int + Int stays exact, Real + Int promotes.
+   A non-numeric operand is returned untouched, so '+' remains string concat.
+
+   '__ll_wrap' is the "normalised with BigInt.asIntN(64) after each op" half of the ruling. Without it
+   an Int would silently become a bignum and stop being 64-bit at the first overflow. */
+/* The HOST boundary (D51). A native JS method takes and returns Numbers, not BigInts, so an Int has
+   to change representation on the way out and back. Both are conversions at a boundary the compiler
+   identified STATICALLY (see NUMERIC_HOST_PARAMS / the Int-returning members in nativeMembers.ts) --
+   the runtime check here only asks which of Int|Real actually arrived, which no static type can say
+   for a gradual value.
+
+   '__ll_hostnum' is the out-edge: .slice(1n) and Math.sqrt(16n) both throw, so an Int argument
+   becomes a Number. '__ll_hostint' is the in-edge: .length is typed Int by nativeMembers but hands
+   back a Number, and leaving it one would make the static type a lie -- '(x :of Int)' would answer
+   Real for a length. */
+/* D49d, in the BigInt era. Int / Int IS integer division, decided from the STATIC types at lowering
+   (HOperator.intDiv) -- "the static type decides and the runtime never gets a vote". So when the
+   compiler emits this, the operands are integers by construction and the division truncates toward
+   zero, whatever representation actually arrived.
+
+   That last clause is the point. A gradually-typed .length hands back a host Number, so an operand
+   the checker called Int can turn up as one; promoting to Real there would silently make
+   (/ lines 10) yield 0.2 and print level 1.2 where the ruling says 1. Converting instead of
+   promoting keeps the decision where D49d put it. */
+/* JSON.stringify THROWS on a BigInt ("Do not know how to serialize a BigInt"), so under D51 every
+   Int[] became unserialisable -- 80-adversarial/spread_in_literals depends on exactly that. JSON has
+   no 64-bit integer anyway, so an Int serialises as a JSON number, which is what it did before D51.
+   Above 2^53 that loses precision; JSON cannot express the value at all, so there is nothing better
+   to do than what every other JSON producer does.
+
+   Patching the prototype rather than passing a replacer because JSON.stringify is reached as a bare
+   host global through the std/js extern -- there is no call site the compiler owns to thread an
+   argument through. An emitted module is a whole program, and the runtime already shadows console,
+   so a global of our own is in keeping. */
+if (typeof BigInt !== "undefined" && !BigInt.prototype.toJSON) {
+  BigInt.prototype.toJSON = function () { return Number(this); };
+}
+function __ll_intdiv(a, b) {
+  const x = typeof a === "bigint" ? a : BigInt(Math.trunc(Number(a)));
+  const y = typeof b === "bigint" ? b : BigInt(Math.trunc(Number(b)));
+  return BigInt.asIntN(64, x / y);
+}
+function __ll_hostnum(x) { return typeof x === "bigint" ? Number(x) : x; }
+function __ll_hostint(x) {
+  /* INTEGRAL Numbers only. The in-edge is applied by name when the checker could not type the
+     receiver (a .length on a gradually-typed value), and "length" is also an ordinary user method
+     name -- 06-value-semantics/00_structs has one returning 2.23606797749979. Truncating that to 2n
+     would be a silent wrong answer, so a non-integral Number is left exactly as it is. */
+  return typeof x === "number" && Number.isInteger(x) ? BigInt(x) : x;
+}
+function __ll_mix(a, b) {
+  if (typeof a === "bigint" && typeof b === "number") return [Number(a), b];
+  if (typeof a === "number" && typeof b === "bigint") return [a, Number(b)];
+  return [a, b];
+}
+function __ll_wrap(x) { return typeof x === "bigint" ? BigInt.asIntN(64, x) : x; }
 function __ll_deep_eq(a, b) {
   if (a === b) return true;
+  // D51: '==' is NUMERIC, so '1 == 1.0' is true -- and with Int as a BigInt, '1n === 1' is false.
+  // Strict equality alone would therefore make an Int and a Real of equal value compare unequal,
+  // silently. Loose '==' across BigInt/Number is exactly the numeric comparison wanted; it is
+  // gated on BOTH sides being numeric so '1n == "1"' (also true in JS) cannot leak in.
+  {
+    const an = typeof a === "bigint" || typeof a === "number";
+    const bn = typeof b === "bigint" || typeof b === "number";
+    if (an && bn) return a == b;
+  }
   // D9: ONE bottom value in the language, TWO representations at the JS boundary.
   //
   // l-lang emits only \`null\` for nil -- but JavaScript hands you \`undefined\` constantly (a missing
@@ -178,6 +249,11 @@ function __ll_js_iter(it) {
 function __ll_index(obj, key) {
   if (obj == null) throw new TypeError('cannot index into nil');
   if (Array.isArray(obj) || typeof obj === 'string') {
+    // A BigInt index is fine below 2^53 and a SILENT wrong element above it, because Number()
+    // rounds. An out-of-range index is a RangeError either way, so say so rather than guess.
+    if (typeof key === 'bigint' && (key > 9007199254740991n || key < -9007199254740991n)) {
+      throw new RangeError('IndexOutOfRange: ' + String(key) + ' (exceeds safe index range)');
+    }
     const i = typeof key === 'number' ? key : Number(key);
     if (!Number.isInteger(i) || i < 0 || i >= obj.length) {
       throw new RangeError('IndexOutOfRange: ' + String(key) + ' (length ' + obj.length + ')');
@@ -220,7 +296,7 @@ const __ll_op_registry = {
 function __ll_is_type(val, type) {
   const t = type.toLowerCase();
   switch (t) {
-    case 'number': return typeof val === 'number';
+    case 'number': return typeof val === 'number' || typeof val === 'bigint';
     // 'int' and 'real' ARE THE SAME TEST, and cannot be otherwise: JavaScript has one number type
     // and \`5.0 === 5\`. A primitive cannot carry a tag (property assign, defineProperty, WeakMap and
     // Symbol all throw), BigInt breaks arithmetic/JSON/Math, and boxing unboxes at the first operator.
@@ -236,7 +312,15 @@ function __ll_is_type(val, type) {
     // takes the first registered. That collapse is pre-existing, inherent, and now the ONLY place it
     // survives -- \`case 'float'\` used to sit here too, and was pure dead code: \`Float\` is not an
     // l-lang type (the six are Int/Real/String/Char/Boolean/Void).
-    case 'int': return typeof val === 'number';
+    // D51 buys MOST of the answer this file's comment above says cannot be bought. A BigInt is
+    // definitively an Int, so (5.5 :of Int) is finally false and an Int-keyed operator overload
+    // finally dispatches. What it does NOT buy is the gradual case: a literal only becomes a BigInt
+    // where the checker typed it Int, so an untyped integer arrives as a host Number and must still
+    // answer Int -- (match 5 { n :of Int => ... }) regressed to the fallthrough arm without this.
+    //
+    // So the collapse survives EXACTLY where it did before -- an INTEGRAL Number, which could be
+    // either -- and nowhere else. Strictly narrower than the old "every number is both".
+    case 'int': return typeof val === 'bigint' || (typeof val === 'number' && Number.isInteger(val));
     case 'real': return typeof val === 'number';
     case 'string': return typeof val === 'string';
     // A Char IS a one-character string -- there is no separate representation, and unlike Int-vs-Real
@@ -316,7 +400,7 @@ function __ll_is_type(val, type) {
         } else if (res && typeof res['${encodeIdentifier('+')}_1'] === 'function') {
           res = res['${encodeIdentifier('+')}_1'](next);
         } else {
-          res = res + next;
+          const [__la, __lb] = __ll_mix(res, next); res = __ll_wrap(__la + __lb);
         }
       }
       return res;
@@ -328,7 +412,7 @@ function __ll_is_type(val, type) {
         const overload = __ll_op_registry.lookup('-', [val]);
         if (overload) return overload(val);
         if (val && typeof val['${encodeIdentifier('-')}_0'] === 'function') return val['${encodeIdentifier('-')}_0']();
-        return -val;
+        return __ll_wrap(-val);
       }
       let res = args[0];
       for (let i = 1; i < args.length; i++) {
@@ -339,7 +423,7 @@ function __ll_is_type(val, type) {
         } else if (res && typeof res['${encodeIdentifier('-')}_1'] === 'function') {
           res = res['${encodeIdentifier('-')}_1'](next);
         } else {
-          res = res - next;
+          const [__la, __lb] = __ll_mix(res, next); res = __ll_wrap(__la - __lb);
         }
       }
       return res;
@@ -355,7 +439,7 @@ function __ll_is_type(val, type) {
         } else if (res && typeof res['${encodeIdentifier('*')}_1'] === 'function') {
           res = res['${encodeIdentifier('*')}_1'](next);
         } else {
-          res = res * next;
+          const [__la, __lb] = __ll_mix(res, next); res = __ll_wrap(__la * __lb);
         }
       }
       return res;
@@ -371,7 +455,7 @@ function __ll_is_type(val, type) {
         } else if (res && typeof res['${encodeIdentifier('/')}_1'] === 'function') {
           res = res['${encodeIdentifier('/')}_1'](next);
         } else {
-          res = res / next;
+          const [__la, __lb] = __ll_mix(res, next); res = __ll_wrap(__la / __lb);
         }
       }
       return res;
@@ -382,7 +466,7 @@ function __ll_is_type(val, type) {
     ">": `const ${encodeIdentifier('>')}  = (a, b) => a > b;`,
     "<=": `const ${encodeIdentifier('<=')} = (a, b) => a <= b;`,
     ">=": `const ${encodeIdentifier('>=')} = (a, b) => a >= b;`,
-    "%": `const ${encodeIdentifier('%')}  = (a, b) => a % b;`,
+    "%": `const ${encodeIdentifier('%')}  = (a, b) => { const [x, y] = __ll_mix(a, b); return __ll_wrap(x % y); };`,
     
     // List/Vector Ops
     //

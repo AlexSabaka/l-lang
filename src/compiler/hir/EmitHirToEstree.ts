@@ -10,6 +10,8 @@
 import type * as ESTree from "estree";
 import type * as ast from "../frontend/ast";
 import type { HBlock, HExpr, HPattern, HStmt } from "./nodes";
+import type { InferredType } from "../analysis/SymbolTable";
+import { floorEntry } from "../floor/floor";
 import { encodeIdentifier } from "../utils/encodeIdentifier";
 
 /**
@@ -97,6 +99,100 @@ function staticMarker(name: string, value: string | boolean, src: ast.ASTNode): 
     static: true,
     loc: loc(src),
   } as ESTree.PropertyDefinition;
+}
+
+/**
+ * An `Int` literal as a JS BigInt literal (D51), or undefined when this is not one.
+ *
+ * Two things matter here and both were measured rather than assumed:
+ *
+ * - The value comes from `src.match`, the RAW LEXED TEXT, not from `h.value`. `IntegerNumberNode.value`
+ *   is a JS `number`, so the parser has already rounded anything past 2^53 -- `9007199254740993`
+ *   arrives as ...992. `match` is the only lossless copy on the node. (The C backend had exactly this
+ *   bug and it is what the Fe-1 guards caught.)
+ * - astring THROWS on a Literal whose `value` is a BigInt unless `raw` (or `bigint`) is set --
+ *   "Do not know how to serialize a BigInt". So `raw` is mandatory, not decoration.
+ *
+ * Gated on the node's static type being exactly `Int`. `undefined` is the gradual answer and means
+ * "not known to be an Int", never a guess: the literal stays a Number and `__ll_mix` promotes if it
+ * later meets one. An `Int?` is boxed-with-nil and takes the same path.
+ */
+function intLiteral(h: { value: unknown; type: InferredType | undefined; src: ast.ASTNode }): ESTree.Literal | undefined {
+  if (typeof h.value !== "number") return undefined;
+  const t = h.type;
+  if (!t || t.kind !== "primitive" || t.name !== "Int" || t.optional) return undefined;
+  const raw = (h.src as { match?: string }).match;
+  const digits = raw !== undefined && /^[+-]?\d+$/.test(raw.trim()) ? raw.trim() : String(h.value);
+  if (!/^[+-]?\d+$/.test(digits)) return undefined;
+  return { type: "Literal", value: BigInt(digits), raw: digits + "n", loc: loc(h.src) } as unknown as ESTree.Literal;
+}
+
+/**
+ * Native JS members whose PARAMETERS are host Numbers, by argument position (D51, the Fe host edge).
+ *
+ * nativeMembers.ts records return types only -- deliberately, since modelling a method as a function
+ * type makes the arity check fire on every call. So the fact that slice takes numbers lives here
+ * instead, keyed by member NAME, which is what actually determines it: charAt takes an index whether
+ * the receiver is a String or anything else.
+ *
+ * Under BigInt every one of these throws on an Int argument ("Cannot convert a BigInt value to a
+ * number"), so the argument is wrapped in __ll_hostnum. The DECISION is static -- this table; only the
+ * conversion is runtime-checked, because a gradual value may be Int or Real and no static type says
+ * which.
+ */
+const NUMERIC_HOST_PARAMS: Record<string, number[]> = {
+  slice: [0, 1], substring: [0, 1], charAt: [0], charCodeAt: [0], codePointAt: [0],
+  repeat: [0], padStart: [0], padEnd: [0], at: [0], flat: [0],
+  indexOf: [1], lastIndexOf: [1], split: [1], // the FROM-INDEX / limit, never the needle
+  toFixed: [0], toPrecision: [0],
+};
+
+/** The identifier name of a non-computed member property (`x.length` -> "length"). */
+function memberIdOf(prop: HExpr): string | undefined {
+  const src = prop.src as { id?: string; name?: string };
+  return src?.id ?? src?.name;
+}
+
+/** The whole dotted callee (Math.sqrt -> "Math.sqrt"), for a floor lookup. */
+function dottedNameOf(head: ast.ASTNode): string | undefined {
+  const id = (head as { id?: string }).id;
+  return typeof id === "string" ? id : undefined;
+}
+
+/** The final segment of a dotted callee (s.charAt -> "charAt"), or undefined. */
+function memberNameOf(head: ast.ASTNode): string | undefined {
+  const id = (head as { id?: string }).id;
+  if (typeof id === "string" && id.includes(".")) return id.slice(id.lastIndexOf(".") + 1);
+  const prop = (head as { property?: { id?: string; name?: string } }).property;
+  return prop?.id ?? prop?.name;
+}
+
+/**
+ * The in-edge of the host boundary (D51): a value whose STATIC type is Int but which a host API hands
+ * back as a Number -- `.length`, `.indexOf`, `.push`. Leaving it a Number makes the static type a lie
+ * and, worse, silently changes arithmetic: `(/ lines 10)` with `lines` holding a host Number promotes
+ * to Real and yields 0.2 where D49d says integer division yields 0.
+ *
+ * Driven by the node's own type rather than a table of member names, so it covers every Int-typed
+ * member and method alike. Safe wherever it lands: `__ll_hostint` is a no-op on a value that is
+ * already a BigInt, which every Int originating inside l-lang is.
+ */
+const INT_RETURNING_MEMBERS = new Set(["length", "indexOf", "lastIndexOf", "charCodeAt", "push", "unshift"]);
+
+function asHostInt(e: ESTree.Expression, t: InferredType | undefined, member?: string): ESTree.Expression {
+  const typedInt = t?.kind === "primitive" && t.name === "Int" && !t.optional;
+  // The gradual fallback. `nativeMembers.ts` types `.length` as Int for EVERY receiver, so a
+  // `.length` read is an Int whether or not the checker managed to type the thing it was read from --
+  // and it very often did not (`(kept |> to-list).length` types as undefined). Without this the read
+  // stays a host Number, `(- HEIGHT kept.length)` promotes to Real, and `(/ lines 10)` silently
+  // becomes real division: `level 1.2` where D49d says 1.
+  if (!typedInt && !(t === undefined && member !== undefined && INT_RETURNING_MEMBERS.has(member))) return e;
+  return {
+    type: "CallExpression",
+    callee: { type: "Identifier", name: "__ll_hostint" },
+    arguments: [e],
+    optional: false,
+  } as ESTree.CallExpression;
 }
 
 export class EmitHirToEstree {
@@ -459,7 +555,7 @@ export class EmitHirToEstree {
     } as ESTree.SequenceExpression);
     const and = (a: ESTree.Expression, b: ESTree.Expression): ESTree.Expression =>
       ({ type: "LogicalExpression", operator: "&&", left: a, right: b } as ESTree.LogicalExpression);
-    const eq = (a: ESTree.Expression, b: ESTree.Expression, op: "===" | "!==" | ">=" ): ESTree.Expression =>
+    const eq = (a: ESTree.Expression, b: ESTree.Expression, op: "===" | "!==" | ">=" | "==" ): ESTree.Expression =>
       ({ type: "BinaryExpression", operator: op, left: a, right: b } as ESTree.BinaryExpression);
     const member = (obj: ESTree.Expression, prop: ESTree.Expression | string, computed: boolean): ESTree.Expression =>
       ({
@@ -479,13 +575,20 @@ export class EmitHirToEstree {
         return bindThen(p.name, scrut);
 
       case "equals":
-        return eq(scrut, this.emitExpr(p.value), "===");
+        // `==`, not `===`. D51 makes an Int a BigInt, and `3n === 3` is FALSE -- so a match arm
+        // testing a literal against a scrutinee whose representation differs (an Int matched against
+        // a Real literal, or either against a value the checker did not type) would silently fall
+        // through to the next arm. Loose equality is the NUMERIC comparison D51 asks for here, and it
+        // is what `__ll_deep_eq` uses for the same reason. Both operands are primitives by
+        // construction: a structural pattern is a different HPattern kind.
+        return eq(scrut, this.emitExpr(p.value), "==");
 
       case "enum-equals": {
         // The member's constant comes from the backend's enum table (A4); the DECISION to test rather
-        // than bind was already made at lowering.
+        // than bind was already made at lowering. `==` for the same reason as `equals` above: an
+        // ordinal is emitted as a plain JS number, and an Int-typed scrutinee is now a BigInt.
         const value = this.legacy.enumMemberValue(p.member);
-        return eq(scrut, lit(value), "===");
+        return eq(scrut, lit(value), "==");
       }
 
       case "typed": {
@@ -535,6 +638,30 @@ export class EmitHirToEstree {
     }
   }
 
+  /**
+   * Wrap the arguments a host call takes as Numbers (D51). Other positions untouched.
+   *
+   * The FLOOR is asked first, because it already states each entry's parameter types once for both
+   * backends -- every Math.* takes Real, so an Int argument must convert. Only a native member, which
+   * the floor does not model, falls back to the name-keyed table.
+   */
+  private hostArgs(member: string | undefined, args: HExpr[], dotted?: string): ESTree.Expression[] {
+    const entry = dotted ? floorEntry(dotted) : undefined;
+    const positions = entry
+      ? entry.params.flatMap((p, i) => (p.kind === "primitive" && p.name === "Real" ? [i] : []))
+      : member ? NUMERIC_HOST_PARAMS[member] : undefined;
+    return args.map((a, i) => {
+      const e = this.emitExpr(a);
+      if (!positions || !positions.includes(i)) return e;
+      return {
+        type: "CallExpression",
+        callee: { type: "Identifier", name: "__ll_hostnum" },
+        arguments: [e],
+        optional: false,
+      } as ESTree.CallExpression;
+    });
+  }
+
   private emitExpr(h: HExpr): ESTree.Expression {
     switch (h.kind) {
       case "opaque-expr":
@@ -549,7 +676,8 @@ export class EmitHirToEstree {
 
       case "literal":
         // Modeled atom: build the Literal directly -- byte-identical to ESTreeBuilder.literal, no leaf.
-        return { type: "Literal", value: h.value, loc: loc(h.src) } as ESTree.Literal;
+        // ...except an Int, which is a BigInt on this backend (D51).
+        return intLiteral(h) ?? ({ type: "Literal", value: h.value, loc: loc(h.src) } as ESTree.Literal);
 
       case "ref":
         // Modeled atom: JS materializes the reference (its identifier policy) via the per-backend hook.
@@ -614,13 +742,13 @@ export class EmitHirToEstree {
         // `leafExpr` of the head (visitExpr -- the JS receiver/member policy: `this`, encoding, import-
         // inlining); args are HIR-emitted. Byte-identical to the emitter's callExpression(visitExpr(head),
         // args), with no re-dispatch back through the legacy call path.
-        return {
+        return asHostInt({
           type: "CallExpression",
           callee: this.legacy.leafExpr(h.head),
-          arguments: h.args.map((a) => this.emitExpr(a)),
+          arguments: this.hostArgs(memberNameOf(h.head), h.args, dottedNameOf(h.head)),
           optional: false,
           loc: loc(h.src),
-        } as ESTree.CallExpression;
+        } as ESTree.CallExpression, h.type, memberNameOf(h.head));
 
       case "operator":
         // Resolved operator dispatch (classifyCall). On JS an operator IS a shim call: `leafExpr(head)`
@@ -635,20 +763,18 @@ export class EmitHirToEstree {
             optional: false,
             loc: loc(h.src),
           } as ESTree.CallExpression;
-          // D49d: `Int / Int` is integer division. JS division is always Real, so truncate -- toward
-          // ZERO (Math.trunc), which is what C's int64_t `/` does; Math.floor would disagree for
-          // negatives. The decision rode the node; nothing is re-derived or guessed here.
+          // D49d: `Int / Int` is integer division, decided from the STATIC types at lowering. The old
+          // emission was `Math.trunc(_2f(a, b))`, which THROWS on a BigInt; the naive BigInt-era
+          // replacement -- just returning the shim call, since BigInt `/` already truncates -- is
+          // wrong for a subtler reason. A gradually-typed operand (`kept.length`) arrives as a host
+          // Number, the `/` shim then promotes to Real per D51, and `(/ lines 10)` yields 0.2. So the
+          // static decision is carried into a dedicated primitive rather than left to the runtime to
+          // rediscover, which is what "the runtime never gets a vote" means.
           if (!h.intDiv) return call;
           return {
             type: "CallExpression",
-            callee: {
-              type: "MemberExpression",
-              object: ident("Math", h.src),
-              property: ident("trunc", h.src),
-              computed: false,
-              optional: false,
-            } as ESTree.MemberExpression,
-            arguments: [call],
+            callee: ident("__ll_intdiv", h.src),
+            arguments: h.args.map((a) => this.emitExpr(a)),
             optional: false,
             loc: loc(h.src),
           } as ESTree.CallExpression;
@@ -733,14 +859,14 @@ export class EmitHirToEstree {
         } as ESTree.ObjectExpression;
 
       case "member":
-        return {
+        return asHostInt({
           type: "MemberExpression",
           object: this.emitExpr(h.object),
           property: this.emitExpr(h.property),
           computed: h.computed,
           optional: false,
           loc: loc(h.src),
-        } as ESTree.MemberExpression;
+        } as ESTree.MemberExpression, h.type, h.computed ? undefined : memberIdOf(h.property));
 
       case "index": {
         // Fold the suffix chain: `.member` -> plain `expr[idx]` (D1 read); a bracket -> checked
@@ -764,7 +890,14 @@ export class EmitHirToEstree {
                 loc: loc(h.src),
               } as ESTree.CallExpression);
         }
-        return expr;
+        // The chain's last step may be a native `.length` on a receiver the checker could not type --
+        // `(kept |> to-list).length` -- which is an Int by nativeMembers regardless. Same in-edge as
+        // the `member` case; `__ll_hostint` is a no-op if it is already a BigInt.
+        {
+          const last = h.steps[h.steps.length - 1];
+          const name = last?.isMember ? memberIdOf(last.index) : undefined;
+          return asHostInt(expr, h.type, name);
+        }
       }
 
       case "match-test": {

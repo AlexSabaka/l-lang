@@ -387,7 +387,9 @@ const CASES: Case[] = [
     expect: ["6"],
     // `6` proves nothing on its own -- a run-time call prints 6 too. The proof of a FOLD is that the
     // function is not in the emitted JavaScript at all.
-    emitted: { must: [/\b6\b/], mustNot: [/function twice|const twice|twice\s*=/] },
+    // `6n`, not `6`: D51 makes an Int a BigInt, so a folded Int constant emits as a BigInt literal.
+    // The regex has to allow the suffix -- `\b6\b` cannot match `6n`, since `n` is a word character.
+    emitted: { must: [/\b6n\b/], mustNot: [/function twice|const twice|twice\s*=/] },
     wasBroken: "not broken -- a guard, and the case that would have caught my false retraction",
   },
   {
@@ -401,7 +403,7 @@ const CASES: Case[] = [
     // the identical expression gave 3 when folded and 6 when run. `:comptime` silently changed the
     // ANSWER. A compile-time evaluator that disagrees with the run-time one is worse than none --
     // the bug appears only in the builds where the fold happens to fire.
-    emitted: { must: [/\b6\b/] },
+    emitted: { must: [/\b6n\b/] },
     wasBroken: "folded to 3, ran to 6 -- the sandbox's `+` dropped every argument after the second",
   },
   {
@@ -3302,7 +3304,9 @@ const CASES: Case[] = [
 (let s "hi")
 (console.log (typeof x))
 (console.log (typeof s))`,
-    expect: ["number", "string"],
+    // `bigint`, not `number`: D51 makes an Int a wrapping int64, and on JS that IS a BigInt. This
+    // assertion is the representation ruling made visible at the language surface.
+    expect: ["bigint", "string"],
     emitted: { mustNot: [/_typeof\(/] },
     wasBroken:
       "`console.log(_typeof(x))` -> ReferenceError: _typeof is not defined. Compiled clean. AF-006.",

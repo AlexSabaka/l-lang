@@ -147,7 +147,10 @@ const CASES: Case[] = [
       // JS block-shadowing rescues the semantics even when the two symbols are conflated into one
       // name, which is exactly why the bug survived so long.
       const code = out.code ?? "";
-      const localKeepsItsName = /\bconst counter = 1\b/.test(code);
+      // `1n`: D51 makes an Int a BigInt, so an Int literal emits with the suffix and `\b1\b`
+      // cannot match it (`n` is a word character). The assertion is about the NAME, not the
+      // literal, so it just has to tolerate the representation.
+      const localKeepsItsName = /\bconst counter = 1n?\b/.test(code);
       const importIsInlined = /__ll_inlined_counter\w* = 999/.test(code);
 
       return {

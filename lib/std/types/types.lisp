@@ -18,7 +18,12 @@
 ;; Export all types
 (export Number Bool Str List Dict is-int is-string is-bool is-array is-nil type-name)
 
-(fn is-int [x] (Number.isInteger x))
+;; `typeof`, not `Number.isInteger`. D51 makes an Int a wrapping int64 -- a BigInt on this backend --
+;; and `Number.isInteger(1n)` is FALSE, so the old spelling inverted for every Int the moment the
+;; numeric floor landed. It was also never quite right: it answered TRUE for `5.0`, a Real that happens
+;; to be integral, because f64 could not tell the two apart. `typeof` now can, which is the whole point
+;; of D51's representation change.
+(fn is-int [x] (== (typeof x) "bigint"))
 
 ;; D9: one bottom value. `==` against nil catches BOTH JS representations -- the `null` l-lang emits
 ;; and the `undefined` a JS library hands back -- so the two-armed Object.is test is no longer needed.

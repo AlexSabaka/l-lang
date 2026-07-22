@@ -18,11 +18,8 @@
  * and Fe temporarily makes it incomplete. When this array is empty, Fe is done and the file can go.
  */
 export const JS_NOT_YET: readonly string[] = [
-  // ---------------------------------------------------------------------------------------------
-  // Fe (D51) -- `Int` is a wrapping 64-bit integer. JS still uses f64, so these four are C-correct
-  // and JS-wrong. They are the discriminating signal the migration is verified against: the corpus's
-  // largest integer is 3628800, so without them a successful Fe would look exactly like no Fe.
-  "80-adversarial/int64_exact.lisp",   // 2^53+1 survives; f64 rounds it
-  "80-adversarial/int64_wrap.lisp",    // asIntN(64) wraparound at INT64_MAX
-  "80-adversarial/int_real_runtime_tag.lisp", // `:of Int` on an untyped value; Int-keyed operator dispatch
+  // Empty, and that is the goal state: every known JS gap is closed. Fe's three guards
+  // (int64_exact, int64_wrap, int_real_runtime_tag) were listed here and are now green on BOTH
+  // backends, so they were removed -- which is exactly what the RATCHET demanded the moment they
+  // started passing. When the next phased migration needs the same instrument, list its files here.
 ];
