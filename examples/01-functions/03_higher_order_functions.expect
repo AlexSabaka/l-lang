@@ -1,0 +1,21 @@
+--- Functions as Parameters ---
+Apply double twice to 3: 12
+--- Returning Functions ---
+3 * 4 = 12
+5 * 4 = 20
+--- Array Operations ---
+Squares: [1 4 9 16 25]
+--- Filter Pattern ---
+Even numbers: [2 4]
+--- Reduce Pattern ---
+Sum: 15
+Product: 120
+--- Function Composition ---
+Compose: (x + 1) * 2 =  12
+--- Callback Pattern ---
+Success: Processed: hello
+Error: Data is empty
+--- Pipeline Operations ---
+Evens: [2 4 6 8 10]
+Squared: [4 16 36 64 100]
+Sum of squared evens: 220

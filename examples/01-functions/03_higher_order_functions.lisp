@@ -27,7 +27,7 @@
 
     ;; 3. Array operations with functions
     (console.log "--- Array Operations ---")
-    (fn map-array [arr <- [Int] transform <- (fn [Int] -> Int)] -> [Int] (
+    (fn map-array [arr <- Int[] transform <- (fn [Int] -> Int)] -> Int[] (
         (let result [])
         (for :each item :from arr :then (
             (result.push (transform item))
@@ -42,7 +42,7 @@
 
     ;; 4. Filter function
     (console.log "--- Filter Pattern ---")
-    (fn filter-array [arr <- [Int] predicate <- (fn [Int] -> Bool)] -> [Int] (
+    (fn filter-array [arr <- Int[] predicate <- (fn [Int] -> Boolean)] -> Int[] (
         (let result [])
         (for :each item :from arr :then (
             (if (predicate item)
@@ -51,7 +51,7 @@
         (return result)
     ))
     
-    (fn is-even [n <- Int] -> Bool (
+    (fn is-even [n <- Int] -> Boolean (
         (return (== (% n 2) 0))
     ))
     (let filtered (filter-array numbers is-even))
@@ -59,16 +59,16 @@
 
     ;; 5. Reduce pattern
     (console.log "--- Reduce Pattern ---")
-    (fn reduce-array [arr <- Int[]] combine <- (fn [Int Int] -> Int) initial <- Int] -> Int (
-        (let accumulator initial)
+    (fn reduce-array [arr <- Int[] combine <- (fn [Int Int] -> Int) initial <- Int] -> Int (
+        (mut accumulator initial)
         (for :each item :from arr :then (
             (accumulator := (combine accumulator item))
         ))
         (return accumulator)
     ))
     
-    (fn add [a <- Int :b Int] -> Int (return (+ a b)))
-    (fn multiply [a <- Int :b Int] -> Int (return (* a b)))
+    (fn add [a <- Int b <- Int] -> Int (return (+ a b)))
+    (fn multiply [a <- Int b <- Int] -> Int (return (* a b)))
     
     (let sum (reduce-array numbers add 0))
     (let product (reduce-array numbers multiply 1))
@@ -92,16 +92,16 @@
 
     ;; 7. Callback pattern
     (console.log "--- Callback Pattern ---")
-    (fn process-data [data <- String on-success <- (fn [String] -> nil) on-error <- (fn [String] -> nil)] -> nil (
+    (fn process-data [data <- String on-success <- (fn [String] -> Void) on-error <- (fn [String] -> Void)] -> Void (
         (if (> data.length 0)
             (on-success (+ "Processed: " data))
             (on-error "Data is empty"))
     ))
     
-    (fn handle-success [msg <- String] -> nil (
+    (fn handle-success [msg <- String] -> Void (
         (console.log "Success:" msg)
     ))
-    (fn handle-error [msg <- String] -> nil (
+    (fn handle-error [msg <- String] -> Void (
         (console.log "Error:" msg)
     ))
     

@@ -45,14 +45,14 @@
 
     ;; 7. Destructuring in function parameters
     (console.log "--- Destructuring in Functions ---")
-    (fn print-point [[x y] <- [Int Int]] -> nil (
+    (fn print-point [[x y] <- [Int Int]] -> Void (
         (console.log "Point: (" x ", " y ")")
     ))
     (print-point [5 10])
     (print-point [100 200])
 
     ;; 8. Destructuring map in function parameters
-    (fn greet [person <- {:name <- String :age <- Int}] -> nil (
+    (fn greet [person <- {:name <- String :age <- Int}] -> Void (
         (console.log "Hello" person:name "you are" person:age "years old")
     ))
     (greet {:name "Diana" :age 28})

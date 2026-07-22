@@ -37,7 +37,9 @@
 
     ;; 3. Throwing custom errors
     (console.log "--- Custom Error ---")
-    (fn validate-age [age <- Int] -> nil (
+    ;; `-> Void`, not `-> nil`. D9 makes `nil` the bottom VALUE; the TYPE of no-value is `Void`, and
+    ;; an annotation naming a type that does not exist turns checking off for the whole declaration.
+    (fn validate-age [age <- Int] -> Void (
         (if (< age 0)
             (throw (Error "Age cannot be negative")))
         (if (> age 150)

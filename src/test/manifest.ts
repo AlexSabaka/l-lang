@@ -102,10 +102,17 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "undeclared modifier that appears nowhere else in the corpus and has no (defmodifier " +
       "inline ...). The example is at fault, not the compiler.",
   },
-  "01-functions/03_higher_order_functions.lisp": {
-    status: "xfail",
-    reason: "parse failure, see Phase 3 (form layer)",
-  },
+  // Was xfail "parse failure, see Phase 3 (form layer)" -- and that diagnosis was wrong. There is no
+  // form-layer gap here; the FILE was never valid l-lang. Three syntax typos (a stray `]` closing the
+  // param list of `reduce-array` early, and `[a <- Int :b Int]` twice where the second parameter is
+  // simply misspelled), `[Int]` where the array type is `Int[]`, `Bool` where the primitive is
+  // `Boolean`, `-> nil` where the type of no-value is `Void` (D9: nil is the VALUE), and a `let`
+  // rebound with `:=` in violation of D10. Fixed; the golden is hand-verified arithmetic.
+  //
+  // It compiles and runs on JS only. The C backend CRASHES on it -- `Error: C emit: no cast closure
+  // -> closure`, a raw stack trace out of EmitCirToC rather than a clean ELL0106 refusal -- when a
+  // function declared `-> (fn [Int] -> Int)` returns a closure. That is a backend gap AND a
+  // fail-loudly-but-cleanly gap; it is why this file is not in c-status.ts.
   "04-pattern-matching/04_destructuring.lisp": {
     status: "xfail",
     reason:
