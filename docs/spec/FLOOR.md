@@ -144,6 +144,33 @@ so `codepoint-at` returns a `Char` with no new type.
 - **Consequence:** non-ASCII goldens change from the JS-UTF-16 accident to the correct codepoint
   count — a one-time re-capture, pinned by a guard so the change is visible, not silent.
 
+> **Amended 2026-07-22 (Ff-1), as built.** Three corrections, all made while landing the primitives.
+>
+> *`codepoint-at` returns an `Int`, not a `Char`.* A `Char` still has no agreed rendering — the
+> display formatter has no JS arm for one — and after D51 an `Int` is already distinguishable from a
+> `Real` on both backends, so the scalar value itself carries the whole answer with one less
+> representation to converge.
+>
+> *Out of range is `-1`, not nil.* A codepoint is non-negative by definition, so `-1` is out of band
+> rather than the in-band lie D9 objects to, and it lets a scanner look one character ahead without a
+> bounds test — the same affordance `io.lisp`'s format scanner already takes from `charAt` returning
+> `""`. A lone surrogate or an out-of-range value encodes as `U+FFFD` on **both** sides, matching what
+> each decoder answers for input it cannot read, so a round trip is total in either direction.
+>
+> *`concat` is not a floor entry.* `+` already concatenates strings identically on both backends and
+> is exercised on every `print` path. Adding `concat` would be a second name for it — the same
+> argument that kept `equals` off the floor in Fg-4.
+>
+> *The "consequence" line above did not happen, and could not have.* The corpus contains **exactly
+> one** non-ASCII string literal — `"·"` in `30-applications/04_flood_fill.lisp` — and never measures
+> it. Zero goldens changed. Ff is guard-only signal, exactly as Fe was.
+>
+> *And the measurement that motivates the phase, taken before any of it was written:* `(strlen "café")`
+> was 4 on JS and **5** on C; `(strlen "Привіт")` 6 and **12**; `(strlen "a😀b")` **4** and **6**,
+> where D52 says 3. JS is right below U+10000 by accident — one UTF-16 unit per codepoint — and wrong
+> the moment anything is astral. This is a floor **both** backends are rebuilt onto, not one catching
+> up with the other. Pinned by `80-adversarial/codepoint_floor.lisp`.
+
 ### D53 — the container floor: primitive `vec` and `map`, structural `equals`
 
 - **Vectors** are a floor representation (`vec-new/push!/get/set!/length`); `pop shift unshift

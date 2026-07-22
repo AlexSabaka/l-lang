@@ -244,6 +244,11 @@ export const C_PASSING: readonly string[] = [
   // listed in js-status.ts too.
   "80-adversarial/seq_structural_search.lisp",
   "80-adversarial/native_search_numeric.lisp",
+  // Ff (D52) -- the codepoint floor. Unlike Fg's containers this one HAD to grow the floor: nothing
+  // in the language could ask what a string's third character is, because `.length`/`.charAt` answer
+  // in bytes here and in UTF-16 code units on JS. Both backends were wrong -- 6 and 4 respectively
+  // for a 3-codepoint string -- so this is a floor both are rebuilt onto, not C catching up.
+  "80-adversarial/codepoint_floor.lisp",
   // Fd -- the reflection metadata GRAPH is emitted into the C module from the shared builder both
   // backends read (D54), so `type`/`type-by-name` answer with real properties, methods, constructor
   // params, generics and interfaces instead of a {name, extends} stub. Closes §5.2 cluster 3.

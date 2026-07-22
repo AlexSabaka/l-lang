@@ -127,6 +127,26 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   ["map-delete", fn("ll_map_delete", [Map_, Any], Bool)],
   ["map-keys", fn("ll_map_keys", [Map_], arr(Str))],
 
+  // -- the CODEPOINT floor (D52): a String is a sequence of Unicode SCALAR VALUES.
+  //
+  // Unlike Fg's containers, this one genuinely had to grow the floor. `flatten` was rescued by
+  // `(x :of Array)` and `includes` by `==` -- both already portable primitives under another name --
+  // but nothing in the language could ask what a string's third CHARACTER is. Every spelling that
+  // exists answers in the host's units: `.length` is bytes here and UTF-16 code units on JS, so
+  // `(strlen "a<emoji>b")` is 6 / 4 where D52 says 3. Neither backend was right, so this is a floor
+  // both are rebuilt onto rather than one catching up with the other.
+  //
+  // `codepoint-at` answers with an INT, not a Char (planning ruling). A Char has no agreed rendering
+  // -- the display formatter still has no JS arm for one -- and after D51 an Int is already
+  // distinguishable from a Real on both backends. One less representation to converge.
+  //
+  // Out of range is `-1`, not nil: a codepoint is non-negative by definition, so -1 is out of band
+  // rather than the in-band lie D9 objects to, and it lets l-lang do bounds-free lookahead the way
+  // `io.lisp`'s format scanner already leans on `charAt` returning "".
+  ["codepoint-length", fn("ll_cp_length", [Str], Int)],
+  ["codepoint-at", fn("ll_cp_at", [Str, Int], Int)],
+  ["string-from-codepoints", fn("ll_string_from_codepoints", [arr(Int)], Str)],
+
   // -- container/sequence primitives the runtime provides (the SYMBOL_MAP surface).
   ["get", fn("ll_get", [Any, Any], Any)],
   ["head", fn("ll_head", [Any], Any)],

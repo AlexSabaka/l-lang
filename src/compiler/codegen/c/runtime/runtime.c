@@ -1045,6 +1045,101 @@ static int ll_str_cmp(ll_str *a, ll_str *b) {
 
 static int64_t ll_str_len(ll_str *s) { return (int64_t)s->len; }
 
+/* -- the CODEPOINT floor (D52) -------------------------------------------------------------------
+ *
+ * D52 rules a String a sequence of Unicode SCALAR VALUES -- not UTF-16 code units (JavaScript's
+ * accident) and not bytes (this backend's). Both backends were wrong, in different directions, and
+ * `(strlen "a<emoji>b")` measured it: 6 here (bytes) and 4 on JS (surrogate halves) where the answer
+ * is 3. So this is not "make C match JS"; it is a floor both of them are built onto.
+ *
+ * An Int, not a Char. `codepoint-at` answers with the scalar value itself, which sidesteps LL_CHAR
+ * entirely -- a Char has no agreed rendering (the display formatter still has no JS arm for one) and
+ * an Int is already distinguishable from a Real on both backends after D51. One less representation
+ * to converge.
+ *
+ * `-1` for out of range, not nil. A codepoint is non-negative by definition, so -1 is out of band
+ * rather than an in-band lie -- the objection D9 raises to a sentinel does not apply. It also lets
+ * l-lang above the floor do bounds-free lookahead, which is exactly what `io.lisp`'s format scanner
+ * already relies on `charAt` returning "" for.
+ */
+
+/* Decode one UTF-8 sequence at byte offset *i and advance *i past it. A malformed, truncated or
+   overlong-lead sequence yields U+FFFD and advances exactly ONE byte -- so decoding always makes
+   progress and a corrupt string can neither hang a caller nor read past the end. */
+static int64_t ll_utf8_next(const ll_str *s, size_t *i) {
+  const unsigned char *p = (const unsigned char *)s->data;
+  size_t k = *i;
+  unsigned char c = p[k];
+  if (c < 0x80) { *i = k + 1; return (int64_t)c; }
+  int extra;
+  int64_t cp;
+  if ((c & 0xE0) == 0xC0) { extra = 1; cp = c & 0x1F; }
+  else if ((c & 0xF0) == 0xE0) { extra = 2; cp = c & 0x0F; }
+  else if ((c & 0xF8) == 0xF0) { extra = 3; cp = c & 0x07; }
+  else { *i = k + 1; return 0xFFFD; }
+  if (k + (size_t)extra >= s->len) { *i = k + 1; return 0xFFFD; }
+  for (int j = 1; j <= extra; j++) {
+    unsigned char cc = p[k + j];
+    if ((cc & 0xC0) != 0x80) { *i = k + 1; return 0xFFFD; }
+    cp = (cp << 6) | (cc & 0x3F);
+  }
+  *i = k + (size_t)extra + 1;
+  return cp;
+}
+
+static int64_t ll_cp_length(ll_str *s) {
+  size_t i = 0;
+  int64_t n = 0;
+  while (i < s->len) { ll_utf8_next(s, &i); n++; }
+  return n;
+}
+
+static int64_t ll_cp_at(ll_str *s, int64_t idx) {
+  if (idx < 0) return -1;
+  size_t i = 0;
+  int64_t k = 0;
+  while (i < s->len) {
+    int64_t cp = ll_utf8_next(s, &i);
+    if (k == idx) return cp;
+    k++;
+  }
+  return -1;
+}
+
+/* Encode one scalar value as UTF-8. A value outside U+0000..U+10FFFF, or a surrogate (U+D800..DFFF,
+   which is not a scalar value and has no UTF-8 encoding), is written as U+FFFD -- the same answer
+   `ll_utf8_next` gives for input it cannot read, so a round trip through either direction is total. */
+static void ll_sb_put_cp(ll_sb *sb, int64_t cp) {
+  char buf[4];
+  if (cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
+  if (cp < 0x80) {
+    buf[0] = (char)cp;
+    ll_sb_put(sb, buf, 1);
+  } else if (cp < 0x800) {
+    buf[0] = (char)(0xC0 | (cp >> 6));
+    buf[1] = (char)(0x80 | (cp & 0x3F));
+    ll_sb_put(sb, buf, 2);
+  } else if (cp < 0x10000) {
+    buf[0] = (char)(0xE0 | (cp >> 12));
+    buf[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+    buf[2] = (char)(0x80 | (cp & 0x3F));
+    ll_sb_put(sb, buf, 3);
+  } else {
+    buf[0] = (char)(0xF0 | (cp >> 18));
+    buf[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    buf[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+    buf[3] = (char)(0x80 | (cp & 0x3F));
+    ll_sb_put(sb, buf, 4);
+  }
+}
+
+static ll_str *ll_string_from_codepoints(ll_vec *cps) {
+  ll_sb sb;
+  ll_sb_init(&sb);
+  for (size_t i = 0; i < cps->len; i++) ll_sb_put_cp(&sb, ll_unbox_int(cps->items[i]));
+  return ll_sb_finish(&sb);
+}
+
 static ll_str *ll_str_upper(ll_str *s) {
   ll_str *out = ll_str_from(s->data, s->len);
   for (size_t i = 0; i < out->len; i++) {

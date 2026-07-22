@@ -1,0 +1,16 @@
+length:     5
+ascii:      5
+empty:      0
+cp 0:       65
+cp 1:       233
+cp 2:       1111
+cp 3:       8364
+cp 4:       128512
+past end:   -1
+negative:   -1
+empty at 0: -1
+build:      Hé€😀
+rebuilt:    A😀
+none:       0
+surrogate:  1
+one euro:   1

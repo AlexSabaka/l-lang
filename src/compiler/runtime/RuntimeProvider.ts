@@ -532,6 +532,33 @@ function __ll_is_type(val, type) {
     "map-keys": `const map2dkeys = (m) => __ll_map_keys(m);`,
     "write-string": `const write2dstring = (s) => { __ll_write_string(String(s)); };`,
     "write-string-err": `const write2dstring2derr = (s) => { __ll_write_string_err(String(s)); };`,
+    // The CODEPOINT floor (D52). Every one of these spreads the string -- \`[...s]\` iterates SCALAR
+    // VALUES, pairing surrogates -- and NONE of them touches \`.length\`, which counts UTF-16 code
+    // units and is the reason \`"a\\u{1F600}b"\` measured 4 here where D52 says 3.
+    //
+    // BigInt out, explicitly. These are typed \`-> Int\` on the floor, and \`asHostInt\`'s in-edge only
+    // fires on member reads -- a floor CALL is not wrapped -- so returning a host Number would leave
+    // an Int-typed value that is not one, which \`==\` against a real Int would then answer wrong for
+    // (see native_search_numeric.lisp for that exact failure in the other direction).
+    //
+    // O(n) per call, and knowingly: a codepoint index into UTF-8 is a walk on C too. \`std/string\`
+    // above this scans once and indexes by position, so the quadratic shape stays in one place.
+    "codepoint-length": `const codepoint2dlength = (s) => BigInt([...String(s)].length);`,
+    "codepoint-at": `const codepoint2dat = (s, i) => {
+  const a = [...String(s)];
+  const k = Number(i);
+  return k >= 0 && k < a.length ? BigInt(a[k].codePointAt(0)) : -1n;
+};`,
+    "string-from-codepoints": `const string2dfrom2dcodepoints = (cps) => {
+  let out = "";
+  for (const c of cps) {
+    const n = Number(c);
+    // Mirrors runtime.c's ll_sb_put_cp: a surrogate or an out-of-range value is not a scalar value
+    // and has no encoding, so both sides answer U+FFFD rather than throwing on one and not the other.
+    out += (n < 0 || n > 0x10FFFF || (n >= 0xD800 && n <= 0xDFFF)) ? "\\uFFFD" : String.fromCodePoint(n);
+  }
+  return out;
+};`,
 
     // Phase L / La: the UNIFORM CURSOR. `iter` turns ANY iterable into an l-lang `Iterator<T>` --
     // `next() -> T?`, nil = done (D9/D30). It cannot be written in l-lang: it reaches through

@@ -4251,6 +4251,18 @@ plus a **vendored simple-case table** shared by both runtimes (host `towupper`/`
 locale/ICU-dependent and would diverge). Every other string op is l-lang on those. Non-ASCII goldens
 change from the JS-UTF-16 count to the correct codepoint count — a one-time, guard-pinned re-capture.
 
+> **Amended 2026-07-22 (Ff-1), as built.** `codepoint-at` returns an **`Int`, not a `Char`** — a Char
+> still has no agreed rendering, and after D51 an Int is already distinguishable from a Real on both
+> backends. Out of range is **`-1`**, out of band because a codepoint is non-negative, which buys
+> bounds-free lookahead. A lone surrogate or an out-of-range value encodes as `U+FFFD` on both sides.
+> **`concat` is not a floor entry**: `+` already concatenates identically on both backends — the same
+> argument that kept `equals` off the floor in Fg-4. And the promised golden re-capture **did not
+> happen**: the corpus holds exactly one non-ASCII string literal, `"·"` in `04_flood_fill.lisp`, and
+> never measures it, so Ff has guard-only signal exactly as Fe did. The motivating measurement, taken
+> first: `(strlen "café")` was 4 on JS and 5 on C, `(strlen "Привіт")` 6 and 12, `(strlen "a😀b")` 4
+> and 6 where D52 says 3 — JS is right below U+10000 by accident and wrong the moment anything is
+> astral, so this is a floor **both** backends are rebuilt onto. See `80-adversarial/codepoint_floor.lisp`.
+
 ### D53 — primitive `vec`/`map`, structural `equals`
 
 > **Amended 2026-07-22 (Fg), two corrections.** *(a) The names drop the bang.* D21 rejects Scheme
