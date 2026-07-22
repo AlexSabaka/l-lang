@@ -1,8 +1,21 @@
 # The l-lang standard library — the standard
 
-> **Status: the standard, not the library.** Nothing here is implemented yet. This document is the
-> inventory of what the language *already implicitly promises*, the rulings that turn those promises
-> into a specification, and the worklist that Phase S executes against.
+> **Status: Sa–Sd are done; Se–Sg are not.** This document was written when none of it existed, and
+> §1 and §2 below are the measurement that justified the rulings — they describe the tree **as it was**
+> and are kept as evidence, not as a description of the present. What has since changed:
+>
+> - the stdlib is real, at `lib/std/` — 11 modules, resolved by name through `ModuleResolver` (Sc);
+> - **the module boundary is enforced.** §2's "the module boundary is fake" is closed: LL0215 (not
+>   exported), LL0216 (not bound), LL0217 (unresolvable), LL0232 (export of an undefined name),
+>   LL0235 (an import list naming something the module does not offer), and `:as` binds on both sides;
+> - `JS_GLOBALS` is dead and `:extern` is real, behind `lib/std/js.lisp` (Sd);
+> - much of what §1 calls "the runtime shim" is now **the intrinsic floor** — see
+>   [`FLOOR.md`](./FLOOR.md), Phase F, which is complete. That phase also collapsed `std/seq`,
+>   `std/string` and `std/io` from native implementations to l-lang written on the floor.
+>
+> Still open, and the reason this document is not archived: **Se** (`std/core`), **Sf** (the
+> cstd-shaped modules, typed and actually *executed* rather than `status: "library"`), **Sg**
+> (retirement). §5 is the note that matters most for those.
 >
 > Rulings live in [`DECISIONS.md`](./DECISIONS.md) as **D19–D22**. This is their evidence and their
 > expansion.

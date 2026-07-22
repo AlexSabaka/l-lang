@@ -1847,6 +1847,38 @@ module root, no extension inference. **A missing import is a raw Node `ENOENT`, 
 - **D20 — `export` is the module boundary.** An unexported top-level symbol is **module-private**;
   naming it from another module is a diagnostic. A selective import binds **only** what it names. An
   unresolvable import is a diagnostic, not an `ENOENT`.
+  > **Amended 2026-07-22 (Sc follow-up) — the three questions, and one logged gap.**
+  >
+  > A cross-module name is now asked three things, where it used to be asked one and a half:
+  >
+  > | | | code |
+  > |---|---|---|
+  > | does that module EXPORT it? | from the use site | LL0215 |
+  > | did this file ASK for it? | from the use site | LL0216 |
+  > | does the module HAVE it at all? | **of the import list itself** | **LL0235** |
+  >
+  > The third was missing entirely: both existing checks are driven from a USE, so the import list was
+  > validated against nothing and `(import { typo } from "m")` was accepted in silence. Its two arms
+  > are separate messages because the fix differs — a name absent from the module is a spelling
+  > problem in the importing file, one present but unexported is a change to the other module.
+  >
+  > **`:as` now binds, on both sides.** `(import { f :as g })` and `(export f :as g)` had parsed since
+  > the frontend was written and done nothing — the import alias was dropped, the export alias stored
+  > and never read. There was nowhere to put it: resolution is a flat union over module root scopes
+  > keyed by DECLARED name, with the import list acting purely as a filter, and **a filter cannot
+  > rename.** An import now writes its local name into the importing module's own scope, pointing at
+  > the existing entry. A rename REPLACES: the old name goes unbound (LL0216), and an aliased export
+  > stops offering the declared name (LL0235).
+  >
+  > **LOGGED, NOT FIXED — a local definition silently shadows an imported name.** `(import { f } from
+  > "m")` beside a local `(fn f ...)` in the same file compiles clean on both backends, and the local
+  > wins. That is a defensible rule and it is the one the alias binding now follows explicitly (an
+  > import never overwrites a name the module defines itself), but **nothing diagnoses the
+  > collision**, so the import silently does nothing and reads as though it were in effect. The honest
+  > shape is a warning naming both, in the class of LL0212's duplicate-declaration check. Recorded
+  > here rather than fixed because it is a new diagnostic on a boundary that has just had two land,
+  > and the corpus does not contain the case.
+
 - **D21 — naming: kebab-case, `is-x` predicates.** This is what the corpus already does, **10 of
   10**. Scheme spellings (`nil?`, `set!`) are **rejected** — including the ones the runtime shim
   itself uses. A module that is a *direct cstd binding* may **additionally** expose the C name as an
