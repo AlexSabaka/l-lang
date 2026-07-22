@@ -483,6 +483,30 @@ why" — the raw material for prioritizing HIR work.
 | `spread` + host global | 1 | `spread_in_literals` — spread in collection literals + a `std/js` global. |
 | host global | 1 | `hex_string_escape` — `JSON.stringify`, no C representation (A9 `unresolvable`). |
 
+> **Added 2026-07-22 — a FLOOR FUNCTION used as a VALUE has no C representation. Logged, not fixed.**
+>
+> `(call sys-args)`, `(map some-floor-fn xs)`, or any other place a floor name appears where a value is
+> expected, emits a reference to a `u_`-prefixed user symbol that no C declaration produces:
+>
+> ```
+> u_args = ll_call_dyn(1, (ll_value[]){u_sys_2dargs});
+>                                      ^ use of undeclared identifier 'u_sys_2dargs'
+> ```
+>
+> The floor lowers a **call** to its `runtimeFn` (`ll_sys_args(...)`), and there is no path that wraps
+> that C function in an `ll_closure` so it can be passed. This is the same shape as the standing
+> "operators are not first-class values on C" gap: both are names the backend can only *invoke*, never
+> *reference*.
+>
+> It is not what blocks `call` — that landed (`8020882`), and nullary user functions and lambdas work
+> on both backends. This is the remaining half, and it is why `std/sys/process` exposes `sys-arg` as a
+> unary indexed accessor rather than a nullary `sys-args`: the workaround for D1's zero-arg read rule
+> requires exactly the capability this row is missing.
+>
+> The fix has a known shape — emit an adapter closure per referenced floor entry, the way
+> `__ll_adapter_u_label` already does for imported l-lang functions — but it is a new emission path
+> and wants its own commit. Deferred deliberately, at Sabaka's call.
+
 ### 6b. cc errors (8) — the emitter produced C, cc rejected it
 
 Each is root-caused; several are the same underlying HIR/backend gap.
