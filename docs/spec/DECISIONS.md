@@ -4278,9 +4278,20 @@ flat containers that a faithful transcription leaves alone. The other 4 (~87 lin
 dumps) depend on node's wrapping and get re-derived once. `runtime.c`'s `ll_inspect_sb` already
 implements 12 of the 12 distinct shapes — the C side is missing only a depth policy and wrapping.
 
-*Two substantive departures from node,* both spec'd in §3.5: **one depth policy, unlimited**, so
-`[Object]`/`[Array]` truncation never appears (it exists in today's goldens only because bare
+*What the format actually is* (ruled 2026-07-22, §3.5 is normative): **l-lang's own reader syntax**,
+not node's shapes with our wrapping. `[1 2 3]`, `{:a 1 :b 2}`, `"strings"`, `nil`, `Point{:x 3 :y 4}`,
+`#<fn norm>`. A printed value is, as far as possible, source you could paste back — the Lisp
+read/print correspondence — and that is the whole reason to own the printer rather than inherit one.
+
+The decisive evidence was in the corpus the entire time: `00-basics/04_nil_handling.lisp` opens with
+*"l-lang has exactly ONE bottom value, spelled `nil`"* and its golden read `nil is: null`. D9 stated
+in a comment and contradicted by the output of the same file. `null` was never a decision; it was
+JavaScript showing through. Printing `nil` is not a patch on the format — it falls out of choosing
+l-lang's notation at all.
+
+*Three departures from node beyond the notation,* all spec'd in §3.5: **one depth policy, unlimited**,
+so `[Object]`/`[Array]` truncation never appears (it exists in today's goldens only because bare
 `console.log` uses depth 2 while interpolation uses depth `null` — the same "display" concept behaving
-two ways); and **`[Circular]`** on revisiting an in-progress container, which closes a latent hang —
-`ll_inspect_sb` recurses unbounded with no visited set today, so unlimited depth without it would spin
-forever on a cyclic structure.
+two ways); **`#<circular>`** on revisiting an in-progress container, which closes a latent hang
+(`ll_inspect_sb` recurses unbounded with no visited set, so unlimited depth without it spins forever);
+and **no separators in the broken form** — dropping commas means the newline is the separator.

@@ -184,88 +184,87 @@ and its rationale; §3.5 is the normative text.
 > under D55 neither backend is the oracle: both are implementations, and a golden is derived from
 > *this* rule, never captured from a run.
 
+### The thesis: l-lang prints l-lang
+
+You write `[1 2 3]`. It used to print `[ 1, 2, 3 ]` — JavaScript's notation, inherited from the first
+backend and never chosen. The clearest evidence is in `00-basics/04_nil_handling.lisp`, whose header
+says *"l-lang has exactly ONE bottom value, spelled `nil`"* and whose golden said `nil is: null`: D9
+stated in the comment and contradicted by the output, in the same file.
+
+So the format is **l-lang's own reader syntax**. A printed value is, as far as possible, source you
+could paste back — the classic Lisp read/print correspondence. `nil` printing as `nil` is not a patch
+on top of that; it is a consequence of it.
+
 ### Three names, two of them distinct operations
 
 ```
-to-string(v)        the `+` string-concat context, and ONLY that context.
-                      Int      -> decimal digits
-                      Real     -> shortest round-trip (see "numbers" below)
-                      String   -> the raw characters
-                      Bool     -> true / false
-                      nil      -> null
-                      vec      -> elements to-string'd, joined with "," (no spaces)
-                      map      -> [object Object]
-                      obj      -> [object]
-                    (These are JS ToString shapes. They are kept because the corpus bakes them in
-                    and because C's `ll_to_string_sb` already implements exactly this.)
+to-string(v)        the `+` string-concat context, and ONLY that context. JS ToString shapes, kept
+                    because the corpus bakes them in and `ll_to_string_sb` already implements them:
+                    Int digits, Real shortest-round-trip, String raw, Bool true/false, nil "null",
+                    vec comma-joined, map "[object Object]".
 
 display(v)          every human-facing rendering: `console.log`, `print`'s {N} substitution, and
                     `'"...{(expr)}"` interpolation.
                       = the raw characters, if v is a String at the TOP level
                       = inspect(v, 0) otherwise
-                    (The top-level-bare rule is what `ll_console_write` already does, and it is what
-                    keeps `(print "Hello, {0}!" "World")` printing `Hello, World!` rather than
-                    `Hello, 'World'!`.)
+                    The top-level-bare rule is what keeps `(print "Hello, {0}!" "World")` printing
+                    `Hello, World!` rather than `Hello, "World"!`.
 
 inspect(v, indent)  the structural rendering, defined below.
 ```
-
-**Unifying `print`'s `{N}` onto `display`** is a deliberate change: today it goes through
-`(+ "" value)`, i.e. `to-string`, so `(print "{0}" ["a" "b"])` prints `a,b` while
-`(console.log ["a" "b"])` prints `[ 'a', 'b' ]` — the same value, two renderings, for no reason a user
-could predict. After this, `+` is the *only* `to-string` context and everything that shows a value to
-a person uses `display`. Cost: a handful of golden lines in `16-stdlib/test_stdlib.expect` where an
-array is printed through `{0}`.
 
 ### `inspect`
 
 ```
 inspect(v, indent):
-  nil                -> null
-  Bool               -> true | false
-  Int                -> decimal digits
-  Real               -> shortest round-trip
-  Char, String       -> single-quoted:  'a'
-  Closure            -> [Function: name]  |  [Function (anonymous)]  when unnamed
-  vec, empty         -> []
-  map, empty         -> {}
-  obj, no fields     -> ClassName {}
-  vec                -> entries are inspect(elem)
-  map                -> entries are `key: inspect(value)`; the key is bare when it is
-                        identifier-like, else single-quoted
-  obj                -> `ClassName ` followed by the map form over its fields
+  nil            -> nil                      (D9: one bottom value, and this is how it is spelled)
+  Bool           -> true | false
+  Int            -> decimal digits           (no BigInt `n` suffix -- D51 amendment (a))
+  Real           -> shortest round-trip; negative zero prints -0
+  String         -> "..." with \\ \" \n \t \r escaped; every other character literal
+  Char           -> #\c                      (PROVISIONAL: the reader has no Char literal yet, and
+                                              no corpus example constructs one)
+  Closure        -> #<fn name>  |  #<fn>     when anonymous
+  vec, empty     -> []
+  map, empty     -> {}
+  obj, no fields -> ClassName{}
+  vec            -> entries are inspect(elem), SPACE-separated
+  map            -> entries are `:key value`, space-separated; the key is bare after the colon when
+                    identifier-like, else quoted (`{"a b" 1}`)
+  obj            -> ClassName followed immediately by the map form over its fields
 
   CONTAINER LAYOUT (vec, map, obj -- the only place indent matters):
     Render the one-line form first, recursively:
-        vec  ->  "[ " + entries joined ", " + " ]"
-        map  ->  "{ " + entries joined ", " + " }"
-        obj  ->  ClassName + " " + the map form
-    Let TEXT be that one-line form PLUS its own line prefix -- the `key: ` when this container is a
+        vec  ->  "[" + entries joined " " + "]"
+        map  ->  "{" + entries joined " " + "}"
+        obj  ->  ClassName + the map form
+    Let TEXT be that one-line form PLUS its own line prefix -- the `:key ` when this container is a
     map value, empty otherwise. (The prefix counts: it occupies the same line.)
     If  indent + length(TEXT)  <=  80   ->  emit the one-line form.
     Otherwise emit the broken form:
         the opening bracket, newline,
         each entry rendered by this same rule at indent+2, preceded by (indent+2) spaces,
-        "," after every entry but the last, newline after each,
+        newline after each,
         (indent) spaces, the closing bracket.
-    The trailing "," of a broken entry does NOT count toward the budget; it may land at column 81.
+    There is no separator in the broken form: the newline IS the separator, which is one of the
+    things dropping commas buys.
 
   DEPTH   -> unlimited. `[Object]` and `[Array]` never appear.
-  CYCLES  -> a container already being rendered higher in the current recursion renders
-             as `[Circular]`.
+  CYCLES  -> a container already being rendered higher in the current recursion renders `#<circular>`,
+             the same unreadable-object marker a closure uses.
 ```
 
-Worked example. The outer map's one-line form is **114** chars at `indent = 0`, so `0 + 114 > 80` and
-it breaks. Its `params:` entry is **38** chars at `indent = 2` (`params: [ { name: 'x', type: 'Any' } ]`,
-prefix included), so `2 + 38 = 40 ≤ 80` and it stays inline:
+Worked example. The outer map's one-line form is **103** chars at `indent = 0`, so `0 + 103 > 80` and
+it breaks. Its `:params` entry is **33** chars at `indent = 2` (`:params [{:name "x" :type "Any"}]`,
+prefix included), so `2 + 33 = 35 <= 80` and it stays inline:
 
 ```
 {
-  name: 'is-null',
-  kind: 'function',
-  params: [ { name: 'x', type: 'Any' } ],
-  returns: 'Boolean',
-  nullable: false
+  :name "is-null"
+  :kind "function"
+  :params [{:name "x" :type "Any"}]
+  :returns "Boolean"
+  :nullable false
 }
 ```
 
@@ -275,16 +274,17 @@ prefix included), so `2 + 38 = 40 ≤ 80` and it stays inline:
 (`%.15g`/`%.16g`/`%.17g`, first that round-trips through `strtod`); what must be matched is the
 **exponent threshold and spelling** — exponential form at ≥1e21 and <1e-6, spelled `1e-7` / `1e+21`,
 not `%g`'s `1e-07`. `NaN`, `Infinity`, `-Infinity` render as those words. Under D51 an `Int` is a
-`BigInt` on JS; it renders as digits with **no `n` suffix** — which is automatic here, not a special
-case, because the formatter is ours rather than `util.inspect`.
+`BigInt` on JS; it renders as digits with **no `n` suffix** — automatic here, not a special case,
+because the formatter is ours rather than `util.inspect`.
 
 ### What this deliberately does not cover
 
 **Format specifiers** — `{0:F2}`, alignment, culture — are *deferred, not dropped*. They need
-number-formatting rules D51 has not spec'd. `print` accepts `{N}` and the `{{` / `}}` escapes only;
-anything else in the braces is an error (§3.6).
+number-formatting rules D51 has not spec'd. `print` accepts `{N}` and the `{{` / `}}` escapes only.
 
-### 3.6 `print` — C# `string.Format` positional substitution
+---
+
+## 3.6 `print` — C# `string.Format` positional substitution
 
 `print`'s first argument is a template scanned left to right:
 
@@ -300,7 +300,8 @@ Every occurrence of an index is substituted, not just the first — today's firs
 is an artifact of `String.prototype.replace` with a string needle, not a decision. A placeholder whose
 index has no argument **throws**, following C#'s `FormatException` rather than silently printing the
 template or an empty string: a format bug that prints something plausible is the silent-wrong class
-this whole document exists to eliminate.
+this whole document exists to eliminate. A lone `}` is emitted verbatim (a documented deviation from
+C#: only `{` opens a placeholder, so nothing is ambiguous).
 
 ---
 
