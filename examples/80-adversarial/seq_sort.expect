@@ -1,0 +1,6 @@
+ints:     [1 2 9 10]
+strings:  ["apple" "fig" "pear"]
+stable:   [{:k 1 :n "a"} {:k 1 :n "d"} {:k 3 :n "c"} {:k 3 :n "b"}]
+by-key:   [{:k 1} {:k 9} {:k 10}]
+empty:    []
+single:   [42]

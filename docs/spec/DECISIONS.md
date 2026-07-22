@@ -4269,6 +4269,41 @@ change from the JS-UTF-16 count to the correct codepoint count — a one-time, g
 > alternative instruments every map write. Both cost more than a case nothing in the corpus exercises,
 > so it is listed in `js-status.ts` and guarded by `80-adversarial/map_insertion_order.lisp`.
 
+> **Amended 2026-07-22 (Fg-3), the sequence half.** D22 has listed `std/seq` as `<- (none)
+> [pure l-lang]` since it was written, and it was not: `map`/`filter`/`reduce`/`flatten`/`reverse`/
+> `sort`/`sort-by` were one-line delegations to JavaScript array methods. Collapsing them needed **no
+> `vec-*` floor entries after all** — `.length`, `.push`, `.slice` and the indexer already carry both
+> backends, which is what `range` and `zip` have always used — so the vector half of this ruling is
+> *unspent*, not implemented. Three rulings the collapse forced:
+>
+> *(a) `sort` orders by the language's own `<`.* One rule for every element type l-lang can order:
+> numbers numerically, strings lexicographically. `Array.prototype.sort` with no comparator is
+> **specified** to stringify its elements and compare UTF-16 code units, so `(sort [10 9 1 2])`
+> answered `[1 10 2 9]` while `language-reference.md` documented it as numeric — the doc was right
+> and the implementation was not.
+>
+> *(b) The comparator is a less-than PREDICATE, not a three-way difference.* `sort-by` compared with
+> `(- (key-fn a) (key-fn b))` and JS's `sort` demands a Number back, so D51 broke it outright —
+> *"Cannot convert a BigInt value to a number"* — the day the numeric floor landed. A Boolean `less`
+> has no such boundary and is also exactly what stability wants: take from the left run unless the
+> right element is *strictly* less. Stable is now spec, not an artifact of ES2019.
+>
+> *(c) `std/seq` is PURE.* `.reverse` and `.sort` mutate in place in JavaScript, and `ll_vec_reverse`
+> returns its own argument, so `(let b (reverse a))` left `a` reversed **and aliased to `b`** on both
+> backends. In the eager, collection-last, functional half of D33's split, these answer with a new
+> sequence. That is a behaviour change on both backends rather than a fix to one.
+>
+> *Why none of this was visible:* `sort` and `sort-by` have **zero call sites** in the corpus, and its
+> one `reverse` call reverses a literal it never reads again. Pinned by `80-adversarial/seq_sort.lisp`
+> and `seq_purity.lisp`, both of which were red on both backends beforehand.
+>
+> *And a third divergence the collapse surfaced, in the language rather than the library:* `(/ len 2)`
+> is **Real** division (D51 amendment (b) keeps the numeric floor Real-valued precisely so narrowing
+> is written at the site). The mergesort midpoint of an odd-length run is therefore `1.5`, and the
+> backends disagree about what that means to `slice` — JS truncates a fractional index silently, C's
+> `ll_unbox_int` raises *"expected an Int"*. The fix is `Math.trunc` at the site, which is the rule
+> working as intended; the lesson is that JS's silent truncation hides these until C names them.
+
 Vectors are a floor representation (`vec-new/push!/get/set!/length`); maps are a floor representation,
 **insertion-ordered with String keys** (`map-new/get/set!/has/delete/keys`) — insertion order is
 spec'd because the corpus already bakes it into goldens. `equals` is a structural, deep floor

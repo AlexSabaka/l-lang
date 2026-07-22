@@ -231,6 +231,13 @@ export const C_PASSING: readonly string[] = [
   // reference here; map_insertion_order is listed in js-status.ts as a known JS gap.
   "80-adversarial/map_floor.lisp",
   "80-adversarial/map_insertion_order.lisp",
+  // Fg -- `std/seq`'s functional operations collapse to l-lang, so C gains `sort`/`sort-by`/`flatten`
+  // for the first time (they were absent from `ll_dyn_method`'s vec arm and trapped outright) and
+  // both backends stop mutating the sequence they were handed. Two conversions that C is strict about
+  // and JS silently forgives showed up here: `(/ len 2)` is REAL division, and JS's `slice` truncates
+  // a fractional index where `ll_unbox_int` raises.
+  "80-adversarial/seq_sort.lisp",
+  "80-adversarial/seq_purity.lisp",
   // Fd -- the reflection metadata GRAPH is emitted into the C module from the shared builder both
   // backends read (D54), so `type`/`type-by-name` answer with real properties, methods, constructor
   // params, generics and interfaces instead of a {name, extends} stub. Closes §5.2 cluster 3.

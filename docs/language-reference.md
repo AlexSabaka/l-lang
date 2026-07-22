@@ -81,6 +81,11 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 | `sort` | `(sort coll)` | Sort items | `(sort [3 1 2])` → `[1 2 3]` |
 | `sort-by` | `(sort-by fn coll)` | Custom sort | `(sort-by length ["aaa" "a" "aa"])` → `["a" "aa" "aaa"]` |
 
+The `std/seq` operations above **return new sequences and never mutate their argument** — `(reverse
+xs)` leaves `xs` alone. `sort` and `sort-by` order by the language's own `<` (numbers numerically,
+strings lexicographically) and are **stable**: elements that compare equal keep their input order.
+See [D53](./spec/DECISIONS.md#d53--primitive-vecmap-structural-equals).
+
 ### Type Operations
 
 | Function | Signature | Returns | Example |
