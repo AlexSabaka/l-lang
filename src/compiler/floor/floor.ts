@@ -220,6 +220,33 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   ["sys-env", fn("ll_sys_env", [Str], StrOpt)],
   ["sys-exit", fn("ll_sys_exit", [Int], Void)],
 
+  // -- the FILE floor. Five entries, and the handle is an INT FILE DESCRIPTOR on both backends.
+  //
+  // That representation is not a compromise, it is what both hosts already use: node's `fs.openSync`
+  // returns an integer fd and POSIX `open(2)` returns one. So the handle needs no new tag, no boxed
+  // resource, and no cross-backend translation -- the same Int means the same open file on either
+  // side. (A `FILE*` boxed as an integer would have worked on C and had no JS counterpart.)
+  //
+  // THESE ARE TOTAL. `file-open` answers -1 rather than throwing, `file-read` answers nil at EOF,
+  // `file-write` answers -1 on failure. The THROWING half of the API is l-lang, in `std/io/files`,
+  // which is the layering the ruling asked for: the floor is the irreducible syscall and the policy
+  // above it decides whether a failure is an exception or a nil. Building it the other way round --
+  // a throwing floor with `try-` wrappers catching -- would need exceptions to cross the floor
+  // boundary identically on both backends, which is a much larger promise than nil.
+  //
+  // -1 is out of band rather than an in-band lie (D9): a file descriptor is non-negative by
+  // definition, exactly as a codepoint is, which is the same argument `codepoint-at` already makes.
+  //
+  // `file-read` reads UP TO n bytes and then EXTENDS the read to complete a trailing multi-byte UTF-8
+  // sequence. Without that, a chunked read splits a codepoint across two chunks and D52's "a String
+  // is a sequence of scalar values" is violated by the reader itself -- silently, and only for
+  // non-ASCII files, which is precisely the class of bug this corpus is bad at noticing.
+  ["file-open", fn("ll_file_open", [Str, Str], Int)],
+  ["file-close", fn("ll_file_close", [Int], Void)],
+  ["file-read", fn("ll_file_read", [Int, Int], StrOpt)],
+  ["file-write", fn("ll_file_write", [Int, Str], Int)],
+  ["file-exists", fn("ll_file_exists", [Str], Bool)],
+
   // -- D11's EXPLICIT deep copy. Distinct from the STORE copy the compiler inserts: that one is
   // memberwise and shares reference fields (the C# rule), while this recurses through arrays too, so
   // a vector of structs comes back with copied elements.

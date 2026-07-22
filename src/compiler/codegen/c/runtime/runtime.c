@@ -21,6 +21,9 @@
 #include <math.h>
 #include <inttypes.h>
 #include <setjmp.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
 
 #define LL_END INT64_MIN /* "argument omitted" sentinel for optional trailing int args (slice end) */
 
@@ -864,6 +867,78 @@ static ll_value ll_sys_env(ll_str *name) {
 }
 
 static void ll_sys_exit(int64_t code) { exit((int)code); }
+
+/* ---------------------------------------------------------------------------------------------
+ * The FILE floor. The handle is an INT file descriptor -- what both hosts already use.
+ *
+ * TOTAL, deliberately: -1 for a failed open, nil at EOF, -1 for a failed write. The THROWING half of
+ * the API is l-lang, in `std/io/files`. Building it the other way round would need exceptions to
+ * cross the floor boundary identically on both backends, which is a far larger promise than nil.
+ * --------------------------------------------------------------------------------------------- */
+
+/* How many more bytes are needed to complete the UTF-8 sequence this buffer ends in? 0 if it already
+ * ends on a boundary. Bounded by 3 -- the longest scalar-value encoding is four bytes.
+ *
+ * This is what keeps a CHUNKED read from splitting a codepoint. Without it `read-file` on a
+ * non-ASCII file would silently produce U+FFFD at every chunk boundary, violating D52 in the reader
+ * itself and only for input the corpus never exercises. */
+static int ll_utf8_want(const unsigned char *b, size_t n) {
+  size_t i = n;
+  int back = 0;
+  while (i > 0 && back < 4) {
+    unsigned char c = b[i - 1];
+    back++;
+    if ((c & 0xC0) != 0x80) { /* a lead byte (or ASCII) */
+      int len = (c < 0x80) ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 1;
+      return len > back ? len - back : 0;
+    }
+    i--;
+  }
+  return 0;
+}
+
+static int64_t ll_file_open(ll_str *path, ll_str *mode) {
+  int flags;
+  const char *m = mode->data;
+  if (strcmp(m, "r") == 0) flags = O_RDONLY;
+  else if (strcmp(m, "w") == 0) flags = O_WRONLY | O_CREAT | O_TRUNC;
+  else if (strcmp(m, "a") == 0) flags = O_WRONLY | O_CREAT | O_APPEND;
+  else return -1;
+  int fd = open(path->data, flags, 0644);
+  return (int64_t)fd;
+}
+
+static void ll_file_close(int64_t fd) {
+  if (fd >= 0) close((int)fd);
+}
+
+static ll_value ll_file_read(int64_t fd, int64_t n) {
+  if (fd < 0 || n <= 0) return ll_nil();
+  size_t cap = (size_t)n + 4; /* room for the boundary completion */
+  unsigned char *buf = (unsigned char *)ll_alloc(cap);
+  ssize_t got = read((int)fd, buf, (size_t)n);
+  if (got <= 0) return ll_nil(); /* EOF or error -- nil MEANS done */
+  size_t len = (size_t)got;
+  int want = ll_utf8_want(buf, len);
+  while (want > 0 && len < cap) {
+    ssize_t more = read((int)fd, buf + len, (size_t)want);
+    if (more <= 0) break;
+    len += (size_t)more;
+    want = ll_utf8_want(buf, len);
+  }
+  return ll_box_str(ll_str_from((const char *)buf, len));
+}
+
+static int64_t ll_file_write(int64_t fd, ll_str *s) {
+  if (fd < 0) return -1;
+  ssize_t put = write((int)fd, s->data, s->len);
+  return (int64_t)put;
+}
+
+static bool ll_file_exists(ll_str *path) {
+  struct stat st;
+  return stat(path->data, &st) == 0;
+}
 
 static void ll_console_write(FILE *out, int n, ll_value *vals) {
   ll_sb sb;

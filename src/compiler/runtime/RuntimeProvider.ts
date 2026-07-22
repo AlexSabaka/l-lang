@@ -35,6 +35,36 @@ export class RuntimeProvider {
   private static readonly LL_RUNTIME: string = `let ${RuntimeProvider.TYPES_METADATA_VAR} = {};
 let _readline = null;
 try { _readline = require("readline-sync"); } catch (e) { /* optional */ }
+/* The FILE floor's host handle. Required LAZILY and cached, so a program that never touches a file
+   still runs in a browser or a bare VM -- which is where the corpus's p5js examples live. */
+let __ll_fs_mod;
+function __ll_fs() {
+  if (__ll_fs_mod === undefined) {
+    try { __ll_fs_mod = require("fs"); } catch (e) { __ll_fs_mod = null; }
+  }
+  return __ll_fs_mod;
+}
+/* How many more bytes complete the UTF-8 sequence this buffer ends in? 0 if it already ends on a
+   boundary; at most 3, since the longest scalar-value encoding is four bytes.
+
+   This is what stops a CHUNKED read from splitting a codepoint. Decoding a Buffer that ends
+   mid-sequence yields U+FFFD, so without it 'read-file' would corrupt one codepoint per chunk
+   boundary on any non-ASCII file -- silently, and only for input the corpus does not contain. C's
+   ll_utf8_want is the same function; they must stay in step or the two backends read a file
+   differently. */
+function __ll_utf8_want(b, n) {
+  let i = n, back = 0;
+  while (i > 0 && back < 4) {
+    const c = b[i - 1];
+    back++;
+    if ((c & 0xC0) !== 0x80) {
+      const len = c < 0x80 ? 1 : (c & 0xE0) === 0xC0 ? 2 : (c & 0xF0) === 0xE0 ? 3 : (c & 0xF8) === 0xF0 ? 4 : 1;
+      return len > back ? len - back : 0;
+    }
+    i--;
+  }
+  return 0;
+}
 /* D51 -- the numeric floor. 'Int' is a wrapping 64-bit integer (a BigInt); 'Real' is f64 (a Number).
    JavaScript refuses to mix them in arithmetic ('1n + 1' throws), so these two helpers are what every
    arithmetic shim funnels through.
@@ -596,6 +626,40 @@ function __ll_is_type(val, type) {
     //
     // Int in, host Number out: `sys-exit` is typed `[Int] -> Void`, so the argument arrives as a
     // BigInt under D51 and `process.exit` will not take one.
+    // The FILE floor. The handle is an INT file descriptor, which is what `fs.openSync` already
+    // returns -- so the same Int means the same open file on both backends, with no translation.
+    //
+    // TOTAL, matching C: -1 for a failed open, null at EOF, -1 for a failed write. The throwing half
+    // of the API is l-lang, in `std/io/files`.
+    //
+    // `__ll_fs` is required LAZILY and guarded: a program that never touches a file must still run in
+    // a browser or a bare VM, which is where the corpus's p5js examples live.
+    //
+    // The read EXTENDS to complete a trailing multi-byte UTF-8 sequence, exactly as C does. Decoding
+    // a Buffer that ends mid-sequence yields U+FFFD, so without this a chunked read of a non-ASCII
+    // file would corrupt one codepoint per chunk boundary -- silently, and only for input the corpus
+    // does not have.
+    "file-open": `const file2dopen = (p, m) => { const fs = __ll_fs(); if (!fs) return -1n; try { return BigInt(fs.openSync(String(p), String(m))); } catch (e) { return -1n; } };`,
+    "file-close": `const file2dclose = (fd) => { const fs = __ll_fs(); if (!fs) return null; try { fs.closeSync(Number(fd)); } catch (e) { /* already closed */ } return null; };`,
+    "file-read": `const file2dread = (fd, n) => {
+  const fs = __ll_fs(); if (!fs) return null;
+  const want = Number(n); if (Number(fd) < 0 || want <= 0) return null;
+  const buf = Buffer.alloc(want + 4);
+  let len = 0;
+  try { len = fs.readSync(Number(fd), buf, 0, want, null); } catch (e) { return null; }
+  if (len <= 0) return null;
+  let need = __ll_utf8_want(buf, len);
+  while (need > 0 && len < buf.length) {
+    let more = 0;
+    try { more = fs.readSync(Number(fd), buf, len, need, null); } catch (e) { break; }
+    if (more <= 0) break;
+    len += more;
+    need = __ll_utf8_want(buf, len);
+  }
+  return buf.slice(0, len).toString('utf8');
+};`,
+    "file-write": `const file2dwrite = (fd, s) => { const fs = __ll_fs(); if (!fs) return -1n; try { return BigInt(fs.writeSync(Number(fd), String(s))); } catch (e) { return -1n; } };`,
+    "file-exists": `const file2dexists = (p) => { const fs = __ll_fs(); if (!fs) return false; try { fs.accessSync(String(p)); return true; } catch (e) { return false; } };`,
     "sys-arg": `const sys2darg = (i) => { const a = (typeof process !== "undefined" && process.argv) ? process.argv.slice(2) : []; const n = Number(i); return (n >= 0 && n < a.length) ? a[n] : null; };`,
     "sys-env": `const sys2denv = (n) => { if (typeof process === "undefined" || !process.env) return null; const v = process.env[String(n)]; return v === undefined ? null : v; };`,
     "sys-exit": `const sys2dexit = (c) => { const n = Number(c); if (typeof process !== "undefined" && process.exit) process.exit(n); throw new Error("exit " + n); };`,

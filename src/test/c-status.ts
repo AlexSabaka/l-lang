@@ -319,6 +319,10 @@ export const C_PASSING: readonly string[] = [
   // `deep-copy` on the floor, and told apart from D11's STORE copy -- pointing it at `ll_copy` would
   // have shared a vector's elements here and copied them on JS.
   "80-adversarial/deep_copy_floor.lisp",
+  // The FILE floor and `std/io/files` over it. The handle is an INT fd on both backends -- what both
+  // hosts already hand out -- and the chunked-read lines pin the UTF-8 boundary extension, without
+  // which a chunked read corrupts one codepoint per boundary on any non-ASCII file.
+  "80-adversarial/file_io_floor.lisp",
   // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
   // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.
   "80-adversarial/display_source_names/main.lisp",

@@ -1,0 +1,10 @@
+exists:   true
+lines:    ["hello" "wörld"]
+codepoints: 12
+appended: ["hello" "wörld" "third"]
+missing:  nil
+exists?:  false
+threw:    true
+chunked:  20
+whole:    20
+same:     true
