@@ -1285,6 +1285,17 @@ static int64_t ll_cp_at(ll_str *s, int64_t idx) {
   return -1;
 }
 
+/* `charCodeAt` -- declared to the checker, implemented nowhere on C until now.
+ *
+ * D52 says a String is a sequence of CODEPOINTS, so this answers the codepoint at index `idx`, which
+ * is `ll_cp_at`. That deliberately DIVERGES from JS below the astral plane boundary, where
+ * `charCodeAt` returns a UTF-16 code UNIT and would give a surrogate half. It is the same call D50's
+ * native-member amendment records for `.length`: the host owns what the operation MEANS, and on C
+ * there is no host -- `ll_dyn_method` is our code imitating a surface that does not exist below it --
+ * so C picks the answer that agrees with the language's own ruling rather than with UTF-16. Pinned as
+ * a documented divergence alongside `native_string_astral.lisp`. */
+static int64_t ll_str_char_code_at(ll_str *s, int64_t idx) { return ll_cp_at(s, idx); }
+
 /* Encode one scalar value as UTF-8. A value outside U+0000..U+10FFFF, or a surrogate (U+D800..DFFF,
    which is not a scalar value and has no UTF-8 encoding), is written as U+FFFD -- the same answer
    `ll_utf8_next` gives for input it cannot read, so a round trip through either direction is total. */
@@ -1362,6 +1373,15 @@ static ll_str *ll_str_trim_end(ll_str *s) {
   size_t b = s->len;
   while (b > 0 && (s->data[b - 1] == ' ' || s->data[b - 1] == '\t' || s->data[b - 1] == '\n' || s->data[b - 1] == '\r')) b--;
   return ll_str_from(s->data, b);
+}
+
+/* The missing third of the trim family. `trim` and `trimEnd` existed; `trimStart` was DECLARED to the
+ * checker and implemented nowhere, so C refused it (ELL0106) while JS answered. ASCII whitespace
+ * only, per D52/Ff-2 -- the same four characters the other two use, deliberately not JS's ~25. */
+static ll_str *ll_str_trim_start(ll_str *s) {
+  size_t a = 0;
+  while (a < s->len && (s->data[a] == ' ' || s->data[a] == '\t' || s->data[a] == '\n' || s->data[a] == '\r')) a++;
+  return ll_str_from(s->data + a, s->len - a);
 }
 
 static int64_t ll_slice_clamp(int64_t i, size_t len) {
@@ -1587,6 +1607,23 @@ static ll_vec *ll_vec_slice(ll_vec *v, int64_t start, int64_t end) {
   return out;
 }
 
+/* `flat` -- ONE level, which is JS's default depth. Declared to the checker and implemented nowhere,
+ * so it was the third member C refused outright rather than merely routing dynamically. A non-vec
+ * element passes through unflattened, exactly as JS does. */
+static ll_vec *ll_vec_flat(ll_vec *v) {
+  ll_vec *out = ll_vec_new(v->len ? v->len : 4);
+  for (size_t i = 0; i < v->len; i++) {
+    ll_value e = v->items[i];
+    if (e.tag == LL_VEC) {
+      ll_vec *inner = e.as.v;
+      for (size_t j = 0; j < inner->len; j++) ll_vec_push(out, inner->items[j]);
+    } else {
+      ll_vec_push(out, e);
+    }
+  }
+  return out;
+}
+
 static ll_vec *ll_vec_concat(ll_vec *a, ll_vec *b) {
   ll_vec *out = ll_vec_new(a->len + b->len ? a->len + b->len : 4);
   for (size_t i = 0; i < a->len; i++) out->items[out->len++] = a->items[i];
@@ -1612,6 +1649,16 @@ static int64_t ll_vec_index_of(ll_vec *v, ll_value x) {
 }
 
 static bool ll_vec_includes(ll_vec *v, ll_value x) { return ll_vec_index_of(v, x) >= 0; }
+
+/* The vec half of `lastIndexOf`. The STRING half existed and `ll_dyn_method` had an arm for it, which
+ * is what made this look routable -- it is not: the vec arm has no such entry, so a declared member
+ * would have trapped at runtime instead of refusing at compile time. Measured, not assumed. */
+static int64_t ll_vec_last_index_of(ll_vec *v, ll_value x) {
+  for (size_t i = v->len; i > 0; i--) {
+    if (ll_strict_eq(v->items[i - 1], x)) return (int64_t)(i - 1);
+  }
+  return -1;
+}
 
 /* -- dynamic (boxed-receiver) member dispatch -- the __ll_member mirror -------------------------- */
 

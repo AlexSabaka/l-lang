@@ -6,11 +6,14 @@
 // could check against `lib/std/js`'s untyped externs, and the two had silently disagreed about
 // `Math.floor`'s return type for as long as both existed.
 //
-// Native MEMBERS (String.length, Array.push, ...) still mirror src/compiler/types/nativeMembers.ts
-// by hand -- the same duplication one layer down, and the next thing the floor should absorb.
+// Native MEMBERS (String.length, Array.push, ...) are now DERIVED from
+// src/compiler/types/nativeMembers.ts too, so the checker and the code generator read one table. They
+// used to be hand-mirrored, and the mirror had drifted in COVERAGE -- seven members the checker
+// declared and C refused.
 
 import { CType, C_BOOL, C_INT, C_REAL, C_STR, C_VALUE, C_VOID, mapType } from "./ctype";
 import { FLOOR } from "../../floor/floor";
+import { nativeMemberTable } from "../../types/nativeMembers";
 
 export interface IntrinsicDef {
   runtimeFn: string;
@@ -42,48 +45,34 @@ export const INTRINSIC_CALLS: ReadonlyMap<string, IntrinsicDef> = new Map<string
 );
 
 /**
- * Native member METHODS: `recv.m(args)`. Keyed `<base>.<name>` where base is "str" | "vec" | "dyn"
- * (dyn = boxed receiver -- runtime dispatches on the tag; the receiver is arg 0 in every case).
+ * Native member METHODS and FIELDS, DERIVED from `types/nativeMembers.ts` (the same move Fa made for
+ * `INTRINSIC_CALLS`). Keyed `<base>.<name>` where base is "str" | "vec" | "dyn".
+ *
+ * These used to be two hand-mirrored tables, and the mirroring had drifted -- not in BEHAVIOUR (all
+ * 27 shared members were measured byte-identical on both backends) but in COVERAGE: the checker
+ * declared `trimStart`, `charCodeAt`, `flat`, and array `lastIndexOf`/`map`/`filter`/`reduce`, and C
+ * refused every one of them. Four of those seven were already implemented by `ll_dyn_method`, so a
+ * STATICALLY-typed receiver refused where a BOXED one worked -- typing the receiver lost capability.
+ *
+ * One table now, so a member cannot be declared to the checker and unknown to the code generator.
+ * An entry with no `c` lowering is not a hole: `resolveNativeMethod` routes it to the dynamic arm.
  */
+const MEMBERS = nativeMemberTable();
+
 export const NATIVE_METHODS: ReadonlyMap<string, IntrinsicDef> = new Map<string, IntrinsicDef>([
-  // String methods (recv: ll_str*)
-  ["str.toUpperCase", def("ll_str_upper", [C_STR], C_STR)],
-  ["str.toLowerCase", def("ll_str_lower", [C_STR], C_STR)],
-  ["str.trim", def("ll_str_trim", [C_STR], C_STR)],
-  ["str.trimEnd", def("ll_str_trim_end", [C_STR], C_STR)],
-  ["str.slice", def("ll_str_slice", [C_STR, C_INT, C_INT], C_STR)], // 1-arg form: P1 pads end with INT64_MAX sentinel
-  ["str.substring", def("ll_str_slice", [C_STR, C_INT, C_INT], C_STR)],
-  ["str.indexOf", def("ll_str_index_of", [C_STR, C_STR], C_INT)],
-  ["str.lastIndexOf", def("ll_str_last_index_of", [C_STR, C_STR], C_INT)],
-  ["str.includes", def("ll_str_includes", [C_STR, C_STR], C_BOOL)],
-  ["str.startsWith", def("ll_str_starts_with", [C_STR, C_STR], C_BOOL)],
-  ["str.endsWith", def("ll_str_ends_with", [C_STR, C_STR], C_BOOL)],
-  ["str.replace", def("ll_str_replace", [C_STR, C_STR, C_STR], C_STR)],
-  ["str.replaceAll", def("ll_str_replace_all", [C_STR, C_STR, C_STR], C_STR)],
-  ["str.repeat", def("ll_str_repeat", [C_STR, C_INT], C_STR)],
-  ["str.split", def("ll_str_split", [C_STR, C_STR], { k: "vec", elem: C_STR })],
-  ["str.charAt", def("ll_str_char_at", [C_STR, C_INT], C_STR)],
-  ["str.concat", def("ll_str_concat2", [C_STR, C_STR], C_STR)],
-  ["str.padStart", def("ll_str_pad_start", [C_STR, C_INT, C_STR], C_STR)],
-  ["str.padEnd", def("ll_str_pad_end", [C_STR, C_INT, C_STR], C_STR)],
-  // Array methods (recv: ll_vec*)
-  ["vec.push", def("ll_vec_push", [VEC_VALUE, C_VALUE], C_INT)],
-  ["vec.pop", def("ll_vec_pop", [VEC_VALUE], C_VALUE)],
-  ["vec.shift", def("ll_vec_shift", [VEC_VALUE], C_VALUE)],
-  ["vec.unshift", def("ll_vec_unshift", [VEC_VALUE, C_VALUE], C_INT)],
-  ["vec.reverse", def("ll_vec_reverse", [VEC_VALUE], VEC_VALUE)],
-  ["vec.slice", def("ll_vec_slice", [VEC_VALUE, C_INT, C_INT], VEC_VALUE)],
-  ["vec.concat", def("ll_vec_concat", [VEC_VALUE, VEC_VALUE], VEC_VALUE)],
-  ["vec.join", def("ll_vec_join", [VEC_VALUE, C_STR], C_STR)],
-  ["vec.indexOf", def("ll_vec_index_of", [VEC_VALUE, C_VALUE], C_INT)],
-  ["vec.includes", def("ll_vec_includes", [VEC_VALUE, C_VALUE], C_BOOL)],
-  // Dynamic receiver (boxed): runtime dispatches on the tag. A3 evidence every time.
+  ...MEMBERS.filter((m) => m.kind === "method" && m.c).map(
+    (m) => [m.key, def(m.c!.runtimeFn, m.c!.cParams.map(mapType), mapType(m.c!.cRet))] as [string, IntrinsicDef]
+  ),
+  // Dynamic receiver (boxed): runtime dispatches on the tag. A3 evidence every time. Not a member of
+  // any declared type, so it is stated here rather than derived.
   ["dyn.method", def("ll_dyn_method", [], C_VALUE, true)],
 ]);
 
 /** Native member FIELD reads: `recv.f`. Same keying as methods. */
 export const NATIVE_FIELDS: ReadonlyMap<string, { runtimeFn: string; ret: CType }> = new Map([
-  ["str.length", { runtimeFn: "ll_str_len", ret: C_INT }],
-  ["vec.length", { runtimeFn: "ll_vec_len", ret: C_INT }],
+  ...MEMBERS.filter((m) => m.kind === "field" && m.c).map(
+    (m) => [m.key, { runtimeFn: m.c!.runtimeFn, ret: mapType(m.c!.cRet) }] as [string, { runtimeFn: string; ret: CType }]
+  ),
+  // A boxed receiver's `.length`: the runtime picks str-vs-vec from the tag.
   ["dyn.length", { runtimeFn: "ll_dyn_length", ret: C_INT }],
 ]);

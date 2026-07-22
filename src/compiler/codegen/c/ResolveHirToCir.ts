@@ -26,6 +26,7 @@ import {
 } from "./cir";
 import { CType, C_BOOL, C_INT, C_REAL, C_STR, C_VALUE, C_VOID, mapType, ctypeEquals } from "./ctype";
 import { INTRINSIC_CALLS, NATIVE_METHODS, NATIVE_FIELDS } from "./intrinsics";
+import { nativeMemberDeclared } from "../../types/nativeMembers";
 import { freeVariables, freeVariablesOfBody } from "../../hir/freevars";
 import { isBuiltinModifier } from "../../helpers/modifiers";
 import { buildTypesMetadata } from "../../reflection/metadata";
@@ -2599,6 +2600,24 @@ export class ResolveHirToCir {
       if (extName && sig) {
         this.ledger.record("A3", "extension-devirt", node, "extension method devirtualized to a free call on its first parameter (Q4 static case)");
         return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName: mangleC(extName), params: sig.params, ret: sig.ret }, args: [recv, ...cArgs] };
+      }
+      // DECLARED, but with no static lowering -> the DYNAMIC arm, which already implements it.
+      //
+      // This is the fix for an inversion: `ll_dyn_method` handles `map`/`filter`/`reduce`/
+      // `lastIndexOf` on a vec, but they were only reachable through a BOXED receiver. A statically
+      // typed one looked up NATIVE_METHODS, missed, and refused -- so TYPING THE RECEIVER LOST
+      // CAPABILITY, and `(xs.map f)` compiled or not depending on whether inference had reached `xs`.
+      //
+      // Gated on the member being DECLARED in the shared table rather than falling back blindly: an
+      // undeclared name must stay a compile-time refusal, because `ll_dyn_method` answers an unknown
+      // name with a field read and then traps. Routing everything would turn fail-closed into
+      // fail-open, which is strictly worse than the gap it fixes.
+      if (nativeMemberDeclared(baseKey, method)) {
+        this.ledger.record("A3", "method-dyn-fallback", node, `'${baseKey}.${method}' is declared but has no static C lowering -- routed through ll_dyn_method`);
+        const dyn = NATIVE_METHODS.get("dyn.method")!;
+        const nameLit: CExpr = { src: node, ctype: C_STR, kind: "c-lit", lit: "str", value: method };
+        const boxed: CExpr = { src: node, ctype: C_VALUE, kind: "c-box", inner: recv, from: recv.ctype };
+        return { src: node, ctype: dyn.ret, kind: "c-call", callee: { kind: "intrinsic", ...dyn }, args: [boxed, nameLit, ...cArgs] };
       }
       throw this.refuse(node, `method:${baseKey}.${method}`, "resolveNativeMethod");
     }

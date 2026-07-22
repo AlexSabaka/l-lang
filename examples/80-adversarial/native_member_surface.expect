@@ -1,0 +1,11 @@
+trimStart:   pad  
+charCodeAt:  72
+flat:        [1 2]
+lastIndexOf: 2
+map:         [6 2 4]
+filter:      [3 2]
+reduce:      6
+padStart:    007
+split:       ["Hello" "World"]
+slice:       [3 1]
+join:        3-1-2

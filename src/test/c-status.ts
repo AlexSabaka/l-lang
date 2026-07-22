@@ -307,6 +307,10 @@ export const C_PASSING: readonly string[] = [
   // node's argv leads with the interpreter and the script, C's with the program name, and both drop
   // their own prefix so index 0 means the same argument on either backend.
   "80-adversarial/sys_process/main.lisp",
+  // The native-member surface, after the checker's table and C's became ONE table. Seven members the
+  // checker declared and C refused; three of them C could already do DYNAMICALLY, so typing the
+  // receiver had been LOSING capability.
+  "80-adversarial/native_member_surface.lisp",
   // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
   // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.
   "80-adversarial/display_source_names/main.lisp",
