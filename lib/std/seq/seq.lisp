@@ -177,6 +177,49 @@
   (fn sort-by [key-fn coll <- Any[]] -> Any[]
     (seq-sort-with coll (fn [a b] (< (key-fn a) (key-fn b)))))
 
+  ;; ------------------------------------------------------------------------------------------------
+  ;; THE SEARCHES -- structural, and that is a deliberate semantic change (D53, Fg-4).
+  ;;
+  ;; `(includes [1 2] [[1 2] [3 4]])` was FALSE. The native `.includes`/`.indexOf` compare containers
+  ;; by REFERENCE -- JS's SameValueZero, and C's `ll_strict_eq`, which spells
+  ;; `case LL_VEC: return a.as.v == b.as.v` -- so a freshly written `[1 2]` could never be found in a
+  ;; list of vectors however it was spelled. Searching a sequence for a value it contains is not a
+  ;; question about object identity.
+  ;;
+  ;; D53 rules `equals` a structural, deep FLOOR primitive with these built on it. It did not need to
+  ;; be added: `==` ALREADY lowers to `ll_deep_eq`/`__ll_deep_eq`, which is structural, deep and
+  ;; recursive on both backends, already converged on int64 exactness by Fg-1, and already reachable
+  ;; from source. Adding `equals` would be a second name for the same runtime function -- a second
+  ;; floor entry to keep in step, which D50 says to pay for only when something is irreducible.
+  ;;
+  ;; The one thing a named `equals` WOULD buy is structural equality as a first-class value, because
+  ;; `(f == a b)` -- passing the operator itself -- compiles on JS and fails to compile on C
+  ;; ("use of undeclared identifier `u__3d_3d`"). That is a C backend gap in operator-as-value, not a
+  ;; hole in the floor, and it is written down rather than worked around here.
+  ;;
+  ;; NOT FIXED, and not fixable to agree: the native members' CROSS-TYPE behaviour. `([1 2 3].includes
+  ;; 1.0)` is `false` on JS and `true` on C -- JS's array holds BigInts where the checker typed the
+  ;; elements `Int`, and SameValueZero is false across BigInt/Number, while `ll_strict_eq` promotes
+  ;; both to a double. There is no answer that makes them agree, because JS's is a function of what
+  ;; the CHECKER inferred rather than of the values: with the array typed `Real[]` and the needle
+  ;; `Int`, JS flips to `true` and C stays `true`. So the native member's cross-type result is
+  ;; unspecified host interop; `==` is numeric on both backends (D51), and these two are the
+  ;; language's answer.
+  ;;
+  ;; `nil`, not `-1`, for a miss. That is this module's own posture -- `first`/`last`/`at` are `T?`
+  ;; for exactly D9's reason, and an in-band sentinel in the same module would be it contradicting
+  ;; itself. `.indexOf` keeps `-1`; it is host interop, not the language's answer.
+  ;; ------------------------------------------------------------------------------------------------
+  (fn index-of [x coll <- Any[]] -> Int? (
+    (for :init (mut i 0) :cond (< i coll.length) :step (i := (+ i 1)) :then (
+      (if (== coll[i] x) (return i))
+    ))
+    (return nil)
+  ))
+
+  (fn includes [x coll <- Any[]] -> Boolean
+    (!= (index-of x coll) nil))
+
   ;; ================================================================================================
   ;; THE TOTAL ACCESSORS -- `first` / `last` / `at`, honest at last (`-> T?`).
   ;;
@@ -203,5 +246,5 @@
   (fn length [coll] -> Int coll.length)
 
   (export range zip map filter reduce flatten reverse sort sort-by
-          first last at length)
+          index-of includes first last at length)
 )

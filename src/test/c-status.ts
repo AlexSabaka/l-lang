@@ -238,6 +238,12 @@ export const C_PASSING: readonly string[] = [
   // a fractional index where `ll_unbox_int` raises.
   "80-adversarial/seq_sort.lisp",
   "80-adversarial/seq_purity.lisp",
+  // Fg-4 -- `std/seq`'s `index-of`/`includes` search by STRUCTURAL equality, routed through `==`
+  // (already `ll_deep_eq`/`__ll_deep_eq` on both backends), so no `equals` floor entry was needed.
+  // `native_search_numeric` is the mirror: C is the REFERENCE there and the gap is JS's, so it is
+  // listed in js-status.ts too.
+  "80-adversarial/seq_structural_search.lisp",
+  "80-adversarial/native_search_numeric.lisp",
   // Fd -- the reflection metadata GRAPH is emitted into the C module from the shared builder both
   // backends read (D54), so `type`/`type-by-name` answer with real properties, methods, constructor
   // params, generics and interfaces instead of a {name, extends} stub. Closes §5.2 cluster 3.

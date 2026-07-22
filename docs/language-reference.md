@@ -80,6 +80,13 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 | `reverse` | `(reverse coll)` | Reverse | `(reverse [1 2 3])` → `[3 2 1]` |
 | `sort` | `(sort coll)` | Sort items | `(sort [3 1 2])` → `[1 2 3]` |
 | `sort-by` | `(sort-by fn coll)` | Custom sort | `(sort-by length ["aaa" "a" "aa"])` → `["a" "aa" "aaa"]` |
+| `index-of` | `(index-of x coll)` | Index, or `nil` | `(index-of [3 4] [[1 2] [3 4]])` → `1` |
+| `includes` | `(includes x coll)` | Is it present? | `(includes [1 2] [[1 2]])` → `true` |
+
+`index-of` and `includes` search by **structural** equality — the same `==` the language uses — so a
+freshly written `[1 2]` is found in a list of vectors. The native `.indexOf` / `.includes` members
+compare containers by *reference* and are host interop, not the language's answer. A miss is `nil`,
+not `-1`, matching `first`/`last`/`at`.
 
 The `std/seq` operations above **return new sequences and never mutate their argument** — `(reverse
 xs)` leaves `xs` alone. `sort` and `sort-by` order by the language's own `<` (numbers numerically,

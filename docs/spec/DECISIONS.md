@@ -4304,6 +4304,35 @@ change from the JS-UTF-16 count to the correct codepoint count — a one-time, g
 > `ll_unbox_int` raises *"expected an Int"*. The fix is `Math.trunc` at the site, which is the rule
 > working as intended; the lesson is that JS's silent truncation hides these until C names them.
 
+> **Amended 2026-07-22 (Fg-4), the equality half — `equals` is not a floor entry.** D53 rules `equals`
+> a structural, deep floor primitive with `index-of`/`includes` built on it. The primitive already
+> exists under another name: **`==` lowers to `ll_deep_eq` / `__ll_deep_eq`**, which is structural,
+> deep and recursive on both backends, was converged on int64 exactness by Fg-1, and is reachable from
+> source today. Adding `equals` would be a second name for the same runtime function — a second entry
+> to conformance-test — and D50 says to pay that only for something irreducible. So the floor did not
+> grow in Fg-3 or Fg-4; **D53's `vec-*` and `equals` are both unspent**.
+>
+> *What `index-of`/`includes` gain is the semantic change, and it is real:* `(includes [1 2] [[1 2]
+> [3 4]])` was **false** and is **true**. The native `.includes`/`.indexOf` compare containers by
+> reference — JS's SameValueZero, and C's `ll_strict_eq`, which spells `case LL_VEC: return a.as.v ==
+> b.as.v` — so a freshly written `[1 2]` could never be found in a list of vectors however it was
+> spelled. `index-of` answers **`nil`, not `-1`**: `std/seq`'s own `first`/`last`/`at` are `T?` for
+> D9's reason, and an in-band sentinel in the same module would contradict them. The native `.indexOf`
+> keeps `-1` — host interop, not the language's answer.
+>
+> *Two gaps found, neither fixed, both written down.* **(i)** Structural equality is not available as
+> a first-class **value** on C: `(f == a b)` — passing the operator itself — compiles on JS and fails
+> to compile natively (*"use of undeclared identifier `u__3d_3d`"*). That is the one thing a named
+> `equals` would buy, and it is a backend gap in operator-as-value rather than a hole in the floor.
+> **(ii)** A native container search with a **numeric needle** diverges: `(nums.includes 2)` on an
+> `Int[]` is `false` on JS and `true` on C. The array holds BigInts, the *literal* needle at a
+> native-member argument position never receives the `Int` type, and SameValueZero is false across
+> BigInt/Number — bind the same `2` to an `Int` variable and JS gets it right, so the answer is a
+> function of what the checker reached rather than of the values. C is right on the language's own
+> terms (D51 makes `==` numeric across Int/Real), and the obvious repair goes the wrong way: coercing
+> the needle with `__ll_hostnum` restores exactly the above-2^53 collapse Fg-1 removed. Listed in
+> `js-status.ts`, guarded by `80-adversarial/native_search_numeric.lisp`.
+
 Vectors are a floor representation (`vec-new/push!/get/set!/length`); maps are a floor representation,
 **insertion-ordered with String keys** (`map-new/get/set!/has/delete/keys`) — insertion order is
 spec'd because the corpus already bakes it into goldens. `equals` is a structural, deep floor

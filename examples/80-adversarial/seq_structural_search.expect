@@ -1,0 +1,10 @@
+prim:       true
+prim-idx:   1
+vec:        true  native: false
+vec-idx:    1  native: -1
+nested:     0
+map:        true
+absent:     nil
+absent-in:  false
+int64:      false
+empty:      false
