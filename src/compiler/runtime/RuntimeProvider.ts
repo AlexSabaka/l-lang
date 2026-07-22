@@ -91,6 +91,25 @@ function __ll_hostint(x) {
      would be a silent wrong answer, so a non-integral Number is left exactly as it is. */
   return typeof x === "number" && Number.isInteger(x) ? BigInt(x) : x;
 }
+/* A map key is stringified on the way in, on both backends (C does it in ll_map_slot via ll_to_str).
+   D53's "String keys" is about the key space, not the argument type -- (m[1] := v) has always
+   written the key "1", and map-get with 1 must find it. BigInt needs saying explicitly: String(1n)
+   is "1", but the default property-key coercion of a BigInt is the same, so this only matters for
+   keeping the two paths visibly identical. */
+function __ll_map_key(k) { return typeof k === "string" ? k : String(k); }
+
+/* KNOWN DIVERGENCE from D53, guarded rather than hidden: a plain JS Object does not iterate in
+   insertion order. Integer-like keys come FIRST, in ascending numeric order, so { b, a, "10", "2" }
+   enumerates as ["2","10","b","a"] while C's ll_map -- an assoc list appended at len -- gives the
+   insertion order D53 specifies.
+
+   Not fixed here because the fix is disproportionate. Making a map a real JS Map breaks DOT ACCESS
+   ('config.host', 'sloth-profile.stats.charisma'), which compiles to a direct property chain today;
+   the corpus has ~1600 dot-access sites against 70 map literals, and the backend frequently cannot
+   tell a map receiver from a class instance statically. The alternative -- a parallel insertion-order
+   key list -- means instrumenting every map write. Both cost far more than the case is worth while
+   nothing iterates an integer-keyed map. See 80-adversarial/map_insertion_order.lisp. */
+function __ll_map_keys(m) { return Object.keys(m).filter(function (k) { return k !== "__ll_name"; }); }
 function __ll_mix(a, b) {
   if (typeof a === "bigint" && typeof b === "number") return [Number(a), b];
   if (typeof a === "number" && typeof b === "bigint") return [a, Number(b)];
@@ -504,6 +523,13 @@ function __ll_is_type(val, type) {
     // The renderer (FLOOR.md 3.5), so l-lang above the floor renders the spec'd way rather than
     // falling back to `+` concat's ToString shapes.
     "display": `const display = (v) => __ll_display(v);`,
+    // The map floor (D53). A map is a plain JS Object -- see the note on __ll_map_keys for why the
+    // representation was NOT changed to a Map, and what that costs.
+    "map-get": `const map2dget = (m, k) => { const s = __ll_map_key(k); return Object.prototype.hasOwnProperty.call(m, s) ? m[s] : null; };`,
+    "map-set": `const map2dset = (m, k, v) => { m[__ll_map_key(k)] = v; return null; };`,
+    "map-has": `const map2dhas = (m, k) => Object.prototype.hasOwnProperty.call(m, __ll_map_key(k));`,
+    "map-delete": `const map2ddelete = (m, k) => { const s = __ll_map_key(k); const had = Object.prototype.hasOwnProperty.call(m, s); delete m[s]; return had; };`,
+    "map-keys": `const map2dkeys = (m) => __ll_map_keys(m);`,
     "write-string": `const write2dstring = (s) => { __ll_write_string(String(s)); };`,
     "write-string-err": `const write2dstring2derr = (s) => { __ll_write_string_err(String(s)); };`,
 

@@ -226,6 +226,11 @@ export const C_PASSING: readonly string[] = [
   // search found something that was not there. Reachable only because D51 gave Int a full 64-bit
   // range; Fe's guards pinned how an Int PRINTS and left the comparison path behind.
   "80-adversarial/equals_int64_exact.lisp",
+  // Fg -- the map floor (D53): map-get/set/has/delete/keys, insertion-ordered with String keys.
+  // C's ll_map is an assoc list appended at `len`, so insertion order is structural and C is the
+  // reference here; map_insertion_order is listed in js-status.ts as a known JS gap.
+  "80-adversarial/map_floor.lisp",
+  "80-adversarial/map_insertion_order.lisp",
   // Fd -- the reflection metadata GRAPH is emitted into the C module from the shared builder both
   // backends read (D54), so `type`/`type-by-name` answer with real properties, methods, constructor
   // params, generics and interfaces instead of a {name, extends} stub. Closes §5.2 cluster 3.

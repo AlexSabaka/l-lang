@@ -18,8 +18,14 @@
  * and Fe temporarily makes it incomplete. When this array is empty, Fe is done and the file can go.
  */
 export const JS_NOT_YET: readonly string[] = [
-  // Empty, and that is the goal state: every known JS gap is closed. Fe's three guards
-  // (int64_exact, int64_wrap, int_real_runtime_tag) were listed here and are now green on BOTH
-  // backends, so they were removed -- which is exactly what the RATCHET demanded the moment they
-  // started passing. When the next phased migration needs the same instrument, list its files here.
+  // Fg (D53) -- a map is INSERTION-ORDERED. C's ll_map is an assoc list appended at `len`, so it is;
+  // a plain JS Object is not, because integer-like keys enumerate first in ascending numeric order.
+  //
+  // Deliberately unfixed, on proportionality rather than difficulty. Making a map a real JS Map
+  // breaks DOT ACCESS -- `config.host` compiles to a direct property chain, and the backend often
+  // cannot tell a map receiver from a class instance statically; the corpus has ~1600 dot-access
+  // sites against 70 map literals. The alternative, a parallel insertion-order key list, means
+  // instrumenting every map write. Nothing in the corpus iterates an integer-keyed map, so both cost
+  // far more than the case is worth -- but it is D53's ruling, so it is pinned rather than hidden.
+  "80-adversarial/map_insertion_order.lisp",
 ];

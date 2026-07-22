@@ -4253,6 +4253,22 @@ change from the JS-UTF-16 count to the correct codepoint count — a one-time, g
 
 ### D53 — primitive `vec`/`map`, structural `equals`
 
+> **Amended 2026-07-22 (Fg), two corrections.** *(a) The names drop the bang.* D21 rejects Scheme
+> spellings **by name** — *"`nil?`, `set!` are rejected, including the ones the runtime shim itself
+> uses"* — and `set!`/`set?` were deleted from `SYMBOL_MAP` for exactly that reason, so `map-set!`
+> and `vec-push!` contradict a standing ruling. Read them as `map-set`, `vec-push`, `vec-set`.
+> *(b) There is no `map-new`.* `{}` is already the empty-map literal, and a zero-argument floor
+> function is unusable anyway: D1 makes `(map-new)` a **read** of the binding, not a call, so it
+> returned the function object and every "new" map aliased the same one.
+>
+> *And one divergence, pinned rather than fixed:* insertion order holds on C, whose `ll_map` is an
+> association list appended at `len`, and **not** on JS, where a plain Object enumerates integer-like
+> keys first in ascending numeric order. Making a map a real JS `Map` would break dot access
+> (`config.host` compiles to a direct property chain, and the backend often cannot distinguish a map
+> receiver from a class instance statically — ~1600 dot-access sites against 70 map literals); the
+> alternative instruments every map write. Both cost more than a case nothing in the corpus exercises,
+> so it is listed in `js-status.ts` and guarded by `80-adversarial/map_insertion_order.lisp`.
+
 Vectors are a floor representation (`vec-new/push!/get/set!/length`); maps are a floor representation,
 **insertion-ordered with String keys** (`map-new/get/set!/has/delete/keys`) — insertion order is
 spec'd because the corpus already bakes it into goldens. `equals` is a structural, deep floor

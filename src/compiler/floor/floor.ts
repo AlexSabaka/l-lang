@@ -43,6 +43,7 @@ const Void: InferredType = { kind: "primitive", name: "Void" };
 const Str: InferredType = { kind: "primitive", name: "String" };
 const Any: InferredType = { kind: "unknown", name: "Any" };
 const arr = (t: InferredType): InferredType => ({ kind: "array", name: "Array", inner: t });
+const Map_: InferredType = { kind: "map", name: "Map" };
 
 const fn = (runtimeFn: string, params: InferredType[], ret: InferredType, variadic = false): FloorEntry =>
   ({ runtimeFn, params, ret, variadic });
@@ -106,6 +107,25 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   ["display", fn("ll_display_str", [Any], Str)],
   ["write-string", fn("ll_write_string", [Str], Void)],
   ["write-string-err", fn("ll_write_string_err", [Str], Void)],
+
+  // -- the MAP floor (D53): insertion-ordered, String keys.
+  //
+  // Named without the bang. D53 writes these as `map-set!`/`vec-push!`, but D21 rejects Scheme
+  // spellings BY NAME -- "`nil?`, `set!` are rejected, including the ones the runtime shim itself
+  // uses" -- and `set!`/`set?` were deleted from SYMBOL_MAP for exactly that reason. D21 is the
+  // naming ruling; D53's spellings were illustrative. Amended there.
+  //
+  // The KEY parameter is `Any`, not String: D53's "String keys" describes the key SPACE, and both
+  // runtimes stringify on the way in, which is what makes `(m[1] := v)` and `(map-get m 1)` agree.
+  // No `map-new`: `{}` is already the empty-map literal, and a ZERO-ARGUMENT floor function is
+  // unusable anyway -- D1 makes `(map-new)` a READ of the binding rather than a call, so it returned
+  // the function object and every "new map" aliased the same one. `(call map-new)` would work and is
+  // absurd. The literal is both idiomatic and unambiguous.
+  ["map-get", fn("ll_map_get_v", [Map_, Any], Any)],
+  ["map-set", fn("ll_map_set_v", [Map_, Any, Any], Void)],
+  ["map-has", fn("ll_map_has", [Map_, Any], Bool)],
+  ["map-delete", fn("ll_map_delete", [Map_, Any], Bool)],
+  ["map-keys", fn("ll_map_keys", [Map_], arr(Str))],
 
   // -- container/sequence primitives the runtime provides (the SYMBOL_MAP surface).
   ["get", fn("ll_get", [Any, Any], Any)],

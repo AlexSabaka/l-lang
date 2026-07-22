@@ -1,0 +1,10 @@
+keys:     ["b" "a" "c"]
+get b:    2
+missing:  nil
+has a:    true
+has zz:   false
+deleted:  true
+again:    false
+after:    ["a" "c"]
+int key:  seven
+as str:   seven

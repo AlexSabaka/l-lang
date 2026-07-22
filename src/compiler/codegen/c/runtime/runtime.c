@@ -913,6 +913,50 @@ static ll_value ll_index_map(ll_map *m, ll_str *key) {
   return ll_nil();
 }
 
+/* -- the map floor (D53) -----------------------------------------------------------------------
+   Insertion-ordered with String keys. `ll_map` is an association list appended at `len`, so the
+   order is structural rather than maintained -- which is why C needs no bookkeeping here and JS
+   does (a plain Object reorders integer-like keys). Keys arrive BOXED and are stringified by
+   `ll_to_str`, matching `ll_map_slot`: D53's "String keys" describes the key SPACE, not the
+   argument type, and `(m[1] := v)` has always written the key "1". */
+static ll_map *ll_map_new0(void) { return ll_map_new(4); }
+
+static ll_value ll_map_get_v(ll_map *m, ll_value key) {
+  return ll_get_map(m, ll_to_str(key));
+}
+
+static ll_value ll_map_set_v(ll_map *m, ll_value key, ll_value val) {
+  *ll_map_slot(m, key) = val;
+  return ll_nil();
+}
+
+static bool ll_map_has(ll_map *m, ll_value key) {
+  ll_str *k = ll_to_str(key);
+  for (size_t i = 0; i < m->len; i++) if (ll_str_eq(m->keys[i], k)) return true;
+  return false;
+}
+
+/* Removing shifts the tail down, which is what keeps insertion order a property of the array rather
+   than something separately tracked. O(n), like every other operation on an assoc list. */
+static bool ll_map_delete(ll_map *m, ll_value key) {
+  ll_str *k = ll_to_str(key);
+  for (size_t i = 0; i < m->len; i++) {
+    if (!ll_str_eq(m->keys[i], k)) continue;
+    for (size_t j = i + 1; j < m->len; j++) { m->keys[j - 1] = m->keys[j]; m->vals[j - 1] = m->vals[j]; }
+    m->len--;
+    return true;
+  }
+  return false;
+}
+
+static ll_vec *ll_map_keys(ll_map *m) {
+  ll_vec *out = ll_vec_new(m->len ? m->len : 4);
+  for (size_t i = 0; i < m->len; i++) out->items[i] = ll_box_str(m->keys[i]);
+  out->len = m->len;
+  return out;
+}
+
+
 static ll_str *ll_index_str(ll_str *s, int64_t i) {
   if (i < 0 || (size_t)i >= s->len) ll_trap("RangeError", "string index out of bounds");
   return ll_str_from(s->data + i, 1);
