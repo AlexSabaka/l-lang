@@ -30,6 +30,7 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { CHILD_ENV } from "./childEnv";
 import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
+import * as genRuntime from "../compiler/codegen/c/runtime/gen-runtime-text";
 
 const VERBOSE = process.argv.includes("--verbose");
 const RUN_TIMEOUT_MS = 10_000;
@@ -5358,8 +5359,29 @@ function main() {
     }
   }
 
+  // The C runtime text that SHIPS must still be the `runtime.c` in the tree.
+  //
+  // `runtime.c` used to reach the compiled output via `fs.readFileSync(__dirname + ...)`, and `tsc`
+  // does not copy `.c` files -- so `npm run build` left whatever `dist/` already held. A STALE
+  // runtime, not a missing one: a published compiler would have silently built every C program
+  // against a pre-Phase-F runtime while this suite, running from source, stayed green over all of
+  // it. The text is generated into a module now, and this is the check that keeps the two in step.
+  // It is the reason generating beat a `cp` step in the build script -- nothing here could have
+  // checked a `dist/` that may not exist.
+  {
+    const cSource = fs.readFileSync(genRuntime.C_SOURCE, "utf8");
+    const onDisk = fs.readFileSync(genRuntime.GENERATED, "utf8");
+    if (onDisk === genRuntime.render(cSource)) {
+      console.log(`  PASS  the generated C runtime text matches runtime.c`);
+    } else {
+      failed++;
+      console.log(`  FAIL  the generated C runtime text matches runtime.c`);
+      console.log(`          runtime.c changed without regenerating -- run: npm run gen:c-runtime`);
+    }
+  }
+
   console.log(`\n=== summary ===`);
-  console.log(`  cases : ${CASES.length}`);
+  console.log(`  cases : ${CASES.length + 1}`);
   console.log(`  failed: ${failed}   (target: 0)`);
 
   process.exit(failed === 0 ? 0 : 1);
