@@ -278,6 +278,11 @@ export const C_PASSING: readonly string[] = [
   // ordinary nil-propagating code); `(get v "1")` answered 20 on JS by host key stringification.
   "80-adversarial/container_accessors.lisp",
   "80-adversarial/floor_simple_name_types.lisp",
+  // D50's boundary: a native member is the HOST's operation, not a floor op, so the host decides what
+  // it MEANS -- `.slice` is shallow and its slots alias, where an l-lang collection store copies (D11).
+  // C agreeing is the non-obvious half: `ll_dyn_method`'s vec arm is our code imitating a surface that
+  // does not exist below it, and could as easily have copied.
+  "80-adversarial/native_member_boundary.lisp",
   // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
   // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.
   "80-adversarial/display_source_names/main.lisp",

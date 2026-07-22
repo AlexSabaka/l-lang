@@ -4176,6 +4176,36 @@ floor and is therefore never a backend primitive — a divergence made impossibl
 conformance-tested. The floor is a cost (each entry must be tested for parity), so it is minimized:
 `intrinsics.ts` collapses from ~90 entries to ~28.
 
+> **Amended 2026-07-22 — the other side of the floor: a native member is an ESCAPE HATCH.**
+> The floor says what both backends implement to one specification. It did not say what a member call
+> on a native receiver is — `(xs.slice 0 1)`, `(s.length)`, `(nums.includes 2)` — and three separate
+> rulings have now each answered that question locally, in three different places, without anyone
+> naming the rule they share. Named here, because otherwise the next person "fixes" one of them:
+>
+> **The host decides what the OPERATION MEANS. l-lang decides how the VALUES CROSSING IT are
+> REPRESENTED.**
+>
+> Both halves are load-bearing, and the line between them is exactly where the three cases fall:
+>
+> - **Meaning — pinned, not fixed.** `.length` counts UTF-16 code units on JS where D52 says
+>   codepoints (D52/Ff-3, `native_string_astral.lisp`). `.slice` is shallow, so a fresh array's slots
+>   alias the same structs where D11 says a collection slot holds a copy
+>   (`native_member_boundary.lisp`). Neither is a bug: the program reached for the host's operation and
+>   got the host's operation. l-lang's own spellings — `std/string`'s `strlen`/`char-at`/`substr`,
+>   `std/seq`'s `length`, a collection literal — obey the rulings on both backends, and that is what
+>   the rulings govern.
+> - **Representation — a bug, and fixed.** `(nums.includes 2)` answered `false` on an `Int[]` because
+>   the literal crossed the boundary as a host Number while the elements were BigInts (D51, amendment
+>   2026-07-22). The host may define `includes` as SameValueZero; it does not get to decide what an
+>   `Int` *is* on the way in.
+>
+> **The C backend is the reason this needs writing down.** C has no host. `ll_dyn_method`'s String and
+> vec arms are *our* code imitating a surface that does not exist below them, so on C every one of
+> these is a free choice — and each time the answer has been "imitate JS's meaning, keep l-lang's
+> representation." Ff-3 is the one place that deviates (C's native string members count characters,
+> because bytes matched neither JS nor D52 and were strictly the worst of the three answers), and it
+> is deviation by exhaustion rather than by principle, which is why it is a listed gap.
+
 ### D51 — `Int` is wrapping `int64`, `Real` is `f64`
 
 `Int` is a wrapping 64-bit two's-complement integer on **both** backends; `Real` is IEEE-754 double.

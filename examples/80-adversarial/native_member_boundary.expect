@@ -1,0 +1,4 @@
+literal:  1 42
+pop:      1 99
+slice:    77 77
+concat:   55 55
