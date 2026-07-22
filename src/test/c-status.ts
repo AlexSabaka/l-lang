@@ -216,6 +216,11 @@ export const C_PASSING: readonly string[] = [
   "80-adversarial/int64_exact.lisp",
   "80-adversarial/int64_wrap.lisp",
   "80-adversarial/int_real_runtime_tag.lisp",
+  // Fe -- number->string. `ll_fmt_double` had the shortest-round-trip DIGITS right and everything
+  // around them wrong: `%g` chooses fixed-vs-exponential from a precision-derived threshold and pads
+  // the exponent, so `0.000001` printed `1e-06` and `1e-7` printed `1e-07`. Rewritten to ECMA-262's
+  // Number::toString, which D51 names as the spec.
+  "80-adversarial/real_format_thresholds.lisp",
   // Fd -- the reflection metadata GRAPH is emitted into the C module from the shared builder both
   // backends read (D54), so `type`/`type-by-name` answer with real properties, methods, constructor
   // params, generics and interfaces instead of a {name, extends} stub. Closes §5.2 cluster 3.

@@ -1699,8 +1699,15 @@ export class ResolveHirToCir {
 
   private resolveAstExpr(node: ast.ASTNode): CExpr {
     switch (node._type) {
-      case "integer-number":
-        return { src: node, ctype: C_INT, kind: "c-lit", lit: "int", value: String((node as ast.IntegerNumberNode).value) };
+      case "integer-number": {
+        // The RAW lexed text, for the same reason as resolveHLiteral: `value` is a JS f64 and has
+        // already rounded anything past 2^53. This is the raw-AST twin of that site -- one was fixed
+        // and the other was not, which is exactly how a precision bug survives a fix.
+        const n = node as ast.IntegerNumberNode;
+        const raw = n.match;
+        const exact = raw !== undefined && /^[+-]?\d+$/.test(raw.trim()) ? raw.trim() : String(n.value);
+        return { src: node, ctype: C_INT, kind: "c-lit", lit: "int", value: exact };
+      }
       case "float-number":
         return { src: node, ctype: C_REAL, kind: "c-lit", lit: "real", value: String((node as ast.FloatNumberNode).value) };
       case "hex-number":

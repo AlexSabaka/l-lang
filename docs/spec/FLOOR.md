@@ -342,9 +342,32 @@ prove parity, then collapses the corresponding `std/*` module to l-lang on top o
   floor primitives, and neither exists yet — so this is sequencing, not an oversight. Until then the
   two implementations are held together by the §5.2 guards, which is the weaker instrument D50 warns
   about and the reason to finish the job after Fg.
-- **Fe — the numeric floor (D51).** JS `Int` → `BigInt` + `BigInt.asIntN(64)`, C `-fwrapv`, and the
-  `number->string` exponent thresholds. Guarded by an overflow/precision differential and a
-  float-formatting differential (both currently latent).
+- ✅ **Fe — the numeric floor (D51). DONE.** `Int` is a wrapping 64-bit integer on both backends: a
+  `BigInt` normalised with `asIntN(64)` on JS, `int64_t` under `-fwrapv` on C. `number->string` now
+  follows ECMA-262's `Number::toString` on both. The differentials FLOOR.md called "latent" are
+  written and green: `int64_exact`, `int64_wrap`, `int_real_runtime_tag`, `real_format_thresholds`.
+
+  *Guards first paid for itself.* The corpus's largest integer is 3628800, so a successful migration
+  would have looked exactly like no migration. Writing the discriminating guards BEFORE the work
+  found four bugs that predate D51 entirely — three of them on the backend everyone assumed was
+  correct:
+  - int literals were round-tripped through an f64 (`String(value)` on a JS `number`), so C emitted
+    `INT64_C(4611686018427388000)` for a source literal of `4611686018427387904`. In **two** places,
+    and fixing one is how the second survived;
+  - no `-fwrapv`, so `INT64_MAX + 1` was undefined behaviour rather than the wrap D51 requires;
+  - `ll_is_type` collapsed Int and Real *deliberately*, to mirror a JS limitation — the precise
+    backend degraded to match the imprecise one;
+  - `ll_fmt_double` had the shortest-round-trip digits right and everything around them wrong:
+    `0.000001` printed `1e-06` and `1e-7` printed `1e-07`.
+
+  *What D51 buys beyond exactness:* the runtime can finally tell an Int from a Real, which
+  `RuntimeProvider`'s own comment argued at length was unbuyable. The collapse now survives only for
+  an **integral host Number** — a gradually-typed value that could be either — instead of for every
+  number. `(5.5 :of Int)` is false at last, and Int-keyed operator dispatch works.
+
+  *Cost, measured:* BigInt with `asIntN` is **6.5×** slower than Number in a tight loop, but the
+  corpus's two hottest programs run in 173 ms (recursive fib) and 30 ms (tokenizer) against a 5 s
+  timeout. D51 accepted the cost; it is not a practical problem at this scale.
 - **Ff — the string floor (D52).** C UTF-8 decode, JS scalar-value iteration, the vendored case
   table; `std/string` collapses to l-lang. Guarded by a non-ASCII length/case/index differential;
   re-capture the affected goldens once.
@@ -378,7 +401,14 @@ by running the new formatter and accepting what it prints.
 **The two hard, up-front items** — **UTF-8 decode** and the vendored **case table** — are each real
 work and each, until done, is exactly one named not-yet guard, the same pattern the §5.2 three already
 establish. Nothing is silently deferred. (Ryū was a third until D51's amendment (c) showed
-`ll_fmt_double` already generates shortest-round-trip digits; what remains is threshold matching.)
+`ll_fmt_double` already generates shortest-round-trip digits; the threshold matching that remained is
+done, in Fe.)
+
+**A residual Fe leaves behind, named rather than hidden.** `IntegerNumberNode.value` is still a JS
+`number`, i.e. the AST itself cannot represent an int64 literal — both backends now read `match`, the
+raw lexed text, but anything else that reaches for `.value` re-introduces the rounding. The legacy JS
+`visitIntegerNumber` still emits a plain Number, so an Int literal inside an opaque subtree is not a
+BigInt; the corpus does not exercise one, which is precisely why it needs writing down.
 
 **A correction to this document's own first draft.** `println` is listed above and in §2 as part of
 the `std/io` surface; it **does not exist** anywhere in `lib/` — it is aspirational, and Fb either

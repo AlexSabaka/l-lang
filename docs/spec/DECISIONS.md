@@ -4218,6 +4218,23 @@ It is a *builtin* conversion and therefore not in tension with D46/B-3 `(cast<T>
 explicit-cast syntax for **user-defined** `defcast`s; when Cv lands, `(cast<Int> r)` routes through
 this primitive rather than competing with it.
 
+**(d) Implemented 2026-07-22 (Fe), with two clarifications the migration forced.**
+
+*The static decision must be CARRIED, not rediscovered.* D49d's `Int / Int` was emitted on JS as
+`Math.trunc(divide(a, b))`. Under BigInt that throws, and the obvious replacement — drop the wrapper,
+since BigInt `/` already truncates toward zero — is wrong: a gradually-typed operand arrives as a host
+Number, the shim promotes to Real per the mixed rule, and `(/ lines 10)` yields `0.2`. The emission is
+now a dedicated `__ll_intdiv`, so the decision the checker made survives to the operation. "The static
+type decides and the runtime never gets a vote" means the vote has to be recorded somewhere the
+runtime cannot overturn.
+
+*The Int/Real runtime collapse NARROWS; it does not invert.* A BigInt is definitively an `Int`, so
+`(5.5 :of Int)` is false at last and an `Int`-keyed operator overload finally dispatches — both of
+which `RuntimeProvider`'s own comment argued were unbuyable. But a literal only becomes a BigInt where
+the checker typed it `Int`, so an untyped integer still arrives as a host Number and must still answer
+`Int`. The collapse therefore survives exactly where it always did — an *integral* Number, which could
+genuinely be either — and nowhere else.
+
 **(c) `number->string` does not need a vendored Ryū.** `runtime.c`'s `ll_fmt_double` already generates
 shortest-round-trip digits by trying `%.15g`/`%.16g`/`%.17g` and keeping the first that round-trips
 through `strtod`. The residual divergence is not digit *generation* but **exponent-notation

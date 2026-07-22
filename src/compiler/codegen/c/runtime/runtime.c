@@ -442,13 +442,65 @@ static ll_map *ll_unbox_map(ll_value v) {
 
 /* -- number formatting (JS Number-to-string: shortest round-trip) -------------------------------- */
 
+/* number->string (D51): the JS `Number.prototype.toString` result IS the spec, so this reproduces
+   ECMA-262's Number::toString rather than deferring to printf.
+   
+   The DIGITS were already right -- try increasing precision until the value round-trips through
+   strtod, which yields the shortest exact representation. What `%g` got wrong is everything around
+   them: it picks fixed-vs-exponential from a precision-derived threshold and pads the exponent to two
+   digits, so `0.000001` came out `1e-06` (wrong notation) and `1e-7` came out `1e-07` (wrong
+   spelling). ECMA's rule is a plain threshold on the decimal exponent n: fixed while -6 < n <= 21,
+   exponential outside, exponent written with a sign and no leading zeros. */
 static void ll_fmt_double(char *buf, size_t cap, double d) {
   if (isnan(d)) { snprintf(buf, cap, "NaN"); return; }
   if (isinf(d)) { snprintf(buf, cap, d < 0 ? "-Infinity" : "Infinity"); return; }
-  for (int prec = 15; prec <= 17; prec++) {
-    snprintf(buf, cap, "%.*g", prec, d);
-    if (strtod(buf, NULL) == d) return;
+  if (d == 0.0) { snprintf(buf, cap, signbit(d) ? "-0" : "0"); return; }
+
+  /* Shortest round-tripping significant digits, as "d.dddde+XX". */
+  char sci[64];
+  for (int prec = 0; prec <= 17; prec++) {
+    snprintf(sci, sizeof sci, "%.*e", prec, d);
+    if (strtod(sci, NULL) == d) break;
   }
+
+  /* Split into sign, digit string (point removed) and the decimal exponent. */
+  const char *p = sci;
+  int neg = (*p == '-');
+  if (neg) p++;
+  char digits[32];
+  size_t k = 0;
+  for (; *p && *p != 'e' && *p != 'E'; p++) {
+    if (*p != '.' && k + 1 < sizeof digits) digits[k++] = *p;
+  }
+  while (k > 1 && digits[k - 1] == '0') k--;   /* ECMA: no trailing zeros in the digit string */
+  digits[k] = '\0';
+  int e10 = (*p == 'e' || *p == 'E') ? atoi(p + 1) : 0;
+  int n = e10 + 1;                              /* value == 0.digits * 10^n */
+
+  char out[64];
+  size_t o = 0;
+  if (neg) out[o++] = '-';
+  if (n > 21 || n <= -6) {
+    /* Exponential: one digit, optional fraction, then e(+|-)exp with no padding. */
+    out[o++] = digits[0];
+    if (k > 1) { out[o++] = '.'; for (size_t i = 1; i < k; i++) out[o++] = digits[i]; }
+    o += (size_t)snprintf(out + o, sizeof out - o, "e%+d", n - 1);
+  } else if (n >= (int)k) {
+    /* Integral: all digits, then n-k zeros. Compared as INT: `n` is negative for a small value, and
+       `(size_t)n >= k` made it a huge unsigned, so 0.000001 took this branch and wrote ~2^64 zeros. */
+    for (size_t i = 0; i < k; i++) out[o++] = digits[i];
+    for (int i = 0; i < n - (int)k; i++) out[o++] = '0';
+  } else if (n > 0) {
+    /* A point inside the digits. */
+    for (size_t i = 0; i < k; i++) { if (i == (size_t)n) out[o++] = '.'; out[o++] = digits[i]; }
+  } else {
+    /* 0. then -n zeros then the digits. */
+    out[o++] = '0'; out[o++] = '.';
+    for (int i = 0; i < -n; i++) out[o++] = '0';
+    for (size_t i = 0; i < k; i++) out[o++] = digits[i];
+  }
+  out[o] = '\0';
+  snprintf(buf, cap, "%s", out);
 }
 
 /* -- string builder ------------------------------------------------------------------------------ */
