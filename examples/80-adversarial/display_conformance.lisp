@@ -61,6 +61,23 @@
     ;; 67: 78 columns without the tag, 84 with it. Must break -- and did not, before this.
     (console.log (Tagged "0000000000000000000000000000000000000000000000000000000000000000000"))
 
+    ;; -- 2b. the width UNIT -------------------------------------------------------------------------
+    ;;
+    ;; The budget is a count of CHARACTERS. It was a count of BYTES on C (the flat form is built in an
+    ;; ll_sb and `one.len` was its byte length) and of UTF-16 CODE UNITS on JS (`oneLine.length`), so
+    ;; for the astral row below the three answers were 24 (the rule), 44 (JS) and 84 (C) -- neither
+    ;; implementation counted what the rule counts, and the spec never stated the unit in a clause.
+    ;;
+    ;; The ASCII pair pins the boundary itself, where all three units agree: 80 columns stays flat,
+    ;; 81 breaks. The two non-ASCII rows are 44 and 24 columns -- comfortably flat -- but 84 BYTES
+    ;; each, so C broke both of them with room to spare.
+    (console.log ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"])
+    (console.log ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"])
+    (console.log ["éééééééééééééééééééééééééééééééééééééééé"])
+    (console.log ["😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"])
+    ;; A realistic one rather than a synthetic ladder: 54 columns flat, 87 bytes.
+    (console.log {:msg "Привіт, світ! Це рядок українською мовою." :n 1})
+
     ;; -- 3. cycles ---------------------------------------------------------------------------------
     (let cyc [])
     (cyc.push 1)

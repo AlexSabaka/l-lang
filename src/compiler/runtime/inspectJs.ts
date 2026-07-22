@@ -58,6 +58,10 @@ function __ll_class_tag(v) {
   var ctor = v.constructor;
   return (ctor && (ctor.__ll_name || ctor.name)) || "";
 }
+/* The layout budget is a count of CHARACTERS (FLOOR.md 3.5 / D52), and .length is a count of UTF-16
+   CODE UNITS. They differ for every astral character, so a vector of 20 emoji measured 44 here, 84
+   on C (bytes) and 24 by the spec -- three answers, none of them the rule. Spread, never .length. */
+function __ll_cplen(s) { return [...s].length; }
 /* flat forces the one-line form: the layout rule renders a container flat FIRST to measure it, then
    decides. prefixLen is the ":key " that shares the line, which counts toward the budget. */
 function __ll_inspect(v, indent, prefixLen, seen, flat) {
@@ -93,7 +97,7 @@ function __ll_inspect(v, indent, prefixLen, seen, flat) {
       flatParts.push(heads[a] + __ll_inspect(vals[a], 0, 0, seen, true));
     }
     var oneLine = tag + open + flatParts.join(" ") + close;
-    if (flat || indent + prefixLen + oneLine.length <= __LL_WIDTH) return oneLine;
+    if (flat || indent + prefixLen + __ll_cplen(oneLine) <= __LL_WIDTH) return oneLine;
     /* Broken: the newline IS the separator -- there is no comma to place. */
     var pad = "";
     for (var p = 0; p < indent + 2; p++) pad += " ";
@@ -101,7 +105,7 @@ function __ll_inspect(v, indent, prefixLen, seen, flat) {
     for (var q = 0; q < indent; q++) outerPad += " ";
     var lines = [];
     for (var b = 0; b < vals.length; b++) {
-      lines.push(pad + heads[b] + __ll_inspect(vals[b], indent + 2, heads[b].length, seen, false));
+      lines.push(pad + heads[b] + __ll_inspect(vals[b], indent + 2, __ll_cplen(heads[b]), seen, false));
     }
     return tag + open + "\n" + lines.join("\n") + "\n" + outerPad + close;
   } finally {

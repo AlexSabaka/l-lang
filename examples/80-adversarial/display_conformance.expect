@@ -3,6 +3,13 @@ Tagged{:label "000000000000000000000000000000000000000000000000000000000000000"}
 Tagged{
   :label "0000000000000000000000000000000000000000000000000000000000000000000"
 }
+["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+[
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+]
+["éééééééééééééééééééééééééééééééééééééééé"]
+["😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"]
+{:msg "Привіт, світ! Це рядок українською мовою." :n 1}
 cycle: [1 #<circular>]
 deep-cycle: 182417
 nested-display: [[1] [2]]

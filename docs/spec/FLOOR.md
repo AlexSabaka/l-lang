@@ -430,6 +430,15 @@ number-formatting rules D51 has not spec'd. `print` accepts `{N}` and the `{{` /
 > `#\c` is in any case syntax the reader cannot take back, which §3.5 already marks provisional.
 > Whoever adds a Char literal must decide this; there is nothing to conform to today.
 >
+> **Amendment, 2026-07-22 (F.6) — the width budget is counted in CODEPOINTS.** §3.5 never stated
+> the unit in a clause; it was only inferable from worked examples ("103 chars", "84 columns"), and
+> both implementations counted something else — **bytes** on C (`one.len` on the flat buffer) and
+> **UTF-16 code units** on JS (`oneLine.length`). For a vector of twenty emoji the three answers were
+> 24 (the rule), 44 (JS) and 84 (C). A Cyrillic map 54 columns wide broke across four lines on C.
+> Both now count characters, at every site that measures: the flat form, the `:key ` prefix that
+> shares a line, and a quoted key. The ASCII 80/81 boundary is unchanged, which is what the guard's
+> ladder pins alongside the non-ASCII rows.
+>
 > Guarded by `80-adversarial/display_conformance.lisp` and `display_imported_class_tag/`.
 > **Full retirement of the duplicate implementation stays deferred**, still blocked on a portable
 > `kind-of` and on `console.log` leaving the floor.

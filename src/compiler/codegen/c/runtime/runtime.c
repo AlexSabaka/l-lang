@@ -588,6 +588,7 @@ static ll_str *ll_str_concat_n(int n, ll_value *vals) {
 /* -- inspect (node util.formatWithOptions parity -- what console.log and the goldens use) -------- */
 
 static int64_t ll_utf8_next(const ll_str *s, size_t *i); /* defined with the codepoint floor below */
+static size_t ll_cp_count(const char *data, size_t len); /* likewise -- the display layout needs it */
 
 /* "Would the READER lex this as an identifier?" -- which is the only question §3.5 is actually
  * asking when it decides between `:key` and `"key"`, since D55 rules the display format to be
@@ -707,7 +708,8 @@ static void ll_inspect_container(ll_sb *sb, ll_value v, int indent, int prefix, 
   }
   ll_sb_put(&one, &close, 1);
 
-  if (flat || (size_t)(indent + prefix) + one.len <= LL_WIDTH) {
+  /* CHARACTERS, not bytes -- the budget is a column count (FLOOR.md 3.5). */
+  if (flat || (size_t)(indent + prefix) + ll_cp_count(one.data, one.len) <= LL_WIDTH) {
     ll_sb_put(sb, one.data, one.len);
     free(one.data);
     return;
@@ -724,16 +726,17 @@ static void ll_inspect_container(ll_sb *sb, ll_value v, int indent, int prefix, 
     if (map) {
       if (ll_ident_like(map->keys[i])) {
         ll_sb_puts(sb, ":"); ll_sb_put(sb, map->keys[i]->data, map->keys[i]->len);
-        head = 1 + (int)map->keys[i]->len;
+        head = 1 + (int)ll_cp_count(map->keys[i]->data, map->keys[i]->len);
       } else {
         ll_sb head_sb; ll_sb_init(&head_sb); ll_sb_put_quoted(&head_sb, map->keys[i]);
-        ll_sb_put(sb, head_sb.data, head_sb.len); head = (int)head_sb.len; free(head_sb.data);
+        ll_sb_put(sb, head_sb.data, head_sb.len);
+        head = (int)ll_cp_count(head_sb.data, head_sb.len); free(head_sb.data);
       }
       ll_sb_puts(sb, " "); head += 1;
       ll_inspect_at(sb, map->vals[i], indent + 2, head, seen, 0);
     } else if (obj) {
       ll_sb_puts(sb, ":"); ll_sb_puts(sb, obj->cls->field_names[i]); ll_sb_puts(sb, " ");
-      head = 2 + (int)strlen(obj->cls->field_names[i]);
+      head = 2 + (int)ll_cp_count(obj->cls->field_names[i], strlen(obj->cls->field_names[i]));
       ll_inspect_at(sb, obj->fields[i], indent + 2, head, seen, 0);
     } else {
       ll_inspect_at(sb, vec->items[i], indent + 2, 0, seen, 0);
@@ -1163,6 +1166,16 @@ static int64_t ll_cp_length(ll_str *s) {
 
 /* `.length` on a String, and the whole reason it moved: characters, not bytes. */
 static int64_t ll_str_len(ll_str *s) { return ll_cp_length(s); }
+
+/* Codepoint count of a raw UTF-8 buffer. A continuation byte is 10xxxxxx; everything else starts a
+   character, so this needs no decoding. The display layout (FLOOR.md 3.5) measures its 80-column
+   budget in CHARACTERS, and measured it in BYTES until this existed -- a Cyrillic map broke across
+   four lines at 54 columns because its 41-character value counted as 74. */
+static size_t ll_cp_count(const char *data, size_t len) {
+  size_t n = 0;
+  for (size_t i = 0; i < len; i++) if (((unsigned char)data[i] & 0xC0) != 0x80) n++;
+  return n;
+}
 
 /* Byte offset of codepoint index k. Clamps to s->len, so `k == cp_length` yields the end and any k
    past that yields the end too -- which is what makes the slice/pad clamping below total. */
