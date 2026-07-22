@@ -28,6 +28,7 @@ import { CType, C_BOOL, C_INT, C_REAL, C_STR, C_VALUE, C_VOID, mapType, ctypeEqu
 import { INTRINSIC_CALLS, NATIVE_METHODS, NATIVE_FIELDS } from "./intrinsics";
 import { freeVariables, freeVariablesOfBody } from "../../hir/freevars";
 import { isBuiltinModifier } from "../../helpers/modifiers";
+import { buildTypesMetadata } from "../../reflection/metadata";
 
 const BINARY_OPS = new Set(["+", "-", "*", "/", "%", "==", "!=", "≠", "<", ">", "<=", ">=", "&&", "||"]);
 const NUMERIC = (t: CType) => t.k === "int" || t.k === "real";
@@ -282,6 +283,9 @@ export class ResolveHirToCir {
       globals: this.globalDecls,
       adapters: [...this.adapters.values()],
       main,
+      // The SAME graph the JS backend emits -- one builder (D54), so the two cannot answer
+      // differently about a class's fields or a function's params.
+      metadata: buildTypesMetadata(this.context),
     };
   }
 

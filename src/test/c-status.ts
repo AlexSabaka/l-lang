@@ -206,6 +206,13 @@ export const C_PASSING: readonly string[] = [
   // `truncate` is the only Real -> Int conversion. Also pins JS `Math.round`'s NEGATIVE ZERO, which
   // C's floor(x+0.5) silently lost -- the guard caught it on its first run.
   "80-adversarial/numeric_floor_narrowing.lisp",
+  // Fd -- the reflection metadata GRAPH is emitted into the C module from the shared builder both
+  // backends read (D54), so `type`/`type-by-name` answer with real properties, methods, constructor
+  // params, generics and interfaces instead of a {name, extends} stub. Closes §5.2 cluster 3.
+  "07-types/01_type_reflection.lisp",
+  "08-generics/00_generics_basic.lisp",
+  "09-oop/01_interfaces.lisp",
+  "80-adversarial/reflection_metadata_depth.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the
@@ -215,8 +222,7 @@ export const C_PASSING: readonly string[] = [
   //   (cluster 1 -- print_positional_format -- PROMOTED above; the mechanism worked as designed.)
   //   80-adversarial/interp_container_format.lisp    -- cluster 2: container interpolation depth
   //                                                    (EmitCirToC routes interp through ToString, not ll_inspect_sb)
-  //   80-adversarial/reflection_metadata_depth.lisp  -- cluster 3: reflection metadata depth
-  //                                                    (ll_class carries only name+parent; no param/method/field graph emitted)
+  //   (cluster 3 -- reflection_metadata_depth -- PROMOTED above; Fd emits the graph.)
   // Cluster 4 (modifier side effects) is intentionally absent: C REFUSES body-carrying defmodifiers
   // fail-closed, which is already the correct loud signal -- there is no silent-wrong to guard.
 ];

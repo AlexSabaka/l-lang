@@ -25,7 +25,7 @@ export class InsertCoercions {
     if (this.inserted > 0) {
       this.ledger.record("A6", "coercions-inserted", undefined as any, `${this.inserted} box/unbox/cast nodes inserted by the coercion pass`);
     }
-    return { functions, lifted, classes: m.classes, globals: m.globals, adapters: m.adapters, main };
+    return { functions, lifted, classes: m.classes, globals: m.globals, adapters: m.adapters, main, metadata: m.metadata };
   }
 
   private runFunction(f: CFunction): CFunction {

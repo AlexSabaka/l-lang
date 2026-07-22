@@ -27,9 +27,9 @@ all of them a runtime primitive implemented twice and disagreeing:
 
 | cluster | JS | C | now a guard |
 |---|---|---|---|
-| `print` `{0}` positional | `x=5` | `x={0} 5` | `80-adversarial/print_positional_format.lisp` |
+| `print` `{0}` positional | `x=5` | ✅ *fixed by rest-param packing* | `80-adversarial/print_positional_format.lisp` |
 | container-in-string | `[ 1, 2, 3 ]` | `1,2,3` | `80-adversarial/interp_container_format.lisp` |
-| reflection depth | full `{kind,params,…}` | `{name,extends}` | `80-adversarial/reflection_metadata_depth.lisp` |
+| reflection depth | full `{kind,params,…}` | ✅ *fixed by Fd* | `80-adversarial/reflection_metadata_depth.lisp` |
 | modifier side effects | `[log]` prints | (C refuses, fail-closed) | — |
 
 And that is only what an **all-ASCII, small-integer** corpus exposes. Two divergences are latent,
@@ -323,8 +323,12 @@ prove parity, then collapses the corresponding `std/*` module to l-lang on top o
 - **Fc — the display formatter (D55).** l-lang `inspect` implementing **§3.5**, on `number->string`
   + reflection tag. **Greens §5.2 cluster 2.** Re-derives the ~87 wrapping-dependent golden lines
   from the §3.5 rule, and adds the `[Circular]` guard.
-- **Fd — reflection depth (D54).** C runtime emits the metadata graph now on the HIR class node.
-  **Greens §5.2 cluster 3.**
+- ✅ **Fd — reflection depth (D54). DONE.** The metadata graph is built ONCE
+  (`compiler/reflection/metadata.ts`, extracted from the JS transformer and verified byte-identical)
+  and emitted into the C module as `ll_value` maps at the top of `main`, so `type`/`type-by-name`
+  answer with real properties, methods, constructor params, generics and interfaces instead of
+  `{name, extends}`. **§5.2 cluster 3 closed** — and with it the last of the four parity clusters that
+  had a silent-wrong to guard.
 - **Fb — the i/o + format base.** `write-string` as the only sink; `print`/`prn` and the `{N}`
   substitution (§3.6) become l-lang on it. Cluster 1 is already green (rest-param packing let C lower
   io.lisp's real body), so what remains here is the sink itself.

@@ -1498,29 +1498,45 @@ static bool ll_is_finite(ll_value v) {
 /* -- reflection: `type` and `type-by-name` -- the metadata graph the JS backend emits as
  *    __ll_type_metadata. A class's metadata map carries "name" and "extends" (a NAME edge). -------- */
 
+/* The reflection metadata graph (D54), assigned at the top of main from the SHARED builder both
+   backends read. Before it existed, C could only answer from `ll_class`, which carries a name and a
+   parent -- hence a two-key stub for a class and nil for a function. */
+ll_map *__ll_meta = 0;
+
+static ll_value ll_meta_lookup(const char *name) {
+  if (!__ll_meta) return ll_nil();
+  for (size_t i = 0; i < __ll_meta->len; i++) {
+    if (strcmp(__ll_meta->keys[i]->data, name) == 0) return __ll_meta->vals[i];
+  }
+  return ll_nil();
+}
+
+/* The fallback shapes mirror the JS runtime's `|| { ... }` arms exactly -- same keys, same order. */
+static ll_value ll_meta_or(const char *name, const char *kind) {
+  ll_value m = ll_meta_lookup(name);
+  if (m.tag != LL_NIL) return m;
+  ll_str *keys[5]; ll_value vals[5];
+  keys[0] = ll_str_lit("name");       vals[0] = ll_box_str(ll_str_lit(name));
+  keys[1] = ll_str_lit("kind");       vals[1] = ll_box_str(ll_str_lit(kind));
+  keys[2] = ll_str_lit("properties"); vals[2] = ll_box_vec(ll_vec_of(0, (ll_value *)0));
+  keys[3] = ll_str_lit("methods");    vals[3] = ll_box_vec(ll_vec_of(0, (ll_value *)0));
+  keys[4] = ll_str_lit("generics");   vals[4] = ll_box_vec(ll_vec_of(0, (ll_value *)0));
+  return ll_box_map(ll_map_of(5, keys, vals));
+}
+
 static ll_value ll_class_meta(const ll_class *cls) {
-  ll_str *keys[2]; ll_value vals[2];
-  keys[0] = ll_str_lit("name");    vals[0] = ll_box_str(ll_str_lit(cls->name));
-  keys[1] = ll_str_lit("extends"); vals[1] = cls->parent ? ll_box_str(ll_str_lit(cls->parent)) : ll_nil();
-  return ll_box_map(ll_map_of(2, keys, vals));
+  return ll_meta_or(cls->name, "class");
 }
 
 static ll_value ll_type(ll_value v) {
-  if (v.tag == LL_OBJ) return ll_class_meta(v.as.o->cls);
-  /* A primitive: a metadata map with just its type name. */
+  if (v.tag == LL_OBJ) return ll_meta_or(v.as.o->cls->name, "object");
   const char *nm = v.tag == LL_INT ? "Int" : v.tag == LL_REAL ? "Real" : v.tag == LL_STR ? "String"
                  : v.tag == LL_BOOL ? "Boolean" : v.tag == LL_VEC ? "Array" : v.tag == LL_MAP ? "Map"
                  : v.tag == LL_CLOSURE ? "Function" : "Nil";
-  ll_str *keys[2]; ll_value vals[2];
-  keys[0] = ll_str_lit("name");    vals[0] = ll_box_str(ll_str_lit(nm));
-  keys[1] = ll_str_lit("extends"); vals[1] = ll_nil();
-  return ll_box_map(ll_map_of(2, keys, vals));
+  return ll_meta_or(nm, "unknown");
 }
 
 static ll_value ll_type_by_name(ll_value name) {
   ll_str *nm = name.tag == LL_STR ? name.as.s : ll_to_str(name);
-  for (size_t i = 0; i < __ll_class_count; i++) {
-    if (strcmp(__ll_class_registry[i]->name, nm->data) == 0) return ll_class_meta(__ll_class_registry[i]);
-  }
-  return ll_nil();
+  return ll_meta_or(nm->data, "unknown");
 }

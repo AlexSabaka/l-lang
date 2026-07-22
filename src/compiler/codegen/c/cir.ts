@@ -462,4 +462,7 @@ export interface CModule {
   adapters: { forCName: string; params: CType[]; ret: CType; arity: number }[];
   /** Top-level statements, in order -- the body of `int main(void)`. */
   main: CBlock;
+  /** The reflection metadata graph (D54), from the SHARED builder the JS backend uses. Materialised
+   *  as ll_value maps at the top of main so `type` / `type-by-name` can answer from real data. */
+  metadata: Record<string, any>;
 }

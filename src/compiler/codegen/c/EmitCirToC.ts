@@ -164,11 +164,47 @@ export class EmitCirToC {
     this.line("int main(void) {");
     this.volatiles = computeVolatileLocals(m.main); // top-level statements are main's locals
     this.indent++;
+    this.emitMetadata(m.metadata);
     this.withFreshTryStack(() => this.emitBlockStmts(m.main));
     this.line("return 0;");
     this.indent--;
     this.line("}");
     return this.out.join("\n") + "\n";
+  }
+
+  /**
+   * Materialise the reflection metadata graph (D54) as ll_value maps, first thing in main.
+   *
+   * The graph comes from the SHARED builder (compiler/reflection/metadata.ts) -- the same function
+   * the JS backend calls -- so this emits data, it never decides it. Before this, `ll_class` carried
+   * a name and a parent and nothing else, which is why `(type p)` answered a two-key stub and
+   * `(type-by-name "add")` answered nil: the graph was never in the C module at all.
+   */
+  private emitMetadata(meta: Record<string, any>): void {
+    const names = Object.keys(meta ?? {});
+    if (names.length === 0) return;
+    const keys = names.map((n) => `ll_str_lit("${cEscape(n)}")`).join(", ");
+    const vals = names.map((n) => this.metaValue(meta[n])).join(", ");
+    this.line(`__ll_meta = ll_map_of(${names.length}, (ll_str*[]){${keys}}, (ll_value[]){${vals}});`);
+  }
+
+  /** One JSON-ish metadata value as a boxed C expression. Mirrors the JS table entry for entry. */
+  private metaValue(v: any): string {
+    if (v === null || v === undefined) return "ll_nil()";
+    if (typeof v === "boolean") return `ll_box_bool(${v ? "true" : "false"})`;
+    if (typeof v === "number") {
+      return Number.isInteger(v) ? `ll_box_int(INT64_C(${v}))` : `ll_box_real(${v})`;
+    }
+    if (typeof v === "string") return `ll_box_str(ll_str_lit("${cEscape(v)}"))`;
+    if (Array.isArray(v)) {
+      if (v.length === 0) return "ll_box_vec(ll_vec_of(0, (ll_value*)0))";
+      return `ll_box_vec(ll_vec_of(${v.length}, (ll_value[]){${v.map((x) => this.metaValue(x)).join(", ")}}))`;
+    }
+    const ks = Object.keys(v);
+    if (ks.length === 0) return "ll_box_map(ll_map_of(0, (ll_str**)0, (ll_value*)0))";
+    const keys = ks.map((k) => `ll_str_lit("${cEscape(k)}")`).join(", ");
+    const vals = ks.map((k) => this.metaValue(v[k])).join(", ");
+    return `ll_box_map(ll_map_of(${ks.length}, (ll_str*[]){${keys}}, (ll_value[]){${vals}}))`;
   }
 
   /** A lifted closure body: unpack params from argv, captures from env, then the resolved body.
