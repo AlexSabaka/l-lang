@@ -77,6 +77,7 @@ source, both backends run it.
 | equality | *(none)* | **unspent** (Fg-4): `==` already lowers to `ll_deep_eq` / `__ll_deep_eq`, structural and deep on both |
 | reflection | *(backend emits the metadata graph)* | shape is spec'd, not per-backend (§D54) |
 | i/o sink | `write-string` `write-string-err` | raw stdout/stderr; **no** formatting |
+| time | `clock-ns` `sleep-ns` | **two clocks behind one entry** — `(clock-ns "mono")` for durations, `(clock-ns "wall")` for timestamps; both answer **nanoseconds** (D56). The selector exists because D1 makes a zero-arg call a *read*, same trap as `map-new` and `sys-args`. `sleep-us/ms/s` are l-lang |
 | host | `random` `now` `clock` `args` `env` `exit` | syscalls / entropy |
 
 **Pure l-lang, on the floor (portable by construction):** all of `std/core`

@@ -20,6 +20,7 @@
 #include <string.h>
 #include <math.h>
 #include <inttypes.h>
+#include <time.h>
 #include <setjmp.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -867,6 +868,44 @@ static ll_value ll_sys_env(ll_str *name) {
 }
 
 static void ll_sys_exit(int64_t code) { exit((int)code); }
+
+/* ---------------------------------------------------------------------------------------------
+ * The TIME floor. Two clocks, never one name -- MONOTONIC for durations, WALL for timestamps.
+ * Conflating them is the classic silent bug: a wall clock steps backwards under NTP, so a duration
+ * measured with it can come out negative. `mono-ns` has an arbitrary epoch and is only ever
+ * subtracted; `wall-ms` is Unix-epoch and is only ever displayed.
+ *
+ * Nanoseconds as int64 is not a precision flourish, it is what both hosts already hand back:
+ * clock_gettime here, `process.hrtime.bigint()` there, and D51 makes an Int an int64 on both. ~292
+ * years of range, so wall time overflows in 2262. `sleep-ns` is a MINIMUM, never an exact interval
+ * -- the OS decides when it is done, and both hosts overshoot.
+ * --------------------------------------------------------------------------------------------- */
+
+/* One entry, a selector, because a NULLARY floor entry cannot be called from source -- D1 makes
+   `(mono-ns)` a read of the binding. See floor.ts; it was measured end-to-end before being ruled. */
+static int64_t ll_clock_ns(ll_str *which) {
+  struct timespec ts;
+  const char *w = which ? which->data : "";
+  if (strcmp(w, "mono") == 0) {
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+  } else if (strcmp(w, "wall") == 0) {
+    clock_gettime(CLOCK_REALTIME, &ts);
+  } else {
+    ll_trap("ValueError", "clock-ns: expected \"mono\" or \"wall\"");
+  }
+  return (int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec;
+}
+
+/* Retried on EINTR: a signal must not turn a 16ms sleep into a 0ms one, which would silently
+   busy-spin a fixed-step loop instead of pacing it. */
+static void ll_sleep_ns(int64_t ns) {
+  if (ns <= 0) return;
+  struct timespec req;
+  req.tv_sec = (time_t)(ns / 1000000000LL);
+  req.tv_nsec = (long)(ns % 1000000000LL);
+  struct timespec rem;
+  while (nanosleep(&req, &rem) != 0) req = rem;
+}
 
 /* ---------------------------------------------------------------------------------------------
  * The FILE floor. The handle is an INT file descriptor -- what both hosts already use.

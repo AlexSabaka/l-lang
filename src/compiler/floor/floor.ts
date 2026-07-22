@@ -220,6 +220,39 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   ["sys-env", fn("ll_sys_env", [Str], StrOpt)],
   ["sys-exit", fn("ll_sys_exit", [Int], Void)],
 
+  // -- the TIME floor (Ld). Two clocks, never one name -- and ONE ENTRY, because a nullary cannot
+  // be called.
+  //
+  // MONOTONIC for durations, WALL for timestamps. Conflating them is the classic silent bug: a wall
+  // clock steps backwards under NTP, so a duration measured with it can come out NEGATIVE. Monotonic
+  // has an arbitrary epoch and is only ever subtracted; wall is Unix-epoch and only ever displayed.
+  //
+  // THE SELECTOR IS FORCED BY THE SAME TRAP AS `sys-arg` ABOVE, and it was measured, not assumed: a
+  // nullary `mono-ns` was written end-to-end -- floor, runtime.c, shim -- and `(mono-ns)` compiled to
+  // `const t0 = mono2dns;` on JS. D1 makes it a READ of the binding. It worked on C, which is the
+  // worst outcome available: one backend timing correctly and the other comparing two copies of a
+  // function object, in silence. So the clock takes an argument and is a call on both, exactly as
+  // `sys-arg` does, and the two names live in `std/sys/timers` where names belong.
+  //
+  // The selector is a STRING rather than an int code so a misuse is readable at the call site and a
+  // wrong one can TRAP by name. It costs a 4-byte compare against a syscall, and it appears exactly
+  // twice in the whole language -- `now-ns` and `epoch-ns` in the library.
+  //
+  // BOTH CLOCKS ANSWER NANOSECONDS, so the floor has one unit and the library does every conversion.
+  // That is free on both hosts and is what D51 bought: `clock_gettime` here, `process.hrtime.bigint()`
+  // there -- which returns a **BigInt**, i.e. exactly l-lang's Int, with no conversion on either side.
+  // int64 nanoseconds is ~292 years, so wall time overflows in 2262.
+  //
+  // `sleep-us`/`sleep-ms`/`sleep-s` are NOT here: they are one entry times a constant, so they are
+  // l-lang in `std/sys/timers`. Four floor entries differing by a multiplier are four places the two
+  // backends can drift apart (A-0).
+  //
+  // `sleep-ns` is a MINIMUM, never an interval -- the OS decides when it is done and both hosts
+  // overshoot (50ms asked, 55ms measured on node). A pacing loop must re-read the clock after
+  // sleeping rather than assume the sleep was exact, which is why `Ticker` does.
+  ["clock-ns", fn("ll_clock_ns", [Str], Int)],
+  ["sleep-ns", fn("ll_sleep_ns", [Int], Void)],
+
   // -- the FILE floor. Five entries, and the handle is an INT FILE DESCRIPTOR on both backends.
   //
   // That representation is not a compromise, it is what both hosts already use: node's `fs.openSync`

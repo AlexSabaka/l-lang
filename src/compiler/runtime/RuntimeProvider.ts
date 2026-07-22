@@ -665,6 +665,44 @@ function __ll_is_type(val, type) {
     "sys-arg": `const sys2darg = (i) => { const a = (typeof process !== "undefined" && process.argv) ? process.argv.slice(2) : []; const n = Number(i); return (n >= 0 && n < a.length) ? a[n] : null; };`,
     "sys-env": `const sys2denv = (n) => { if (typeof process === "undefined" || !process.env) return null; const v = process.env[String(n)]; return v === undefined ? null : v; };`,
     "sys-exit": `const sys2dexit = (c) => { const n = Number(c); if (typeof process !== "undefined" && process.exit) process.exit(n); throw new Error("exit " + n); };`,
+    // The TIME floor (Ld). Two clocks, never one name -- monotonic for durations, wall for
+    // timestamps -- behind ONE entry, because a nullary floor entry cannot be called: D1 makes
+    // \`(mono-ns)\` a READ, and a nullary version of this was measured emitting \`const t0 = mono2dns\`
+    // here while working correctly on C. See floor.ts.
+    //
+    // Both answer NANOSECONDS, and on this backend that is free: \`process.hrtime.bigint()\` already
+    // returns a BigInt, which is exactly what D51 made an Int. \`hrtime\` is monotonic; \`Date.now\` is
+    // the wall clock and is the only one that can step backwards.
+    "clock-ns": `const clock2dns = (which) => {
+  const w = String(which);
+  if (w === "mono") {
+    return (typeof process !== "undefined" && process.hrtime && process.hrtime.bigint)
+      ? process.hrtime.bigint()
+      : BigInt(Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) * 1e6));
+  }
+  if (w === "wall") return BigInt(Date.now()) * 1000000n;
+  throw new Error('clock-ns: expected "mono" or "wall"');
+};`,
+    // A BLOCKING sleep on the main thread, which JS is usually said not to have.
+    //
+    // \`Atomics.wait\` on a SharedArrayBuffer genuinely blocks, and node permits it on the main thread
+    // (browsers do not). That is what makes a FIXED-STEP loop portable: the same l-lang drives it on
+    // both backends, with no event loop and no async anywhere. Measured: 50ms asked, 55ms delivered
+    // -- a sleep is a MINIMUM on both hosts, and the floor says so.
+    //
+    // The timeout is milliseconds as a double, so sub-millisecond sleeps are expressible but land at
+    // whatever resolution the OS gives. A non-positive request returns without yielding, matching C.
+    "sleep-ns": `const sleep2dns = (ns) => {
+  const ms = Number(ns) / 1e6;
+  if (!(ms > 0)) return;
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch (e) {
+    // No SharedArrayBuffer (a locked-down host): spin rather than silently not sleeping at all.
+    const end = Date.now() + ms;
+    while (Date.now() < end) {}
+  }
+};`,
     // The CODEPOINT floor (D52). Every one of these spreads the string -- \`[...s]\` iterates SCALAR
     // VALUES, pairing surrogates -- and NONE of them touches \`.length\`, which counts UTF-16 code
     // units and is the reason \`"a\\u{1F600}b"\` measured 4 here where D52 says 3.

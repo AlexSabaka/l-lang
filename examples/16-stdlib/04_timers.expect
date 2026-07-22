@@ -1,0 +1,33 @@
+--- units ---
+1us = 1000
+1ms = 1000000
+1s  = 1000000000
+--- manual clock ---
+t0:       0
+advanced: 5000000
+slept:    15000000
+--- stopwatch ---
+elapsed ms: 250
+elapsed us: 250000
+after reset: 0
+--- ticker at 100ms ---
+dt1: 100 at 100 lag 0
+dt2: 100 at 200 lag 0
+dt3: 250 at 450 lag 150
+dt4: 100 at 550 lag 0
+--- scheduler ---
+fired:   ["tick@100" "tick@200" "once@250" "tick@300" "stop@350"]
+clock:   350
+pending: 1
+--- same instant ---
+order: ["first" "second" "third"]
+--- cancel ---
+fired:     1
+cancel:    true
+again:     false
+after cut: 0
+hits:      1
+--- real clock ---
+slept >= 20ms:   true
+monotonic runs:  true
+wall is Unix ms: true

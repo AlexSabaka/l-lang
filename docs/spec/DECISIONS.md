@@ -4652,3 +4652,52 @@ so `[Object]`/`[Array]` truncation never appears (it exists in today's goldens o
 two ways); **`#<circular>`** on revisiting an in-progress container, which closes a latent hang
 (`ll_inspect_sb` recurses unbounded with no visited set, so unlimited depth without it spins forever);
 and **no separators in the broken form** — dropping commas means the newline is the separator.
+
+
+### D56 — time is nanoseconds, two clocks, and one floor entry
+
+**Nanoseconds as `Int`.** Both hosts already hand back nanoseconds — `clock_gettime` on C,
+`process.hrtime.bigint()` on JS — and the second of those returns a **BigInt**, which is exactly what
+D51 made an `Int`. So the language's time unit costs no conversion on either backend, and int64
+nanoseconds is ~292 years of range (wall time overflows in 2262). `sleep-us`/`sleep-ms`/`sleep-s` and
+the `ns`/`us`/`ms`/`s` constructors are **l-lang** in `std/sys/timers`: four floor entries differing
+by a multiplier are four places two backends can drift, which is what A-0 exists to prevent.
+
+**Two clocks, never one name.** *Monotonic* has an arbitrary epoch, never steps backwards, and is
+only ever subtracted; *wall* is Unix-epoch and only ever displayed. Conflating them is the classic
+silent bug — a wall clock steps backwards under NTP, so a duration measured with it can come out
+negative.
+
+**One entry with a selector, because a nullary floor entry cannot be called.** `(clock-ns "mono")`,
+not `(mono-ns)`. This is the same trap `sys-args` records and the maps floor records as the reason
+there is no `map-new`: **D1 makes `(f)` a READ of the binding**. It was measured rather than assumed
+— a nullary `mono-ns` was written end to end (floor, `runtime.c`, shim) and emitted
+`const t0 = mono2dns;` on JS while working correctly on C. That is the worst outcome available: one
+backend timing correctly and the other comparing two copies of a function object, silently. The
+selector is a **string** so a misuse is readable at the call site and a wrong one traps by name; it
+costs a four-byte compare against a syscall and appears exactly twice in the language.
+
+**A sleep is a MINIMUM, never an interval.** The OS decides when it is done and both hosts overshoot
+(50ms asked, 55ms measured on node). Anything pacing itself must re-read the clock afterwards rather
+than assume the sleep was exact.
+
+*JS has a blocking sleep, which is usually said not to be true.* `Atomics.wait` on a
+`SharedArrayBuffer` genuinely blocks, and node permits it on the main thread (browsers do not). That
+is what makes a **fixed-step loop portable**: the same l-lang drives it on both backends with no
+event loop and no async anywhere — and it is why the `:async`/`:gen` refusal does not block games.
+
+**The scheduler is DRIVEN, not ambient — and this is the events question, answered narrowly.**
+`std/sys/timers` offers `every`/`after`/`cancel` plus `run`/`pump`; callbacks fire only inside those.
+Ambient firing on C needs either POSIX signal timers — the callback lands on a signal stack, and the
+C runtime is malloc-and-leak with no reentrancy guarantees — or threads, which need a memory model
+neither backend has. `set-interval`/`clear-interval` exist as one-line **aliases** for porting; the
+primary spelling is deliberately the one that does not promise the host's semantics. This does **not**
+settle the open EVENTS ruling logged at D41: it settles only the *pull* half, which is what a fixed
+loop needs.
+
+*A `Clock` owns sleeping as well as reading, and that is the load-bearing decision.* A fake clock
+that does not advance while a real sleep burns wall time leaves every deadline permanently in the
+past. Because waiting goes through the clock, `ManualClock` makes dispatch order, repeat arithmetic
+and catch-up behaviour **exactly reproducible** — which is the difference between a timers module
+that can be goldened and one that can only assert `elapsed >= 0`, the single thing
+`10-modifiers/03_timing_modifier.lisp` has ever asserted.

@@ -358,6 +358,10 @@ export const C_PASSING: readonly string[] = [
   // Lc -- `std/llang/reflect`, the typed surface over the D54 graph. A library over an existing
   // floor: no backend change, and it runs byte-identically on both from the first commit.
   "16-stdlib/03_reflect.lisp",
+  // Ld -- `std/sys/timers`. The time floor (`clock-ns`/`sleep-ns`) plus Clock/Stopwatch/Ticker/
+  // Scheduler in l-lang. Deterministic because a `Clock` owns sleeping, so a ManualClock advances
+  // when something waits on it -- the whole example is exact except the three real-clock bounds.
+  "16-stdlib/04_timers.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the
