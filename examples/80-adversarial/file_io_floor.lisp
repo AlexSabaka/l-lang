@@ -29,7 +29,7 @@
 (
     (import { write-file read-file try-read-file append-file read-lines exists
               open close read-chunk } from "std/io/files")
-    (import { strlen } from "std/string")
+    (import { strlen } from "std/core/string")
 
     (let p "/tmp/ll_guard_file_io.txt")
 

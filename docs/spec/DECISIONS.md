@@ -4701,3 +4701,21 @@ past. Because waiting goes through the clock, `ManualClock` makes dispatch order
 and catch-up behaviour **exactly reproducible** — which is the difference between a timers module
 that can be goldened and one that can only assert `elapsed >= 0`, the single thing
 `10-modifiers/03_timing_modifier.lisp` has ever asserted.
+
+> **Noted for later, not done (2026-07-23).** The `"mono"`/`"wall"` selector should become an enum —
+> `(defenum ClockMode :mono :wall)`, read as `ClockMode:mono`. Measured: `defenum` works on **both**
+> backends today. What holds it back is not the timers module.
+>
+> An enum member is a **bare `Int` at runtime** (`ClockMode:mono` *is* `0`), so the floor entry would
+> go from `Str` to `Int`: the call site reads better and the floor reads worse, and a wrong value
+> stops being diagnosable by name. The prerequisite is that **an enum carry its keys into the
+> runtime** — its name, its members, and the member↔value mapping, reachable through the D54 metadata
+> graph like every other declared type. That is a reflection question rather than a timers one, and
+> it would also let `display` render `ClockMode:mono` instead of `0`, which is the same argument D55
+> made when it replaced `null` with `nil`: printing the host's representation where the language has
+> a name for the thing.
+
+> **Also deferred from the timers work (2026-07-23):** a **TTY stream** and `set-raw-mode`. The game
+> samples need unbuffered single-keypress input (`process.stdin.on` + `setRawMode(true)`, 5 sites),
+> and `std/sys/timers` deliberately answers only the *pull* half of that problem. Raw-mode input is
+> the push half and belongs with the EVENTS ruling, not beside a clock.

@@ -10,7 +10,7 @@
 ;; - a `while` loop with an explicit cursor, plus vectors and `.push`
 
 (
-    (import "std/string")
+    (import "std/core/string")
     (import "std/seq")
 
     ;; 1. The token kinds. An enum keeps the scanner and the printer honest:

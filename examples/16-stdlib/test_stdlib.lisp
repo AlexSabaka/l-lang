@@ -2,8 +2,8 @@
   (import "std/io")
   (import "std/math")
   (import "std/seq")
-  (import "std/types")
-  (import "std/string")
+  (import "std/core/types")
+  (import "std/core/string")
   (import "std/fn")
 
   ;; Blank lines come from `(print "")`, and that IS now just a style choice.

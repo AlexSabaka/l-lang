@@ -1,5 +1,5 @@
 (import "./math_utils.lisp")
-(import "std/types")
+(import "std/core/types")
 (import "std/math")
 
 (fn main []

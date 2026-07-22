@@ -13,7 +13,7 @@
 
 (
     (import "std/io")
-    (import "std/string")
+    (import "std/core/string")
     (import "std/seq")
 
     ;; --- The toolkit --------------------------------------------------------

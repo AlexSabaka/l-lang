@@ -35,7 +35,7 @@
 ;; (U+00A0) survives, so the trimmed string is 3 characters and not 2.
 ;; ------------------------------------------------------------------------------------------------
 (
-    (import "std/string")
+    (import "std/core/string")
 
     ;; U+0041 A, U+00E9 (2 bytes), U+0457 (2 bytes), U+20AC (3 bytes), U+1F600 (4 bytes, and a
     ;; surrogate PAIR on JS).

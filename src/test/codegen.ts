@@ -2119,14 +2119,14 @@ const CASES: Case[] = [
   },
 
   {
-    name: "D32/Aa: std/async is importable and Awaitable is implementable",
-    source: `(import "std/async")
+    name: "D32/Aa: std/core/async is importable and Awaitable is implementable",
+    source: `(import "std/core/async")
 (defstruct Later :implements Awaitable<Int>
   (fn then [cb] -> Any (return nil)))
 (console.log "ok")`,
     expect: ["ok"],
     wasBroken:
-      "NOT broken -- a GUARD, the 'who calls it?' rule again. Aa ships `lib/std/async.lisp` " +
+      "NOT broken -- a GUARD, the 'who calls it?' rule again. Aa ships the async module " +
       "(`Awaitable<T>`, `Task<T>`), consumed by nothing until Ab wires the type rules. A stdlib file " +
       "with no test rots. This pins that the interfaces parse, import, and are conformable-to.",
   },

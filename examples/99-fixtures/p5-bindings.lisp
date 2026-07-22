@@ -1,7 +1,7 @@
 (
     ;; `is-nil` was called 8 times in this file and imported by nobody -- the file had no (import ...)
     ;; line at all. Eight of its LL0210s were never about p5; they were a missing import.
-    (import "std/types")
+    (import "std/core/types")
 
     ;; ================================================================================================
     ;; THE p5.js AMBIENT SURFACE

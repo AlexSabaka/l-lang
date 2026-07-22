@@ -27,7 +27,7 @@
 ;; which an aliased snapshot could never do.
 ;; ============================================================
 (
-    (import "std/string")
+    (import "std/core/string")
 
     ;; ---- the world: a struct, so binding it is a COPY ----
     (defstruct World

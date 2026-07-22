@@ -1,2 +1,0 @@
-name: std/types
-sources: ["*.lisp"]

@@ -9,7 +9,7 @@
 
 (
     (import "std/io")
-    (import "std/string")
+    (import "std/core/string")
 
     ;; Take one value off the stack. `pop` is typed as `Real?` because it
     ;; yields nothing on an empty vector, so we guard first and then read

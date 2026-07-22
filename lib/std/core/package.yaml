@@ -1,2 +1,2 @@
-name: std/async
+name: std/core
 sources: ["*.lisp"]

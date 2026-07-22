@@ -197,7 +197,10 @@ than function-by-function.
 | `std/core` | *(the language)* | `head tail cons list get elem empty` — from `SYMBOL_MAP` |
 | `std/io` | `stdio.h` | `print println read-line open close` |
 | `std/math` | `math.h` | `sqrt sin cos tan pow floor ceil round abs min max E PI` |
-| `std/string` | `string.h` | `string-length substr split join trim starts-with ends-with` |
+| `std/core/string` | `string.h` | `strlen substr split join trim starts-with ends-with` + `format-args` |
+| `std/core/types` | *(the language)* | the portable type predicates, on `std/llang/reflect` |
+| `std/core/async` | *(none)* | `Awaitable<T>`, `Task<T>` — D32 |
+| `std/core/errors` | *(the language)* | the error hierarchy — l-lang's own `Error`, not the host's |
 | `std/char` | `ctype.h` | `is-alpha is-digit is-space upcase downcase` |
 | `std/time` | `time.h` | `now clock sleep` |
 | `std/os` | `unistd.h` | `args env exit` |
@@ -299,6 +302,20 @@ In dependency order. Each is a sub-phase of Phase S.
   The **AST half of `std/llang` is still blocked**, and not on effort: the `llang` backend is untested
   and cannot be trusted, which removes the `quote → datum → emit → compare` round trip that would have
   been its oracle.
+- ✅ **Le — `std/core` exists; `std/types` / `std/string` / `std/async` move into it.** Grouping, not
+  rewriting: `lib/std/core/{types,string,async}.lisp`, imported by full path (`std/core/string`)
+  exactly as `std/io/files` and `std/sys/timers` already are. `format-args` moves with them — it was
+  private to `std/io` with one caller, and it is not an I/O operation at all: it takes a template and
+  a vector and answers a String. `std/io` imports it now, which is the honest direction.
+
+  > **A resolver footgun this exposed, recorded rather than fixed.** `PackageRegistry.resolve`
+  > answers a *package* import with **one** entry file: the source whose basename matches the
+  > package's last name segment, and otherwise **`files[0]`** — the first source, alphabetically. So a
+  > bare `(import "std/core")` neither fails nor imports the package; it silently resolves to
+  > `async.lisp`. Full-path imports are unaffected — they never reach the package registry, falling
+  > through to the bare-path search. Either an ambiguous package import should be a diagnostic or a
+  > package should declare an entry point; both are compiler changes, not layout ones.
+
 - **Sf — the cstd-shaped modules**, typed, and **actually tested**: goldens, `status: "test"`.
 - **Sg — retire** what remains; close D7.
 

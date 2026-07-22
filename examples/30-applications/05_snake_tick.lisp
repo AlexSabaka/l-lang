@@ -20,7 +20,7 @@
 ;; list of steering inputs drives the world and every tick prints its state.
 ;; ============================================================
 (
-    (import "std/string")
+    (import "std/core/string")
 
     (defenum Direction :up :down :left :right)
 

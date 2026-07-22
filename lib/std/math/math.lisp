@@ -1,5 +1,5 @@
 (
-  (import "std/types")
+  (import "std/core/types")
 
   ;; D20: this list is the module's PUBLIC SURFACE, and it is now enforced (LL0215).
   ;;

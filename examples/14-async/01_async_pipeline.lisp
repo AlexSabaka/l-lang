@@ -14,9 +14,9 @@
 
 (
     (import "std/io")
-    (import "std/async")
+    (import "std/core/async")
     (import "std/seq")
-    (import "std/string")
+    (import "std/core/string")
 
     ;; --- Stage 1: fetch a raw row -----------------------------------------
     ;; Declared `-> Task<String>` (std/async), but `(return ...)` yields the

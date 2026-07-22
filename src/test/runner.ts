@@ -133,7 +133,21 @@ function walkDir(dir: string, callback: (filePath: string) => void) {
     if (isDirectory && SKIP_DIRS.some(skip => dirPath.includes(skip))) {
       return;
     }
-    
+
+    // A LEADING UNDERSCORE means "scratch, not a corpus member".
+    //
+    // Every other file under examples/ must be declared -- a `.expect` or a manifest entry -- and an
+    // undeclared one is a hard error rather than a silent skip, deliberately: a file nobody classified
+    // is a file nobody is grading. That rule has no escape hatch, so a throwaway probe written beside
+    // the corpus (isolating a divergence, checking what a backend does with some syntax) fails the
+    // WHOLE suite until it is deleted or given a golden it does not deserve.
+    //
+    // The underscore is the escape hatch, and it is deliberately ugly so it does not become a habit.
+    // It says the file is not a claim about the language; nothing here is compiled, run or graded.
+    if (path.basename(dirPath).startsWith('_')) {
+      return;
+    }
+
     if (isDirectory) {
       walkDir(dirPath, callback);
     } else {

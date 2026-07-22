@@ -1444,7 +1444,7 @@ ${PRODUCER}
   // -----------------------------------------------------------------------------------------------
   {
     name: "Ab: an :async returning its payload under -> Task<T> is SILENT",
-    source: `(import "std/async")
+    source: `(import "std/core/async")
 (fn :async f [] -> Task<Int> (
   (return 5)
 ))`,
@@ -1494,7 +1494,7 @@ ${PRODUCER}
   },
   {
     name: "Ab: a correct async function is silent",
-    source: `(import "std/async")
+    source: `(import "std/core/async")
 (fn :async fetch [id <- Int] -> Task<Int> (
   (return (+ id 100))))`,
     silent: true,
