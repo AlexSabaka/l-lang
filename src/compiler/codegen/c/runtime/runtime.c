@@ -1317,11 +1317,15 @@ static int64_t ll_str_index_of(ll_str *s, ll_str *needle) {
   return at < 0 ? -1 : ll_cp_index_of_offset(s, (size_t)at);
 }
 
+/* Same conversion `ll_str_index_of` got in Ff-3, and it was missed one function down: the scan runs
+   on bytes (legitimately -- UTF-8 is self-synchronizing) but the ANSWER is a position in a string of
+   characters. `("éécaféx".lastIndexOf "x")` returned the byte offset 9 where the codepoint index is
+   6, while `.indexOf` next to it already answered correctly. */
 static int64_t ll_str_last_index_of(ll_str *s, ll_str *needle) {
   int64_t found = -1, at = 0;
   for (;;) {
     int64_t next = ll_str_find(s, needle, at);
-    if (next < 0) return found;
+    if (next < 0) return found < 0 ? -1 : ll_cp_index_of_offset(s, (size_t)found);
     found = next;
     at = next + 1;
   }
@@ -1623,10 +1627,22 @@ static ll_value ll_dyn_method(int n, ll_value *vals) {
     if (ll_dyn_name_is(name, "toLowerCase")) return ll_box_str(ll_str_lower(s));
     if (ll_dyn_name_is(name, "trim")) return ll_box_str(ll_str_trim(s));
     if (ll_dyn_name_is(name, "trimEnd")) return ll_box_str(ll_str_trim_end(s));
-    if (ll_dyn_name_is(name, "length")) return ll_box_int((int64_t)s->len);
+    /* `ll_str_len`, NOT `s->len`. This arm is the CALL position -- `(x.length)` on a boxed receiver --
+       and it was the one place a raw byte count still escaped after Ff-3, which moved the read path
+       (`ll_dyn_member` -> `ll_dyn_length`) and missed its sibling. So `"café"` measured 4 when read
+       and 5 when called, on the same value in the same program. Pure BMP: not the astral gap. */
+    if (ll_dyn_name_is(name, "length")) return ll_box_int(ll_str_len(s));
     if (ll_dyn_name_is(name, "slice"))
       return ll_box_str(ll_str_slice(s, argc > 0 ? ll_unbox_int(args[0]) : 0, argc > 1 ? ll_unbox_int(args[1]) : LL_END));
     if (ll_dyn_name_is(name, "indexOf")) return ll_box_int(ll_str_index_of(s, ll_unbox_str(args[0])));
+    /* Absent entirely until now, so a boxed receiver trapped ("no such method on this value") where
+       a statically-typed one worked -- `lastIndexOf` and the two pads reach `intrinsics.ts` on the
+       typed path and had no dynamic arm at all. */
+    if (ll_dyn_name_is(name, "lastIndexOf")) return ll_box_int(ll_str_last_index_of(s, ll_unbox_str(args[0])));
+    if (ll_dyn_name_is(name, "padStart"))
+      return ll_box_str(ll_str_pad_start(s, ll_unbox_int(args[0]), argc > 1 ? ll_unbox_str(args[1]) : ll_str_lit(" ")));
+    if (ll_dyn_name_is(name, "padEnd"))
+      return ll_box_str(ll_str_pad_end(s, ll_unbox_int(args[0]), argc > 1 ? ll_unbox_str(args[1]) : ll_str_lit(" ")));
     if (ll_dyn_name_is(name, "includes")) return ll_box_bool(ll_str_includes(s, ll_unbox_str(args[0])));
     if (ll_dyn_name_is(name, "startsWith")) return ll_box_bool(ll_str_starts_with(s, ll_unbox_str(args[0])));
     if (ll_dyn_name_is(name, "endsWith")) return ll_box_bool(ll_str_ends_with(s, ll_unbox_str(args[0])));

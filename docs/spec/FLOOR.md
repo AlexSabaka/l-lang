@@ -224,11 +224,23 @@ so `codepoint-at` returns a `Char` with no new type.
 > the worst of the three options available: a codepoint count agrees with JS for everything below
 > U+10000 and with D52 always. Byte offsets no longer leave `runtime.c`.
 >
+> **Correction 2026-07-22 (F.2/F.4).** That last sentence was false when written, twice over, and
+> both leaks were pure-BMP rather than astral. `ll_dyn_method`'s `length` arm -- the CALL position
+> `(x.length)` on a boxed receiver, a different dispatch path from the read Ff-3 moved -- returned
+> `s->len` raw, so `"café"` measured 4 when read and **5 when called**, on the same value in the
+> same program. And `ll_str_last_index_of`, one function below the `ll_str_index_of` that Ff-3 did
+> convert, returned the raw byte offset: `("éécaféx".lastIndexOf "x")` gave **9** where the
+> character index is 6. Both fixed; `lastIndexOf`, `padStart` and `padEnd` also gained the dynamic
+> arm they never had (they trapped on a boxed receiver). Pinned by the `last-*` and `dyn-*` lines
+> in `native_string_codepoints.lisp`, which is green on both backends.
+>
 > **`std/seq`'s `length` dispatches on `(coll :of String)`** and answers `codepoint-length`. It was
 > `coll.length`, so the language's own measurement inherited whichever host unit the backend used.
 > The dispatch lives there, in one place, rather than in each backend.
 >
-> *The residual gap is astral-only and JS's, and it is listed rather than closed.* JS's members still
+> *The residual gap is astral-only and JS's, and it is listed rather than closed.* (True only as
+> of the F.2/F.4 correction above -- when this was written, two BMP byte leaks were still live on
+> C, so the claim was wrong about both the range and the backend.) JS's members still
 > count UTF-16 code units, so they agree with D52 below U+10000 and part company on a surrogate pair.
 > The fix has no good shape: C's members are *our* implementation, so moving them touched one file;
 > JS's are the *host's*, and `s.length` is a property read. Routing it through a receiver-aware helper
