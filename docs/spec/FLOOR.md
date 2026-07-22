@@ -1,10 +1,16 @@
 # The intrinsic floor — the runtime contract both backends must not diverge on
 
-> **Status: the standard, not yet the library.** Almost none of this is implemented — the JS backend
-> reaches host globals, the C backend reaches `runtime.c` + a private `intrinsics.ts` table, and the
-> two are only *accidentally* in agreement wherever the corpus happens to be ASCII and integer-valued.
-> This document is the ruling that turns that accident into a specification, plus the worklist that
-> Phase F executes against.
+> **Status: implemented. Phase F is complete (Fa–Fg), 2026-07-22.** This document was written as a
+> specification plus a worklist, at a time when almost none of it existed: the JS backend reached host
+> globals, the C backend reached `runtime.c` plus a private `intrinsics.ts` table, and the two agreed
+> only *accidentally*, wherever the corpus happened to be ASCII and integer-valued. All of it is built.
+> §4 is now the planning record rather than a worklist — kept because the reasoning is what makes the
+> phase auditable, and marked inline where a prediction turned out to be wrong.
+>
+> What the floor did **not** absorb is named where it lives, not hidden here: the display formatter is
+> §3.5-conformant in both runtimes but still native in both (Fc), the two remaining JS divergences are
+> costed and declined in `src/test/js-status.ts`, and D50's native-member boundary rules the escape
+> hatch that both of those sit on.
 >
 > Rulings live in [`DECISIONS.md`](./DECISIONS.md) as **D50–D55**. This is their evidence and their
 > expansion. It is the runtime-boundary companion to [`STDLIB.md`](./STDLIB.md) (Phase S): Phase S
@@ -496,9 +502,22 @@ prove parity, then collapses the corresponding `std/*` module to l-lang on top o
   Real-returning body — fixed by making `Math.trunc` the one NARROWING floor entry, `[Real] -> Int`,
   backed by a new `ll_truncate`. *Still hand-mirrored, and the next thing the floor should absorb:*
   `NATIVE_METHODS`/`NATIVE_FIELDS` vs `types/nativeMembers.ts`.
-- **Fc — the display formatter (D55).** l-lang `inspect` implementing **§3.5**, on `number->string`
-  + reflection tag. **Greens §5.2 cluster 2.** Re-derives the ~87 wrapping-dependent golden lines
-  from the §3.5 rule, and adds the `[Circular]` guard.
+- ✅ **Fc — the display formatter (D55). DONE, as §3.5 conformance — NOT as retirement.** Both
+  runtimes implement §3.5 and the wrapping-dependent goldens were re-derived arithmetically from the
+  rule. The five divergences this document listed as unguarded are fixed and each ships with the guard
+  that catches it: the class tag now counts against C's width budget, the two ident-like key tests
+  agree, the class name is read the way `__ll_is_type` reads it (`constructor.__ll_name`, not the
+  instance — the Zh bug, reintroduced by Fc and caught again), C's cycle set grew from a silent
+  256-entry cap to unbounded, and the JS side stopped reading host reflection where C read l-lang's
+  own metadata. See `display_conformance`, `display_source_names/`, `display_lambda_name`,
+  `display_imported_class_tag/`.
+
+  *Still native in both runtimes, deliberately.* §2 lists the formatter itself as pure l-lang. Two of
+  the five blockers landed with Fg and Fe (`map-keys`, `number->string`); the ones that remain are a
+  portable `kind-of`, a string builder (concat is O(n²)), and `console.log` off the floor — it is
+  callable with no import at ~948 sites, so an l-lang formatter needs an auto-preluded module or a
+  callback mechanism C does not have. Fixing the five divergences was most of the benefit at a
+  fraction of the cost; retirement stays on the worklist with its blockers named rather than pending.
 - ✅ **Fd — reflection depth (D54). DONE.** The metadata graph is built ONCE
   (`compiler/reflection/metadata.ts`, extracted from the JS transformer and verified byte-identical)
   and emitted into the C module as `ll_value` maps at the top of `main`, so `type`/`type-by-name`
@@ -513,11 +532,9 @@ prove parity, then collapses the corresponding `std/*` module to l-lang on top o
   `(console.log [4 5])` printed `[4 5]` — one value, two renderings. §3.6 says `display`, and now it
   is.
 
-  *Not done, and deliberately:* §2 lists the display/`inspect` formatter itself as pure l-lang, and it
-  is native in both runtimes. An l-lang formatter needs `map-keys` (Fg) and `number->string` (D51) as
-  floor primitives, and neither exists yet — so this is sequencing, not an oversight. Until then the
-  two implementations are held together by the §5.2 guards, which is the weaker instrument D50 warns
-  about and the reason to finish the job after Fg.
+  *On the formatter's retirement, which this bullet used to defer to Fg:* see Fc above — the blockers
+  it named (`map-keys`, `number->string`) have since landed, and the ones that remain are different
+  ones.
 - ✅ **Fe — the numeric floor (D51). DONE.** `Int` is a wrapping 64-bit integer on both backends: a
   `BigInt` normalised with `asIntN(64)` on JS, `int64_t` under `-fwrapv` on C. `number->string` now
   follows ECMA-262's `Number::toString` on both. The differentials FLOOR.md called "latent" are
@@ -544,13 +561,38 @@ prove parity, then collapses the corresponding `std/*` module to l-lang on top o
   *Cost, measured:* BigInt with `asIntN` is **6.5×** slower than Number in a tight loop, but the
   corpus's two hottest programs run in 173 ms (recursive fib) and 30 ms (tokenizer) against a 5 s
   timeout. D51 accepted the cost; it is not a practical problem at this scale.
-- **Ff — the string floor (D52).** C UTF-8 decode, JS scalar-value iteration, the vendored case
-  table; `std/string` collapses to l-lang. Guarded by a non-ASCII length/case/index differential;
-  re-capture the affected goldens once.
-- **Fg — containers + equality (D53).** `vec`/`map` primitives, structural `equals`; `std/seq`
-  collapses to l-lang.
+- ✅ **Ff — the string floor (D52). DONE, with two of its three items re-ruled on contact.** Four
+  primitives — `codepoint-length`, `codepoint-at`, `string-to-codepoints`, `string-from-codepoints` —
+  and `std/string` rewritten on them: decode once into an `Int[]`, work there, encode once, so every
+  function is linear instead of re-walking the string per character. C's byte-oriented surface
+  (`ll_str_len`, `char_at`, `index_of`, `pad_*`, and the native members) is now codepoint-oriented.
 
-**Fc is the linchpin — corrected sequencing.** Fe was moved to second on the argument that it rewrites
+  *The re-rulings:* **`concat` is not a floor entry** — `+` already concatenates identically on both
+  backends, the same argument that kept `equals` off the floor in Fg-4. And the **vendored case table
+  is deferred, not built**: case and trim are ASCII on both backends by ruling (D52, Ff-2), because
+  the divergence was already live (`CAFÉ` vs `CAFé`) and JS's side of it came from `toUpperCase`,
+  which is ICU- and locale-version-dependent — conformance-by-chasing-a-host, which D55 already
+  rejected for `util.inspect`. So the "two hard, up-front items" below are one item, and it is done.
+
+  *The promised golden re-capture did not happen, and could not:* the corpus holds exactly one
+  non-ASCII string literal and never measures it. Ff had guard-only signal, exactly as Fe did. The
+  residual is astral-only and JS's, listed in `js-status.ts` under D50's native-member boundary.
+- ✅ **Fg — containers + equality (D53). DONE, and it was four live bugs rather than a refactor.**
+  `ll_deep_eq` compared two `int64`s through a `double`; `reverse` mutated in place on C and returned
+  fresh on JS; `sort`/`sort-by`/`flatten` trapped outright on C, which is why `test_stdlib` had no C
+  golden. `std/seq` is l-lang on the map floor, with a stable top-down mergesort.
+
+  *Two planned floor entries turned out to be unnecessary*, which is the useful correction: `vec-*`
+  was not needed (`(x :of Array)` already exists) and neither was `equals` (`==` already does the
+  structural comparison). The floor stayed smaller than the plan, which is the direction D50 wants.
+  Map insertion order is JS's one open divergence, costed and declined — see `js-status.ts`.
+
+> **Phase F is complete.** Everything from here to the end of §4 is the planning record — the
+> sequencing argument, the verification method, the named-up-front risks. It is kept because the
+> reasoning is what makes the phase auditable, and because two of its predictions were wrong in
+> instructive ways (marked inline). It is no longer a worklist.
+
+**Fc is the linchpin — corrected sequencing, and it held.** Fe was moved to second on the argument that it rewrites
 how JS produces numbers, and JS output is what downstream goldens are graded against. That argument
 does not survive D55: display goldens are hand-derived from §3.5 *regardless* of what JS does, so JS
 is no longer the oracle that would need re-validating. The dependency that actually binds runs the
@@ -566,6 +608,8 @@ other way:
   matching a rendering we have already ruled we are abandoning.
 
 So the order is **Fa → Fc → Fd → Fb → Fe → Ff → Fg**, and Fc is what unblocks the two after it.
+*Executed in that order; the Fc-first argument was correct — no golden in the corpus ever carried a
+`1n`.*
 
 **A note on how Fc must be verified.** Its ~87 wrapping-dependent golden lines have no independent
 oracle: node's rule is being *replaced*, so whoever implements §3.5 would otherwise be writing both
@@ -579,6 +623,14 @@ work and each, until done, is exactly one named not-yet guard, the same pattern 
 establish. Nothing is silently deferred. (Ryū was a third until D51's amendment (c) showed
 `ll_fmt_double` already generates shortest-round-trip digits; the threshold matching that remained is
 done, in Fe.)
+
+> *Wrong on the second, in a way worth keeping.* The case table was sized as work and turned out to be
+> a **ruling**: D52/Ff-2 makes case and trim ASCII on both backends, so there is nothing to vendor
+> until someone needs non-ASCII case — at which point it replaces two functions and its guard changes
+> with it. Two of the three "hard, up-front items" dissolved on contact with the actual question, and
+> both times the dissolution was the more interesting result than the work would have been. The
+> pattern repeated inside Fg (`vec-*` and `equals` both proved unnecessary) often enough to be a
+> method: **cost the primitive last, after asking whether the language can already say it.**
 
 **A residual Fe leaves behind, named rather than hidden.** `IntegerNumberNode.value` is still a JS
 `number`, i.e. the AST itself cannot represent an int64 literal — both backends now read `match`, the
