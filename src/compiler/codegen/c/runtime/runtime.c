@@ -827,6 +827,44 @@ static ll_str *ll_display_str(ll_value v) {
 static void ll_write_string(ll_str *s) { fwrite(s->data, 1, s->len, stdout); }
 static void ll_write_string_err(ll_str *s) { fwrite(s->data, 1, s->len, stderr); }
 
+/* ---------------------------------------------------------------------------------------------
+ * The PROCESS floor: argv, the environment, the exit status.
+ *
+ * `main` is emitted as `int main(int argc, char** argv)` and stores both here before anything else
+ * runs. It has to be captured rather than reached for, because C gives a program its arguments in
+ * exactly one place -- main's parameters -- and every other function in the translation unit is
+ * downstream of that. JS has `process.argv` as a global and needs no such handoff, which is why this
+ * pair of statics has no counterpart over there.
+ *
+ * The `argv + 1` offset is a CONFORMANCE decision, not a convenience: node's `process.argv` leads
+ * with the interpreter and the script path (dropped with `.slice(2)`), and C's `argv[0]` is the
+ * program name. Both are "how this process was invoked" rather than "what the user asked for", so
+ * both are dropped and `args` means the same thing on both backends. Disagree here and every index
+ * into `args` is off by one on one of them.
+ * --------------------------------------------------------------------------------------------- */
+static int    ll_argc = 0;
+static char **ll_argv = 0;
+
+/* Argument `i`, or nil past the end. `argv + 1` is the CONFORMANCE decision, not a convenience: node's
+ * `process.argv` leads with the interpreter and the script path, C's `argv[0]` is the program name.
+ * Both answer "how was this process invoked" rather than "what was asked for", so both are dropped
+ * and index 0 means the same argument on either backend. Disagree here and every index is off by one
+ * on exactly one of them. */
+static ll_value ll_sys_arg(int64_t i) {
+  if (i < 0 || i + 1 >= (int64_t)ll_argc) return ll_nil();
+  return ll_box_str(ll_str_lit(ll_argv[i + 1]));
+}
+
+/* nil for UNSET, not "" -- absent and empty are different questions and D9 has one bottom value to
+ * say the first with. `getenv` answers NULL for unset and a valid empty string for `FOO=`, so the
+ * distinction survives here exactly as it does through JS's `undefined` check. */
+static ll_value ll_sys_env(ll_str *name) {
+  const char *v = getenv(name->data);
+  return v ? ll_box_str(ll_str_lit(v)) : ll_nil();
+}
+
+static void ll_sys_exit(int64_t code) { exit((int)code); }
+
 static void ll_console_write(FILE *out, int n, ll_value *vals) {
   ll_sb sb;
   ll_sb_init(&sb);

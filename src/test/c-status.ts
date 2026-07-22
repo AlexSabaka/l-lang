@@ -303,6 +303,10 @@ export const C_PASSING: readonly string[] = [
   // identity cast (`closure -> closure` threw, an uncaught exception rather than a diagnostic) and a
   // closure call claiming the closure's DECLARED return ctype where `ll_call` yields a boxed value.
   "80-adversarial/call_nullary_c.lisp",
+  // The PROCESS floor (argv / environment) and `std/sys/process` over it. The offset is the point:
+  // node's argv leads with the interpreter and the script, C's with the program name, and both drop
+  // their own prefix so index 0 means the same argument on either backend.
+  "80-adversarial/sys_process/main.lisp",
   // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
   // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.
   "80-adversarial/display_source_names/main.lisp",

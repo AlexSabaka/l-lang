@@ -1,0 +1,6 @@
+args:     []
+count:    0
+unset:    nil
+is-set:   false
+fallback: default
+has PATH: true

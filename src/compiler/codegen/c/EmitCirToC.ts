@@ -161,9 +161,16 @@ export class EmitCirToC {
     for (const f of m.functions) this.emitFunction(f);
     for (const l of m.lifted) this.emitLifted(l);
     for (const a of m.adapters) this.emitAdapter(a);
-    this.line("int main(void) {");
+    // `int main(int, char**)`, unconditionally. C hands a program its arguments in exactly one
+    // place -- main's parameters -- and every other function in the TU is downstream of that, so the
+    // process floor's `ll_sys_args` reads statics that only main can fill. Emitted always rather than
+    // only when `sys-args` is reached: both forms are valid C, the unused-parameter warning is
+    // suppressed the same way everywhere, and a signature that changes shape depending on what the
+    // program happens to call is a second thing to get wrong.
+    this.line("int main(int argc, char** argv) {");
     this.volatiles = computeVolatileLocals(m.main); // top-level statements are main's locals
     this.indent++;
+    this.line("ll_argc = argc; ll_argv = argv;");
     this.emitMetadata(m.metadata);
     this.withFreshTryStack(() => this.emitBlockStmts(m.main));
     this.line("return 0;");

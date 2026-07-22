@@ -41,6 +41,7 @@ const Real: InferredType = { kind: "primitive", name: "Real" };
 const Bool: InferredType = { kind: "primitive", name: "Boolean" };
 const Void: InferredType = { kind: "primitive", name: "Void" };
 const Str: InferredType = { kind: "primitive", name: "String" };
+const StrOpt: InferredType = { kind: "primitive", name: "String", optional: true };
 const Any: InferredType = { kind: "unknown", name: "Any" };
 const arr = (t: InferredType): InferredType => ({ kind: "array", name: "Array", inner: t });
 const Map_: InferredType = { kind: "map", name: "Map" };
@@ -181,6 +182,43 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   // signature is not knowable here. Typing it more precisely would need a function type the caller
   // does not have.
   ["call", fn("ll_call_dyn", [], Any, true)],
+
+  // -- the PROCESS floor: argv, the environment, and the exit status.
+  //
+  // Irreducible by D50's test -- each is a host facility with no l-lang expression -- and the first
+  // floor entries that are neither a computation nor a stream write: they are how a program learns
+  // what it was ASKED to do. Before these, an l-lang program could not read its own command line on
+  // either backend, which is why the whole corpus is input-free.
+  //
+  // Named `sys-*` rather than `args`/`env`/`exit` because a floor name is the name a program WRITES,
+  // and these are the primitive under `std/sys/process`'s API, not the API. The same separation
+  // `codepoint-length` has from `std/string`'s `strlen`. It also keeps `exit` free: an unprefixed
+  // `exit` on the floor would be unshadowable in every program in the language.
+  //
+  // `sys-env` answers `nil` for an unset variable rather than "" -- absent and empty are different
+  // questions, and D9 has exactly one bottom value to say the first with.
+  // UNARY, BY INDEX, and that shape is forced rather than chosen.
+  //
+  // The obvious entry is a nullary `sys-args` returning the whole list, and it cannot be called. D1
+  // makes `(sys-args)` a READ of the binding rather than a call -- the trap the map floor above
+  // records as the reason there is no `map-new` -- so a nullary floor entry is unreachable from
+  // source. All three ways around it were tried and two of them failed on a real backend:
+  //
+  //   (call sys-args)   needs a FLOOR FUNCTION AS A VALUE. C has no representation for one: it emits
+  //                     a reference to a `u_`-prefixed symbol no declaration produces.
+  //   (sys.args)        a DOTTED head is a call by syntax, and works on C -- but on JS a dotted head
+  //                     is host MEMBER ACCESS, so it compiled to `__ll_member(sys, "args")` and threw
+  //                     `ReferenceError: sys is not defined`. `console.log` and `Math.random` only
+  //                     work there because those objects genuinely exist in the host.
+  //   (sys-arg i)       unary, so it is a call on both, with no new mechanism anywhere.
+  //
+  // So the floor exposes the INDEXED accessor and `std/sys/process` assembles the vector in l-lang,
+  // which is the D50-shaped answer anyway: the irreducible part is "ask the host for argument i", and
+  // the loop around it is portable by construction. `nil` past the end is what terminates it -- an
+  // argument count would be a second nullary entry with the same problem.
+  ["sys-arg", fn("ll_sys_arg", [Int], StrOpt)],
+  ["sys-env", fn("ll_sys_env", [Str], StrOpt)],
+  ["sys-exit", fn("ll_sys_exit", [Int], Void)],
 
   // -- reflection: the backend emits the metadata graph, the accessor shape is spec (D54).
   ["type", fn("ll_type", [Any], Any)],

@@ -586,6 +586,19 @@ function __ll_is_type(val, type) {
     "map-keys": `const map2dkeys = (m) => __ll_map_keys(m);`,
     "write-string": `const write2dstring = (s) => { __ll_write_string(String(s)); };`,
     "write-string-err": `const write2dstring2derr = (s) => { __ll_write_string_err(String(s)); };`,
+    // The PROCESS floor. `process` is node-only, so each guards -- a program that never asks for its
+    // arguments must still run in a browser or a bare VM, which is where the corpus's p5js examples
+    // live. Absent host -> the honest empty answer, never a crash at load.
+    //
+    // `argv.slice(2)` drops the interpreter and the script path, so `args` is what the USER passed,
+    // matching what a C program sees at `argv[1..]` after the same subtraction in `ll_sys_args`. The
+    // two backends must agree on that offset or every index into `args` is off by one on one of them.
+    //
+    // Int in, host Number out: `sys-exit` is typed `[Int] -> Void`, so the argument arrives as a
+    // BigInt under D51 and `process.exit` will not take one.
+    "sys-arg": `const sys2darg = (i) => { const a = (typeof process !== "undefined" && process.argv) ? process.argv.slice(2) : []; const n = Number(i); return (n >= 0 && n < a.length) ? a[n] : null; };`,
+    "sys-env": `const sys2denv = (n) => { if (typeof process === "undefined" || !process.env) return null; const v = process.env[String(n)]; return v === undefined ? null : v; };`,
+    "sys-exit": `const sys2dexit = (c) => { const n = Number(c); if (typeof process !== "undefined" && process.exit) process.exit(n); throw new Error("exit " + n); };`,
     // The CODEPOINT floor (D52). Every one of these spreads the string -- \`[...s]\` iterates SCALAR
     // VALUES, pairing surrogates -- and NONE of them touches \`.length\`, which counts UTF-16 code
     // units and is the reason \`"a\\u{1F600}b"\` measured 4 here where D52 says 3.
