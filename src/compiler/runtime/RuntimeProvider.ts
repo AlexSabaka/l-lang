@@ -98,6 +98,41 @@ function __ll_hostint(x) {
    keeping the two paths visibly identical. */
 function __ll_map_key(k) { return typeof k === "string" ? k : String(k); }
 
+/* The TOTAL container accessor behind get and elem (D9/D53, F.5).
+
+   Both used to be a raw host property access -- obj?.[key] ?? null -- and JavaScript stringifies
+   every property key, so (get v "1") on a VECTOR answered 20 where C answered nil. A key is an Int
+   or a String, and which of those a container accepts is a property of the CONTAINER: a vector and a
+   String are indexed by position, a map by name. A key of the wrong kind is ABSENT, not an error --
+   these are the total half of D9's pair, so they answer nil rather than throwing.
+
+   An integral Number counts as an Int, matching __ll_is_type's case 'int': a literal only becomes
+   a BigInt where the checker typed it, so an untyped 1 must still index. That is D51's documented
+   gradual collapse, not a new one; a NON-integral Real is nil here and nil on C.
+
+   A String is indexed by CODEPOINT (D52) -- spread, never [i], which hands back half a surrogate
+   pair. get is the language's own accessor and follows the language's rule; the native .charAt is
+   host interop and is a different question. */
+function __ll_container_get(c, k) {
+  if (c === null || c === undefined) return null;
+  var idx = typeof k === "bigint" ? Number(k)
+          : (typeof k === "number" && Number.isInteger(k)) ? k : null;
+  if (Array.isArray(c)) {
+    return (idx !== null && idx >= 0 && idx < c.length) ? c[idx] : null;
+  }
+  if (typeof c === "string") {
+    if (idx === null) return null;
+    var cps = [...c];
+    return (idx >= 0 && idx < cps.length) ? cps[idx] : null;
+  }
+  if (typeof c === "object") {
+    var name = typeof k === "string" ? k : (idx !== null ? String(idx) : null);
+    if (name === null) return null;
+    return Object.prototype.hasOwnProperty.call(c, name) ? c[name] : null;
+  }
+  return null;
+}
+
 /* KNOWN DIVERGENCE from D53, guarded rather than hidden: a plain JS Object does not iterate in
    insertion order. Integer-like keys come FIRST, in ascending numeric order, so { b, a, "10", "2" }
    enumerates as ["2","10","b","a"] while C's ll_map -- an assoc list appended at len -- gives the
@@ -502,20 +537,39 @@ function __ll_is_type(val, type) {
     // where someone typed a `?`, and the forced unwrap would have nothing to catch.
     //
     // `?? null`, not `|| null`: a stored `0`, `""` or `false` is a VALUE and must come back as itself.
-    "get": `const get = (obj, key) => obj?.[key] ?? null;`,
+    // TOTAL, and the key is NOT coerced (D9/D53, F.5). This was `obj?.[key] ?? null`, i.e. a raw
+    // host property access -- so `(get v "1")` on a VECTOR answered 20, because JavaScript stringifies
+    // every property key and "1" and 1 are the same property. C answered nil. A key is an Int or a
+    // String, and which one a container accepts is a property of the CONTAINER: a vector and a String
+    // are indexed by position, a map by name. A key of the wrong kind is absent, not an error.
+    //
+    // An INT key on a MAP still stringifies -- that is D53 (Fg-2), which rules the key space to be
+    // String and both runtimes to stringify on the way in.
+    //
+    // An integral Number counts as an Int here, matching `__ll_is_type`'s `case 'int'`: a literal
+    // only becomes a BigInt where the checker typed it, so an untyped 1 must still index. That is
+    // D51's documented gradual collapse, not a new one -- and a NON-integral Real is nil on both.
+    //
+    // A String is indexed by CODEPOINT (D52): spread, never [i], which would hand back half a
+    // surrogate pair. `get` is the language's own accessor, so it follows the language's rule; the
+    // native `.charAt` is host interop and is not this.
+    "get": `const get = (c, k) => __ll_container_get(c, k);`,
     // D9: `head []` returned THE ARRAY ITSELF -- so `(head [])` was `[]`, and asking "did I get
     // anything?" was unanswerable. It is nil. DECISIONS.md:84 cites exactly this ("optionals, so
     // `first`/`last` can be typed honestly") as why D9 must precede a typed stdlib: `head` is the
     // canonical `T?` producer, and it could not be typed while it lied about the empty case.
     // `tail []` is `[]`, which is the true answer, and is left alone.
     "head": `const head = (a) => (Array.isArray(a) && a.length > 0) ? a[0] : null;`,
-    "tail": `const tail = (a) => (Array.isArray(a) && a.length > 0) ? a.slice(1) : a;`,
+    // An EMPTY array for a non-array, not the argument. The floor declares `tail : Any -> Array`,
+    // and returning the receiver made that false: `(tail {:a 1})` handed back the map, so
+    // `(tail x).length` was nil rather than 0.
+    "tail": `const tail = (a) => (Array.isArray(a) && a.length > 0) ? a.slice(1) : [];`,
     // `=== undefined` was blind to null -- so `(empty nil)` was FALSE, and once nil is `null` (D9c)
     // it would have been blind to every bottom value the language emits.
     "empty": `const empty = (a) => a == null || (Array.isArray(a) && a.length === 0);`,
     // Total, like `get`. It was `a[i]`, which hands back `undefined` for a miss -- and `undefined` is
     // no longer a value this language has.
-    "elem": `const elem = (a, i) => a?.[i] ?? null;`,
+    "elem": `const elem = (c, k) => __ll_container_get(c, k);`,
     "list": `const list = (...args) => [...args];`,
     // The i/o SINK (Fb, FLOOR.md 2). Raw bytes, no newline -- `console.log` and `print` are layers
     // over it. This is what makes a PARTIAL line expressible at all: before it, every route out of

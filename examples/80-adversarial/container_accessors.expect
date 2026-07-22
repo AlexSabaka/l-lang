@@ -1,0 +1,19 @@
+head str:  nil
+head nil:  nil
+head map:  nil
+tail str:  []
+tail nil:  []
+tail map:  []
+hit:       1
+miss:      nil
+vec int:   20
+vec str:   nil
+str int:   b
+str str:   nil
+map name:  1
+elem int:  20
+elem str:  nil
+vec oob:   nil
+map miss:  nil
+map int:   one
+map as-s:  one

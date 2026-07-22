@@ -44,6 +44,13 @@ const Str: InferredType = { kind: "primitive", name: "String" };
 const Any: InferredType = { kind: "unknown", name: "Any" };
 const arr = (t: InferredType): InferredType => ({ kind: "array", name: "Array", inner: t });
 const Map_: InferredType = { kind: "map", name: "Map" };
+// The KEY type: the two key spaces the language has. Used by the total accessors, so the checker
+// rejects `(get xs (Math.floor i))` at the call site instead of both backends inventing an answer
+// for it -- JS coerced (20), C answered nil. D51 amendment (b) types every `Math.*` but `trunc` as
+// `-> Real` precisely so a narrowing is written down; this is that rule reaching the accessors.
+// `mapType` boxes a union (ctype.ts: "an Int|String IS dynamic at this level"), so the C signature
+// is unchanged.
+const Key: InferredType = { kind: "union", name: "Int | String", alternatives: [Int, Str] };
 
 const fn = (runtimeFn: string, params: InferredType[], ret: InferredType, variadic = false): FloorEntry =>
   ({ runtimeFn, params, ret, variadic });
@@ -153,11 +160,11 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   ["string-to-codepoints", fn("ll_string_to_codepoints", [Str], arr(Int))],
 
   // -- container/sequence primitives the runtime provides (the SYMBOL_MAP surface).
-  ["get", fn("ll_get", [Any, Any], Any)],
+  ["get", fn("ll_get", [Any, Key], Any)],
   ["head", fn("ll_head", [Any], Any)],
   ["tail", fn("ll_tail", [Any], arr(Any))],
   ["empty", fn("ll_empty", [Any], Bool)],
-  ["elem", fn("ll_elem", [Any, Any], Any)],
+  ["elem", fn("ll_elem", [Any, Key], Any)],
   ["list", fn("ll_list", [], arr(Any), true)],
 
   // -- reflection: the backend emits the metadata graph, the accessor shape is spec (D54).

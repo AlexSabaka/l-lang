@@ -4293,6 +4293,37 @@ change from the JS-UTF-16 count to the correct codepoint count — a one-time, g
 
 ### D53 — primitive `vec`/`map`, structural `equals`
 
+> **Amended 2026-07-22 (F.3/F.5) — the total accessors, ruled.** Three questions, decided together:
+>
+> *(a) `head`/`tail` are TOTAL on any shape.* `nil` and `[]` for a non-vector. They called
+> `ll_unbox_vec` unguarded on C, so `(head "abc")` — and, far more realistically,
+> `(head (get m "missing"))`, since `get` is total and answers nil on a miss — **killed the process**
+> (exit 70, nothing printed) where JS answered nil. Every sibling in the same floor cluster
+> (`ll_get`, `ll_elem`, `ll_empty`) was already a switch with a nil arm; these two were the exception.
+> D9 puts trapping in the **indexer**, not in the total accessors.
+>
+> *(b) A key is an `Int` or a `String`, and is NOT coerced.* Which of the two a container accepts is a
+> property of the container: a vector and a String are indexed by position, a map by name. A key of
+> the wrong kind is **absent**, not an error, so a total accessor answers nil. `(get v "1")` on a
+> vector answered `20` on JS — a raw host property access, and JavaScript stringifies every property
+> key — against `nil` on C. An **Int key on a map still stringifies**; that is this ruling's own
+> earlier half (Fg-2) and is not undone.
+>
+> *(c) JS `tail` returns `[]`* so the floor's declared `tail : Any -> Array` is true. It returned the
+> receiver, so `(tail {:a 1})` handed back the map.
+>
+> *What is NOT closed:* a **`Real`** key. C rejects it (`k.tag != LL_INT`); JS cannot, because after
+> D51 an `Int` is a BigInt only where the checker typed it, so an untyped integral value arrives as a
+> plain Number and the accessor must accept one or `(get v 1)` stops working in untyped code — the
+> same concession `__ll_is_type`'s `case 'int'` already makes. The fix belongs in the **checker**:
+> `get`/`elem` now declare their key `Int | String` on the floor, but the argument is not yet checked,
+> because `inferTotalAccessorType` intercepts these names before `checkCallArguments`. Nor is any
+> other floor call's arguments checked for a simple name — `(codepoint-length 5)` is silent too. F.1
+> connected the floor to the checker for *return* types and left the argument path. Guarded by
+> `container_key_real.lisp`, listed in `js-status.ts`.
+
+
+
 > **Amended 2026-07-22 (Fg), two corrections.** *(a) The names drop the bang.* D21 rejects Scheme
 > spellings **by name** — *"`nil?`, `set!` are rejected, including the ones the runtime shim itself
 > uses"* — and `set!`/`set?` were deleted from `SYMBOL_MAP` for exactly that reason, so `map-set!`

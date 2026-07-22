@@ -273,6 +273,11 @@ export const C_PASSING: readonly string[] = [
   // F.1 -- the checker consults the floor for SIMPLE names, not only dotted ones. 25 of 48 entries
   // contributed no types at all, so `(/ (codepoint-length s) 2)` typed Real: 2.5 here against 2 on
   // JS, where BigInt division truncated by accident. D49d decides division from the STATIC types.
+  // F.3/F.5 -- the total accessors are total, and keys are not coerced. `head`/`tail` on a
+  // non-vector used to TRAP and kill the process here (`(head (get m "missing"))` reaches it from
+  // ordinary nil-propagating code); `(get v "1")` answered 20 on JS by host key stringification.
+  "80-adversarial/container_accessors.lisp",
+  "80-adversarial/container_key_real.lisp",
   "80-adversarial/floor_simple_name_types.lisp",
   // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
   // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.

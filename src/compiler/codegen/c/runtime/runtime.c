@@ -1063,7 +1063,12 @@ static ll_value ll_get(ll_value c, ll_value k) {
       if (i < 0 || (size_t)i >= c.as.v->len) return ll_nil();
       return c.as.v->items[i];
     }
-    case LL_MAP: return ll_get_map(c.as.m, ll_to_str(k));
+    /* Int or String only. A map's key SPACE is String and both runtimes stringify on the way in
+       (D53), so `(m[1] := v)` and `(get m 1)` agree -- but a Real, a Boolean or a container is not a
+       key at all, and stringifying one would invent a key the program never wrote. */
+    case LL_MAP:
+      if (k.tag != LL_INT && k.tag != LL_STR) return ll_nil();
+      return ll_get_map(c.as.m, ll_to_str(k));
     case LL_STR: {
       if (k.tag != LL_INT) return ll_nil();
       int64_t i = k.as.i;
@@ -1078,13 +1083,22 @@ static ll_value ll_get(ll_value c, ll_value k) {
 
 static ll_value ll_elem(ll_value c, ll_value k) { return ll_get(c, k); }
 
+/* TOTAL, like `ll_get`/`ll_elem`/`ll_empty` beside them (D9). These called `ll_unbox_vec`
+   UNGUARDED, so `(head "abc")` -- or, far more realistically, `(head (get m "missing"))`, since
+   `get` is total and answers nil on a miss -- TRAPPED and killed the process, printing nothing,
+   where JS answered nil. Every sibling in this cluster is a switch with a nil/default arm; these two
+   were the exception. A wrong answer is recoverable; a process death mid-`console.log` is not. */
 static ll_value ll_head(ll_value c) {
-  ll_vec *v = ll_unbox_vec(c);
+  if (c.tag != LL_VEC) return ll_nil();
+  ll_vec *v = c.as.v;
   return v->len ? v->items[0] : ll_nil();
 }
 
+/* An EMPTY vector for a non-vector, not the argument: the floor declares `tail : Any -> Array`, and
+   handing back a String would make that declaration false (the JS half did exactly that). */
 static ll_vec *ll_tail(ll_value c) {
-  ll_vec *v = ll_unbox_vec(c);
+  if (c.tag != LL_VEC) return ll_vec_new(4);
+  ll_vec *v = c.as.v;
   ll_vec *out = ll_vec_new(v->len > 1 ? v->len - 1 : 4);
   for (size_t i = 1; i < v->len; i++) out->items[out->len++] = v->items[i];
   return out;
