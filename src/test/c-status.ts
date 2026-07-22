@@ -288,6 +288,12 @@ export const C_PASSING: readonly string[] = [
   // `(/ 7 2)` REAL division inside a string and integer division outside it -- on BOTH backends, the
   // one class of bug cross-backend grading can never find.
   "80-adversarial/interp_is_an_expression.lisp",
+  // `:as` on both sides of the boundary. The C half needed three fixes the JS half did not:
+  // `ensureClassRegistered` short-circuited on the SPELLED name while registering under the
+  // DEFINITION's, so an aliased class lowered again on every reference; the class list was emitted
+  // from `values()`, writing one descriptor out twice; and the spelled alias reached the emitter as
+  // `__ll_class_Gadget`, a name no declaration produces.
+  "80-adversarial/import_export_aliases/main.lisp",
   // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
   // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.
   "80-adversarial/display_source_names/main.lisp",

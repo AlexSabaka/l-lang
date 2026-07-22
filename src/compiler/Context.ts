@@ -150,6 +150,20 @@ export class Context {
    */
   private importBindings: Map<string, Map<string, Set<string> | null>> = new Map();
 
+  /**
+   * The names an import BINDS, when the local name differs from the module's -- `:as`, on either side.
+   *
+   * `(import { a :as b } from "m")` has to make `b` resolve, in THIS file, to the symbol `m` declares
+   * as `a`. Resolution is a flat union over module root scopes keyed by DECLARED name, so there was
+   * nowhere for a rename to live and both aliases were silently discarded -- `:as` parsed, was stored
+   * in one case and dropped in the other, and had zero readers either way.
+   *
+   * This is that missing binding site. It is recorded by the dependency-graph pass (which is where an
+   * import is resolved) and applied by `bindImportAliases` after this module's own scope exists, one
+   * pass later. Importer -> [{ local, source, from }], absolute paths.
+   */
+  private importAliases: Map<string, { local: string; source: string; from: string }[]> = new Map();
+
   /** The module every module implicitly imports. Resolved against `libPaths`, like any other. */
   private static readonly PRELUDE = "std/js";
 
@@ -220,6 +234,46 @@ export class Context {
 
     byModule.set(path.resolve(imported), merged);
     this.importBindings.set(path.resolve(importer), byModule);
+  }
+
+  /** Called per named symbol in an import, from the dependency-graph pass. See `importAliases`. */
+  recordImportAlias(importer: string, imported: string, local: string, source: string): void {
+    const key = path.resolve(importer);
+    const list = this.importAliases.get(key) ?? [];
+    if (list.some((a) => a.local === local && a.source === source && a.from === path.resolve(imported))) {
+      return;
+    }
+    list.push({ local, source, from: path.resolve(imported) });
+    this.importAliases.set(key, list);
+  }
+
+  /**
+   * Bind each of `file`'s imported names into its own top-level scope.
+   *
+   * Runs after the module's symbol table is built and joined, because both halves have to exist: the
+   * IMPORTED module's symbols (joined by the dependency-graph pass, one stage earlier) and THIS
+   * module's root scope (the thing being written into).
+   *
+   * Only a name that would not already resolve is bound. An unaliased `(import { a } from "m")` needs
+   * nothing -- `a` is `m`'s declared name and the flat root-union already finds it -- so the common
+   * case adds no entries at all and the forest is untouched. The two cases that DO need a binding are
+   * the two spellings of a rename: `:as` on the import, and `(export a :as b)` on the module, which
+   * makes `b` a name no scope declares.
+   *
+   * A local declaration WINS: this never overwrites a name the module defines itself, because an
+   * import must not silently displace a definition. That collision is a diagnostic's business (and
+   * currently nobody's -- flagged, not fixed here).
+   */
+  private bindImportAliases(file: string, moduleSymbols: SymbolTable): void {
+    const aliases = this.importAliases.get(path.resolve(file));
+    if (!aliases || aliases.length === 0) return;
+
+    for (const { local, source, from } of aliases) {
+      if (moduleSymbols.hasOwnTopLevel(file, local)) continue; // a local definition owns the name
+      const target = this.symbolTable.moduleOffering(from, source);
+      if (!target) continue; // unresolvable -> LL0235 already reported it; do not invent a binding
+      moduleSymbols.bindTopLevel(file, local, target);
+    }
   }
 
   /**
@@ -451,6 +505,12 @@ export class Context {
 
     const moduleSymbols = buildSymbolTableVisitor.buildSymbolTable();
     this.symbolTable.join(moduleSymbols);
+
+    // The `:as` bindings, after BOTH halves exist: the imported modules' symbols (joined by the
+    // dependency-graph pass above) and this module's own root scope (just built). The join is first
+    // so `moduleOffering` can see the whole forest, and the entries land in `moduleSymbols`, which
+    // `join` has already placed by reference -- so the forest picks them up without a second join.
+    this.bindImportAliases(fullPath, moduleSymbols);
     
     const symbolsVisitCount = ((buildDependencyGraphVisitor as any).getVisitCount?.() || 0) + 
                              ((buildSymbolTableVisitor as any).getVisitCount?.() || 0);

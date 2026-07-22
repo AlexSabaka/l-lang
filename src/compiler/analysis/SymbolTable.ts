@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import * as ast from "../frontend/ast";
 import { SymbolVisibility, getVisibility, getModifierNames } from "../helpers/modifiers";
 
@@ -571,6 +572,67 @@ export class SymbolTable {
     if (entry.isOperator) return true;
 
     return entry.exportName !== undefined;
+  }
+
+  /**
+   * What does `moduleFile` OFFER under the name `offered`?
+   *
+   * The module-boundary companion to `isVisibleFrom`, and a different question from `resolveSymbol`.
+   * `resolveSymbol` finds a symbol by the name it was DECLARED with; a consumer names a module's
+   * symbol by the name that module OFFERS it as, and `(export a :as b)` makes those two different.
+   * A module offers a name if it declares it, or if some declaration's `exportName` is that name.
+   *
+   * Declared name first: under `(export a :as b)` a module offers `b` and no longer offers `a`, but
+   * an unaliased export offers its declared name, and that is overwhelmingly the common case. Only
+   * the TOP-LEVEL scope of that module is searched -- a local or a class member never crosses a
+   * boundary as a free name, which is the same cut `isVisibleFrom` makes via `scope.parent`.
+   */
+  moduleOffering(moduleFile: string, offered: string): SymbolEntry | undefined {
+    const root = this.rootFor(moduleFile);
+    if (!root) return undefined;
+
+    const direct = root.table.get(offered);
+    // A declaration whose export was NOT renamed still offers its own name. One that WAS renamed
+    // offers only the alias, so a direct hit whose exportName is a different name does not count.
+    if (direct) {
+      const exported = direct.exportName ? ast.symbolName(direct.exportName) : undefined;
+      if (exported === undefined || exported === offered) return direct;
+    }
+
+    for (const entry of root.table.values()) {
+      if (!entry.exportName) continue;
+      if (ast.symbolName(entry.exportName) === offered) return entry;
+    }
+    return undefined;
+  }
+
+  /** Does `moduleFile`'s own top-level scope already declare `name`? (A local definition wins.) */
+  hasOwnTopLevel(moduleFile: string, name: string): boolean {
+    return this.rootFor(moduleFile)?.table.has(name) ?? false;
+  }
+
+  /**
+   * Bind `name` in `moduleFile`'s top-level scope to an EXISTING entry from another module.
+   *
+   * The alias binding, and the only writer of a name a module did not declare. It shares the target
+   * entry rather than copying it, which is what makes the rename transparent everywhere downstream:
+   * codegen resolves an identifier to a `SymbolEntry` and derives the emitted name from THAT (the JS
+   * inliner keys on `source::declaredName`), so an aliased reference emits the same inlined binding
+   * as an unaliased one with no codegen change at all.
+   */
+  bindTopLevel(moduleFile: string, name: string, entry: SymbolEntry): void {
+    const root = this.rootFor(moduleFile);
+    if (!root || root.table.has(name)) return;
+    root.table.set(name, entry);
+    this.cacheValid = false;
+    this.indexValid = false;
+    this.symbolCache.clear();
+  }
+
+  private rootFor(moduleFile: string): Scope | undefined {
+    return this.scopes.find(
+      (s) => moduleOf(s) !== undefined && path.resolve(moduleOf(s)!) === path.resolve(moduleFile)
+    );
   }
 
   /**

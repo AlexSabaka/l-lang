@@ -24,6 +24,26 @@ export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
   }
 
   /**
+   * The LOCAL name an import introduces, and the name it asks the MODULE for.
+   *
+   * `(import { a } from "m")` binds `a` to `a`; `(import { a :as b } from "m")` binds `b` to `a`.
+   * Everything downstream that asks "did this file bind NAME?" means the LOCAL name -- that is what
+   * the source will write -- while everything that asks the module a question means the SOURCE name.
+   * Keeping the two apart is the whole of alias support; conflating them is why `:as` did nothing.
+   */
+  private aliasPairs(import_: ast.ImportDefinition): { local: string; source: string }[] {
+    const out: { local: string; source: string }[] = [];
+    for (const s of import_.symbols ?? []) {
+      if (!s?.symbol) continue;
+      const source = ast.symbolName(s.symbol);
+      if (!source) continue;
+      const local = s.as ? ast.symbolName(s.as) : source;
+      if (local) out.push({ local, source });
+    }
+    return out;
+  }
+
+  /**
    * WHICH names did this import ask for? `null` means "the whole module".
    *
    * `undefined` and `[]` BOTH mean the whole module, and getting that wrong is not a subtle bug --
@@ -38,11 +58,9 @@ export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
   private importedNames(import_: ast.ImportDefinition): Set<string> | null {
     const symbols = import_.symbols;
     if (!symbols || symbols.length === 0) return null;
-    return new Set(
-      symbols
-        .map((s) => (s.symbol as any)?.name ?? (s.symbol as any)?.id)
-        .filter((n): n is string => typeof n === "string")
-    );
+    // The LOCAL names -- `importBinds` is asked about the name the SOURCE writes, and under `:as`
+    // that is the alias. Recording the source name here would report LL0216 on every aliased use.
+    return new Set(this.aliasPairs(import_).map((p) => p.local));
   }
 
   private processFileImport(
@@ -80,6 +98,12 @@ export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
 
     // AFTER processing, because the module's symbols do not exist until then.
     this.checkImportedNamesExist(import_, resolvedFile, currentFile);
+
+    // The aliases, for Context to bind once THIS module's own scope exists (it does not yet -- the
+    // symbol table is built by the pass after this one).
+    for (const p of this.aliasPairs(import_)) {
+      this.context.recordImportAlias(currentFile, resolvedFile, p.local, p.source);
+    }
   }
 
   /**
@@ -115,34 +139,29 @@ export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
       const name = s.symbol ? ast.symbolName(s.symbol) : undefined;
       if (!name) continue;
 
-      const entry = table.resolveSymbol(name);
+      // What the module OFFERS, which under `(export a :as b)` is not what it DECLARES. Asking
+      // `resolveSymbol` here would report an aliased export as missing and accept its private name.
+      const entry = table.moduleOffering(resolvedFile, name);
 
-      // `resolveSymbol` unions every module merged into that table, so a hit is not proof the name
-      // came from THIS module. Provenance decides; no provenance means not judgeable.
-      const declaredIn = (entry?.value as any)?._location?.source;
-      const fromThisModule =
-        entry !== undefined &&
-        declaredIn !== undefined &&
-        path.resolve(declaredIn) === path.resolve(resolvedFile);
+      if (entry === undefined) {
+        // Distinguish "no such name" from "there, but withheld". `moduleOffering` answers undefined
+        // for both, so the DECLARED name is what separates them -- and within a package there is no
+        // export boundary at all, so a declared name is simply offered.
+        const declared = table.resolveSymbol(name);
+        const declaredIn = (declared?.value as any)?._location?.source;
+        const here =
+          declared !== undefined &&
+          declaredIn !== undefined &&
+          path.resolve(declaredIn) === path.resolve(resolvedFile);
 
-      if (!fromThisModule) {
+        // An OPERATOR is exempt for the same reason it is exempt from LL0215/LL0216 (W): it is found
+        // by dispatch, never by name, so it has no export and cannot appear in an import list.
+        if (here && (declared!.isOperator || samePackage)) continue;
+
         this.report(MD.ImportNameNotFound, (s.symbol as any) ?? import_.source, {
           name,
           source: path.basename(resolvedFile),
-          defined: false,
-        });
-        continue;
-      }
-
-      // An OPERATOR is exempt for the same reason it is exempt from LL0215/LL0216 (W): it is found
-      // by dispatch, never by name, so it has no export and cannot appear in an import list.
-      if (entry!.isOperator || samePackage) continue;
-
-      if (entry!.exportName === undefined) {
-        this.report(MD.ImportNameNotFound, (s.symbol as any) ?? import_.source, {
-          name,
-          source: path.basename(resolvedFile),
-          defined: true,
+          defined: here,
         });
       }
     }

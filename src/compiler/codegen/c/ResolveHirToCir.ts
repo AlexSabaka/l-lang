@@ -267,7 +267,12 @@ export class ResolveHirToCir {
     // An imported binding initializes BEFORE this module's own body -- the order the import implies.
     const main = { stmts: [...this.importedInits, ...resolvedMain.stmts] };
     if (this.refused) return null;
-    const classes: CClass[] = [...this.classes.values()].map((c) => {
+    // DEDUPED by descriptor identity, not by key. `this.classes` is keyed by the name a program
+    // SPELLS, and an aliased import (`{ Widget :as Gadget }`) deliberately points two keys at one
+    // descriptor -- an alias is a second name for one definition, never a second definition. Emitting
+    // `values()` verbatim wrote that definition's field table, method adapters and class descriptor
+    // out twice, and cc rejected the second.
+    const classes: CClass[] = [...new Set(this.classes.values())].map((c) => {
       // OWN methods only (inherited ones carry the parent's cName and are found via the runtime parent
       // walk): a method is this class's own iff its cName was built with this class's mangled name.
       const ownPrefix = `__ll_method_${mangleBare(c.name)}_`;
@@ -601,7 +606,7 @@ export class ResolveHirToCir {
     if (t.array === true || t.type?.array === true) return { k: "vec", elem: C_VALUE };
     const nm = this.typeNodeName(t);
     if (!nm) return undefined;
-    if (this.classes.has(nm)) return { k: "obj", className: nm };
+    if (this.classes.has(nm)) return { k: "obj", className: this.canonClassName(nm) };
     const prim: Record<string, CType> = {
       Int: C_INT, Real: C_REAL, Boolean: C_BOOL, Bool: C_BOOL, String: C_STR, Char: { k: "char" }, Void: C_VOID,
     };
@@ -609,8 +614,21 @@ export class ResolveHirToCir {
     // An imported class used as a TYPE annotation (`v <- Vector3`): register its descriptor on demand
     // so the param/field/return stays typed as obj. Checked after primitives so `Int`/`Real`/... never
     // hit the symbol table.
-    if (this.ensureClassRegistered(nm, t)) return { k: "obj", className: nm };
+    if (this.ensureClassRegistered(nm, t)) return { k: "obj", className: this.canonClassName(nm) };
     return undefined;
+  }
+
+  /**
+   * The name a class is DEFINED under, given whatever a program spelled.
+   *
+   * `this.classes` is keyed by the spelled name, and an aliased import points two keys at one
+   * descriptor. Everything the EMITTER writes -- `__ll_class_X`, `__ll_fields_X`, `__ll_methods_X`,
+   * `__ll_method_X_m` -- is derived from the definition, so an alias must be resolved here rather
+   * than travelling into a CType or a `c-construct` and emitting a reference to `__ll_class_Gadget`
+   * that no declaration ever produced.
+   */
+  private canonClassName(nm: string): string {
+    return this.classes.get(nm)?.name ?? nm;
   }
 
   // -- cell analysis: which mut-locals of a scope are captured by nested closures ------------------
@@ -1986,8 +2004,9 @@ export class ResolveHirToCir {
    * A4:construct dip is closed -- the only AST read left is a per-field DEFAULT for an OMITTED arg (the
    * HIR carries the args, not the defaults), recorded per use.
    */
-  private buildConstruct(node: ast.ASTNode, className: string, argVals: CExpr[], fromHir: boolean): CExpr {
-    const desc = this.classes.get(className)!;
+  private buildConstruct(node: ast.ASTNode, classNameSpelled: string, argVals: CExpr[], fromHir: boolean): CExpr {
+    const desc = this.classes.get(classNameSpelled)!;
+    const className = desc?.name ?? classNameSpelled;
     const cArgs = desc.fields.map((f, i) => {
       // A field initializer is a store site: a struct-typed value is copied (D11), an array/class shared.
       if (i < argVals.length) return this.copyStore(argVals[i], node, "field-init");
@@ -2824,8 +2843,20 @@ export class ResolveHirToCir {
     const entry = (() => { try { return this.context.symbolTable.resolveSymbol(name as any, node as any); } catch { return undefined; } })();
     const val = entry?.value as ast.ASTNode | undefined;
     if (val && (val._type === "struct" || val._type === "class") && !this.isExtern(entry)) {
-      this.ledger.record("A9-extern", "imported-class", node, `imported class '${name}' registered + methods lowered on demand (class analog of imported-body)`);
-      this.collectClassMembers(this.desugaredCopyOf(val) as ast.StructNode | ast.ClassNode);
+      // The idempotence check above is keyed on the SPELLED name, but `collectClassMembers` registers
+      // under the DEFINITION's own name. Those agree for every unaliased import and part company
+      // under `(import { Widget :as Gadget } ...)`: `classes.has("Gadget")` stayed false however many
+      // times the class was lowered, so every reference lowered it again and C got
+      // `redefinition of '__ll_method_Widget_describe'`. Register once, under the declared name, then
+      // point the spelled name at the SAME descriptor -- an alias is a second name for one
+      // definition, never a second definition.
+      const declared = ast.symbolName((val as any).name) ?? name;
+      if (!this.classes.has(declared)) {
+        this.ledger.record("A9-extern", "imported-class", node, `imported class '${declared}' registered + methods lowered on demand (class analog of imported-body)`);
+        this.collectClassMembers(this.desugaredCopyOf(val) as ast.StructNode | ast.ClassNode);
+      }
+      const desc = this.classes.get(declared);
+      if (desc && declared !== name) this.classes.set(name, desc);
       return this.classes.has(name);
     }
     return false;
