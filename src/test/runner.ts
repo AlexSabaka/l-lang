@@ -14,7 +14,7 @@
 import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
-import { spawnSync } from 'child_process';
+import { spawnSync, SpawnSyncReturns } from 'child_process';
 import { Context, CompilerOptions, LogLevel } from '../compiler/Context';
 import { MANIFEST, ExampleStatus } from './manifest';
 import { CHILD_ENV } from './childEnv';
@@ -52,6 +52,25 @@ const RUN_TIMEOUT_MS = 5000;
 
 // Mirrors examples/'s directory structure under a gitignored scratch dir, instead of writing
 // generated .js/.js.map next to the .lisp source -- the suite must not dirty the tracked corpus.
+/**
+ * Run a child, retrying ONCE on a wall-clock timeout.
+ *
+ * A timeout is a statement about the MACHINE, not about the program: `RUN_TIMEOUT_MS` is 5s, and
+ * under CPU contention -- a parallel build, another suite, a fleet of agents compiling -- an
+ * ordinary example can miss it. The runner reported that as `status: 'error'`, indistinguishable in
+ * the summary from a genuine failure, so the C suite went red on random unrelated files under load.
+ * A ratchet whose red is sometimes noise is not a ratchet; it trains you to re-run instead of look.
+ *
+ * Retried once, not indefinitely: a program that genuinely hangs (03-loops/01_for.lisp loops
+ * forever, deliberately) still times out twice and is still reported, at twice the cost for that one
+ * file. And the message now says it was a timeout AFTER a retry, so a real hang reads as one.
+ */
+function spawnWithRetry(cmd: string, args: string[], opts: any): SpawnSyncReturns<string> {
+  const first = spawnSync(cmd, args, opts) as SpawnSyncReturns<string>;
+  if ((first.error as any)?.code !== 'ETIMEDOUT') return first;
+  return spawnSync(cmd, args, opts) as SpawnSyncReturns<string>;
+}
+
 function compiledPathFor(lispPath: string): string {
   const ext = BACKEND === 'c' ? '.c' : '.js';
   const rel = path.relative(EXAMPLES_DIR, lispPath).replace(/\.lisp$/, ext);
@@ -231,17 +250,22 @@ function runCTest(lispPath: string): TestResult {
   // `-fwrapv` is required by D51, not a nicety: `Int` is a WRAPPING two's-complement 64-bit integer,
   // and plain signed overflow in C is undefined behaviour -- which is not wrapping, it is whatever the
   // optimiser decides. Without it `(+ INT64_MAX 1)` is UB and can differ between -O0 and -O2.
-  const cc = spawnSync('cc', ['-std=c11', '-fwrapv', ...(COPT ? [`-${COPT}`] : []), cPath, '-o', binPath, '-lm'], { encoding: 'utf-8', timeout: 30000 });
+  const cc = spawnWithRetry('cc', ['-std=c11', '-fwrapv', ...(COPT ? [`-${COPT}`] : []), cPath, '-o', binPath, '-lm'], { encoding: 'utf-8', timeout: 30000 });
+  if ((cc.error as any)?.code === 'ETIMEDOUT') {
+    // Distinguished from a compile error: an empty stderr would otherwise be reported as
+    // `cc failed: ` with nothing after it.
+    return { name: fileName, status: softStatus ?? 'error', message: 'cc timed out (30s), twice (retried)' };
+  }
   if (cc.status !== 0) {
     const firstErr = (cc.stderr || '').split('\n').find((l) => l.includes('error')) ?? (cc.stderr || '').split('\n')[0];
     return { name: fileName, status: softStatus ?? 'error', message: `cc failed: ${firstErr}`, stderr: cc.stderr };
   }
 
   // Step 3: run the binary against the same golden the JS suite uses.
-  const run = spawnSync(binPath, [], { encoding: 'utf-8', timeout: RUN_TIMEOUT_MS, env: CHILD_ENV });
+  const run = spawnWithRetry(binPath, [], { encoding: 'utf-8', timeout: RUN_TIMEOUT_MS, env: CHILD_ENV });
   if (run.error || run.status !== 0) {
     const why = run.error
-      ? (run.error as any).code === 'ETIMEDOUT' ? `timeout after ${RUN_TIMEOUT_MS}ms` : run.error.message
+      ? (run.error as any).code === 'ETIMEDOUT' ? `timeout after ${RUN_TIMEOUT_MS}ms, twice (retried)` : run.error.message
       : `exit code ${run.status}`;
     return { name: fileName, status: softStatus ?? 'error', message: `runtime: ${why}`, actual: run.stdout, stderr: run.stderr };
   }
@@ -329,7 +353,7 @@ function runTest(lispPath: string): TestResult {
     // doesn't depend on throwing, stderr is captured even when the process succeeds, and a
     // hung process (e.g. an infinite loop in generated code) is killed instead of hanging
     // the whole suite forever.
-    const run = spawnSync('node', [jsPath], {
+    const run = spawnWithRetry('node', [jsPath], {
       encoding: 'utf-8',
       timeout: RUN_TIMEOUT_MS,
       // CHILD_ENV, not process.env: FORCE_COLOR makes node colourise its own console.log through a
@@ -343,7 +367,7 @@ function runTest(lispPath: string): TestResult {
         name: fileName,
         status: softStatus ?? 'error',
         message: timedOut
-          ? `Timeout: process did not exit within ${RUN_TIMEOUT_MS}ms`
+          ? `Timeout: process did not exit within ${RUN_TIMEOUT_MS}ms, twice (retried)`
           : `Runtime error: ${run.error.message}`,
         actual: run.stdout,
         stderr: run.stderr
@@ -485,7 +509,35 @@ function summarizeGapLedgers() {
 }
 
 // Main test runner
+/**
+ * Every ratchet entry must name a file that exists.
+ *
+ * `C_PASSING` and `JS_NOT_YET` are plain string arrays matched with `.includes(relPath)`, so an entry
+ * that names a renamed or deleted example simply never matches -- it is dead weight that asserts
+ * nothing and reads, to the next person, as coverage. Nothing detected it: the four-way ratchet only
+ * ever asks "is THIS file listed", never "does every listing correspond to a file".
+ *
+ * That is the same failure shape as a stale golden or a guard that cannot discriminate: a test that
+ * has quietly stopped testing. Checked up front, before a single example runs, because a rotten
+ * allowlist makes every result below it less trustworthy.
+ */
+function validateRatchets(): number {
+  const missing: string[] = [];
+  for (const [listName, list] of [['c-status.ts', C_PASSING], ['js-status.ts', JS_NOT_YET]] as const) {
+    for (const rel of list) {
+      if (!fs.existsSync(path.join(EXAMPLES_DIR, rel))) missing.push(`${listName}: ${rel}`);
+    }
+  }
+  if (missing.length) {
+    console.log(chalk.red(`\n  ratchet entries naming files that do not exist (${missing.length}):`));
+    for (const m of missing) console.log(chalk.red(`    ${m}`));
+    console.log('');
+  }
+  return missing.length;
+}
+
 function main() {
+  const ratchetRot = validateRatchets();
   console.log(chalk.bold('\n================================'));
   console.log(chalk.bold('  L-Lang Compiler Test Suite'));
   console.log(chalk.bold('================================\n'));
@@ -565,7 +617,7 @@ function main() {
 
   if (BACKEND === 'c') summarizeGapLedgers();
   
-  if (failed === 0 && errors === 0) {
+  if (failed === 0 && errors === 0 && ratchetRot === 0) {
     console.log(chalk.green.bold('🎉 All tests passed!\n'));
     process.exit(0);
   } else {

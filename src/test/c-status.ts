@@ -45,6 +45,9 @@ export const C_PASSING: readonly string[] = [
   // Ratcheted in by the first full-corpus run (passed without being targeted):
   "05-data-structures/03_matrices.lisp",
   "07-types/00_primitives.lisp",
+  // Promoted from xfail 2026-07-22: its stale reason blamed a checker false-positive that had
+  // stopped firing, so the file sat unrun on BOTH backends. It compiles clean and passes here too.
+  "07-types/03_type_basics.lisp",
   "10-modifiers/00_memoization.lisp", // :comptime folds to constants before codegen
   "11-comptime/00_comptime.lisp",
   "80-adversarial/cond_dangling_else.lisp",

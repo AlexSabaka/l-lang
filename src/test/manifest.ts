@@ -117,14 +117,13 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "04-pattern-matching/04_destructuring.lisp": {
     status: "xfail",
     reason:
-      "Tuples (Phase U) and records (Phase R) BOTH work now. The :97 match-arm blocker is GONE (Pa): " +
-      "the `[(pattern match) (body)]` form was stale syntax only the PEG accepted; rewritten to the " +
-      "ruled `(match x { pat => body })`. The file now PARSES on grammar_v2. " +
-      "Blocked now at :19 on LL0219 'r'/'b' 'used before it is declared', both bound at :18 by " +
-      "`(let [r g b] rgb)` -- note `g`, bound by the SAME form, is not flagged, so this is not a " +
-      "plain destructuring-binding miss. `b` is separately re-declared at :78 and :80 in the same " +
-      "scope (an example bug: `(let [a b] [b a])` is a genuine TDZ read). The `r` report has no " +
-      "measured root cause yet -- it is a false positive on valid code and wants a probe.",
+      "Re-measured 2026-07-22: parses and type-checks past the old blockers; its `-> nil` returns " +
+      "were corrected to `-> Void`. Now blocked on FOUR ELL0212s -- `a`, `b`, `r` and `name` are each " +
+      "declared twice in the one top-level scope, because the sections reuse names " +
+      "(`[r g b]` at :18 vs `[q r]` at :90, `{:name :age}` at :29 vs the nested `{:user {:name :id}}` " +
+      "at :43). Three of those are mechanical renames. The fourth is not: :76-80 does `(let a 1) " +
+      "(let b 2) (let [a b] [b a])` to demonstrate a SWAP, and D10 says a `let` binds once. Whether " +
+      "l-lang wants destructuring ASSIGNMENT is a language question.",
   },
   "00-basics/03_optional_and_mutability.lisp": {
     status: "test",
@@ -132,15 +131,13 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "00-basics/02_scope.lisp": {
     status: "xfail",
     reason:
-      "The :68 `for` blocker is GONE (Pa): `:i`/`:<` are not D12 clauses, rewritten to " +
-      "`:init (mut i 0) :cond (< i 3) :step (i := (+ i 1))`. Three more stale forms went with it: " +
-      "`(Fn [] Int)` -> `(fn [] -> Int)` (v2's functionType rule takes lowercase `fn` + `->`; the " +
-      "capital-`Fn` spelling never parsed on EITHER frontend and appears nowhere else in the corpus), " +
-      "the `[(pat match) (body)]` match arms -> `{pat => body}`, and `(let [f1 f2] <- (make-functions))` " +
-      "-> `(let [f1 f2] (make-functions))` (`<-` is the type arrow, so the old LL0006 was correct). " +
-      "The file now PARSES on grammar_v2. Blocked at :27 on LL0219 'x' 'used before declared': `x` is " +
-      "declared at :26 AND re-declared at :103 in the same top-level scope -- two `const x` in one " +
-      "block, an EXAMPLE bug. Fix the duplicate before re-judging the diagnostic.",
+      "Re-measured 2026-07-22: compiles with zero diagnostics, and dies at RUNTIME with " +
+      "'ReferenceError: Cannot access count before initialization'. :69 `(let count (+ count 10))` " +
+      "shadows an outer `count` and reads it in its own initializer, which emits `const count = " +
+      "count + 10` -- a self-referential const, i.e. a TDZ read. TWO defects hide here: the emitter " +
+      "produces it, and the checker does not report the LL0219 that would have caught it. The file " +
+      "also carries two commented-out lines (`; (let x 2)`, `; (let count 0)`) that disable the very " +
+      "shadowing it is titled after, so 'Inner x (shadowed)' currently prints the OUTER x.",
   },
   "00-basics/04_nil_handling.lisp": {
     status: "test",
@@ -148,17 +145,19 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "18-error-handling/01_try_catch.lisp": {
     status: "xfail",
     reason:
-      "not goldenable as written: it does `(console.log \"Caught error:\" err)` on raw Error " +
-      "objects, so node prints a full stack trace with ABSOLUTE paths and line numbers into the " +
-      "generated .js -- a golden would bake one machine's filesystem into the repo. (Its old " +
-      "reason, 'needs a golden authored', was wrong: it compiles and runs fine.) Fix is to print " +
-      "err.message, but that edits the corpus and needs a call.",
+      "Re-measured 2026-07-22: the stack-trace objection no longer applies (the file catches `:of " +
+      "Error` and prints fixed literals), and its `-> nil` return type was corrected to `-> Void`. " +
+      "It now fails to COMPILE, on ELL0205: section 5 does `(let data nil)` and then reads " +
+      "`data.property` to demonstrate a runtime null access, which D9's non-nullable-by-default " +
+      "checker refuses statically. The type system preventing the bug IS the feature; what an " +
+      "example of type-specific catch should fail WITH instead is a decision, not a fix.",
   },
-  "07-types/03_type_basics.lisp": {
-    status: "xfail",
-    reason: "D5: convertAstTypeToInferred false-positives on this exact file",
-  },
-  "12-quote-macros/00_quoting.lisp": {
+  // 07-types/03_type_basics.lisp was xfail "D5: convertAstTypeToInferred false-positives on this
+  // exact file". Re-measured 2026-07-22: it compiles with ZERO diagnostics and runs. The blocker was
+  // real once and went away without anyone re-checking, so the file sat unrun for the whole of the
+  // interval. It has a golden now (two lines, both hand-checked against the source) and is an
+  // ordinary test.
+    "12-quote-macros/00_quoting.lisp": {
     status: "xfail",
     reason:
       "Quote is no longer 'broken (compiles to a JSON string)' -- D3d fixed that, and this file now " +
@@ -172,14 +171,14 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "05-data-structures/02_maps.lisp": {
     status: "xfail",
     reason:
-      "The colon-path blocker is GONE (Pa). It was flagged here as needing a ruling, and it got one: " +
-      "`map:key:key` is NOT a language feature (D39) -- maps use dot-path. grammar_v2's rejection was " +
-      "correct all along; the PEG's acceptance was the defect (it mangled the path to a junk identifier " +
-      "that reached codegen -- audit AF-029). Every `person:name`/`nested:user:name`/`config:host` is now " +
-      "dot-access, and `(data.hasKey :a)` -> `\"a\"` per D13 (keys are strings). File now PARSES. " +
-      "Blocked at :72 on LL0202 'cannot assign Int to Map' for `(user[\"profile\"][\"score\"] := 1500)`: " +
-      "the checker drops the SECOND index in assignment position. A REAL CHECKER BUG -- the read form " +
-      "`nested[\"user\"][\"contact\"][\"email\"]` on :31 works fine. Unfiled by the audit. It also has no golden.",
+      "Re-measured 2026-07-22: this now COMPILES with zero diagnostics and fails at RUNTIME. Two " +
+      "causes, both real features rather than checker bugs: (1) `settings.entries` in a for-each " +
+      "emits a call to `__ll_map_copy_each`, which RuntimeProvider defines but the tree-shaken " +
+      "prelude does not include -- a shim-SELECTION bug, not a missing helper; (2) `.keys`, " +
+      "`.values` and `.hasKey` on a map do not exist. The map FLOOR (Fg-2) gave the language " +
+      "map-get/set/has/delete/keys, so the accessors this file wants are expressible now and the " +
+      "remaining work is surface, not semantics. The earlier colon-path note (D39, `map:key` is not " +
+      "a feature) was settled and is no longer why this is here.",
   },
   "06-value-semantics/00_structs.lisp": {
     status: "test",
@@ -202,7 +201,11 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "20-algorithms/00_bfs.lisp": {
     status: "xfail",
-    reason: "D5: `new` expressions are untyped",
+    reason:
+      "Re-measured 2026-07-22: `new` expressions ARE typed now -- the diagnostic names `Point?`, " +
+      "which is the inferred type doing its job. The live blocker is nil-safety: ELL0205 " +
+      "'current is possibly nil (Point?)', from reading a field off a queue-shift result without " +
+      "checking it. D9 friction on a real algorithm, not a missing feature.",
   },
   "20-algorithms/02_game_of_life.lisp": {
     status: "xfail",
