@@ -355,6 +355,9 @@ export const C_PASSING: readonly string[] = [
   // Lb, found by the above: C reads a map key that is a JS reserved word; JS mangles it to `_class`
   // and answers nil. C is the correct backend here -- see js-status.ts, where JS is listed red.
   "80-adversarial/reserved_word_map_keys.lisp",
+  // Lc -- `std/llang/reflect`, the typed surface over the D54 graph. A library over an existing
+  // floor: no backend change, and it runs byte-identically on both from the first commit.
+  "16-stdlib/03_reflect.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the

@@ -1,0 +1,41 @@
+--- values ---
+int:       Int primitive
+string:    String primitive
+array:     Array container
+map:       Map container
+nil:       Nil primitive
+instance:  Dog class
+function:  add function
+--- function add ---
+is-function: true
+arity:       2
+params:      ["a" "b"]
+returns:     Int
+--- class Dog ---
+is-class:    true
+own methods: ["speak" "fetch" "greet"]
+own props:   []
+implements:  ["Greeter"]
+parent:      Animal
+ancestors:   ["Animal"]
+--- inherited ---
+all methods: ["speak" "fetch" "greet" "describe"]
+all props:   ["name" "legs"]
+has speak:   true
+has legs:    true
+has fly:     false
+subtype-of:  true false
+speak ret:   String
+fetch arity: 1 ["n"]
+--- root Animal ---
+parent:      
+ancestors:   []
+ctor req:    2
+parent obj:  nil
+--- a primitive ---
+kind:        primitive
+methods:     []
+params:      []
+returns:     
+ancestors:   []
+has-method:  false

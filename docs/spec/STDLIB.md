@@ -203,6 +203,7 @@ than function-by-function.
 | `std/os` | `unistd.h` | `args env exit` |
 | `std/seq` | *(none)* | `map filter reduce zip range` — pure l-lang, built on the above |
 | `std/fn` | *(none)* | `identity compose partial constantly` |
+| `std/llang/reflect` | *(the floor)* | `name-of kind-of parent ancestors find-method has-property …` — the typed surface over D54's metadata graph |
 
 **This ratifies a drift rather than imposing a shape.** The existing corpus has already wandered
 toward cstd on its own, without anyone deciding to:
@@ -279,6 +280,25 @@ In dependency order. Each is a sub-phase of Phase S.
   - The **native member tables** merged the same way: 27 members byte-identical, 7 declared by the
     checker and refused by C, and three of those seven C could already do *dynamically* — so typing
     the receiver had been **losing** capability.
+- ✅ **Lc — `std/llang/reflect`, the RTTI half of l-lang's self-description.** A library over an
+  existing floor: no backend change, no new primitive, byte-identical on both backends from the first
+  commit. It exists because a raw metadata index gets three things wrong. **Totality** — a
+  descriptor's shape depends on its kind, so `t["extends"]` raises a D9 KeyError on a *root* class and
+  `t["params"]` on anything that is not a function; every accessor here answers nil or `[]` instead,
+  which is what makes them composable. **Inheritance** — `(type-by-name "Dog")` lists Dog's *own*
+  methods, so any `has-method` that does not walk the `extends` chain is wrong for every inherited
+  member; `methods` and `all-method-names` are named for which they are. **The edge is a name** —
+  climbing is a by-name lookup, and nobody should have to know that to ask for a parent.
+
+  Typed `Any`, deliberately: D42 conformance is checked against *declared* types, and a map the
+  runtime mints declares nothing, so a `definterface TypeInfo` over it would be an unverifiable claim.
+  The *returns* are typed as tightly as the data allows. `name-of`/`kind-of` are also the portable
+  answer to the question `lib/std/types` answers with `x.constructor.name`, `Array.isArray` and
+  `typeof` — three host spellings that work on one backend.
+
+  The **AST half of `std/llang` is still blocked**, and not on effort: the `llang` backend is untested
+  and cannot be trusted, which removes the `quote → datum → emit → compare` round trip that would have
+  been its oracle.
 - **Sf — the cstd-shaped modules**, typed, and **actually tested**: goldens, `status: "test"`.
 - **Sg — retire** what remains; close D7.
 
