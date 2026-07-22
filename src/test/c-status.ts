@@ -316,6 +316,9 @@ export const C_PASSING: readonly string[] = [
   // a String and a hand-written Iterable each CRASHED the emitter, and an `Iterable<T>` parameter
   // compiled clean and trapped on data.
   "80-adversarial/iteration_protocol.lisp",
+  // `deep-copy` on the floor, and told apart from D11's STORE copy -- pointing it at `ll_copy` would
+  // have shared a vector's elements here and copied them on JS.
+  "80-adversarial/deep_copy_floor.lisp",
   // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
   // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.
   "80-adversarial/display_source_names/main.lisp",

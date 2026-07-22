@@ -979,6 +979,38 @@ static ll_value ll_copy(ll_value v) {
   return ll_box_obj(dst);
 }
 
+/* `deep-copy` -- the EXPLICIT deep copy, and NOT the same operation as `ll_copy` above.
+ *
+ * `ll_copy` is D11's STORE copy: memberwise on a struct, and a reference field is SHARED, which is
+ * the C# rule the language chose. `deep-copy` is the one a program asks for by name, and it recurses
+ * through arrays as well -- so a vector of structs comes back with copied elements.
+ *
+ * The two had to be told apart the moment `deep-copy` went on the floor. JS has both (`__ll_copy` and
+ * `deep2dcopy`); C had only the first, so mapping the floor entry at `ll_copy` would have made
+ * `(deep-copy [s1 s2])` share its elements here and copy them there -- a silent divergence
+ * introduced by the very act of modelling the name.
+ *
+ * A MAP is returned as-is, matching the JS shim: it recurses into arrays and structs and nothing
+ * else. Not obviously right, but it is what the language already does, and changing it is a ruling
+ * rather than a port. */
+static ll_value ll_deep_copy(ll_value v) {
+  if (v.tag == LL_VEC) {
+    ll_vec *src = v.as.v;
+    ll_vec *dst = ll_vec_new(src->len ? src->len : 4);
+    for (size_t i = 0; i < src->len; i++) dst->items[i] = ll_deep_copy(src->items[i]);
+    dst->len = src->len;
+    return ll_box_vec(dst);
+  }
+  if (v.tag == LL_OBJ && v.as.o->cls->is_struct) {
+    const ll_obj *src = v.as.o;
+    ll_obj *dst = (ll_obj *)ll_alloc(sizeof(ll_obj) + src->cls->field_count * sizeof(ll_value));
+    dst->cls = src->cls;
+    for (size_t i = 0; i < src->cls->field_count; i++) dst->fields[i] = ll_deep_copy(src->fields[i]);
+    return ll_box_obj(dst);
+  }
+  return v;
+}
+
 /* Copy keeping the typed obj shape (for a struct-typed local/param/return slot). */
 static ll_obj *ll_copy_obj(ll_obj *o) {
   return ll_unbox_obj(ll_copy(ll_box_obj(o)));

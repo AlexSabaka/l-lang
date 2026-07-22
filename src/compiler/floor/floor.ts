@@ -220,6 +220,15 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   ["sys-env", fn("ll_sys_env", [Str], StrOpt)],
   ["sys-exit", fn("ll_sys_exit", [Int], Void)],
 
+  // -- D11's EXPLICIT deep copy. Distinct from the STORE copy the compiler inserts: that one is
+  // memberwise and shares reference fields (the C# rule), while this recurses through arrays too, so
+  // a vector of structs comes back with copied elements.
+  //
+  // Telling those two apart is the whole reason this needed modelling. JS had both; C had only the
+  // store copy, so pointing this entry at `ll_copy` would have made `(deep-copy [s1 s2])` share its
+  // elements on C and copy them on JS -- a divergence created by the act of naming the operation.
+  ["deep-copy", fn("ll_deep_copy", [Any], Any)],
+
   // -- D30's ITERATION PROTOCOL. `iter` gives a cursor, `next` advances it, nil means done.
   //
   // These were JS-only, in the shim, on no floor -- and that is not a bookkeeping detail: the C
