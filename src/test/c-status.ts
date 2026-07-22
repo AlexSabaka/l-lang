@@ -259,6 +259,10 @@ export const C_PASSING: readonly string[] = [
   // were strictly the worst of the three. The astral file is C-reference / JS-gap; see js-status.ts.
   "80-adversarial/native_string_codepoints.lisp",
   "80-adversarial/native_string_astral.lisp",
+  // Ff-4 -- `format-args` scans codepoints. Ff-3 had made C's `.charAt` a walk, so the old scanner
+  // became O(n^2) for every `print`; and it left `.length`/`.charAt` -- the one place the backends
+  // still disagree -- in the middle of the language's most-used function.
+  "80-adversarial/format_codepoints.lisp",
   // Fd -- the reflection metadata GRAPH is emitted into the C module from the shared builder both
   // backends read (D54), so `type`/`type-by-name` answer with real properties, methods, constructor
   // params, generics and interfaces instead of a {name, extends} stub. Closes §5.2 cluster 3.
