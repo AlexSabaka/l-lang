@@ -348,6 +348,13 @@ export const C_PASSING: readonly string[] = [
   "08-generics/00_generics_basic.lisp",
   "09-oop/01_interfaces.lisp",
   "80-adversarial/reflection_metadata_depth.lisp",
+  // Lb -- the OTHER half of reflection: what `(type v)` answers for a value the graph does not
+  // describe. Nil, Array, Map and Function are seeded in the shared builder, so neither backend
+  // invents a name from its own fallback any more, and C's `ll_type` reads a closure's source name.
+  "80-adversarial/reflection_value_type.lisp",
+  // Lb, found by the above: C reads a map key that is a JS reserved word; JS mangles it to `_class`
+  // and answers nil. C is the correct backend here -- see js-status.ts, where JS is listed red.
+  "80-adversarial/reserved_word_map_keys.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the

@@ -4556,6 +4556,49 @@ per-backend** — the JS `type`/`type-by-name` object (`{name, kind, params, ret
 > **Amended 2026-07-21.** D54 originally also ruled that display is node's `util.inspect` exactly.
 > That half is **superseded by D55** and has been removed here rather than left to contradict it.
 
+> **Amended 2026-07-22 (Lb) — `(type v)` names a value from its REPRESENTATION, and the names are
+> seeded once.** D54 settled the shape of a *declared* type's descriptor and left the rest to each
+> backend's fallback. That was most of the surface: `Nil`, `Array`, `Map` and `Function` were in no
+> table, so `(type nil)`, `(type [1 2 3])`, `(type {:a 1})` and `(type f)` were each answered by
+> whatever the two runtimes happened to invent, and all four disagreed. JS answered from the **host** —
+> a map was `Object` (JS's name for it, not l-lang's) carrying its own keys as `properties`, an array
+> carried its indices, a lambda reported the JS binding's name with `kind: "class"` — and C answered
+> `{kind: "unknown"}`. The four names are now seeded in the one shared builder, `Array` and `Map` with
+> a new kind **`container`**, and both backends find them instead of inventing them.
+>
+> A container's **elements are not its properties**. `(type [1 2 3])` answers what the value *is*;
+> `[1 2 3]` is not a type with three fields named `"0"`, `"1"` and `"2"`. That was `Object.keys`
+> showing through, the same way `null` did before D55.
+>
+> **The refusal is lifted.** The JS runtime's fallback answered `Unknown` on principle — *"`typeof`
+> says number but never Int-vs-Real, string but never String-vs-Char, so it does not guess"* — and
+> both halves of that have expired. **D51** made an `Int` a **BigInt**, so `typeof` separates Int from
+> Real exactly, and `lib/std/types`' `is-int` has read it that way ever since; **Char** is
+> unconstructible, because the reader has no Char literal. C has always answered precisely from its
+> tag, so the refusal was not neutrality — it was a divergence on every dynamically-typed `(type x)`.
+>
+> The distinction it was protecting survives, and is now pinned by its own guard: reading the
+> **representation** D51 chose is not the same as **guessing from the value**. `(type 5.0)` on an
+> un-inferred slot still answers `Real`, where `Number.isInteger` — the guess the original concession
+> named — would have said `Int`.
+>
+> *Consequence for the compile-time fold.* `foldPrimitiveType` emits a **raw** metadata lookup with no
+> fallback arm, so it must only fire on a name the graph carries or it answers `undefined`, which
+> prints as `nil`. `(type nil)` did exactly that: reflecting the bottom value produced the bottom
+> value. It now declines to fold an unseeded name and lets the call reach the runtime, which names the
+> value from its representation and carries the fallback the folded expression cannot.
+>
+> *Found by this work, not fixed by it:* a map key that is a **JS reserved word** is unreachable
+> through the dotted (D9 **total**) accessor on the JS backend. `visitCompositeIdentifier` runs every
+> part of `a.b` through `encodeIdentifier`, which prefixes a reserved word so it is safe as a
+> *binding*; a property key is not a binding, and `obj.class` has been legal JS since ES5. So
+> `hero.class` reads `hero._class` and answers **nil**, indistinguishable from a key that was never
+> set, while `hero["class"]` is correct. It surfaced here because `extends` — the edge D54's own graph
+> uses to name a parent type — is one of them, which makes the graph unwalkable through the total
+> accessor on JS. Pinned by `80-adversarial/reserved_word_map_keys.lisp` and listed in `js-status.ts`;
+> the fix must be symmetric (a class field named `class` is *defined* as `_class` too) and reaches
+> ctor params, where the escape is genuinely required.
+
 ### D55 — display is l-lang's own format, specified by transcription
 
 The canonical rendering of a value is **l-lang's own**, written out as a rule in

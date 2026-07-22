@@ -4829,18 +4829,39 @@ catch b ((console.log "two")))`,
       "`(type String)` reflected the JS global and reported kind 'class'; `type-by-name` did not exist.",
   },
   {
-    // The gradual concession, asserted so it is DOCUMENTED behaviour rather than an accident. Ze took
-    // the same one: "a condition we could not type is not a condition we can call wrong."
-    name: "Zib/D43: an un-inferred primitive answers Unknown -- it does not GUESS",
+    // REVERSED at Lb, and the reversal is the point: this used to assert `Unknown`.
+    //
+    // The concession was correct when written -- "`typeof` says number but never Int-vs-Real" -- and
+    // D51 expired it. An Int is a BigInt now, so the representation answers exactly, and C (which has
+    // always had a tag) was answering `Int` here the whole time. The refusal was not neutrality; it
+    // was a live divergence between the backends on every dynamically-typed `(type x)`.
+    name: "Zib/D43/Lb: an un-inferred Int answers Int -- the REPRESENTATION knows (D51)",
     source: `(fn f [x] -> Void (
   (let t (type x))
   (console.log t["name"])))
 (f 5)`,
-    expect: ["Unknown"],
+    expect: ["Int"],
     wasBroken:
-      "NOT broken -- the CONCESSION. `x` is un-annotated, so the channel is empty and the runtime " +
-      "cannot finish the job. `Number.isInteger` would answer 'Int' for 5.0 -- a guess that " +
-      "CONTRADICTS the static type. Two answers to one question is the bug class this audit kills.",
+      "`Unknown`, on the since-expired premise that JS cannot separate Int from Real. D51 made an " +
+      "Int a BigInt; `lib/std/types`' is-int has read `(== (typeof x) \"bigint\")` ever since.",
+  },
+  {
+    // The GUARD on the case above, and the reason `Number.isInteger` is still refused.
+    //
+    // The old concession's specific fear was that a runtime answer would report an integral Real as
+    // an Int -- "a guess that CONTRADICTS the static type". Reading the representation cannot do
+    // that: `5.0` is a plain JS number, so it answers Real. That is what separates a REPRESENTATION
+    // READ (D51 chose the encoding; this reports it) from a VALUE GUESS (inspecting the number and
+    // inferring). Only the second was ever the bug class, and it is still refused.
+    name: "Zib/D43/Lb: an un-inferred INTEGRAL Real still answers Real -- not a value guess",
+    source: `(fn f [x] -> Void (
+  (let t (type x))
+  (console.log t["name"])))
+(f 5.0)`,
+    expect: ["Real"],
+    wasBroken:
+      "NOT broken -- the GUARD that keeps Lb honest. `Number.isInteger(5.0)` is true, so the guess " +
+      "the old concession feared would answer 'Int' here. Reading the representation answers 'Real'.",
   },
   {
     // The fold replaces a CALL with a lookup, so the operand stops being evaluated unless we keep it.

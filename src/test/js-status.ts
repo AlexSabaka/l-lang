@@ -74,4 +74,15 @@ export const JS_NOT_YET: readonly string[] = [
   // REPRESENTATION crossing the boundary -- which is why `native_search_numeric` was a bug and had to
   // be fixed, while this stays. So this entry is not an unpaid debt; it is the boundary working.
   "80-adversarial/native_string_astral.lisp",
+  // Lb (D9) -- a map key that is a JS RESERVED WORD is unreachable through the dotted TOTAL accessor
+  // on this backend: `visitCompositeIdentifier` runs every part of `a.b` through `encodeIdentifier`,
+  // which prefixes a reserved word for use as a BINDING, so `hero.class` reads `hero._class` and
+  // answers nil. C reads the key it was given.
+  //
+  // The one entry here that is NOT a declined divergence -- it is a bug, and it is sized rather than
+  // argued away. The fix has to be SYMMETRIC: a class field named `class` is DEFINED as `_class` too,
+  // so relaxing only the read breaks it; and it reaches ctor params, where `class` genuinely is an
+  // illegal JS binding and must keep its escape, and `{:class}` destructuring. Listed here so the
+  // ratchet turns red the moment it is fixed, and so the hole is visible while it is not.
+  "80-adversarial/reserved_word_map_keys.lisp",
 ];

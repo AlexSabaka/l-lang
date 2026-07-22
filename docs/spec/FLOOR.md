@@ -288,6 +288,12 @@ so `codepoint-at` returns a `Char` with no new type.
   nullable}` for a class — and `reflection_metadata_depth.lisp` pins it. [D48-Q5](./DECISIONS.md)
   put field types on the HIR class node (`af6047e`); the residual is purely that the C *runtime*
   descriptor does not yet emit them.
+- **Reflecting a value the graph does not describe** (Lb). `Nil`, `Array`, `Map` and `Function` are
+  **seeded in the shared builder** alongside the primitives, `Array`/`Map` with kind **`container`**,
+  so neither backend answers from its own fallback. A container's **elements are not its
+  `properties`**. `(type v)` names the value from its **representation** — C's tag, and on JS the
+  D51 encoding (`Int` is a BigInt, `Real` a number); reading that encoding is not the same as
+  guessing from the value, so an un-inferred `5.0` still answers `Real`.
 
 ### D55 — display is l-lang's own format (see §3.5)
 

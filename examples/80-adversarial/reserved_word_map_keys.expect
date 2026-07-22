@@ -1,0 +1,9 @@
+class:   warrior
+default: 10
+in:      1
+new:     2
+static:  true
+name:    Ada
+[class]: warrior
+[new]:   2
+absent:  nil

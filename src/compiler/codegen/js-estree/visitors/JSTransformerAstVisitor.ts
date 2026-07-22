@@ -3333,6 +3333,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * be a guess that CONTRADICTS the static type -- two answers to one question, which is the bug class
    * this whole audit exists to kill.
    */
+  /** The metadata graph's key set, built once -- the same builder the emitted table comes from. */
+  private foldableNames?: Set<string>;
+  private foldableTypeNames(): Set<string> {
+    if (!this.foldableNames) {
+      this.foldableNames = new Set(Object.keys(buildTypesMetadata(this.context)));
+    }
+    return this.foldableNames;
+  }
+
   private foldPrimitiveType(
     node: ast.ASTNode,
     head: ast.ASTNode,
@@ -3347,6 +3356,14 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     const known: any = this.context.nodeTypes?.get(args[0]);
     if (!known || known.kind !== "primitive" || typeof known.name !== "string") return undefined;
+
+    // The fold is a RAW lookup -- no `|| {...}` arm -- so it must only fire on a name the graph
+    // actually carries, or it answers `undefined`, which prints as `nil` (Lb). `(type nil)` did
+    // exactly that: `Nil` was in no table, so reflecting the bottom value produced the bottom value,
+    // against C's descriptor. Declining to fold is not a worse answer, it is a better one: the call
+    // falls through to the runtime `type`, which names the value from its representation and carries
+    // the fallback this expression cannot.
+    if (!this.foldableTypeNames().has(known.name)) return undefined;
 
     const lookup = ESTreeBuilder.memberExpression(
       node,

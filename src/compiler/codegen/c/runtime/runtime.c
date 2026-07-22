@@ -2215,9 +2215,21 @@ static ll_value ll_class_meta(const ll_class *cls) {
 
 static ll_value ll_type(ll_value v) {
   if (v.tag == LL_OBJ) return ll_meta_or(v.as.o->cls->name, "object");
+  /* A function VALUE reports its DECLARATION, when it has one (Lb). `ll_closure` has carried the
+     source name all along -- for the inspect format -- and this arm is the only reader that needed
+     it, so `(type add)` answered `Function` while JS answered add's full params/returns. A lambda's
+     name is not a declaration and falls through to `Function`, which is what JS now says too. */
+  if (v.tag == LL_CLOSURE) {
+    const char *fname = v.as.fn->name;
+    if (fname && *fname) {
+      ll_value m = ll_meta_lookup(fname);
+      if (m.tag != LL_NIL) return m;
+    }
+    return ll_meta_or("Function", "function");
+  }
   const char *nm = v.tag == LL_INT ? "Int" : v.tag == LL_REAL ? "Real" : v.tag == LL_STR ? "String"
                  : v.tag == LL_BOOL ? "Boolean" : v.tag == LL_VEC ? "Array" : v.tag == LL_MAP ? "Map"
-                 : v.tag == LL_CLOSURE ? "Function" : "Nil";
+                 : "Nil";
   return ll_meta_or(nm, "unknown");
 }
 

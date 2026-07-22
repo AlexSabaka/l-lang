@@ -1,0 +1,12 @@
+string:   String/primitive
+int:      Int/primitive
+real:     Real/primitive
+boolean:  Boolean/primitive
+nil:      Nil/primitive
+array:    Array/container
+map:      Map/container
+instance: Point/class
+function: add/function
+lambda:   Function/function
+array props: nil
+parent:   Point/class

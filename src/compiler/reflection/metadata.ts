@@ -116,9 +116,30 @@ export function buildTypesMetadata(context: Context): Record<string, any> {
   //
   // Registered FIRST, so a user type of the same name wins the key rather than being shadowed by us.
   // Minimal on purpose: `String.length` and friends are a members question (Ja), not a name question.
-  for (const p of ["Int", "Real", "String", "Char", "Boolean", "Void"]) {
+  for (const p of ["Int", "Real", "String", "Char", "Boolean", "Void", "Nil"]) {
     out[p] = { name: p, kind: "primitive", nullable: false };
   }
+
+  // The three types every program can PRODUCE but no program DECLARES (Zi's gap, one level out).
+  //
+  // Zi seeded the primitives because `(type 5)` had no arm to land on. The same hole was left open
+  // one type-constructor further out: `(type [1 2 3])`, `(type {:a 1})` and `(type f)` all reached a
+  // lookup for a name that was in no table, so each backend answered from its own FALLBACK -- and the
+  // fallbacks are where the two runtimes are least alike. JS reported a map as `Object` (the host's
+  // name for it, not l-lang's) with the map's own KEYS as its `properties`, and an array with its
+  // INDICES as `properties` -- `Object.keys` showing through, the same way `null` showed through
+  // before D55. C reported `{kind:"unknown"}` for both. One entry each ends it: the name is decided
+  // here, once, and both backends now find it rather than invent it.
+  //
+  // `container` is a KIND, not a stretch of `primitive`: D53 makes Array and Map floor
+  // representations with their own contract, and calling them primitive would say they have none. A
+  // container's ELEMENTS are deliberately not its `properties` -- `(type v)` answers what v IS, and
+  // `[1 2 3]` is not a type with three fields called "0", "1" and "2".
+  out["Array"] = { name: "Array", kind: "container", nullable: false };
+  out["Map"] = { name: "Map", kind: "container", nullable: false };
+  // The type of a function VALUE whose name reaches no declaration -- a lambda. A declared function
+  // has its own entry (params, returns) and wins the lookup before this is reached.
+  out["Function"] = { name: "Function", kind: "function", nullable: false };
 
   // Every type with codegen metadata, minus the host's ambient globals -- one question, one getter
   // (Zja/Zjb). This was two calls filtering on `kind`, which is why an interface could have a shape

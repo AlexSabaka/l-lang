@@ -764,36 +764,56 @@ function __ll_is_type(val, type) {
     // metadata, and a String value's own type was structurally unaskable. \`(type "hello")\` invented a
     // type CALLED "hello". The author's own \`(== (type tree) Number)\` expected reflection and got an
     // object that compares equal to nothing -- silently, and pinned by a golden (15_recursion).
-    "type": `const type = (typeNameOrObj) => {
-  // If it's an object (instance), try to get its type.
-  //
-  // __ll_name FIRST, constructor.name only as a fallback -- the same order __ll_is_type uses, and for
-  // the same reason (Zh). An import is INLINED under a mangled JS name, so \`constructor.name\` is the
-  // MANGLER's name: \`(type m)\` on an imported Money reported \`__ll_inlined_Money_1\`, a name that
-  // appears nowhere in the user's source. It also missed the metadata lookup -- which is keyed on the
-  // SOURCE name -- so it silently fell through to the reflected fallback, losing every method and
-  // generic. \`__ll_name\` is the source of truth; the JS binding's name is not.
-  if (typeof typeNameOrObj === 'object' && typeNameOrObj !== null) {
-    const typeName = typeNameOrObj.constructor?.__ll_name || typeNameOrObj.constructor?.name || 'Object';
-    return __ll_type_metadata[typeName] || { name: typeName, kind: 'object', properties: Object.keys(typeNameOrObj), methods: [], generics: [] };
+    //
+    // SHAPED AFTER C's \`ll_type\`, deliberately (Lb). Both are now the same two steps -- NAME the
+    // value from its runtime representation, then look that name up in the shared metadata graph --
+    // and \`ll_meta_or\` is \`meta\` below, argument for argument. They diverged for as long as they were
+    // two different algorithms: the fallbacks are where two runtimes are least alike, and this used
+    // to be almost entirely fallback.
+    "type": `const type = (v) => {
+  // The exact fallback C's \`ll_meta_or\` builds, for a name the graph does not carry. With Nil,
+  // Array, Map and Function now seeded it is reached only by a class whose metadata was suppressed.
+  const meta = (n, k) => __ll_type_metadata[n] || { name: n, kind: k, properties: [], methods: [], generics: [] };
+
+  if (v === null || v === undefined) return meta('Nil', 'primitive');   // D9: one bottom value
+  if (Array.isArray(v)) return meta('Array', 'container');
+
+  // A function VALUE. Its own declaration wins; a lambda's host-derived name is DISCARDED rather
+  // than reported, because C cannot know it and a name only one backend can produce is a divergence
+  // wearing a useful answer's clothes. \`(let f (fn [x] ...))\` read \`{name:'f', kind:'class'}\` on JS
+  // -- the binding's name, and the wrong kind besides -- against \`Function\` on C.
+  if (typeof v === 'function') {
+    const declared = v.__ll_name || v.name;
+    return (declared && __ll_type_metadata[declared]) || meta('Function', 'function');
   }
-  // If it's a function (class), get its type -- same rename, same reason.
-  if (typeof typeNameOrObj === 'function') {
-    const typeName = typeNameOrObj.__ll_name || typeNameOrObj.name;
-    return __ll_type_metadata[typeName] || { name: typeName, kind: 'class', properties: [], methods: [], generics: [] };
+
+  if (typeof v === 'object') {
+    // __ll_name FIRST, constructor.name only as a fallback -- the same order __ll_is_type uses, and
+    // for the same reason (Zh). An import is INLINED under a mangled JS name, so \`constructor.name\`
+    // is the MANGLER's name: \`(type m)\` on an imported Money reported \`__ll_inlined_Money_1\`, a name
+    // that appears nowhere in the user's source. It also missed the metadata lookup -- which is keyed
+    // on the SOURCE name -- so it silently fell through to the reflected fallback, losing every
+    // method and generic. \`__ll_name\` is the source of truth; the JS binding's name is not.
+    const cls = v.constructor?.__ll_name || v.constructor?.name;
+    // No class, or the host's bare \`Object\`: this is an l-lang MAP, and its name is \`Map\`.
+    return !cls || cls === 'Object' ? meta('Map', 'container') : meta(cls, 'object');
   }
-  // A PRIMITIVE whose static type the checker did not know (Zi/D43).
+
+  // A PRIMITIVE the static channel could not name -- and the runtime now CAN (Lb).
   //
-  // \`(type x)\` on a primitive is folded at COMPILE time -- see \`foldPrimitiveType\`. Reaching here
-  // means the channel was empty, and the runtime genuinely cannot finish the job: \`typeof\` says
-  // "number" but never Int-vs-Real, "string" but never String-vs-Char. So it does not guess. Guessing
-  // (\`Number.isInteger\`) would contradict the static type, and two answers to one question is the bug
-  // class this audit exists to kill.
+  // This arm used to answer \`{name:'Unknown'}\` on principle: "typeof says number but never
+  // Int-vs-Real, string but never String-vs-Char, so it does not guess." That reasoning was true
+  // when it was written and both halves have since expired. D51 made an Int a **BigInt**, so
+  // \`typeof\` separates Int from Real exactly -- \`lib/std/types\`' \`is-int\` has been reading it that
+  // way ever since. And Char is unconstructible: the reader has no Char literal (FLOOR.md 3.5), so
+  // no value here is ever one. Nothing is being guessed; this reads the representation D51 chose,
+  // which is the same thing C's tag switch does one line up.
   //
-  // \`name\` is present and says so. It used to be ABSENT here, and \`(type 5)["name"]\` therefore threw
-  // a D9 KeyError rather than answering -- every OTHER arm returns a named object, so the one arm
-  // meaning "I do not know" was also the one arm shaped differently.
-  return { name: 'Unknown', kind: 'unknown', properties: [], methods: [], generics: [] };
+  // The cost of the refusal was a live divergence, not just a vaguer answer: C named these
+  // correctly from its tag, so every dynamically-typed \`(type x)\` disagreed across the backends.
+  const n = typeof v === 'bigint' ? 'Int' : typeof v === 'number' ? 'Real'
+    : typeof v === 'string' ? 'String' : typeof v === 'boolean' ? 'Boolean' : 'Unknown';
+  return meta(n, 'unknown');
 };`,
   };
 
