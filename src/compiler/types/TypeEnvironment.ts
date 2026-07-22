@@ -276,9 +276,33 @@ export class TypeEnvironment {
     const symbol = from
       ? this.symbolTable.resolveSymbol(name, from)
       : this.symbolTable.resolveSymbol(name);
+
+    // The intrinsic floor (D50) for a SIMPLE name -- the other half of the dotted branch above, and
+    // it was missing. `floorEntry` was only ever consulted inside `if (name.includes('.') || ...)`,
+    // so 25 of the 48 entries contributed NO types at all: every `codepoint-*` and `map-*`, plus
+    // `get`/`head`/`tail`/`elem`/`empty`/`list`/`display`/`type`/`parseInt`/`isNaN`. The floor knew
+    // their signatures and the C backend derived its runtime calls from them; the checker never
+    // asked, which is the one property D50 exists to provide.
+    //
+    // It is not cosmetic, because D49d decides DIVISION from the static types. With
+    // `codepoint-length`'s `-> Int` invisible, `(/ (codepoint-length s) 2)` typed Real and the
+    // backends disagreed about the result -- 2 on JS (by accident: BigInt division truncates) and
+    // 2.5 on C (a genuine double divide). See 80-adversarial/floor_simple_name_types.lisp.
+    //
+    // PRECEDENCE, and it is the same rule the dotted branch applies to its base: a floor name is a
+    // host/runtime global, so anything that gives it a REAL type -- a user's own `(fn empty ...)`,
+    // an imported binding -- is a different thing that happens to share a spelling, and wins. The
+    // floor answers only where the symbol table has nothing, or has an UNTYPED extern (`lib/std/js`
+    // declares `parseInt`, `isNaN` and friends with no types at all, so without the `unknown` arm
+    // those entries would still never be reached).
+    const fe = floorEntry(name);
     if (symbol && symbol.inferredType) {
-      return symbol.inferredType;
+      if (!(fe && symbol.inferredType.kind === "unknown")) return symbol.inferredType;
     }
+    if (fe) {
+      return { kind: "function", name, params: fe.params, returns: fe.ret, isVariadic: !!fe.variadic };
+    }
+    if (symbol && symbol.inferredType) return symbol.inferredType;
 
     return undefined;
   }

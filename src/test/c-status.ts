@@ -267,6 +267,10 @@ export const C_PASSING: readonly string[] = [
   // allowed $ and rejected -, JS the reverse; both now transcribe the tokenizer's Identifier
   // pattern), the class tag missing from C's width budget, C's 256-slot cycle set silently
   // capping, and JS reading __ll_name off the instance and printing the MANGLED name.
+  // F.1 -- the checker consults the floor for SIMPLE names, not only dotted ones. 25 of 48 entries
+  // contributed no types at all, so `(/ (codepoint-length s) 2)` typed Real: 2.5 here against 2 on
+  // JS, where BigInt division truncated by accident. D49d decides division from the STATIC types.
+  "80-adversarial/floor_simple_name_types.lisp",
   "80-adversarial/display_conformance.lisp",
   "80-adversarial/display_imported_class_tag/main.lisp",
   // Fd -- the reflection metadata GRAPH is emitted into the C module from the shared builder both
