@@ -82,6 +82,63 @@
         (return (FileReader fd))
     ))
 
+    ;; -- a LINE-BUFFERED reader --------------------------------------------------------------------
+    ;;
+    ;; NO NEW FLOOR ENTRIES, which is the point. `file-read` answers "up to n bytes", and a reader can
+    ;; over-read past a newline -- so line splitting needs somewhere to keep the remainder. That
+    ;; somewhere is a field, and the splitting itself is ordinary string work, which makes the whole
+    ;; thing l-lang written on the floor rather than a primitive implemented twice.
+    ;;
+    ;; It is also what makes `read-line` from STDIN nearly free: stdin is fd 0, so a LineReader over 0
+    ;; is a console reader, and one over an open file is a line-oriented file reader. Same code.
+    ;;
+    ;; `.indexOf`/`.slice` are the HOST's string members, so they count codepoints on C and UTF-16
+    ;; units on JS (D50's native-member boundary). That is safe HERE because both indices are produced
+    ;; and consumed by the same backend on the same string -- the split lands in the same logical place
+    ;; either way. It would not be safe to compare one against a length computed by l-lang's own
+    ;; `strlen`, which is why nothing below does.
+    (defclass LineReader :implements Reader
+        (let :ctor fd <- Int 0)
+        (mut pending <- String "")
+        (mut drained <- Boolean false)
+
+        ;; The raw `Reader` surface, so a LineReader is still a Reader.
+        (fn read [n <- Int] -> String? (return (file-read this.fd n)))
+
+        ;; The next line WITHOUT its terminator, or nil once input is exhausted.
+        ;;
+        ;; A trailing newline does not produce a final empty line, and a last line with no terminator
+        ;; is still a line -- the two rules every line-oriented tool follows.
+        (fn read-line [] -> String? (
+            (mut idx (this.pending.indexOf "\n"))
+            (while (< idx 0) (
+                (if this.drained (
+                    (if (== this.pending "") (return nil))
+                    (let rest this.pending)
+                    (this.pending := "")
+                    (return (strip-cr rest))
+                ))
+                (let chunk (file-read this.fd 65536))
+                (if (== chunk nil)
+                    (this.drained := true)
+                    (this.pending := (+ this.pending (+ "" chunk))))
+                (idx := (this.pending.indexOf "\n"))
+            ))
+            (let line (this.pending.slice 0 idx))
+            (this.pending := (this.pending.slice (+ idx 1)))
+            (return (strip-cr line))
+        ))
+
+        (fn close [] -> Void (file-close this.fd))
+    )
+
+    ;; `\r\n` line endings: drop the carriage return so a file written on Windows reads the same.
+    (fn strip-cr [line <- String] -> String (
+        (if (== line "") (return line))
+        (if (== (line.slice (- line.length 1)) "\r") (return (line.slice 0 (- line.length 1))))
+        (return line)
+    ))
+
     ;; -- operations over the interfaces ------------------------------------------------------------
     ;;
     ;; These take `Writer`/`Reader`, so they work on a file and on a standard stream without knowing
@@ -113,6 +170,6 @@
         (return n)
     ))
 
-    (export Writer Reader StdOut StdErr FileWriter FileReader
-            stdout stderr open-writer open-reader write-line copy)
+    (export Writer Reader StdOut StdErr FileWriter FileReader LineReader
+            stdout stderr open-writer open-reader write-line copy strip-cr)
 )

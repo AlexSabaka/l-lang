@@ -327,6 +327,10 @@ export const C_PASSING: readonly string[] = [
   // INTERFACE-TYPED dispatch works here -- the ledger's "witness-table case, deferred" row cites an
   // example whose real blocker is an EXTENSION method on a class receiver, a different thing.
   "80-adversarial/stream_interfaces/main.lisp",
+  // Line-buffered reading. NO new floor entries: stdin is fd 0 and the file floor already read it, so
+  // the buffering and splitting are l-lang. Reads a FILE rather than stdin on purpose -- the runner
+  // inherits stdio, and `fs.readSync` on a live TTY can raise EAGAIN.
+  "80-adversarial/line_reader.lisp",
   // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
   // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.
   "80-adversarial/display_source_names/main.lisp",

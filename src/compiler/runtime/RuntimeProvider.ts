@@ -33,8 +33,10 @@ export class RuntimeProvider {
    * `__ll_is_type` STAYS. It is live: `__ll_op_registry.lookup` calls it to resolve operator overloads.
    */
   private static readonly LL_RUNTIME: string = `let ${RuntimeProvider.TYPES_METADATA_VAR} = {};
-let _readline = null;
-try { _readline = require("readline-sync"); } catch (e) { /* optional */ }
+/* 'readline-sync' used to be required here, into a '_readline' that NOTHING EVER READ -- someone
+   started down the "vendor a line reader" road and stopped. 'read-line' landed without it: stdin is
+   fd 0, so the file floor already reads the console, and std/io/stream's LineReader does the
+   buffering in l-lang. The require and the dependency both go. */
 /* The FILE floor's host handle. Required LAZILY and cached, so a program that never touches a file
    still runs in a browser or a bare VM -- which is where the corpus's p5js examples live. */
 let __ll_fs_mod;

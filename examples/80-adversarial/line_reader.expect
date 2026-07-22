@@ -1,0 +1,6 @@
+terminated:   ["alpha" "beta"]
+unterminated: ["alpha" "beta"]
+crlf:         ["alpha" "beta"]
+empty:        []
+blank line:   ["alpha" "" "beta"]
+non-ascii:    ["wörld" "zwölf"]
