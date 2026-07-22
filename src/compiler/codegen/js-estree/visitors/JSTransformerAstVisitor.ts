@@ -1240,6 +1240,49 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           loc: ESTreeBuilder.loc(node),
         } as ESTree.ArrowFunctionExpression);
 
+        // The SOURCE name, attached to the function VALUE itself.
+        //
+        // Inline rather than as a following statement, because this branch covers every function the
+        // program-front stamps cannot reach: a nested `(fn increment [] ...)`, and an inlined imported
+        // one. An expression wrap has no hoisting or scope question at all -- `Object.assign` returns
+        // its first argument, so the emitted value is unchanged.
+        //
+        // This is what lets `inspectJs` stop falling back to `Function.name`: with every function the
+        // language NAMED carrying `__ll_name`, a value with none is one the language did not name, and
+        // `#<fn>` is the honest answer. Previously JS printed `#<fn g>` for `(let g (fn [a b] ...))`
+        // because ECMA-262 NamedEvaluation names an anonymous function expression after the binding it
+        // is assigned to -- the HOST naming a value, which D55 says is not what display reports.
+        const named: ESTree.Expression =
+          name && typeof originalName === "string" && originalName &&
+          JSTransformerAstVisitor.isDisplayableName(originalName)
+            ? ({
+                type: "CallExpression",
+                callee: {
+                  type: "MemberExpression",
+                  object: { type: "Identifier", name: "Object" },
+                  property: { type: "Identifier", name: "assign" },
+                  computed: false,
+                  optional: false,
+                },
+                arguments: [
+                  funcExpr,
+                  {
+                    type: "ObjectExpression",
+                    properties: [{
+                      type: "Property",
+                      kind: "init",
+                      method: false,
+                      shorthand: false,
+                      computed: false,
+                      key: { type: "Identifier", name: "__ll_name" },
+                      value: { type: "Literal", value: originalName },
+                    }],
+                  },
+                ],
+                optional: false,
+              } as unknown as ESTree.Expression)
+            : (funcExpr as ESTree.Expression);
+
         if (name) {
           let variableDecl: ESTree.VariableDeclaration = {
             type: "VariableDeclaration",
@@ -1248,7 +1291,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
               {
                 type: "VariableDeclarator",
                 id: name,
-                init: funcExpr,
+                init: named,
               },
             ],
             loc: ESTreeBuilder.loc(node),

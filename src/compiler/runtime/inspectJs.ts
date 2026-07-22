@@ -76,7 +76,7 @@ function __ll_inspect(v, indent, prefixLen, seen, flat) {
      arm of this switch. It is also WRONG IN THE OTHER DIRECTION for a lambda: ECMA-262 NamedEvaluation
      gives (let g (fn [a b] ...)) the name "g", so JS printed #<fn g> where C printed #<fn>. The host
      naming a value the language did not name is not a name; falling through to #<fn> matches C. */
-  if (t === "function") { var fn = v.__ll_name || v.name; return fn ? "#<fn " + fn + ">" : "#<fn>"; }
+  if (t === "function") return v.__ll_name ? "#<fn " + v.__ll_name + ">" : "#<fn>";
   if (t !== "object") return String(v);
   if (seen.indexOf(v) !== -1) return "#<circular>";
   seen.push(v);

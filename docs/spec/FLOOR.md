@@ -439,6 +439,23 @@ number-formatting rules D51 has not spec'd. `print` accepts `{N}` and the `{{` /
 > shares a line, and a quoted key. The ASCII 80/81 boundary is unchanged, which is what the guard's
 > ladder pins alongside the non-ASCII rows.
 >
+> **Amendment, 2026-07-22 (F.7/F.8) — a value displays under its SOURCE name.** Two more arms of
+> the same switch read HOST reflection. Struct/class FIELD names came from `Object.keys(v)`, so
+> D21's kebab-case printed encoded — `Rec{:first2dname "Ada"}` against C's `Rec{:first-name}` — and
+> the mangled key passed the ident-like test cleanly, so nothing flagged it. FUNCTION names came
+> from `Function.name`, so a kebab-case function printed `#<fn my2dkebab2dfn>` and an **imported**
+> one printed `#<fn __ll_inlined__double_1>` — the same compiler-internal leak this section already
+> forbids for a class tag. Both now carry the source name: fields on the constructor as
+> `__ll_fields` (carried, not decoded — the encoding is not reversible, `a2db` encodes `a-b` and is
+> also a legal name), functions as `__ll_name`.
+>
+> *And the ruling that follows from it:* **binding a lambda does not name it.** `(let g (fn [a b]
+> ...))` printed `#<fn g>` on JS purely because ECMA-262 NamedEvaluation names an anonymous
+> function expression after its binding — the host naming a value the language never did. Since
+> every function l-lang *does* name now carries `__ll_name`, the formatter reads only that and
+> answers `#<fn>` otherwise, which is what C always said. A generated placeholder name was
+> considered and rejected: `#<fn __ll_lam_3>` is the very class of leak the paragraph above removes.
+>
 > Guarded by `80-adversarial/display_conformance.lisp` and `display_imported_class_tag/`.
 > **Full retirement of the duplicate implementation stays deferred**, still blocked on a portable
 > `kind-of` and on `console.log` leaving the floor.

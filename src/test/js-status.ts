@@ -55,17 +55,4 @@ export const JS_NOT_YET: readonly string[] = [
   // and `std/seq`'s `length`, which dispatches on `(coll :of String)` precisely so this cannot reach
   // it. The guard's `seq-len` line is that control, green on both in the same file.
   "80-adversarial/native_string_astral.lisp",
-  // F.8 facet 3 (D55) -- does BINDING a lambda NAME it? `(let g (fn [a b] ...))` prints `#<fn g>`
-  // here and `#<fn>` on C. JS's answer is ECMA-262 NamedEvaluation, a HOST rule, and D55 rules the
-  // display format to be l-lang's own -- so C is right and the fix is to drop the host-name
-  // fallback in `inspectJs.ts`.
-  //
-  // Not dropped, because that fallback is load-bearing elsewhere: a NESTED `(fn increment [] ...)`
-  // gets no `__ll_name` stamp (it is not a top-level declaration, so it does not exist where the
-  // stamps are emitted) and its host name IS its source name, nothing having needed encoding.
-  // Removing the fallback regressed `01_closures.expect` from `#<fn increment>` to `#<fn>`.
-  // Separating the two wants either stamping nested declarations or a ruling that a bound lambda
-  // is named. The BUG half -- kebab-case and imported functions printing mangled names -- is fixed
-  // and guarded in `display_source_names/`.
-  "80-adversarial/display_lambda_name.lisp",
 ];
