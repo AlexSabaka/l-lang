@@ -209,6 +209,13 @@ export const C_PASSING: readonly string[] = [
   // Fb -- `write-string`, the i/o SINK: raw bytes, no newline, on both backends. console.log and
   // print are layers over it, and a PARTIAL line is expressible for the first time.
   "80-adversarial/write_string_sink.lisp",
+  // Fe (D51) -- the numeric floor's discriminating guards. C is the CONTROL here, and it only became
+  // one in this commit: int literals were being round-tripped through an f64 (`String(v)` on a JS
+  // number), `-fwrapv` was absent so INT64_MAX+1 was UB, and `ll_is_type` deliberately collapsed
+  // Int/Real to mirror a JS limitation. All three are C bugs that predate Fe; the guards found them.
+  "80-adversarial/int64_exact.lisp",
+  "80-adversarial/int64_wrap.lisp",
+  "80-adversarial/int_real_runtime_tag.lisp",
   // Fd -- the reflection metadata GRAPH is emitted into the C module from the shared builder both
   // backends read (D54), so `type`/`type-by-name` answer with real properties, methods, constructor
   // params, generics and interfaces instead of a {name, extends} stub. Closes §5.2 cluster 3.

@@ -1430,11 +1430,20 @@ static const ll_class *ll_class_by_name(const char *name) {
   return (const ll_class *)0;
 }
 
-/* -- runtime type tests (D41 / spec A7). Mirrors JS __ll_is_type: Int/Real are one "number", and a
- *    generic's arguments are erased (`Int[]` tests "is an array"). Nominal walks the :extends chain. */
+/* -- runtime type tests (D41 / spec A7). A generic's arguments are erased (`Int[]` tests "is an
+ *    array"); nominal walks the :extends chain.
+ *
+ *    Int and Real are now SEPARATE, and that is a correction. This used to read
+ *        strcmp(name,"Int")==0 || strcmp(name,"Real")==0  ->  tag==LL_INT || tag==LL_REAL
+ *    with the comment "Mirrors JS __ll_is_type: Int/Real are one number" -- C has carried distinct
+ *    LL_INT and LL_REAL tags all along and was deliberately discarding them so that `(5.5 :of Int)`
+ *    would answer the same wrong `true` JS answered. That is A-0 upside down: the precise backend
+ *    degraded to match the imprecise one. D51 removes the reason (JS gets a bigint tag), so C stops
+ *    pretending. Reached only where the checker had no static type -- D43 folds the rest. */
 static bool ll_is_type(ll_value v, const char *name, int primitive) {
   if (primitive) {
-    if (strcmp(name, "Int") == 0 || strcmp(name, "Real") == 0) return v.tag == LL_INT || v.tag == LL_REAL;
+    if (strcmp(name, "Int") == 0) return v.tag == LL_INT;
+    if (strcmp(name, "Real") == 0) return v.tag == LL_REAL;
     if (strcmp(name, "String") == 0) return v.tag == LL_STR;
     if (strcmp(name, "Boolean") == 0 || strcmp(name, "Bool") == 0) return v.tag == LL_BOOL;
     if (strcmp(name, "Char") == 0) return v.tag == LL_CHAR;

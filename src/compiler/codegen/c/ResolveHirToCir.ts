@@ -1850,9 +1850,17 @@ export class ResolveHirToCir {
     // A number: Int vs Real from the node's own type (the A1 win -- type on the node, not nodeTypes),
     // falling back to the value's integrality.
     const isReal = h.type?.kind === "primitive" ? h.type.name === "Real" : !Number.isInteger(v);
-    return isReal
-      ? { src: h.src, ctype: C_REAL, kind: "c-lit", lit: "real", value: String(v) }
-      : { src: h.src, ctype: C_INT, kind: "c-lit", lit: "int", value: String(v) };
+    if (isReal) return { src: h.src, ctype: C_REAL, kind: "c-lit", lit: "real", value: String(v) };
+    // An Int literal is emitted from its SOURCE TEXT, not from `String(v)`.
+    //
+    // `IntegerNumberNode.value` is a JS `number`, i.e. an f64, so the parser has already rounded any
+    // literal past 2^53 before codegen ever sees it: `9007199254740993` arrived as ...992, and
+    // `4611686018427387904` as ...388000. C's `int64_t` can represent both exactly, so the loss was
+    // pure round-tripping -- a live wrong answer on the native backend, independent of D51.
+    // `match` is the raw text the lexer matched; it is the only lossless copy on the node.
+    const raw = (h.src as { match?: string }).match;
+    const exact = raw !== undefined && /^[+-]?\d+$/.test(raw) ? raw : String(v);
+    return { src: h.src, ctype: C_INT, kind: "c-lit", lit: "int", value: exact };
   }
 
   /** The common concrete element type of a vector literal, or undefined if the elements disagree. */

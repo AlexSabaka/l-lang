@@ -19,6 +19,7 @@ import { Context, CompilerOptions, LogLevel } from '../compiler/Context';
 import { MANIFEST, ExampleStatus } from './manifest';
 import { CHILD_ENV } from './childEnv';
 import { C_PASSING } from './c-status';
+import { JS_NOT_YET } from './js-status';
 
 // Backend under test. `--backend=c` compiles to C, builds with cc, runs the binary against the
 // SAME .expect goldens, with ratchet semantics from c-status.ts. Default `js` is byte-for-byte
@@ -227,7 +228,10 @@ function runCTest(lispPath: string): TestResult {
   fs.writeFileSync(cPath, code);
 
   // Step 2: cc. A cc failure is a FINDING (usually a missed coercion), surfaced not hidden.
-  const cc = spawnSync('cc', ['-std=c11', ...(COPT ? [`-${COPT}`] : []), cPath, '-o', binPath, '-lm'], { encoding: 'utf-8', timeout: 30000 });
+  // `-fwrapv` is required by D51, not a nicety: `Int` is a WRAPPING two's-complement 64-bit integer,
+  // and plain signed overflow in C is undefined behaviour -- which is not wrapping, it is whatever the
+  // optimiser decides. Without it `(+ INT64_MAX 1)` is UB and can differ between -O0 and -O2.
+  const cc = spawnSync('cc', ['-std=c11', '-fwrapv', ...(COPT ? [`-${COPT}`] : []), cPath, '-o', binPath, '-lm'], { encoding: 'utf-8', timeout: 30000 });
   if (cc.status !== 0) {
     const firstErr = (cc.stderr || '').split('\n').find((l) => l.includes('error')) ?? (cc.stderr || '').split('\n')[0];
     return { name: fileName, status: softStatus ?? 'error', message: `cc failed: ${firstErr}`, stderr: cc.stderr };
@@ -263,6 +267,11 @@ function runTest(lispPath: string): TestResult {
   const dirName = path.dirname(lispPath);
   const expectPath = path.join(dirName, fileName.replace('.lisp', '.expect'));
   const jsPath = compiledPathFor(lispPath);
+  // The JS ratchet (js-status.ts), mirroring runCTest's. Listed = a KNOWN gap, so a failure is soft
+  // `not-yet` rather than red; a listed file that PASSES is red, demanding the line be removed.
+  const relPath = path.relative(EXAMPLES_DIR, lispPath).split(path.sep).join('/');
+  const jsNotYet = JS_NOT_YET.includes(relPath);
+  const softStatus = jsNotYet ? ('not-yet' as const) : undefined;
   
   // Check if .expect file exists
   if (!fs.existsSync(expectPath)) {
@@ -291,7 +300,7 @@ function runTest(lispPath: string): TestResult {
         }
         return {
           name: fileName,
-          status: 'error',
+          status: softStatus ?? 'error',
           message: 'Compilation error: type/syntax errors reported'
         };
       }
@@ -302,7 +311,7 @@ function runTest(lispPath: string): TestResult {
     } catch (compileError: any) {
       return {
         name: fileName,
-        status: 'error',
+        status: softStatus ?? 'error',
         message: `Compilation error: ${compileError.message}`
       };
     }
@@ -332,7 +341,7 @@ function runTest(lispPath: string): TestResult {
       const timedOut = (run.error as any).code === 'ETIMEDOUT';
       return {
         name: fileName,
-        status: 'error',
+        status: softStatus ?? 'error',
         message: timedOut
           ? `Timeout: process did not exit within ${RUN_TIMEOUT_MS}ms`
           : `Runtime error: ${run.error.message}`,
@@ -344,7 +353,7 @@ function runTest(lispPath: string): TestResult {
     if (run.status !== 0) {
       return {
         name: fileName,
-        status: 'error',
+        status: softStatus ?? 'error',
         message: `Runtime error: process exited with code ${run.status}`,
         actual: run.stdout,
         stderr: run.stderr
@@ -357,6 +366,11 @@ function runTest(lispPath: string): TestResult {
     const normalizedExpected = normalizeOutput(expected);
 
     if (actual === normalizedExpected) {
+      // Teeth: a file listed as a known JS gap that now PASSES must be delisted, or the list rots
+      // into a set of stale excuses. Same rule as runCTest's RATCHET, opposite polarity.
+      if (jsNotYet) {
+        return { name: fileName, status: 'fail', message: `RATCHET: newly passing -- remove "${relPath}" from src/test/js-status.ts` };
+      }
       return {
         name: fileName,
         status: 'pass',
@@ -365,7 +379,7 @@ function runTest(lispPath: string): TestResult {
     } else {
       return {
         name: fileName,
-        status: 'fail',
+        status: softStatus ?? 'fail',
         message: 'Output mismatch',
         expected: normalizedExpected,
         stderr: run.stderr,

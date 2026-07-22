@@ -1,0 +1,3 @@
+probe 5:     Int
+probe 5.5:   Real
+probe str:   other
