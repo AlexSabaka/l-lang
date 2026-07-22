@@ -4588,16 +4588,25 @@ per-backend** — the JS `type`/`type-by-name` object (`{name, kind, params, ret
 > value. It now declines to fold an unseeded name and lets the call reach the runtime, which names the
 > value from its representation and carries the fallback the folded expression cannot.
 >
-> *Found by this work, not fixed by it:* a map key that is a **JS reserved word** is unreachable
-> through the dotted (D9 **total**) accessor on the JS backend. `visitCompositeIdentifier` runs every
-> part of `a.b` through `encodeIdentifier`, which prefixes a reserved word so it is safe as a
-> *binding*; a property key is not a binding, and `obj.class` has been legal JS since ES5. So
-> `hero.class` reads `hero._class` and answers **nil**, indistinguishable from a key that was never
-> set, while `hero["class"]` is correct. It surfaced here because `extends` — the edge D54's own graph
-> uses to name a parent type — is one of them, which makes the graph unwalkable through the total
-> accessor on JS. Pinned by `80-adversarial/reserved_word_map_keys.lisp` and listed in `js-status.ts`;
-> the fix must be symmetric (a class field named `class` is *defined* as `_class` too) and reaches
-> ctor params, where the escape is genuinely required.
+> *Found by this work, and fixed next to it — **a member name is not a binding**.* Walking the graph
+> needs `t.extends`, and that read was broken: `visitCompositeIdentifier` ran every part of `a.b`
+> through `encodeIdentifier`, which prefixes a **JS reserved word** so it is safe as a *binding*. A
+> property key is not a binding — `obj.class` has been legal JS since ES5 — and l-lang has no
+> reserved-word list of its own, so `class`, `default`, `new`, `in`, `static` and `extends` are all
+> ordinary names. The two halves of the language then disagreed with themselves in **opposite**
+> directions, which is why they never looked like the same bug: a map literal emitted its key **raw**,
+> so `hero.class` read `hero._class` and answered **nil** — silent, and indistinguishable under D9
+> from a key that was never set; a class field emitted its name **encoded**, so the dotted read worked
+> and `h["class"]` raised a **KeyError** on a field the class demonstrably has.
+>
+> `encodeIdentifier` therefore splits. **`encodeMemberName`** keeps the hex escape — required, since a
+> member is *defined* under the encoded name — and the leading-digit guard (`obj.0` is a syntax
+> error), and drops the reserved-word prefix. Every member position takes it: the read, and the
+> definition sites (field, method, `this.<field>` store) so the two accessors agree. A **ctor
+> parameter keeps the binding escape**, because `constructor(class)` genuinely is illegal.
+>
+> C was correct throughout — it reads the key it was given — which is the tell that this was a
+> host-encoding leak and not a language question.
 
 ### D55 — display is l-lang's own format, specified by transcription
 

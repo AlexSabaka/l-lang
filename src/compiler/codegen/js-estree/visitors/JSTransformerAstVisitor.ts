@@ -10,6 +10,8 @@ import { RuntimeProvider } from "../../../runtime";
 import {
   uniqueIdentifier,
   encodeIdentifier,
+  encodeMemberName,
+  asMemberKey,
 } from "../../../utils";
 import { CodegenDiagnostics as CD } from "../../../rules/diagnostics";
 import { TypeChecker } from "../../../types/TypeChecker";
@@ -1148,7 +1150,8 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       if (this.currentScope() === ScopeType.method) {
         result = {
           type: "MethodDefinition",
-          key: name!,
+          // A method is a MEMBER: `obj.delete()` is legal JS, so the key keeps the source spelling.
+          key: asMemberKey(node.name, name!),
           value: {
             type: "FunctionExpression",
             id: null,
@@ -2671,11 +2674,13 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
     let expr: ESTree.Expression = ESTreeBuilder.identifier(node, head);
 
+    // Every part AFTER the head is a property key, not a binding -- `encodeMemberName`, which drops
+    // the reserved-word prefix and keeps the hex escape. `hero.class` used to read `hero._class`.
     for (let i = startPartId + 1; i < parts.length; i++) {
       expr = ESTreeBuilder.memberExpression(
         node,
         expr,
-        ESTreeBuilder.identifier(node, encodeIdentifier(parts[i]))
+        ESTreeBuilder.identifier(node, encodeMemberName(parts[i]))
       );
     }
 

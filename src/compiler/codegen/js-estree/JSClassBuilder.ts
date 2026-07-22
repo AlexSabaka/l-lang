@@ -1,7 +1,7 @@
 import * as ESTree from "estree";
 import * as ast from "../../frontend/ast";
 import { Context } from "../../Context";
-import { encodeIdentifier } from "../../utils";
+import { encodeIdentifier, asMemberKey } from "../../utils";
 import { hasModifier } from "../../helpers/modifiers";
 import { report, CodegenDiagnostics } from "../../rules/diagnostics";
 
@@ -329,7 +329,9 @@ export class ClassBuilder {
    */
   private buildFields(): ESTree.PropertyDefinition[] {
     return this.classFields.map(v => {
-      const key = this.visitor.visit(v.name) as ESTree.Identifier;
+      // A MEMBER key, not a binding: `class` stays `class` (encodeMemberName), so the field is
+      // written under the name `h["class"]` and `h.class` both look it up by.
+      const key = asMemberKey(v.name, this.visitor.visit(v.name)) as ESTree.Identifier;
 
       // A FIELD is a new home for a value (D11), so an initializer that names an existing struct
       // stores a copy of it. `(let vel <- Vector3 (new Vector3 0 0 0))` is a fresh construction and is

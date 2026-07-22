@@ -7,3 +7,5 @@ name:    Ada
 [class]: warrior
 [new]:   2
 absent:  nil
+hero class:   paladin
+hero default: 3

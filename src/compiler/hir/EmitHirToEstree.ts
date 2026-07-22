@@ -12,7 +12,7 @@ import type * as ast from "../frontend/ast";
 import type { HBlock, HExpr, HPattern, HStmt } from "./nodes";
 import type { InferredType } from "../analysis/SymbolTable";
 import { floorEntry } from "../floor/floor";
-import { encodeIdentifier } from "../utils/encodeIdentifier";
+import { encodeIdentifier, encodeMemberName, asMemberKey } from "../utils/encodeIdentifier";
 
 /**
  * What the emitter is allowed to ask of the legacy JSTransformer. Deliberately narrow: leaves, the nil
@@ -280,7 +280,7 @@ export class EmitHirToEstree {
           const pairs: Array<[string, string]> = [];
           const note = (source: unknown) => {
             if (typeof source !== "string") return;
-            const enc = encodeIdentifier(source);
+            const enc = encodeMemberName(source);
             if (enc !== source) pairs.push([enc, source]);
           };
           if (h.ctor) for (const p of h.ctor.params) note(p.name);
@@ -292,7 +292,8 @@ export class EmitHirToEstree {
         // re-visited by the JS leaf hooks. Visibility is erased (a plain `this.x`, never `#x`; see D11c).
         const fieldDefs: ESTree.PropertyDefinition[] = h.fields.map((f) => ({
           type: "PropertyDefinition",
-          key: this.legacy.leafExpr(f.name) as ESTree.PropertyDefinition["key"],
+          // A field is a MEMBER, so its key drops the reserved-word escape a binding would take.
+          key: asMemberKey(f.name, this.legacy.leafExpr(f.name)) as ESTree.PropertyDefinition["key"],
           value: f.valueSrc != null
             ? this.legacy.storeValue(this.legacy.leafExpr(f.valueSrc), f.valueSrc)
             : null,
@@ -531,7 +532,7 @@ export class EmitHirToEstree {
             left: {
               type: "MemberExpression",
               object: { type: "ThisExpression" } as ESTree.ThisExpression,
-              property: this.legacy.leafExpr(h.field),
+              property: asMemberKey(h.field, this.legacy.leafExpr(h.field)),
               computed: false,
               optional: false,
             } as ESTree.MemberExpression,
@@ -562,7 +563,7 @@ export class EmitHirToEstree {
             callee: {
               type: "MemberExpression",
               object: { type: "ThisExpression" } as ESTree.ThisExpression,
-              property: this.legacy.leafExpr(h.method),
+              property: asMemberKey(h.method, this.legacy.leafExpr(h.method)),
               computed: false,
               optional: false,
             } as ESTree.MemberExpression,
