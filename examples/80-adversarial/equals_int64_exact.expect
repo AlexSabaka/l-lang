@@ -1,0 +1,6 @@
+2^53+1 == 2^53: false
+differ by 1:    false
+includes 2^53:  false
+indexOf 2^53:   -1
+boxed ==:       false
+same is same:   true

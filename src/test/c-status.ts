@@ -221,6 +221,11 @@ export const C_PASSING: readonly string[] = [
   // the exponent, so `0.000001` printed `1e-06` and `1e-7` printed `1e-07`. Rewritten to ECMA-262's
   // Number::toString, which D51 names as the spec.
   "80-adversarial/real_format_thresholds.lisp",
+  // Fg -- Int equality is exact at 64 bits. `ll_deep_eq` and `ll_strict_eq` both widened an LL_INT to
+  // a double before comparing, so two values differing above 2^53 compared EQUAL and a container
+  // search found something that was not there. Reachable only because D51 gave Int a full 64-bit
+  // range; Fe's guards pinned how an Int PRINTS and left the comparison path behind.
+  "80-adversarial/equals_int64_exact.lisp",
   // Fd -- the reflection metadata GRAPH is emitted into the C module from the shared builder both
   // backends read (D54), so `type`/`type-by-name` answer with real properties, methods, constructor
   // params, generics and interfaces instead of a {name, extends} stub. Closes §5.2 cluster 3.

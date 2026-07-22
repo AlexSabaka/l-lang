@@ -781,6 +781,11 @@ static void ll_console_error(int n, ll_value *vals) { ll_console_write(stderr, n
 
 static bool ll_deep_eq(ll_value a, ll_value b) {
   if (a.tag == LL_NIL || b.tag == LL_NIL) return a.tag == LL_NIL && b.tag == LL_NIL;
+  /* Int vs Int compares as int64. Widening BOTH to double -- which this did -- collapses every pair
+     that differs above 2^53 onto the same value, so `9007199254740993 == 9007199254740992` was true.
+     D51 made that reachable by giving Int a full 64-bit range, and Fe's guards only pinned how an Int
+     PRINTS, so the comparison path kept the bug. A Real operand still promotes, per D51's mixed rule. */
+  if (a.tag == LL_INT && b.tag == LL_INT) return a.as.i == b.as.i;
   bool a_num = a.tag == LL_INT || a.tag == LL_REAL;
   bool b_num = b.tag == LL_INT || b.tag == LL_REAL;
   if (a_num && b_num) {
@@ -828,6 +833,9 @@ static bool ll_deep_eq(ll_value a, ll_value b) {
 
 /* Strict (===) equality for indexOf/includes: content for primitives, identity for containers. */
 static bool ll_strict_eq(ll_value a, ll_value b) {
+  /* Same int64 exactness as ll_deep_eq -- this is the path indexOf/includes take, so without it a
+     container search "finds" a value that is not in it. */
+  if (a.tag == LL_INT && b.tag == LL_INT) return a.as.i == b.as.i;
   bool a_num = a.tag == LL_INT || a.tag == LL_REAL;
   bool b_num = b.tag == LL_INT || b.tag == LL_REAL;
   if (a_num && b_num) {
