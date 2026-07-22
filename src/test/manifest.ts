@@ -46,6 +46,7 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "80-adversarial/module_private_collision/alpha.lisp": { status: "library" },
   "80-adversarial/module_private_collision/beta.lisp": { status: "library" },
   "80-adversarial/display_imported_class_tag/money.lisp": { status: "library" },
+  "80-adversarial/display_source_names/lib.lisp": { status: "library" },
   "80-adversarial/module_private_fnvalue/alpha.lisp": { status: "library" },
   "80-adversarial/module_private_fnvalue/beta.lisp": { status: "library" },
   "99-fixtures/p5-bindings.lisp": { status: "library" },

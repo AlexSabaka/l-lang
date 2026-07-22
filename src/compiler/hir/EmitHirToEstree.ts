@@ -90,6 +90,42 @@ function ident(name: string, src: ast.ASTNode): ESTree.Identifier {
 
 /** `static <name> = <value>;` -- a class metadata marker (`__ll_name` / `__ll_struct`). Mirrors the
  *  shape JSClassBuilder used: computed:false, static:true, an Identifier key and a Literal value. */
+/**
+ * `static __ll_fields = { first2dname: "first-name" }` -- the SOURCE spelling of every field whose JS
+ * property name is encoded, for the display formatter.
+ *
+ * D21 makes kebab-case idiomatic and `encodeIdentifier` turns each character JS rejects into its hex
+ * code, so `first-name` becomes the property `first2dname`. Correct for the PROPERTY, wrong for
+ * display: the formatter enumerated `Object.keys(v)` and printed `Rec{:first2dname "Ada"}` where C
+ * printed `Rec{:first-name "Ada"}`. C is right against FLOOR.md 3.5, and the mangled key passed
+ * `__ll_ident_like` cleanly, so nothing downstream flagged it.
+ *
+ * Carried, not decoded: the encoding is not reversible -- `a2db` encodes `a-b` and is also a legal
+ * source name. Only fields that actually differ are listed, so an all-ASCII class emits nothing.
+ */
+function fieldNameMarker(pairs: Array<[string, string]>, src: ast.ASTNode): ESTree.PropertyDefinition[] {
+  if (!pairs.length) return [];
+  return [{
+    type: "PropertyDefinition",
+    key: { type: "Identifier", name: "__ll_fields" },
+    value: {
+      type: "ObjectExpression",
+      properties: pairs.map(([enc, source]) => ({
+        type: "Property",
+        kind: "init",
+        method: false,
+        shorthand: false,
+        computed: false,
+        key: { type: "Literal", value: enc },
+        value: { type: "Literal", value: source },
+      })),
+    },
+    computed: false,
+    static: true,
+    loc: loc(src),
+  } as unknown as ESTree.PropertyDefinition];
+}
+
 function staticMarker(name: string, value: string | boolean, src: ast.ASTNode): ESTree.PropertyDefinition {
   return {
     type: "PropertyDefinition",
@@ -237,6 +273,20 @@ export class EmitHirToEstree {
         const markers: ESTree.PropertyDefinition[] = [];
         if (h.sourceName != null) markers.push(staticMarker("__ll_name", h.sourceName, h.src));
         if (h.isStruct) markers.push(staticMarker("__ll_struct", true, h.src));
+        // The source spelling of any encoded field name. Both lists: a `:ctor` field lands on
+        // `h.ctor.params` and every other member variable on `h.fields`, and a defstruct's fields are
+        // almost always the former -- covering only `h.fields` finds nothing for the common case.
+        {
+          const pairs: Array<[string, string]> = [];
+          const note = (source: unknown) => {
+            if (typeof source !== "string") return;
+            const enc = encodeIdentifier(source);
+            if (enc !== source) pairs.push([enc, source]);
+          };
+          if (h.ctor) for (const p of h.ctor.params) note(p.name);
+          for (const f of h.fields) if (!f.isStatic) note((f.name as any)?.id ?? (f.name as any)?.name);
+          markers.push(...fieldNameMarker(pairs, h.src));
+        }
         // A4 step 4: the fields, after the markers and before the constructor. A field is a new home for
         // a value, so a named-struct initializer is D11-copied (`storeValue`); the name + initializer are
         // re-visited by the JS leaf hooks. Visibility is erased (a plain `this.x`, never `#x`; see D11c).

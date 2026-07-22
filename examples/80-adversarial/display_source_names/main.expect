@@ -1,0 +1,6 @@
+Rec{:first-name "Ada" :last-name "Lovelace"}
+[Rec{:first-name "Ada" :last-name "Lovelace"}]
+#<fn my-kebab-fn>
+#<fn double-it>
+[#<fn double-it>]
+Ada

@@ -245,6 +245,41 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   private typesMetadata: Record<string, any> = {};
   private overloadCounter = 0;
   private operatorRegistrations: ESTree.Statement[] = [];
+  /**
+   * `f.__ll_name = "my-kebab-fn";` for every top-level function whose JS binding name is not its
+   * source name -- because it was encoded (D21's kebab-case -> `my2dkebab2dfn`) or because the import
+   * inliner renamed it (`__ll_inlined__double_1`).
+   *
+   * The display formatter printed `Function.name`, i.e. the JS binding, so `(console.log my-kebab-fn)`
+   * answered `#<fn my2dkebab2dfn>` against C's `#<fn my-kebab-fn>`, and an imported function answered
+   * with a mangler symbol that appears nowhere in the user's source. That is the same class of bug
+   * `display_imported_class_tag/` was written to forbid for CLASSES, in the sibling arm of the same
+   * switch -- classes had `__ll_name` and functions had no name channel at all.
+   *
+   * Collected as binding -> source name and emitted at the FRONT of the program body, but ONLY for
+   * bindings that provably exist there: a top-level FunctionDeclaration (which hoists) or an inlined
+   * definition. A nested `fn` inside top-level control flow, and a `defmodifier`-wrapped function
+   * (which becomes a non-hoisting `const`), are both skipped -- stamping those raised
+   * "ReferenceError: Cannot access '_double' before initialization" and a plain undefined-identifier
+   * throw before the program ran a line. Emitting beside each declaration instead would mean changing
+   * the declaration FORM of every function in the language.
+   */
+  private functionSourceNames = new Map<string, string>();
+  /**
+   * Is this source name one the READER would lex as an identifier? The same rule the display
+   * formatter applies to map keys (the tokenizer's Identifier pattern).
+   *
+   * Operators are the reason it exists. An imported `+` is claimed in `inlinedDefinitions` under
+   * `__ll_inlined__2b_1` but that binding is never EMITTED -- the operator becomes an
+   * `__ll_overload_*` function plus a registry call -- so stamping it produced a reference to a
+   * name that does not exist. `#<fn +>` would not have been a useful rendering anyway: an operator
+   * is dispatched through `__ll_op_registry`, not displayed as a function value.
+   */
+  private static isDisplayableName(n: string): boolean {
+    return /^[A-Za-z_\u0080-\uFFFF][A-Za-z0-9_\-\u0080-\uFFFF]*$/.test(n);
+  }
+
+
   private modifierDefinitions: Map<string, ast.ModifierDefNode> = new Map();
 
   // ===========================================================================================
@@ -702,6 +737,38 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       }
     }
 
+    // The source-name stamps, at the FRONT, and only for bindings that provably exist there: a
+    // top-level FunctionDeclaration hoists, and an inlined definition is spliced in ahead of this
+    // body. Anything else -- a nested `fn`, a modifier-wrapped `const` -- is skipped rather than
+    // stamped into a ReferenceError.
+    if (this.functionSourceNames.size > 0) {
+      const reachable = new Set<string>(Object.keys(this.inlinedDefinitions));
+      for (const st of statements as any[]) {
+        if (st && st.type === "FunctionDeclaration" && st.id && st.id.name) reachable.add(st.id.name);
+      }
+      const stamps: ESTree.Statement[] = [];
+      for (const [binding, source] of this.functionSourceNames) {
+        if (!reachable.has(binding)) continue;
+        stamps.push({
+          type: "ExpressionStatement",
+          expression: {
+            type: "AssignmentExpression",
+            operator: "=",
+            left: {
+              type: "MemberExpression",
+              object: { type: "Identifier", name: binding },
+              property: { type: "Identifier", name: "__ll_name" },
+              computed: false,
+              optional: false,
+            },
+            right: { type: "Literal", value: source },
+          },
+        } as unknown as ESTree.Statement);
+      }
+      statements.unshift(...stamps as any);
+      this.functionSourceNames.clear();
+    }
+
     // Add operator registrations at the beginning of the program scope
     if (this.operatorRegistrations.length > 0) {
       statements.unshift(...this.operatorRegistrations as any);
@@ -1133,6 +1200,21 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
         // Apply custom modifiers if present
         result = this.applyModifiersToDeclaration(node, declaration, originalName);
+
+        // The source name, when the JS binding is not it (encoded, or renamed by the inliner).
+        //
+        // Only when the result is STILL a FunctionDeclaration. `applyModifiersToDeclaration` can turn
+        // it into a `const f = <wrapped>`, which does NOT hoist -- and these stamps are emitted at the
+        // front of the program body, so stamping one of those raised
+        // "ReferenceError: Cannot access '_double' before initialization" before the program ran a
+        // single line. A modifier-wrapped function keeps the host name for now.
+        if (
+          (result as any)?.type === "FunctionDeclaration" &&
+          typeof originalName === "string" && originalName && originalName !== name.name &&
+          JSTransformerAstVisitor.isDisplayableName(originalName)
+        ) {
+          this.functionSourceNames.set(name.name, originalName);
+        }
       } else {
         // A nested/anonymous function is normally an arrow -- but a generator CANNOT be an arrow
         // (`() => {}` has no `function*` form). A `:gen` here emits a `function*` EXPRESSION instead,
@@ -3929,6 +4011,22 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       // order definitions WITHIN a module any better than this already does. The test
       // "inlined definitions are emitted in dependency order" (test/imports.ts) pins this down.
       this.inlinedDefinitions[uniq] = defStmt;
+
+      // An inlined FUNCTION takes the arrow branch of visitFunction (it is emitted as a definition,
+      // not hoisted as a declaration), so it never reaches the source-name stamp there. Without one,
+      // `(console.log double-it)` on an imported function printed `#<fn __ll_inlined__double_1>` --
+      // the mangler's symbol, in user-facing output, which is exactly what
+      // `display_imported_class_tag/` forbids for classes. The stamps land at the front of
+      // `program.body`, which runs AFTER `inlinedDefs`, so the binding is initialised by then.
+      const initType = (defStmt as any)?.declarations?.[0]?.init?.type;
+      const isFnDef =
+        (defStmt as any)?.type === "FunctionDeclaration" ||
+        ((defStmt as any)?.type === "VariableDeclaration" &&
+          (initType === "ArrowFunctionExpression" || initType === "FunctionExpression"));
+      if (isFnDef && typeof symName === "string" && symName && symName !== uniq &&
+          JSTransformerAstVisitor.isDisplayableName(symName)) {
+        this.functionSourceNames.set(uniq, symName);
+      }
       return uniq;
     } catch (ex) {
       console.error("ensureSymbolInlined error for", symName, ex);

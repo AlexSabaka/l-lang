@@ -70,7 +70,13 @@ function __ll_inspect(v, indent, prefixLen, seen, flat) {
   if (t === "boolean") return v ? "true" : "false";
   if (t === "number" || t === "bigint") return __ll_num(v);
   if (t === "string") return "\"" + __ll_esc(v) + "\"";
-  if (t === "function") return v.name ? "#<fn " + v.name + ">" : "#<fn>";
+  /* __ll_name, and NOT Function.name. The host name is the JS binding: encoded for a kebab-case
+     source name (my2dkebab2dfn), and the mangler's for an inlined import (__ll_inlined__double_1) --
+     the same compiler-internal leak display_imported_class_tag forbids for classes, in the sibling
+     arm of this switch. It is also WRONG IN THE OTHER DIRECTION for a lambda: ECMA-262 NamedEvaluation
+     gives (let g (fn [a b] ...)) the name "g", so JS printed #<fn g> where C printed #<fn>. The host
+     naming a value the language did not name is not a name; falling through to #<fn> matches C. */
+  if (t === "function") { var fn = v.__ll_name || v.name; return fn ? "#<fn " + fn + ">" : "#<fn>"; }
   if (t !== "object") return String(v);
   if (seen.indexOf(v) !== -1) return "#<circular>";
   seen.push(v);
@@ -79,6 +85,12 @@ function __ll_inspect(v, indent, prefixLen, seen, flat) {
     var tag = isArr ? "" : __ll_class_tag(v);
     var open = isArr ? "[" : "{";
     var close = isArr ? "]" : "}";
+    /* The SOURCE spelling of an encoded field. D21 makes kebab-case idiomatic and encodeIdentifier
+       turns "first-name" into the property first2dname, so this arm printed Rec{:first2dname "Ada"}
+       where C printed Rec{:first-name "Ada"} -- and the mangled key passed __ll_ident_like cleanly,
+       so nothing downstream flagged it. The map is carried on the constructor because the encoding
+       is not reversible: a2db encodes a-b and is also a legal source name. */
+    var fieldNames = (v.constructor && v.constructor.__ll_fields) || null;
     var keys = isArr ? null : Object.keys(v).filter(function (k) { return k !== "__ll_name"; });
     if ((isArr ? v.length : keys.length) === 0) return tag + open + close;
     var heads = [];
@@ -88,7 +100,8 @@ function __ll_inspect(v, indent, prefixLen, seen, flat) {
     } else {
       for (var j = 0; j < keys.length; j++) {
         var k = keys[j];
-        heads.push((__ll_ident_like(k) ? ":" + k : "\"" + __ll_esc(k) + "\"") + " ");
+        var kn = (fieldNames && Object.prototype.hasOwnProperty.call(fieldNames, k)) ? fieldNames[k] : k;
+        heads.push((__ll_ident_like(kn) ? ":" + kn : "\"" + __ll_esc(kn) + "\"") + " ");
         vals.push(v[k]);
       }
     }

@@ -271,6 +271,10 @@ export const C_PASSING: readonly string[] = [
   // contributed no types at all, so `(/ (codepoint-length s) 2)` typed Real: 2.5 here against 2 on
   // JS, where BigInt division truncated by accident. D49d decides division from the STATIC types.
   "80-adversarial/floor_simple_name_types.lisp",
+  // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
+  // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.
+  "80-adversarial/display_source_names/main.lisp",
+  "80-adversarial/display_lambda_name.lisp",
   "80-adversarial/display_conformance.lisp",
   "80-adversarial/display_imported_class_tag/main.lisp",
   // Fd -- the reflection metadata GRAPH is emitted into the C module from the shared builder both

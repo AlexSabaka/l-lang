@@ -496,6 +496,60 @@ export class ClassBuilder {
   }
 
   /**
+   * `static __ll_fields = { first2dname: "first-name" }` -- the SOURCE spelling of any field whose JS
+   * property name is encoded.
+   *
+   * D21 makes kebab-case idiomatic, and `encodeIdentifier` turns every character JS will not accept
+   * into its hex code, so `first-name` becomes the property `first2dname`. That is correct for the
+   * PROPERTY and wrong for the display formatter, which enumerated `Object.keys(v)` and printed
+   * `Rec{:first2dname "Ada"}` where C printed `Rec{:first-name "Ada"}`. C is right against §3.5, and
+   * the mangled key then passed `__ll_ident_like` cleanly, so nothing downstream flagged it.
+   *
+   * Carried rather than decoded, because the encoding is NOT reversible: `a2db` is the encoding of
+   * `a-b` and also a legal source name in its own right. Only fields that actually differ are listed,
+   * so an all-ASCII class emits nothing at all.
+   *
+   * Static, for the same reasons as `__ll_name`: it rides on the class object, survives the import
+   * inliner's rename, stays off the instance, and is inherited.
+   */
+  private buildFieldNameMarker(): ESTree.PropertyDefinition[] {
+    const pairs: Array<[string, string]> = [];
+    // BOTH lists: `processVariable` routes a `:ctor` field to `ctorVars` and everything else to
+    // `classFields`, and a defstruct's fields are almost always `:ctor` ones -- covering only the
+    // latter found nothing at all for the common case.
+    for (const v of [...this.ctorVars, ...this.classFields]) {
+      if (hasModifier(v.modifiers ?? [], "static")) continue;
+      const encoded = (this.visitor.visit(v.name) as ESTree.Identifier)?.name;
+      const source = (v.name as any)?.name ?? (v.name as any)?.id;
+      if (typeof encoded === "string" && typeof source === "string" && encoded !== source) {
+        pairs.push([encoded, source]);
+      }
+    }
+    if (!pairs.length) return [];
+    return [
+      {
+        type: "PropertyDefinition",
+        key: { type: "Identifier", name: "__ll_fields" },
+        value: {
+          type: "ObjectExpression",
+          properties: pairs.map(([enc, src]) => ({
+            type: "Property",
+            kind: "init",
+            method: false,
+            shorthand: false,
+            computed: false,
+            key: { type: "Literal", value: enc },
+            value: { type: "Literal", value: src },
+          })),
+        },
+        computed: false,
+        static: true,
+        loc: loc(this.node),
+      } as unknown as ESTree.PropertyDefinition,
+    ];
+  }
+
+  /**
    * The class-body MEMBERS, in source order: markers, fields, constructor, methods, the iterable bridge,
    * and any other valid members. The class SHELL (id / superClass / ClassDeclaration wrap) is assembled
    * by the HIR emitter now (A4 step 2) from the modeled `HClass.name` / `superName`; this is the seam the
@@ -535,6 +589,7 @@ export class ClassBuilder {
     const ctor = this.buildConstructor();
     const body = [
       ...this.buildTypeNameMarker(),
+      ...this.buildFieldNameMarker(),
       ...this.buildValueTypeMarker(),
       ...this.buildFields(),
       ...(ctor ? [ctor] : []),
