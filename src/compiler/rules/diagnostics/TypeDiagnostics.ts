@@ -120,6 +120,22 @@ export const TypeDiagnostics = {
       `${p.plural ? "define them" : "define it"}, or drop the ':implements ${p.iface}'.`
   ),
 
+  // LL0236 -- `eval` names a feature that does not exist.
+  //
+  // A dedicated message rather than LL0210's "'eval' is not defined", because the name LOOKS like it
+  // should exist: it was in the runtime shim's surface for the whole life of the project, and on JS
+  // it compiled to bare `eval(...)` -- the HOST's, evaluating JAVASCRIPT source. An l-lang program
+  // asking to evaluate l-lang got a JavaScript evaluator, silently, on one backend only.
+  EvalNotImplemented: def<{}>(
+    "LL0236",
+    Error,
+    () =>
+      `'eval' is not implemented. It needs a runtime AST interpreter, which the language does not ` +
+      `have -- it is a phase of its own, not a stdlib function. It used to compile to the HOST's ` +
+      `eval on the JS backend (evaluating JavaScript, not l-lang) and was refused outright on the ` +
+      `native one. Use ':comptime' for compile-time evaluation (D3).`
+  ),
+
   // LL0210
   NotDefined: def<{ name: string }>(
     "LL0210",

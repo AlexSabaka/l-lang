@@ -5406,7 +5406,6 @@ function main() {
     // Language runtime, deliberately NOT floor entries. Each is a standing debt with a named reason;
     // this list shrinking is the measure of progress.
     const NOT_FLOOR: Record<string, string> = {
-      eval: "the empty string; needs a runtime AST interpreter (S-a4 makes it throw)",
     };
 
     const floorNames = [...FLOOR.keys()];

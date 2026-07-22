@@ -4259,6 +4259,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       this.checkForwardReference(node, head, entry);
       return;
     }
+    // `eval` earns its own message: it was a runtime-shim name for the whole life of the project, so
+    // "is not defined" would read as a typo rather than as the missing feature it is.
+    if (head === "eval") {
+      this.report(TD.EvalNotImplemented, node, {});
+      return;
+    }
     this.report(TD.NotDefined, node, { name: head });
   }
 

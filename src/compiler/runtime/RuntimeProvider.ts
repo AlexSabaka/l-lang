@@ -677,7 +677,6 @@ function __ll_is_type(val, type) {
 
     // Call wrapper
     "call": `const call = (f, args) => !!args && Array.isArray(args) ? f(...args) : f();`,
-    "eval": ``,
     // The type-metadata lookup, BY NAME -- the half of the old `type` that took a string (Zia).
     //
     // NOTE THE TWO NAMES. The KEY is the SOURCE name: \`isRuntimeReference\` tests \`node.id in

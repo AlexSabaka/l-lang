@@ -165,9 +165,12 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "compiles and runs. It is blocked on two things it asks for that do not exist. (1) It wants a " +
       "CONS/LIST representation -- its own comment says `'(+ 1 2)` should be `[\"+\", 1, 2]` -- and " +
       "quote emits the AST datum, `{_type:'list', nodes:[...]}`. Which of those homoiconicity means " +
-      "is a language decision, not a bug. (2) It wants `(eval logic)`, which needs a runtime AST " +
-      "interpreter: `RuntimeProvider` registers `\"eval\": \"\"`, so it falls through to host JS eval. " +
-      "Both are out of scope for D3, whose ruling is ':comptime + defmodifier'.",
+      "is a language decision, not a bug; the ruling taken 2026-07-22 is BOTH, with the AST datum as " +
+      "the source of truth and cons/list a derived layer. (2) It wants `(eval logic)`. RE-MEASURED " +
+      "after S-a4: this is now a clean LL0236 on BOTH backends naming the missing runtime AST " +
+      "interpreter, where it used to compile to the HOST's eval on JS -- evaluating JavaScript, not " +
+      "l-lang -- and refuse with LL0107 on C. So the file's remaining failure is one honest " +
+      "diagnostic rather than a silent backend split.",
   },
   "05-data-structures/02_maps.lisp": {
     status: "xfail",
