@@ -549,6 +549,7 @@ function __ll_is_type(val, type) {
   const k = Number(i);
   return k >= 0 && k < a.length ? BigInt(a[k].codePointAt(0)) : -1n;
 };`,
+    "string-to-codepoints": `const string2dto2dcodepoints = (s) => [...String(s)].map((c) => BigInt(c.codePointAt(0)));`,
     "string-from-codepoints": `const string2dfrom2dcodepoints = (cps) => {
   let out = "";
   for (const c of cps) {

@@ -57,6 +57,20 @@ Complete API reference for the **l-lang** standard library and compiler introspe
 | `contains` | `(contains s sub)` | Check if contains | `(contains "hello" "ell")` → `true` |
 | `starts-with` | `(starts-with s prefix)` | Check prefix | `(starts-with "hello" "he")` → `true` |
 | `ends-with` | `(ends-with s suffix)` | Check suffix | `(ends-with "hello" "lo")` → `true` |
+| `char-at` | `(char-at s i)` | Character at index | `(char-at "hello" 1)` → `"e"` |
+| `pad-start` | `(pad-start s width pad)` | Pad on the left | `(pad-start "7" 3 "0")` → `"007"` |
+| `pad-end` | `(pad-end s width pad)` | Pad on the right | `(pad-end "7" 3 "0")` → `"700"` |
+| `repeat` | `(repeat s n)` | Repeat a string | `(repeat "ab" 3)` → `"ababab"` |
+
+A `String` is a sequence of **Unicode codepoints** — not bytes, not UTF-16 code units. `(strlen
+"café")` is 4 and `(strlen "a😀b")` is 3, and every index and width above counts characters. The
+native `.length` / `.charAt` / `.slice` members answer in the *host's* units and are interop, not the
+language's answer.
+
+`upcase`, `downcase` and `trim` are **ASCII-only, deliberately** — `(upcase "café")` is `"CAFé"`, and
+`trim` removes only space, tab, CR and LF. A host case-mapper is locale- and ICU-version-dependent,
+which is precisely the divergence the floor exists to prevent; ASCII is a rule both backends can
+state exactly. See [D52](./spec/DECISIONS.md#d52--string-is-unicode-codepoints).
 
 ### Collection Operations
 

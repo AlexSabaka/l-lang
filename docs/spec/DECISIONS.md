@@ -4263,6 +4263,21 @@ change from the JS-UTF-16 count to the correct codepoint count — a one-time, g
 > and 6 where D52 says 3 — JS is right below U+10000 by accident and wrong the moment anything is
 > astral, so this is a floor **both** backends are rebuilt onto. See `80-adversarial/codepoint_floor.lisp`.
 
+> **Amended 2026-07-22 (Ff-2) — case and trim are ASCII; the vendored table is deferred, not dropped.**
+> `(upcase "café")` is **`"CAFé"`** and `trim` removes exactly space/tab/LF/CR. The divergence was
+> already live — JS said `CAFÉ`, C said `CAFé` — so the only question was which becomes the rule, and
+> C's wins because it *is* one: JS's came from `toUpperCase`, an ICU- and locale-version-dependent
+> host function, and adopting it means conformance-by-chasing-a-host, which D55 already rejected for
+> `util.inspect`. The ~1400-entry simple-case table, vendored twice and kept in step, is not worth it
+> for a corpus with one non-ASCII string literal; when it lands it replaces two functions and the
+> guard changes with it. A fourth primitive, **`string-to-codepoints`**, was added so every
+> `std/string` function decodes once and stays linear. `split`/`join`/`contains`/`starts-with`/
+> `ends-with` remain native delegations and are sound because UTF-8 is **self-synchronizing** — only
+> operations returning or taking a *position* or *width* needed rewriting. `index-of` is deliberately
+> absent (it **collides** with `std/seq`'s, and `test_stdlib` imports both), as is `replace` (JS gives
+> the replacement string special meaning, `$&`/`$1`/`$$`; C does not). Pinned by
+> `80-adversarial/string_codepoints.lisp`.
+
 ### D53 — primitive `vec`/`map`, structural `equals`
 
 > **Amended 2026-07-22 (Fg), two corrections.** *(a) The names drop the bang.* D21 rejects Scheme

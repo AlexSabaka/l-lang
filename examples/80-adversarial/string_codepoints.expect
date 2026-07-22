@@ -1,0 +1,17 @@
+len-latin:   4
+len-cyril:   6
+len-astral:  3
+char-at:     😀
+char-at-oob: 0
+substr:      éї€
+substr-astr: 😀
+upcase:      CAFé
+upcase-cyr:  Привіт
+downcase:    cafÉ
+trim:        hi
+trim-nbsp:   3
+pad-start:   --café
+pad-end:     éaba
+repeat:      ééé
+contains:    true
+starts-with: true

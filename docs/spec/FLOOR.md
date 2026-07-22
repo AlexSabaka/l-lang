@@ -171,6 +171,42 @@ so `codepoint-at` returns a `Char` with no new type.
 > the moment anything is astral. This is a floor **both** backends are rebuilt onto, not one catching
 > up with the other. Pinned by `80-adversarial/codepoint_floor.lisp`.
 
+> **Amended 2026-07-22 (Ff-2) — case and trim are ASCII, and the vendored table is deferred.**
+>
+> `upcase`/`downcase` map `a-z`/`A-Z` and pass everything else through, on both backends: `(upcase
+> "café")` is **`"CAFé"`** and `(upcase "Привіт")` is unchanged. `trim` removes exactly space, tab, LF
+> and CR — not the ~25 characters of Unicode `White_Space` that JS's `.trim` takes.
+>
+> *This is a narrowing of the ruling above, taken with its eyes open.* The vendored simple-case table
+> is still the right long-term answer. It is also ~1400 entries with conditional and locale-sensitive
+> cases, vendored **twice** and kept in step, for a corpus containing one non-ASCII string literal.
+> The alternative is not "do nothing": the divergence was already live — `(upcase "café")` gave
+> `CAFÉ` on JS and `CAFé` on C — so the only question was which becomes the rule. C's wins because it
+> *is* a rule, where JS's came from `toUpperCase`, an ICU- and locale-version-dependent host
+> function; adopting it would mean conformance-by-chasing-a-host, which §D55 already rejected for
+> `util.inspect`. ASCII is a rule both backends state exactly. When the table lands it replaces
+> `ascii-upper`/`ascii-lower` and `string_codepoints.lisp` changes with it, on purpose.
+>
+> *A fourth primitive was added:* **`string-to-codepoints : String -> Int[]`**, the inverse of
+> `string-from-codepoints`. Every function in `std/string` decodes once, works on the `Int[]` with
+> ordinary vector code, and encodes once — which is what keeps them linear. Built out of repeated
+> `codepoint-at` they would each re-walk the string per character, since a codepoint index is a walk
+> on both backends.
+>
+> *What stayed a native delegation, and why it is sound:* `split`, `join`, `contains`, `starts-with`,
+> `ends-with`. UTF-8 is **self-synchronizing** — a continuation byte cannot be mistaken for a lead
+> byte — so a valid encoded needle cannot match starting inside a character, and a substring
+> *predicate* is already codepoint-correct on a byte scan. What is unsafe is anything returning or
+> taking a **position** or a **width**, which is exactly the set that was rewritten. The one hole is
+> `(split s "")`, wrong on both backends and used nowhere in the corpus; flagged, not fixed.
+>
+> *Two names from the list above are deliberately still missing.* `index-of` **collides**: `std/seq`
+> exports one (Fg-4) and `16-stdlib/test_stdlib.lisp` imports both modules — D33's "pick one
+> convention per file" settles seq-vs-linq because those are alternatives, and seq-vs-string because
+> they are not. `replace` would import JS's special replacement syntax (`$&`, `$1`, `$$`), which C's
+> `ll_str_replace` does not have. Both need their own ruling rather than whichever spelling was
+> convenient.
+
 ### D53 — the container floor: primitive `vec` and `map`, structural `equals`
 
 - **Vectors** are a floor representation (`vec-new/push!/get/set!/length`); `pop shift unshift

@@ -146,6 +146,11 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   ["codepoint-length", fn("ll_cp_length", [Str], Int)],
   ["codepoint-at", fn("ll_cp_at", [Str, Int], Int)],
   ["string-from-codepoints", fn("ll_string_from_codepoints", [arr(Int)], Str)],
+  // The inverse, and the reason `std/string` above is LINEAR. Every operation up there decodes once
+  // into an Int[], works on it with ordinary vector code, and encodes once. Built out of repeated
+  // `codepoint-at` instead, each of those loops re-walks the string per character -- O(n^2) on a
+  // representation that is a walk on both backends (UTF-8 here, `[...s]` there).
+  ["string-to-codepoints", fn("ll_string_to_codepoints", [Str], arr(Int))],
 
   // -- container/sequence primitives the runtime provides (the SYMBOL_MAP surface).
   ["get", fn("ll_get", [Any, Any], Any)],

@@ -249,6 +249,10 @@ export const C_PASSING: readonly string[] = [
   // in bytes here and in UTF-16 code units on JS. Both backends were wrong -- 6 and 4 respectively
   // for a 3-codepoint string -- so this is a floor both are rebuilt onto, not C catching up.
   "80-adversarial/codepoint_floor.lisp",
+  // Ff-2 -- `std/string` is l-lang on those primitives: codepoint measurement and indexing, and
+  // ASCII-only case and trim. C was already ASCII-cased (`ll_str_upper` maps a-z and nothing else),
+  // so this is JS narrowing to a stated rule rather than C growing to match a host library.
+  "80-adversarial/string_codepoints.lisp",
   // Fd -- the reflection metadata GRAPH is emitted into the C module from the shared builder both
   // backends read (D54), so `type`/`type-by-name` answer with real properties, methods, constructor
   // params, generics and interfaces instead of a {name, extends} stub. Closes §5.2 cluster 3.

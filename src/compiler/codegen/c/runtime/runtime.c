@@ -1133,6 +1133,22 @@ static void ll_sb_put_cp(ll_sb *sb, int64_t cp) {
   }
 }
 
+/* The inverse, and the reason `std/string` is linear rather than quadratic. Every operation up there
+   decodes ONCE into an Int[], works on it with ordinary vector code, and encodes once. Built out of
+   `codepoint-at` instead, each of those loops would re-walk the string per character. */
+static ll_vec *ll_string_to_codepoints(ll_str *s) {
+  size_t i = 0;
+  /* `ll_vec_grow` and not `ll_vec_push`: push is defined further down the file with the rest of the
+     vector method surface, and the string ops sit above it. Same ordering constraint the map floor
+     hit -- an implicit declaration here is an error under C99, not a warning. */
+  ll_vec *out = ll_vec_new(s->len ? s->len : 4);
+  while (i < s->len) {
+    ll_vec_grow(out, out->len + 1);
+    out->items[out->len++] = ll_box_int(ll_utf8_next(s, &i));
+  }
+  return out;
+}
+
 static ll_str *ll_string_from_codepoints(ll_vec *cps) {
   ll_sb sb;
   ll_sb_init(&sb);
