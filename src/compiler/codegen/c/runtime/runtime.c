@@ -1820,6 +1820,72 @@ static ll_value ll_dyn_method(int n, ll_value *vals) {
   return ll_nil();
 }
 
+/* ---------------------------------------------------------------------------------------------
+ * D30's ITERATION PROTOCOL: `iter` gives a cursor, `next` advances it, nil means done.
+ *
+ * These existed only in the JS shim, so the C backend had no protocol at all: `resolveForEach`
+ * special-cased vec and str and boxed everything else, and the emitter then wrote `ll_vec*` over it
+ * unconditionally. A hand-written `Iterable` struct CRASHED the emitter (`no cast obj -> vec`, an
+ * uncaught exception rather than a diagnostic), and an `Iterable<T>`-typed parameter compiled to
+ * `ll_unbox_vec` and trapped at run time on anything that was not an array.
+ *
+ * A cursor is a CLOSURE for the built-in sequences and the USER'S OWN OBJECT otherwise. That split is
+ * what keeps `ll_next` from needing to know anything: a closure is called, an object is asked for its
+ * `next` method. No new tag, no cursor class, and nothing a user can accidentally construct -- a
+ * 2-element vec used as a cursor would have been indistinguishable from a user's 2-element vec.
+ * --------------------------------------------------------------------------------------------- */
+typedef struct { ll_value src; int64_t i; } ll_cursor_env;
+
+static ll_value ll_cursor_step(void *env, int argc, ll_value *argv) {
+  (void)argc;
+  (void)argv;
+  ll_cursor_env *e = (ll_cursor_env *)env;
+  if (e->src.tag == LL_VEC) {
+    ll_vec *v = e->src.as.v;
+    if (e->i >= (int64_t)v->len) return ll_nil();
+    return v->items[e->i++];
+  }
+  if (e->src.tag == LL_STR) {
+    ll_str *s = e->src.as.s;
+    if (e->i >= ll_cp_length(s)) return ll_nil();
+    return ll_box_str(ll_str_char_at(s, e->i++));
+  }
+  return ll_nil();
+}
+
+static ll_value ll_iter(ll_value x) {
+  /* D30: an Iterable answers `iterator()`, and an Iterator IS an Iterable -- it answers `this`. A user
+   * type that has neither is not iterable, and `ll_dyn_method` traps saying so. */
+  if (x.tag == LL_OBJ) return ll_dyn_method(2, (ll_value[]){x, ll_box_str(ll_str_lit("iterator"))});
+  if (x.tag == LL_CLOSURE) return x; /* already a cursor */
+  /* TRAPS on anything else, deliberately, and this line is a correction to an earlier draft of it.
+   *
+   * The first version answered an empty cursor for nil and walked a MAP's keys -- which made C
+   * iterate `(for :each k :from {:a 1})` while JS threw `m is not iterable`, because a plain Object
+   * has no Symbol.iterator. That is a divergence INVENTED while fixing one, and the silent kind: C
+   * would have quietly produced keys for a program that fails on the other backend.
+   *
+   * A map is not Iterable until something RULES that it is. Until then both backends refuse, and the
+   * JS shim's own wording is the specification being matched here. */
+  if (x.tag != LL_VEC && x.tag != LL_STR) ll_trap("TypeError", "value is not iterable");
+  ll_cursor_env *e = (ll_cursor_env *)ll_alloc(sizeof(ll_cursor_env));
+  e->src = x;
+  e->i = 0;
+  return ll_box_closure(ll_closure_make(ll_cursor_step, e, 0, "cursor"));
+}
+
+/* nil MEANS DONE -- the whole protocol, and the reason it needs no `{value, done}` pair. D9 gives the
+ * language exactly one bottom value, so "no more elements" and "absent" are the same answer, and a
+ * sequence containing nil is not expressible anyway. */
+static ll_value ll_next(ll_value it) {
+  if (it.tag == LL_NIL) return ll_nil();
+  if (it.tag == LL_CLOSURE) return ll_call(it, 0, (ll_value *)0);
+  if (it.tag == LL_OBJ) return ll_dyn_method(2, (ll_value[]){it, ll_box_str(ll_str_lit("next"))});
+  /* A raw sequence handed straight to `next` -- take a cursor over it and step once. Not useful on
+   * its own, but it keeps `next` total rather than trapping on a plain array. */
+  return ll_next(ll_iter(it));
+}
+
 /* -- generic boxed operators (the JS operator shim's NATIVE tail; user-overload registry is
  *    Phase C). JS `+` semantics: string contagion, else numeric; int-ness preserved when exact. --- */
 

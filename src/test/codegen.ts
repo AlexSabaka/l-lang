@@ -5406,12 +5406,6 @@ function main() {
     // Language runtime, deliberately NOT floor entries. Each is a standing debt with a named reason;
     // this list shrinking is the measure of progress.
     const NOT_FLOOR: Record<string, string> = {
-      // D30's iteration protocol, JS-only. This is the entry that justifies the JS -> floor direction
-      // of this check: `for :each` on C special-cases vec and str and has no protocol path at all, so
-      // a hand-written `Iterable` CRASHES the emitter and an `Iterable<T>`-typed parameter silently
-      // emits `ll_unbox_vec` and traps. S-a2 moves them and deletes these two lines.
-      iter: "D30's cursor primitive -- JS-only; S-a2 puts it on the floor and gives C ll_iter",
-      next: "D30's cursor primitive -- JS-only; S-a2 puts it on the floor and gives C ll_next",
       "deep-copy": "D11's copy decision -- both backends make it, so it belongs on the floor (S-a3)",
       eval: "the empty string; needs a runtime AST interpreter (S-a4 makes it throw)",
     };

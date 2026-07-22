@@ -311,6 +311,11 @@ export const C_PASSING: readonly string[] = [
   // checker declared and C refused; three of them C could already do DYNAMICALLY, so typing the
   // receiver had been LOSING capability.
   "80-adversarial/native_member_surface.lisp",
+  // D30's iteration protocol reaching C at all. `iter`/`next` were JS-only and on no floor, so
+  // `for :each` here special-cased vec/str and the emitter wrote `ll_vec*` over everything else --
+  // a String and a hand-written Iterable each CRASHED the emitter, and an `Iterable<T>` parameter
+  // compiled clean and trapped on data.
+  "80-adversarial/iteration_protocol.lisp",
   // The formatter trio (F.6/F.7/F.8) -- all three are the same shape: JS read HOST reflection
   // (String.length, Object.keys, Function.name) where C read l-lang's own metadata.
   "80-adversarial/display_source_names/main.lisp",

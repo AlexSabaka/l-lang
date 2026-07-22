@@ -105,10 +105,17 @@ export class InsertCoercions {
         };
 
       case "c-foreach": {
-        // The collection must be a runtime vector; a boxed one is unboxed here. The per-element
-        // unbox (varCType concrete) is emitted mechanically by P3 from varCType.
+        // TWO ARMS, and the coercion is the opposite for each. The index loop needs a runtime VECTOR,
+        // so a boxed collection is unboxed here. D30's protocol arm needs a BOXED value, because
+        // `ll_iter` dispatches on the tag -- unboxing to a vec there is exactly the bug this replaced:
+        // P1 chose the protocol for a String or a user `Iterable`, and P2 coerced it to `ll_vec*`
+        // anyway, so P3 crashed with `no cast obj -> vec` before the protocol could run.
         const coll = this.expr(s.collection);
-        const collection = coll.ctype.k === "vec" ? coll : this.coerce(coll, { k: "vec", elem: C_VALUE });
+        const collection = s.viaProtocol
+          ? this.coerce(coll, C_VALUE)
+          : coll.ctype.k === "vec"
+            ? coll
+            : this.coerce(coll, { k: "vec", elem: C_VALUE });
         return { ...s, collection, body: this.block(s.body, ret), elseBlock: s.elseBlock ? this.block(s.elseBlock, ret) : null };
       }
 

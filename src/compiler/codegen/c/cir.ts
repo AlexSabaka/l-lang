@@ -398,7 +398,17 @@ export interface CFor {
   elseBlock: CBlock | null;
 }
 
-/** A for-each over a vector/string, lowered to an index loop (iterator protocol is later work). */
+/**
+ * A for-each. TWO lowerings, and which one is a P1 decision:
+ *
+ *   viaProtocol: false   the collection is statically a VECTOR -> a direct index loop, no allocation
+ *   viaProtocol: true    anything else -> D30's protocol, `ll_iter` then `ll_next` until nil
+ *
+ * The protocol arm is what a `for :each` over a string, a map, or a user `Iterable` uses. Before it,
+ * the emitter wrote `ll_vec*` over whatever P1 handed it, so a string CRASHED (`no cast str -> vec`)
+ * and a user Iterable crashed differently (`no cast obj -> vec`) -- both uncaught exceptions rather
+ * than diagnostics, and both reachable from ordinary code.
+ */
 export interface CForEach {
   kind: "c-foreach";
   varCName: string;
@@ -406,6 +416,8 @@ export interface CForEach {
   collection: CExpr;
   body: CBlock;
   elseBlock: CBlock | null;
+  /** Use D30's iterator protocol rather than an index loop. */
+  viaProtocol?: boolean;
 }
 
 export interface CBlock {

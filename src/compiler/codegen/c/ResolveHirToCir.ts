@@ -1186,10 +1186,25 @@ export class ResolveHirToCir {
       throw this.refuse(node, "foreach-destructuring", "resolveForEach");
     }
     const collection = this.resolveExpr(h.collection);
+    // WHICH LOWERING. A statically-known vector keeps the direct index loop -- no allocation, and it
+    // is what the whole corpus iterates. Everything ELSE goes through D30's protocol: a string, a map,
+    // a user `Iterable`, or a boxed value whose shape is only known at run time.
+    //
+    // There used to be no second arm. `varCType` was set here for str and obj, and the emitter then
+    // wrote `ll_vec*` over the collection unconditionally -- so `for :each` over a String crashed with
+    // `no cast str -> vec` and over a hand-written Iterable with `no cast obj -> vec`, both uncaught
+    // exceptions rather than diagnostics. An `Iterable<T>`-typed PARAMETER was worse: it boxed, and
+    // `ll_unbox_vec` trapped at run time on anything that was not an array. D29's ruling warned about
+    // exactly this -- "`for :each` was hardcoded to emit `for...of`, with no protocol behind it" --
+    // and the C backend had reproduced it.
+    const viaProtocol = collection.ctype.k !== "vec";
     let varCType: CType = C_VALUE;
     if (collection.ctype.k === "vec") varCType = collection.ctype.elem;
     else if (collection.ctype.k === "str") varCType = C_STR;
     else this.ledger.record("A1", "foreach-elem", node, "collection element type unknown; boxed");
+    if (viaProtocol) {
+      this.ledger.record("A3", "foreach-protocol", node, "non-vector collection iterated through D30's iter/next protocol");
+    }
     // D11: each iteration value is copied (shallow). The HIR does not say so -- the legacy
     // emitForEach seam does (A5).
     this.ledger.record("A5", "foreach-copy", node, "per-iteration element copy decided below the HIR");
@@ -1197,7 +1212,7 @@ export class ResolveHirToCir {
     this.declareLocal(cName, varCType);
     return [{
       src: node, ctype: C_VOID, kind: "c-foreach",
-      varCName: cName, varCType, collection,
+      varCName: cName, varCType, collection, viaProtocol,
       body: this.resolveBlock(h.body),
       elseBlock: h.elseBlock ? this.resolveBlock(h.elseBlock) : null,
     }];

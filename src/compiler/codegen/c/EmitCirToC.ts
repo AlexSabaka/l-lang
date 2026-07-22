@@ -470,6 +470,31 @@ export class EmitCirToC {
         // may read the variable's last value (the corpus golden proves this semantic).
         const v = `__c${this.fresh++}`;
         const i = `__i${this.fresh++}`;
+        // D30's PROTOCOL arm: a cursor from `ll_iter`, stepped by `ll_next`, nil means done. Used for
+        // every collection that is not statically a vector -- a string, a map, a user `Iterable`, or a
+        // boxed value whose shape is only known at run time.
+        if (s.viaProtocol) {
+          const it = `__it${this.fresh++}`;
+          const e = `__e${this.fresh++}`;
+          this.line("{");
+          this.indent++;
+          this.line(`ll_value ${it} = ll_iter(${this.expr(s.collection)});`);
+          this.line(`${cType(s.varCType)} ${s.varCName} = ${defaultInit(s.varCType)};`);
+          this.line(`for (;;) {`);
+          this.indent++;
+          this.line(`ll_value ${e} = ll_next(${it});`);
+          this.line(`if (${e}.tag == LL_NIL) break;`);
+          const got = `ll_copy(${e})`; // D11 per-iteration copy (identity for non-structs)
+          if (s.varCType.k === "value") this.line(`${s.varCName} = ${got};`);
+          else this.line(`${s.varCName} = ${UNBOX_FN[s.varCType.k]}(${got});`);
+          this.emitBlockStmts(s.body);
+          this.indent--;
+          this.line("}");
+          if (s.elseBlock) this.emitBlockStmts(s.elseBlock);
+          this.indent--;
+          this.line("}");
+          return;
+        }
         this.line("{");
         this.indent++;
         this.line(`ll_vec* ${v} = ${this.expr(s.collection)};`);

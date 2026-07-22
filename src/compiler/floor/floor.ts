@@ -220,6 +220,21 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   ["sys-env", fn("ll_sys_env", [Str], StrOpt)],
   ["sys-exit", fn("ll_sys_exit", [Int], Void)],
 
+  // -- D30's ITERATION PROTOCOL. `iter` gives a cursor, `next` advances it, nil means done.
+  //
+  // These were JS-only, in the shim, on no floor -- and that is not a bookkeeping detail: the C
+  // backend therefore had no protocol AT ALL. `resolveForEach` special-cased vec and str and boxed
+  // everything else, and the emitter wrote `ll_vec*` over it unconditionally, so a hand-written
+  // `Iterable` struct CRASHED the emitter with `no cast obj -> vec` (an uncaught exception, not a
+  // diagnostic) and an `Iterable<T>`-typed parameter compiled to `ll_unbox_vec` and trapped at run
+  // time. D29's own ruling warned about exactly this shape: "`for :each` was hardcoded to emit
+  // `for...of`, with no protocol behind it." The C backend had reproduced it.
+  //
+  // `Any` in and out. A cursor has no expressible type -- it is a closure on the built-in sequences
+  // and the user's own object otherwise -- and `next` answers `T?` for a T the floor cannot name.
+  ["iter", fn("ll_iter", [Any], Any)],
+  ["next", fn("ll_next", [Any], Any)],
+
   // -- reflection: the backend emits the metadata graph, the accessor shape is spec (D54).
   ["type", fn("ll_type", [Any], Any)],
   ["type-by-name", fn("ll_type_by_name", [Any], Any)],
