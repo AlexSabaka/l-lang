@@ -259,17 +259,17 @@
           (while (&& (< j n) (!= (elem cs j) 125)) (
             (let d (- cs[j] 48))
             (if (|| (< d 0) (> d 9))
-              (throw (Error "format: a placeholder index must be digits")))
+              (throw (new ValueError "format: a placeholder index must be digits")))
             (idx := (+ (* idx 10) d))
             (seen := (+ seen 1))
             (j := (+ j 1))
           ))
           (if (>= j n)
-            (throw (Error "format: unterminated placeholder, no closing brace")))
+            (throw (new ValueError "format: unterminated placeholder, no closing brace")))
           (if (== seen 0)
-            (throw (Error "format: empty placeholder, an index is required")))
+            (throw (new ValueError "format: empty placeholder, an index is required")))
           (if (>= idx args.length)
-            (throw (Error "format: placeholder index has no argument")))
+            (throw (new ValueError "format: placeholder index has no argument")))
           (let rendered (string-to-codepoints (display args[idx])))
           (mut k <- Int 0)
           (while (< k rendered.length) (
@@ -386,7 +386,7 @@
     ;; positive `(if (!= r nil) (return r))` does not carry its narrowing to the return type -- LL0213 --
     ;; and a value-position `match` with a throwing arm hits a JS codegen bug, ledger 16.1. This form
     ;; works on both backends.)
-    (if (== r nil) (throw (Error (+ "cannot parse integer: " s))))
+    (if (== r nil) (throw (new ValueError (+ "cannot parse integer: " s))))
     (return r)
   ))
 

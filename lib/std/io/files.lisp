@@ -24,6 +24,8 @@
 ;; JS-refused, so routing i/o through them would widen a divergence the language already has; plain
 ;; try/catch is green on both backends (18-error-handling, 12 examples).
 (
+    (import "std/core/errors")
+
     ;; How much to pull per `file-read`. The floor completes a trailing multi-byte UTF-8 sequence, so
     ;; a chunk boundary never splits a codepoint whatever this is set to.
     (let CHUNK 65536)
@@ -37,7 +39,7 @@
     ;; total spelling is `try-open`.
     (fn open [path <- String mode <- String] -> Int (
         (let fd (file-open path mode))
-        (if (< fd 0) (throw (Error (+ "cannot open file: " path))))
+        (if (< fd 0) (throw (new FileError (+ "cannot open file: " path) path)))
         (return fd)
     ))
 
@@ -100,7 +102,7 @@
         (let fd (open path "w"))
         (let put (write-chunk fd text))
         (close fd)
-        (if (< put 0) (throw (Error (+ "cannot write file: " path))))
+        (if (< put 0) (throw (new FileError (+ "cannot write file: " path) path)))
     ))
 
     ;; Add to the end of a file, creating it if absent. THROWS if it cannot be written.
@@ -108,7 +110,7 @@
         (let fd (open path "a"))
         (let put (write-chunk fd text))
         (close fd)
-        (if (< put 0) (throw (Error (+ "cannot append to file: " path))))
+        (if (< put 0) (throw (new FileError (+ "cannot append to file: " path) path)))
     ))
 
     ;; The file's lines, without their terminators. A trailing newline does NOT produce a final empty

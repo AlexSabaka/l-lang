@@ -26,6 +26,8 @@
 ;; `write-string`, which has none to report, and the throwing half matches `std/io/files`: a failed
 ;; write is a defect, not a value to inspect.
 (
+    (import "std/core/errors")
+
     ;; No import: `file-open`/`file-read`/`file-write`/`file-close` are FLOOR names, ambient on both
     ;; backends like `write-string`. Importing them from `std/io/files` is an LL0235 -- that module
     ;; exports its own `open`/`read-chunk`/`write-chunk` layer, not the primitives underneath it.
@@ -57,7 +59,7 @@
         (let :ctor fd <- Int 0)
         (fn write [text <- String] -> Void (
             (let put (file-write this.fd text))
-            (if (< put 0) (throw (Error "write failed")))
+            (if (< put 0) (throw (new IOError "write failed")))
         ))
         (fn close [] -> Void (file-close this.fd))
     )
@@ -71,14 +73,14 @@
     ;; Open a file for writing. Mode is "w" (truncate) or "a" (append). THROWS if it cannot be opened.
     (fn open-writer [path <- String mode <- String] -> FileWriter (
         (let fd (file-open path mode))
-        (if (< fd 0) (throw (Error (+ "cannot open for writing: " path))))
+        (if (< fd 0) (throw (new FileError (+ "cannot open for writing: " path) path)))
         (return (FileWriter fd))
     ))
 
     ;; Open a file for reading. THROWS if it cannot be opened.
     (fn open-reader [path <- String] -> FileReader (
         (let fd (file-open path "r"))
-        (if (< fd 0) (throw (Error (+ "cannot open for reading: " path))))
+        (if (< fd 0) (throw (new FileError (+ "cannot open for reading: " path) path)))
         (return (FileReader fd))
     ))
 

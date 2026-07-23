@@ -68,6 +68,8 @@
 ;; needs no `from-int`: an integer literal `5` stays an Int, and `5/1` -> `(Rational 5 1)` if the
 ;; rational form is written explicitly.
 (
+    (import "std/core/errors")
+
     ;; -- private Int helpers (see header: self-contained by rule) -----------------------------------
 
     ;; Int abs. NOT `Math.abs`: on JS Int is a BigInt, and `Math.abs(BigInt)` throws
@@ -118,7 +120,7 @@
         (fn :ctor init [] -> Void
             ;; Loud, identical, before anything else can read den. See header on trap-vs-throw.
             (if (== this.den 0)
-                (throw (Error "Rational: denominator is zero")))
+                (throw (new ArithmeticError "Rational: denominator is zero")))
             ;; Sign onto the numerator, so `den > 0` holds everywhere downstream. Unary `(- x)`, not
             ;; `(- 0 x)`: a literal `0` inlines to a Number on JS and would float a large Int (see
             ;; `iabs`); unary minus stays an int64 negate, so a wrapped denominator flips sign without
@@ -207,7 +209,7 @@
         ;; denominator and the ctor moves the sign.
         (fn :operator / [o <- Rational] -> Rational
             (if (== o.num 0)
-                (throw (Error "Rational: division by zero")))
+                (throw (new ArithmeticError "Rational: division by zero")))
             (let g1 (gcd-int this.num o.num))
             (let g2 (gcd-int this.den o.den))
             (return (Rational (* (/ this.num g1) (/ o.den g2))
@@ -226,7 +228,7 @@
         ;; the ctor as a zero denominator, but guarding here names the operation.
         (fn recip [] -> Rational
             (if (== this.num 0)
-                (throw (Error "Rational: reciprocal of zero")))
+                (throw (new ArithmeticError "Rational: reciprocal of zero")))
             (return (Rational this.den this.num)))
 
         ;; Integer power, negative exponents included. n < 0 reciprocates the result, so 0^negative
