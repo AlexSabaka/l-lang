@@ -2804,6 +2804,15 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       if (!TypeChecker.isUnknown(rt)) {
         if (this.isIteratorType(rt)) {
           elementType = rt.generics?.[0];
+          // D58/LL0238: the element type may not admit nil. nil MEANS DONE (D30), so a nullable
+          // element would end the sequence rather than appear in it -- the same bug as LL0237's
+          // valueless yield, one level up, and the reason both rules exist together.
+          if (elementType && this.admitsNil(elementType)) {
+            this.report(TD.GenNullableElement, node, {
+              func: genName,
+              declared: TypeChecker.formatType(rt),
+            });
+          }
         } else {
           this.report(TD.GenReturnType, node, {
             func: genName,
@@ -2811,6 +2820,17 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           });
         }
       }
+    }
+
+    // D58/LL0237: `(yield)` with no operand TRUNCATES the sequence, because nil means done.
+    for (const y of yields) {
+      if (!y.value) this.report(TD.GenYieldNoValue, y.node);
+    }
+
+    // D58/LL0239: no suspension inside a protected region -- the native lowering cannot re-enter a
+    // handler frame it destroyed by suspending. Language-wide, and `yield`-only (see the diagnostic).
+    for (const { node: y, region } of this.yieldsInProtectedRegions(node.body)) {
+      this.report(TD.GenYieldInProtected, y, { region });
     }
 
     // A generator STOPS with a valueless `(return)`. A value has nowhere to go in the sequence.
@@ -2847,6 +2867,59 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   private isIteratorType(t: InferredType): boolean {
     const name = t?.name ?? t?.refName;
     return name === "Iterator" || name === "Iterable";
+  }
+
+  /** Does this type admit nil -- `T?` (D9's `optional`), nil itself, or a union with a nil arm? */
+  private admitsNil(t: InferredType): boolean {
+    if (t.optional) return true;
+    if (TypeChecker.isNil(t)) return true;
+    return (t.alternatives ?? []).some((a) => TypeChecker.isNil(a));
+  }
+
+  /**
+   * The `yield` sites lexically inside a `try`/`restart-case`/`handle` within THIS function (D58).
+   *
+   * The whole subtree of a protected node counts -- the try body, every catch arm, and the finally --
+   * because a suspend anywhere under it leaves the same dead frame behind. Stops at a nested
+   * `function`, exactly as `collectHeaded` does: that function's yields are its own, checked when it
+   * is visited. `region` is the source spelling, for the message.
+   */
+  private yieldsInProtectedRegions(
+    body: ast.ASTNode[]
+  ): { node: ast.ASTNode; region: string }[] {
+    const REGIONS: Record<string, string> = {
+      "try-catch": "try",
+      "restart-case": "restart-case",
+      handle: "handle",
+    };
+    const found: { node: ast.ASTNode; region: string }[] = [];
+
+    const walk = (n: any, region: string | null): void => {
+      if (!n || typeof n !== "object") return;
+      if (Array.isArray(n)) {
+        n.forEach((x) => walk(x, region));
+        return;
+      }
+      if (!n._type) return;
+      if (n._type === "function") return;
+
+      // The OUTERMOST protected region wins the message: a yield nested two deep still names the
+      // construct the author has to move it out of first.
+      const here = region ?? REGIONS[n._type as string] ?? null;
+
+      if (here && ast.isListNode(n) && n.nodes.length > 0) {
+        const head = n.nodes[0];
+        if (head?._type === "simple-identifier" && (head as ast.SimpleIdentifierNode).id === "yield") {
+          found.push({ node: n, region: here });
+          return;
+        }
+      }
+
+      for (const key of ast.getNodeIterableKeys(n)) walk((n as any)[key], here);
+    };
+
+    body.forEach((n) => walk(n, null));
+    return found;
   }
 
   /** Is this type awaitable -- `Task<T>`, `Awaitable<T>`, or the JS-native `Promise<T>` (D32)? */

@@ -1426,6 +1426,46 @@ ${PRODUCER}
       "an empty generator is almost always a mistake -- a `:gen` you forgot to `yield` in. A warning, " +
       "not an error: an empty sequence is legal, just suspicious.",
   },
+  // -----------------------------------------------------------------------------------------------
+  // G1 (D58) -- the three rules that NARROW the generator surface before the native lowering is
+  // built. All three had zero corpus sites when they landed: they close holes, they do not change
+  // working code.
+  // -----------------------------------------------------------------------------------------------
+  {
+    name: "D58: a valueless `(yield)` is an error",
+    source: `(fn :gen g [] -> Iterator<Int> (
+  (yield)
+))`,
+    expect: /LL0237/,
+    why:
+      "D31 said `(yield)` yields nil; D30 says nil MEANS DONE. Through the `iter`/`next` cursor those " +
+      "are the same value, so a bare yield does not produce an empty element -- it silently truncates " +
+      "the sequence. C# closes this syntactically (`yield return` requires an operand).",
+  },
+  {
+    name: "D58: a `:gen` whose element type admits nil is an error",
+    source: `(fn :gen g [] -> Iterator<Int?> (
+  (yield 1)
+))`,
+    expect: /LL0238/,
+    why:
+      "the deeper form of LL0237: `(yield maybe-nil)` truncates just as silently as `(yield)`. Since " +
+      "nil means done, a nullable element type is incoherent rather than merely risky -- one rule on " +
+      "the element type closes both.",
+  },
+  {
+    name: "D58: `yield` inside a protected region is an error, on BOTH backends",
+    source: `(fn :gen g [] -> Iterator<Int> (
+  (try ((yield 1)) catch e :of Error (console.log 0))
+))`,
+    expect: /LL0239/,
+    why:
+      "a generator suspends by RETURNING, which destroys the C activation an enclosing `setjmp` named " +
+      "-- C11 7.13.2.1 makes landing there undefined. Supporting it means re-establishing control " +
+      "structure on resume (the Roslyn shape), the biggest multiplier in the feature. Language-wide " +
+      "rather than C-only: JS would get it free from `function*`, but one rule beats a mid-feature " +
+      "backend split, and a restriction is liftable while the reverse breaks code.",
+  },
   {
     name: "Gb: a CORRECT generator is silent",
     source: `(import "std/iter")

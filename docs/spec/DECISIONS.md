@@ -3027,6 +3027,31 @@ protocol) and user `:implements Iterable` type-checks but is not yet consumable 
 > `Iterator`, `filter` wants an `Iterable`). The code block above shows the original two interfaces; the
 > live `std/iter` has the `:implements` clause.
 
+> **Extended 2026-07-23 (D58, Phase G1) — a third interface: `Disposable`.**
+>
+> ```lisp
+> (definterface Disposable (fn dispose [] -> Void))
+> ```
+>
+> A lazy source is routinely **abandoned** rather than exhausted — `take`, `take-while`, `first` and
+> `any` all stop early, which is what they are *for* — so "the sequence ended" and "the consumer walked
+> away" are different events, and only the second wants a cleanup hook. Today neither backend has one:
+> JS has `.return()` and l-lang does not expose it, so an abandoned generator's `finally` is unreliable
+> on *both*. Prior art converges on the shape — C#'s `IEnumerator<T> : IDisposable` with `foreach`
+> disposing in a `finally` is the clean one, JS's optional `return()` the same idea as an optional
+> member, Python's GC-coupled `close()` the version PEP 533 exists to apologise for, and Java's
+> hookless `Iterator` the cautionary tale.
+>
+> **Separate interface, NOT a member on `Iterator<T>`** — the ruling, and the reason is mechanical:
+> `:implements` is a promise the checker enforces (LL0235), so a new member on `Iterator` is a new
+> obligation for every hand-written iterator in the corpus, most of which hold no resource. Consumers
+> type-test instead: dispose what is `Disposable`, leave the rest alone. Per A-0 this is core (both
+> backends make the decision) and therefore nodified rather than left to each backend.
+>
+> **GC is not the mechanism** (D59: memory-only, no finalizers). That is a feature, not a compromise:
+> JS never runs an abandoned generator's `finally` either, so scope-bound disposal is the behaviour both
+> backends can actually agree on.
+
 ## D31 — generators: `:gen` + `yield`
 
 A generator is a function that produces a **sequence** by suspending, under D29/D30. The second
@@ -3057,7 +3082,7 @@ of `return` and invert the JS lowering (l-lang `return` → JS `yield` reads as 
 
 | | inside a `:gen` function |
 |---|---|
-| produce a value | **`(yield x)`** -- the only way. `(yield)` yields nil. |
+| produce a value | **`(yield x)`** -- the only way. A valueless `(yield)` is an **error** (amended 2026-07-23, D58). |
 | stop early | **`(return)`** -- valueless. Ends the sequence. |
 | `(return x)` with a value | **error.** Its value has no place in the sequence; silently discarding it (JS/Python) is the trap C# avoids by forbidding it. |
 | implicit return of the tail | **suppressed.** A generator's tail value is not a sequence element. |
@@ -3066,6 +3091,35 @@ And because `:gen` is EXPLICIT (the ruling), two consistency checks fall out:
 
 - **`yield` outside a `:gen` function is an error** -- you are not in a generator.
 - **a `:gen` function with no `yield` is a warning** -- an empty generator is almost always a mistake.
+
+> **Amended 2026-07-23 (D58, Phase G1) — three rules this ruling was one short of.**
+>
+> 1. **`(yield)` is an error (LL0237).** The row above originally read "`(yield)` yields nil," which
+>    contradicts D30 one line away: **nil MEANS DONE**, and that is the whole reason the protocol needs
+>    no `{value, done}` pair. Through the `iter`/`next` cursor the two are the same value, so a bare
+>    `(yield)` does not produce an empty element — it *truncates the sequence*, silently. C# closes this
+>    syntactically (`yield return` requires an operand); we close it with a diagnostic.
+> 2. **The element type may not admit nil (LL0238).** The deeper form of the same bug: `(yield
+>    maybe-nil)` truncates exactly as silently as `(yield)`, so `Iterator<T?>` is *incoherent*, not
+>    merely risky. One rule on the element type closes both, riding on D9's `optional`.
+> 3. **No `yield` inside a protected region — `try`/`catch`/`finally`/`restart-case`/`handle`
+>    (LL0239), on BOTH backends.** A generator suspends by *returning*, which destroys the C activation
+>    an enclosing `setjmp` named; C11 7.13.2.1 makes landing there undefined. Supporting it requires
+>    re-establishing control structure on *resume* — nested state dispatch inside every protected region
+>    and a fresh `setjmp` per enclosing `try` per resume (the Roslyn shape) — which is the single
+>    biggest complexity multiplier in the native lowering. **Language-wide rather than C-only:** JS
+>    would get this free from `function*`, but one rule beats a mid-feature backend split (a file that
+>    is JS-green and C-refused *inside* a feature both otherwise support is worse for the one-golden
+>    discipline than whole-feature refusal), and a restriction is liftable while the reverse breaks
+>    code. **Scoped to `yield`, not `await`** — `:async` has no native lowering to constrain (D60), and
+>    `14-async/01_async_pipeline` awaits inside a `try` today as a green golden.
+>
+> **The lift, named so it is not reinvented:** C#'s split is subtler than "no yield in try." C# *allows*
+> `yield` in try-with-**finally**, by extracting finally blocks into methods that `Dispose` invokes by
+> state — no exception machinery on that path — and forbids it only in try-with-**catch** and inside
+> catch/finally bodies. That trick composes with D58's `Disposable` and is what eventually makes "open
+> file, yield lines, finally close" work. Until then the idiom is a hand-written iterator class with
+> `dispose`. All three rules had **zero corpus sites** when they landed.
 
 ### The return type is the full `Iterator<T>` (the ruling)
 
@@ -4780,3 +4834,163 @@ than exact anyway, and `≈` fixes the tolerance (`1e-9`) that `.near` leaves as
 `Vector3` with `(fn :operator ·)` — the U+00B7 head operator this ruling bans on both counts. It
 predates the ruling and its consumers (`complex_math_test`, `08_vector_toolkit`, `geometry/measure`)
 still import it, so retiring it is a migration, tracked separately from landing the new modules.
+
+---
+
+## D58–D60 — coroutines and memory (Phase G)
+
+> **Ratified in the 2026-07-23 Sabaka⇄Dove round.** Source: `docs/inbox/coroutines-and-memory-brief.md`
+> (the implementation lane's recon) plus Dove's rulings on its eight questions. The brief remains the
+> long-form record of the measurements; these are the decisions. Sequencing: **`:gen` alone** (D58),
+> with D59 ruled as a *constraint* and built later, and D60 a deliberate non-build.
+>
+> **What the recon changed.** Two findings reshaped the round. (1) `:gen` on C needs **no C runtime
+> changes**: `ll_iter` already returns an `LL_CLOSURE` unchanged and asks an `LL_OBJ` for `iterator()`,
+> `ll_next` already dispatches the same way, and `resolveForEach` already routes every non-vector
+> collection through D30's protocol — proven by `80-adversarial/iteration_protocol.lisp` being C-green
+> over a hand-written `:implements Iterable` struct. What is missing is *only* the state-machine
+> transform. (2) The coupling between coroutines and GC is **one edge**, not a shared project:
+> `(fibs) |> (take 8)` abandons a suspended frame forever, but the baseline is already
+> malloc-and-leak, so `:gen` before GC is strictly no worse. The coupling is a constraint on the frame
+> *representation*, not a build-order dependency.
+
+## D58 — coroutine lowering: one HIR state-machine pass, and the generator is an object
+
+**The transform.** One shared **state-machine pass at the HIR level**, backend-neutral and Rust-style
+— explicitly *not* `llvm.coro`, which would lock the native lane to LLVM's passes and edge cases. JS
+skips it entirely (`function*` is native). So building it for C **is** building it for LLVM, which is
+what makes this the right next native increment rather than a detour.
+
+**Where the nodes live — settled by A-0.** `HYield` (and later `HAwait`) are **core source nodes**:
+both backends emit them from the AST, and only the native pipeline lowers them away — the spec's own
+category 2. The state machine's *dispatch* nodes (`HResumePoint` / `HDispatch`) are **non-core,
+pipeline-introduced**, exactly like `HBox`/`HUnbox`/`HCast`, because JS never consumes them. This was
+not obvious and needed measuring: **neither the HIR nor the CIR has a switch, label, or goto today** —
+both are structured (if/while/for/block/return) — so labeled re-entry had no home and A-0 decides
+which side of the core line it lands on.
+
+**The generator instance is an OBJECT, not a closure.** A closure would need *zero* runtime work
+(`ll_iter` passes one through as a cursor), and that is the tempting answer. It is refused for
+**display and reflection parity** — the thing Phase F just spent itself buying. On JS a `:gen` returns
+a native generator object; if C returned a bare `ll_closure`, then `(type g)` and the D55 formatter
+diverge across backends on the very first generator anyone inspects. An object with a synthesized
+class makes parity *structural* rather than maintained. It also costs less than it looks: the runtime
+still changes zero lines (`ll_iter`/`ll_next` already have `LL_OBJ` arms via `ll_dyn_method`), and the
+empirical validation already exists and is green, where the closure shape's sharpest edge is only
+*argued* closed.
+
+- The synthesized class implements `Iterator<T>` **and** `Disposable` (D30, as extended).
+- The factory keeps the source name and modifiers, so `(fn :extension :gen map<T> ...)` keeps
+  extension dispatch.
+- **Display: `#<generator fibs>`**, and `#<generator>` when anonymous — an unreadable-object marker
+  carrying the *source* name, exactly parallel to `#<fn name>`/`#<fn>`. `(type g)` answers
+  `kind: "generator"` with the source name; **the synthesized class never enters the reflection graph
+  or `type-by-name`.** The precedent is in FLOOR.md's own F.7/F.8 amendment, which rejected
+  `#<fn __ll_lam_3>` as "the very class of leak the paragraph above removes" — a generated class name
+  in a `ClassName{...}` tag, or a frame's `state` integer and spilled locals in its fields, is that
+  same leak. §3.5 gains the arm when the lowering ships.
+
+**The frame.** The typed `envStruct` the emitter already produces per closure, plus an `int state`;
+slots become cells where inner closures capture them, reusing the existing `CLifted.cell` machinery.
+**Traceable, reachable through the instance, and NOT registered.** The last clause is load-bearing and
+corrects the brief, which asked for frames "registered in an enumerable set": a strong global registry
+**roots every frame forever**, pinning the abandoned `fibs` frame that motivated the whole
+GC-readiness constraint. It would institutionalise the exact leak it was meant to make collectable.
+Enumeration is legitimate only as a *weak* debug/stats facility and is not a design constraint.
+
+**The v1 restriction and the three narrowing rules** are D31's amendment (LL0237/38/39): no suspension
+inside a protected region, language-wide; no valueless `(yield)`; no nullable element type. The
+restriction is not a shortcut — the alternative was shown to be **undefined behaviour**, not a
+tradeoff (a suspend returns the C activation an enclosing `setjmp` named).
+
+**Disposal — the cheap variant, with the fidelity lift named.** Full C# fidelity wraps `for :each` in
+try/finally, which on C is a **`setjmp` per loop**: real money. Instead, dispose on **statically known
+exit edges** — exhaustion and an early `return` crossing the loop — which the transform already knows,
+at zero `setjmp` cost. l-lang has **no `break`** (the corpus's three `(continue)` uses are `:cond`
+clauses in `for` loops, not loop exits), so that list is complete. The exception-unwind path skips user
+`finally`s and GC reclaims the frame; that is a deliberate wart, and the lift is to emit the protected
+form only when the collection's static type is `Disposable`-or-Unknown, which with existing devirt
+information means most loops keep paying nothing. The library holds the other half: `take` and
+`take-while` dispose the source cursor they abandon, which is where the real leak lives.
+
+## D59 — memory: a precise tracing GC with shadow-stack roots; no finalizers
+
+**Direction: a precise tracing GC, shadow-stack root discipline.** Ruled now so D58's frame
+representation is written GC-ready; **built later** (not in this build order).
+
+**Why the heap half is already done.** Every shape carries its own layout — `ll_obj` knows
+`cls->field_count` and stores boxed fields in slot order, `ll_vec`/`ll_map` carry `len`, `ll_closure`
+carries a typed `envStruct` the emitter named — and `ll_alloc` is a single choke point. So the object
+graph is *already* precisely traceable. **Only the roots are missing**, which narrows the whole
+question to root discipline.
+
+**Why shadow stack over the alternatives.** The honest comparison, with one argument from the brief
+withdrawn: a properly built conservative scanner is **not** register-blind (Boehm spills callee-saved
+registers before scanning; caller-saved values are on the stack at the call boundary by ABI), so
+`-O2` is not where it loses. It loses on three quieter things — **false retention** (an `Int` payload
+aliasing a heap address pins an object, and a pinned *suspended coroutine frame* pins everything it
+captures, making exactly the leak class D58 exists to close *probabilistic* instead of solved),
+**pointer provenance** (integers-as-pointers is increasingly UB-adjacent under C's provenance work),
+and **platform hacks** for stack-bounds detection. Boehm proper loses on the single-translation-unit
+property: the emitted program is `runtime.c` + the module, libc and libm only, `cc prog.c` and done.
+
+Shadow stack is the boring, portable, deterministically precise option, and the precedents are
+production-grade: Henderson's 2002 "accurate GC in an uncooperative environment," Julia's
+`JL_GC_PUSH`/`POP`, LLVM's shadow-stack strategy. Two things shrink its cost here specifically:
+**only pointer-typed and `ll_value` locals need slots** — concrete `Int`/`Real`/`Bool` locals are
+unboxed natives and invisible to GC — and Phase Bg's escape analysis (`:stack`, already greenlit)
+*removes* slots rather than managing them. If overhead ever measures badly, the documented fallback is
+Oilpan's hybrid (conservative stack, precise heap); half of that architecture is already built.
+
+**No finalizers.** `:destructor` (D15) stays **scope-bound; GC is memory-only.** The industry has run
+this experiment — Java's `finalize` deprecated for removal (JEP 421), .NET pushing everyone to
+`SafeHandle`/`IDisposable`, Go's `SetFinalizer` documentation reading like a hazmat label, Rust's
+`Drop` deterministic and leaking explicitly *not* unsafe. And it buys parity for free: **JS never runs
+an abandoned generator's `finally` either**, so "GC is memory-only, `Disposable` is the deterministic
+edge" makes C's behaviour match JS's exactly rather than merely acceptably.
+
+**`:gc` / `:stack` / `:manual` stay reserved** (D15, `RESERVED_NATIVE_MODIFIERS`). This ruling does not
+give them meaning; a per-allocation strategy annotation is a separate decision from having a collector.
+
+**The acceptance test lands RED first.** Nothing in the corpus measures memory today, and a collector
+without a failing test is precisely the silent-failure shape this project was rebuilt to kill. The
+bounded-RSS assertion — RSS after 2N iterations ≈ RSS after N — is written and committed **before**
+any collector work begins.
+
+## D60 — async posture: `:async` stays C-refused, and l-lang owns await ordering
+
+**`:async` remains refused on C** (LL0105 narrows to `:async` only once `:gen` lands). The mirror of
+D47 — C-native restarts / JS-refused — so the asymmetry is a shape already ruled acceptable.
+
+**Not because the queue is large, but because it has no consumer and an unstable oracle.** *No
+consumer:* games run on the deliberately blocking fixed-step loop (`sleep-ns` was chosen on both
+backends specifically so a fixed-step loop is portable "with no event loop and no async anywhere"),
+`std/sys/timers` covers driven scheduling, and with no timers, no I/O multiplexing and no threads a C
+`Task` can only be made pending by another `await` — async on C today is pure *sequencing*, a feature
+in search of a use. When the real consumer arrives — wasm32 in a browser, most likely — **the host owns
+the event loop**, and a standalone drain-after-module-body queue is the wrong queue for it. Building
+now means designing against the consumer we do not have. Prior art is emphatic: Rust ships the
+transform with **no executor in std** and that is regarded as the thing they got right, while Zig spent
+years in the state-machine-async tar pit, removed it entirely, and returned in 0.16 with async as an
+explicitly passed capability where the caller picks the implementation.
+
+**The ordering-ownership clause — written now, because it costs a paragraph today and saves the golden
+later.** `14-async/01_async_pipeline.expect` bakes an interleaving (the module's sync tail printing
+*second*, before any awaited stage) that is currently **V8's**, not a specification's — and V8's await
+ordering is not bedrock: the 2018 normative "faster async functions" change altered how many microtask
+ticks an `await` of a resolved promise takes, which reorders interleaved chains. That golden records
+post-2018 semantics by accident of when it was written. This is exactly the shape D55 killed for
+printing: the host as silent oracle.
+
+So, D55-style: **l-lang's await ordering is specified by l-lang.** An `:async` call runs synchronously
+until its first `await`; every `await` defers exactly one FIFO turn; completion enqueues the
+continuation. That happens to equal current JS for the constructs l-lang exposes — the surface is
+small and checked: `std/core/async` exports exactly two interfaces, `Awaitable<T>` (whose `then` is the
+hook `await` consumes) and `Task<T>`, with **no combinators** (`all`, `race`, `resolve`, `reject` do
+not exist) — so the existing golden becomes *the spec's* golden rather than V8's. If V8 ever drifts,
+the JS backend compensates. **No `.c.expect`, ever:** a per-backend golden would spend the
+same-golden control at exactly the point divergence is most likely to hide, and the gap ledger's whole
+epistemology stands on that control.
+
+**Revisit when a real consumer exists.** The `:gen` transform D58 builds *is* the async transform's
+hard half; only the scheduler waits, and the scheduler is the regrettable commitment.

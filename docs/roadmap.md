@@ -488,6 +488,31 @@ The coercion pass reframed as the type system's checked-conversion layer. In ord
         unless `volatile`) affected **plain `try`/`catch` too** — silently wrong at any `-O` above 0.
         Both fixed; `npm run test:c:o2` now fences the second, which `-O0` structurally cannot.
 
+### 🔮 Phase G — coroutines on the native backend (D58–D60)
+
+Ratified in the 2026-07-23 round over `docs/inbox/coroutines-and-memory-brief.md`. The C backend has
+refused `:gen`/`:async` since the probe began (LL0105, spec gap A8); this builds **`:gen` only**, which
+drains the entire lazy sequence library to C — 11 generator definitions of 15 exported operators — and
+*is* the LLVM coroutine work, since the transform is HIR-level and backend-neutral. `:async` stays
+refused by ruling (D60), and the collector (D59) is a separate lane.
+
+*   [x] **G1 — carve the rulings, narrow the surface.** D58/D59/D60; D30 gains `Disposable`; D31 gains
+        the three rules that had **zero corpus sites**: a valueless `(yield)` is **LL0237**, a nullable
+        element type **LL0238**, and `yield` inside a protected region **LL0239** — the last
+        *language-wide*, because the alternative was shown to be UB rather than a tradeoff.
+*   [ ] **G2 — `HYield` as a core source node.** It is emitted on the legacy JS leaf path today, so the
+        native pass has nothing to consume. Pure nodify; the `13-generators` JS golden is the test.
+*   [ ] **G3 — the generator instance.** A synthesized class implementing `Iterator<T>` + `Disposable`,
+        one shape on both backends (JS wraps `function*`'s iterator), displaying as `#<generator name>`
+        with the class hidden from reflection — D58's parity ruling.
+*   [ ] **G4 — the state-machine pass.** `HResumePoint`/`HDispatch` as non-core pipeline nodes, the
+        frame as the existing typed `envStruct` + an `int state`, and `c-switch`/`c-goto` in the CIR.
+        The three refused files join the C ratchet against their existing goldens.
+*   [ ] **G5 — disposal.** Statically-known exit edges only (exhaustion, early `return`; l-lang has no
+        `break`), so no `setjmp` per loop; `take`/`take-while` dispose the source they abandon.
+*   [ ] **G6 — the collector (D59).** Separate lane. The bounded-RSS acceptance test lands **RED
+        first** — nothing in the corpus measures memory today.
+
 ## 🚀 Phase 7: The Speed of Light (v1.0.0)
 **Theme:** "The Sloth becomes a Cheetah."
 

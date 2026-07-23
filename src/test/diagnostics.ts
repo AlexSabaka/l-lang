@@ -258,6 +258,20 @@ const PROBES: Probe[] = [
     source: '(import "std/iter")\n(fn :gen g [] -> Iterator<Int> (yield "s"))',
   },
   { name: "LL0226 :gen never yields", source: "(import \"std/iter\")\n(fn :gen g [] -> Iterator<Int> (return))" },
+  {
+    name: "LL0237 valueless (yield)",
+    source: '(import "std/iter")\n(fn :gen g [] -> Iterator<Int> (yield))',
+  },
+  {
+    name: "LL0238 :gen with a nullable element type",
+    source: '(import "std/iter")\n(fn :gen g [] -> Iterator<Int?> (yield 1))',
+  },
+  {
+    name: "LL0239 yield inside a protected region",
+    source:
+      '(import "std/iter")\n' +
+      "(fn :gen g [] -> Iterator<Int> (try ((yield 1)) catch e :of Error (console.log 0)))",
+  },
   { name: "LL0227 await outside :async", source: "(fn f [] -> Int (await 1))" },
   { name: "LL0228 :async wrong return type", source: "(fn :async f [] -> Int 1)" },
   { name: "LL0229 :extension without receiver", source: "(fn :extension foo [] -> Int 1)" },

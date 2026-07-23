@@ -269,6 +269,46 @@
     ]
   },
   {
+    "probe": "LL0237 valueless (yield)",
+    "diagnostics": [
+      {
+        "code": "LL0223",
+        "severity": "error",
+        "text": "a ':gen' function stops with a valueless '(return)'; it cannot '(return x)'. Produce values with '(yield x)'."
+      },
+      {
+        "code": "LL0237",
+        "severity": "error",
+        "text": "'(yield)' needs a value. nil MEANS DONE in the iteration protocol (D30), so a valueless yield does not produce an empty element -- it ends the sequence. Write '(yield x)', or '(return)' to stop."
+      }
+    ]
+  },
+  {
+    "probe": "LL0238 :gen with a nullable element type",
+    "diagnostics": [
+      {
+        "code": "LL0223",
+        "severity": "error",
+        "text": "a ':gen' function stops with a valueless '(return)'; it cannot '(return x)'. Produce values with '(yield x)'."
+      },
+      {
+        "code": "LL0238",
+        "severity": "error",
+        "text": "':gen' function 'g' declares Iterator<Int?>, but a generator's element type cannot admit nil: nil MEANS DONE in the iteration protocol (D30), so a nil element would end the sequence instead of appearing in it. Drop the '?'."
+      }
+    ]
+  },
+  {
+    "probe": "LL0239 yield inside a protected region",
+    "diagnostics": [
+      {
+        "code": "LL0239",
+        "severity": "error",
+        "text": "'yield' cannot appear inside a 'try' (D58). A generator suspends by returning, which destroys the frame an enclosing handler landed in, so the native lowering cannot re-enter it. Move the yield out of the protected region, or drive the resource with a hand-written iterator implementing 'Disposable'."
+      }
+    ]
+  },
+  {
     "probe": "LL0227 await outside :async",
     "diagnostics": [
       {

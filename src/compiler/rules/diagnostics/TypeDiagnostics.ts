@@ -265,6 +265,60 @@ export const TypeDiagnostics = {
       `':gen' function '${p.func}' never yields -- it produces an empty sequence. Did you forget a '(yield ...)'?`
   ),
 
+  // LL0237 (D58) -- a valueless `(yield)` has no meaning in this protocol.
+  //
+  // D31 originally said `(yield)` yields nil. D30 says nil MEANS DONE -- it is the whole reason the
+  // protocol needs no `{value, done}` pair. Through the `iter`/`next` cursor those are the same
+  // value, so a bare `(yield)` does not produce an empty element: it TRUNCATES the sequence, and
+  // silently. C# closes this syntactically (`yield return` requires an operand); D58 closes it here.
+  GenYieldNoValue: def(
+    "LL0237",
+    Error,
+    () =>
+      `'(yield)' needs a value. nil MEANS DONE in the iteration protocol (D30), so a valueless ` +
+      `yield does not produce an empty element -- it ends the sequence. Write '(yield x)', or ` +
+      `'(return)' to stop.`
+  ),
+
+  // LL0238 (D58) -- the deeper form of the same bug as LL0237.
+  //
+  // A valueless yield is only the syntactic case; `(yield maybe-nil)` truncates just as silently.
+  // Since nil means done, a NULLABLE element type is incoherent rather than merely risky -- one rule
+  // on the element type closes both, and it rides on D9's existing optional machinery.
+  GenNullableElement: def<{ func: string; declared: string }>(
+    "LL0238",
+    Error,
+    (p) =>
+      `':gen' function '${p.func}' declares ${p.declared}, but a generator's element type cannot ` +
+      `admit nil: nil MEANS DONE in the iteration protocol (D30), so a nil element would end the ` +
+      `sequence instead of appearing in it. Drop the '?'.`
+  ),
+
+  // LL0239 (D58) -- no suspension inside a protected region, on BOTH backends.
+  //
+  // Language-wide rather than C-only, deliberately. The native lowering is a state machine, and its
+  // C activation RETURNS at every suspend -- so a `setjmp` taken inside the generator names a frame
+  // that is gone by the time anything could `longjmp` to it (C11 7.13.2.1: undefined). Supporting it
+  // means re-establishing control structure on resume (nested state dispatch inside each protected
+  // region, a fresh setjmp per enclosing try per resume -- the Roslyn shape), which is the single
+  // biggest multiplier in the feature. JS would get this free from `function*`, but taking it there
+  // too keeps ONE rule instead of a mid-feature backend split, and a restriction is liftable while
+  // the reverse breaks code. The lift is C#'s: extract finally blocks into methods `dispose` invokes
+  // by state, so try/FINALLY becomes legal while try/CATCH stays out.
+  //
+  // Scoped to `yield` -- NOT to `await`. `:async` has no native lowering to constrain (D60 keeps it
+  // C-refused and JS handles it natively), and `14-async/01_async_pipeline` awaits inside a `try`
+  // today as a green golden.
+  GenYieldInProtected: def<{ region: string }>(
+    "LL0239",
+    Error,
+    (p) =>
+      `'yield' cannot appear inside a '${p.region}' (D58). A generator suspends by returning, which ` +
+      `destroys the frame an enclosing handler landed in, so the native lowering cannot re-enter it. ` +
+      `Move the yield out of the protected region, or drive the resource with a hand-written ` +
+      `iterator implementing 'Disposable'.`
+  ),
+
   // LL0227
   AwaitOutsideAsync: def(
     "LL0227",

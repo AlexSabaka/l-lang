@@ -33,5 +33,27 @@
   (definterface Iterator<T> :implements Iterable<T>
     (fn next [] -> T?))
 
-  (export Iterable Iterator)
+  ;; The DETERMINISTIC edge, and deliberately a SEPARATE interface rather than a member on
+  ;; `Iterator<T>` (D58).
+  ;;
+  ;; A lazy source is routinely abandoned rather than exhausted -- `take`, `take-while`, `first` and
+  ;; `any` all stop early, which is what they are FOR -- so "the sequence ended" and "the consumer
+  ;; walked away" are different events, and only the second needs a cleanup hook. Prior art agrees on
+  ;; the shape: C#'s `IEnumerator<T> : IDisposable` with `foreach` disposing in a finally is the clean
+  ;; one; JS's optional `return()` is the same idea as an optional member; Python's GC-coupled
+  ;; `close()` is the version PEP 533 exists to apologise for; Java's hookless `Iterator` is the
+  ;; cautionary tale.
+  ;;
+  ;; Separate, though, because bolting `dispose` onto `Iterator<T>` would break every hand-written
+  ;; iterator in the corpus at once -- `:implements Iterator` is a PROMISE the checker enforces
+  ;; (LL0235), so a new member is a new obligation for code that has no resource to release. A
+  ;; consumer type-tests instead: dispose what is `Disposable`, leave everything else alone.
+  ;;
+  ;; GC is NOT the mechanism (D59: memory-only, no finalizers). That is not a limitation to work
+  ;; around -- JS never runs an abandoned generator's `finally` either, so scope-bound disposal is
+  ;; the behaviour BOTH backends can actually agree on.
+  (definterface Disposable
+    (fn dispose [] -> Void))
+
+  (export Iterable Iterator Disposable)
 )
