@@ -646,3 +646,20 @@ wrong only when the flattened ctor params and the flattened field list disagree 
 JS is correct on this shape. Not yet fixed; it blocks giving `std/core/errors` classes plain fields
 (e.g. `Error`'s `cause`) while the hierarchy is deep. The error module can dodge it for now by keeping
 plain fields off the deep nodes, but the C layout is the real fix.
+
+## 10. JS-backend gap, surfaced by std/math/stats (2026-07-23)
+
+**`cond` in a lowered library module fails on the JS leaf path.** `std/math/stats`'s `sorted-copy`
+(a bottom-up mergesort) originally wrote its merge step as a four-clause `(cond ...)`. It parses,
+compiles on **C**, and runs correctly there; a top-level `(cond ...)` in an example file also compiles
+on JS. But routed through the library-import lowering, the JS backend dies with `ELL0100 visitCond is
+not implemented in the JS backend` — `JSTransformerAstVisitor.visitCondCase` is an explicit
+`onUnhandled` (`compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts:1886`). The HIR path
+desugars `cond` to an `if`-chain (`LowerAstToHirVisitor:443`), so the two JS emission paths disagree:
+one lowers `cond` away, the leaf one never learned to.
+
+Worked around, not fixed: `stats.lisp`'s merge is spelled as nested `if`, which lowers identically on
+both paths. The real fix is either to implement `visitCondCase` on the leaf visitor or to route library
+bodies through the HIR desugar that already handles it. A minimal guard would be any `library` module
+that uses `cond` and an example that imports and runs it — none exists today, which is why this sat
+latent until a stdlib module reached for `cond`.

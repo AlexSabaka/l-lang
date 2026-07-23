@@ -1,0 +1,38 @@
+-- descriptive (dataset 2 4 4 4 5 5 7 9) --
+sum          = 40
+mean         = 5
+minimum      = 2
+maximum      = 9
+range        = 7
+median       = 4.5
+mode         = 4
+var-pop      = 4
+var-sample   = 4.571429
+std-pop      = 2
+std-sample   = 2.13809
+p25          = 4
+p50          = 4.5
+p75          = 5.5
+q1 q2 q3     = 4 4.5 5.5
+iqr          = 1.5
+-- variance survives catastrophic cancellation --
+adv var-pop  = 22.5
+adv var-samp = 30
+adv std-pop  = 4.743416
+-- covariance / correlation / regression --
+cov-pop      = 1.6
+cov-sample   = 2
+pearson      = 0.8
+slope        = 0.8
+intercept    = 0.6
+r2           = 0.64
+-- a perfect line ys = 2x --
+perfect slope= 2
+perfect int  = 0
+perfect r2   = 1
+perfect r    = 1
+-- degenerate inputs return NaN / clamp, never trap --
+empty mean   = NaN
+single var-s = NaN
+p110 clamp   = 9
+p-10 clamp   = 2

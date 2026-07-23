@@ -388,6 +388,13 @@ export const C_PASSING: readonly string[] = [
   //   one-method class, not a bare function value). Goldens are exact closed forms with the
   //   trapezoid error PREDICTED from Euler-Maclaurin, so the coarse values are derived not observed.
   "40-math/09_integrate.lisp",
+  //   stats -- descriptive stats + OLS regression on the canonical [2 4 4 4 5 5 7 9] set (pop
+  //   variance exactly 4), a two-pass variance that survives catastrophic cancellation
+  //   ([1e8+4..1e8+16] -> 22.5), and a bottom-up mergesort behind median/percentile/quartiles. The
+  //   merge is nested `if`, not `cond`: `cond` in a lowered library module hits an unimplemented
+  //   visitCondCase on the JS leaf path (works at top level and on C) -- a real gap tracked in the
+  //   ledger. Regression outputs round to 6dp; everything else is byte-identical.
+  "40-math/06_stats.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the
