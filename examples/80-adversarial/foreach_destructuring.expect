@@ -1,0 +1,11 @@
+idx 1,2
+idx 3,4
+proto 1,10
+proto 2,20
+proto 3,30
+short 7,8 r-nil=true
+long 1,2
+loop 1,2
+loop 5,6
+after 5,6
+kebab bolt x4

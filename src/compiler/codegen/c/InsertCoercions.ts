@@ -116,7 +116,9 @@ export class InsertCoercions {
           : coll.ctype.k === "vec"
             ? coll
             : this.coerce(coll, { k: "vec", elem: C_VALUE });
-        return { ...s, collection, body: this.block(s.body, ret), elseBlock: s.elseBlock ? this.block(s.elseBlock, ret) : null };
+        // D16 destructuring bindings: each is an edge into a declared slot, exactly like a c-decl's.
+        const destructure = s.destructure?.map((b) => ({ ...b, value: this.coerce(this.expr(b.value), b.ctype) }));
+        return { ...s, collection, destructure, body: this.block(s.body, ret), elseBlock: s.elseBlock ? this.block(s.elseBlock, ret) : null };
       }
 
       case "c-restart-case":

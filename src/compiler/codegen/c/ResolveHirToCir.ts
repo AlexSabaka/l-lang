@@ -151,6 +151,8 @@ export class ResolveHirToCir {
   /** Names (C names) that must be heap cells in the CURRENT function scope (mutable-captured). */
   private cellVars: Set<string> = new Set();
   private liftCounter = 0;
+  /** Fresh-name counter for compiler-introduced locals (the destructuring element temp). */
+  private tempCounter = 0;
   /** True while resolving a FUNCTION body (top-level or lifted). A `function` statement seen when
    *  false is a module-level declaration; when true it is a nested closure. (Scope depth cannot tell
    *  them apart because each function resolves on an isolated scope stack.) */
@@ -1182,8 +1184,13 @@ export class ResolveHirToCir {
   private resolveForEach(h: Extract<HStmt, { kind: "for-each" }>): CStmt[] {
     const node = h.src as ast.ForEachNode;
     const variable = this.dipAst("A2", "foreach-variable", node, "loop binding read from raw ForEachNode (legacy emitForEach seam)", () => node.variable);
-    if (variable._type !== "simple-identifier" && variable._type !== "composite-identifier") {
-      throw this.refuse(node, "foreach-destructuring", "resolveForEach");
+    // D16: the loop variable may be a PATTERN. A vector pattern is the only shape the corpus uses
+    // (`[key val]` over map entries, `[i e]` over `enumerate`, `[up down]` over `zip`), and it is the
+    // only one lowered here; a MAP pattern still refuses, under its own name so the ledger can tell
+    // the two apart rather than reporting a closed gap as open.
+    const pattern = variable._type === "vector-pattern" ? (variable as ast.VectorPatternNode) : null;
+    if (!pattern && variable._type !== "simple-identifier" && variable._type !== "composite-identifier") {
+      throw this.refuse(node, `foreach-destructuring:${variable._type}`, "resolveForEach");
     }
     const collection = this.resolveExpr(h.collection);
     // WHICH LOWERING. A statically-known vector keeps the direct index loop -- no allocation, and it
@@ -1198,8 +1205,13 @@ export class ResolveHirToCir {
     // exactly this -- "`for :each` was hardcoded to emit `for...of`, with no protocol behind it" --
     // and the C backend had reproduced it.
     const viaProtocol = collection.ctype.k !== "vec";
+    // A destructuring loop OPENS each element, so the element itself is a container held boxed --
+    // whatever the collection's static element type says. Both readers below (`ll_dyn_length` and
+    // `ll_index_dyn`) take an `ll_value`, and forcing the type here is what keeps a `vec<vec<...>>`
+    // collection from handing them an already-unboxed `ll_vec*`.
     let varCType: CType = C_VALUE;
-    if (collection.ctype.k === "vec") varCType = collection.ctype.elem;
+    if (pattern) this.ledger.record("A2", "foreach-destructure", node, "loop-variable pattern bound by element reads (the binding structure is not in the HIR)");
+    else if (collection.ctype.k === "vec") varCType = collection.ctype.elem;
     else if (collection.ctype.k === "str") varCType = C_STR;
     else this.ledger.record("A1", "foreach-elem", node, "collection element type unknown; boxed");
     if (viaProtocol) {
@@ -1208,14 +1220,58 @@ export class ResolveHirToCir {
     // D11: each iteration value is copied (shallow). The HIR does not say so -- the legacy
     // emitForEach seam does (A5).
     this.ledger.record("A5", "foreach-copy", node, "per-iteration element copy decided below the HIR");
-    const cName = mangleC(ast.symbolName(variable as ast.IdentifierNode));
+    const cName = pattern
+      ? `__ll_de_${this.tempCounter++}`
+      : mangleC(ast.symbolName(variable as ast.IdentifierNode));
     this.declareLocal(cName, varCType);
+    const destructure = pattern ? this.foreachDestructure(pattern, cName, node) : undefined;
     return [{
       src: node, ctype: C_VOID, kind: "c-foreach",
-      varCName: cName, varCType, collection, viaProtocol,
+      varCName: cName, varCType, collection, viaProtocol, destructure,
       body: this.resolveBlock(h.body),
       elseBlock: h.elseBlock ? this.resolveBlock(h.elseBlock) : null,
     }];
+  }
+
+  /**
+   * D16 `(for :each [a b] :from ...)` -- bind each pattern name to one element slot.
+   *
+   * The read is BOUNDS-GUARDED (`i < len ? elem[i] : nil`) rather than a bare index, and that is the
+   * whole subtlety. `ll_index_vec` TRAPS out of range ("RangeError: vector index out of bounds"),
+   * while JS's `let [a, b, c] = [1, 2]` leaves `c` undefined -- which D9 makes nil. An unguarded
+   * index would turn a short element from a silent nil on one backend into a process exit on the
+   * other, in a construct whose whole point is that it reads like a pattern match. The guard is a
+   * `c-ternary` over a `c-ref`, so it needs no new runtime function and re-evaluates nothing: the
+   * base is the element temp, which is pure.
+   *
+   * Nested patterns and `...rest` refuse. `match`'s `vectorPattern` supports both, but it gets to
+   * lean on a preceding length TEST that a `for :each` has no place to put; rather than half-support
+   * them here, they name themselves in the ledger.
+   */
+  private foreachDestructure(
+    pattern: ast.VectorPatternNode,
+    elemCName: string,
+    node: ast.ASTNode
+  ): { cName: string; ctype: CType; value: CExpr }[] {
+    return pattern.elements.map((el, i) => {
+      // A vector pattern's elements are PATTERNS, so a plain name arrives wrapped as an
+      // `identifier-pattern`. Anything else -- a nested pattern, a `...rest`, a constant -- refuses.
+      if (el._type !== "identifier-pattern") {
+        throw this.refuse(node, `foreach-destructuring-element:${el._type}`, "foreachDestructure");
+      }
+      const base: CExpr = { src: node, ctype: C_VALUE, kind: "c-ref", cName: elemCName };
+      const idx: CExpr = { src: node, ctype: C_INT, kind: "c-lit", lit: "int", value: String(i) };
+      const len: CExpr = { src: node, ctype: C_INT, kind: "c-member", object: base, fieldName: "length", runtimeFn: "ll_dyn_length" };
+      const inRange: CExpr = { src: node, ctype: C_BOOL, kind: "c-binop", op: "<", mode: "int", lhs: idx, rhs: len };
+      const read: CExpr = { src: node, ctype: C_VALUE, kind: "c-index", base, index: idx, mode: "boxed", checked: false };
+      const value: CExpr = {
+        src: node, ctype: C_VALUE, kind: "c-ternary",
+        test: inRange, then: read, else: { src: node, ctype: C_VALUE, kind: "c-nil" },
+      };
+      const cName = mangleC(ast.symbolName(el.id));
+      this.declareLocal(cName, C_VALUE);
+      return { cName, ctype: C_VALUE, value };
+    });
   }
 
   // -- expressions ----------------------------------------------------------------------------------

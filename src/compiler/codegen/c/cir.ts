@@ -418,6 +418,18 @@ export interface CForEach {
   elseBlock: CBlock | null;
   /** Use D30's iterator protocol rather than an index loop. */
   viaProtocol?: boolean;
+  /**
+   * D16 `(for :each [key val] :from ...)` -- the loop variable is a PATTERN, so `varCName` holds the
+   * element container and these bind its members. Each `value` is an expression over `varCName`,
+   * built by P1 (a bounds-guarded element read: absent index -> nil, matching JS's `undefined`).
+   *
+   * They are a field rather than statements prepended to `body` because of WHERE they must be
+   * emitted: the names are DECLARED beside `varCName` -- outside the loop, inside the block the
+   * for-each opens -- and only ASSIGNED per iteration. That is what keeps them readable from the
+   * `:else` clause, which runs after the loop and may reference the final binding, and it is exactly
+   * the shape the JS emitter reaches for (`let x, y; for ([x, y] of pts)`), for the same reason.
+   */
+  destructure?: { cName: string; ctype: CType; value: CExpr }[];
 }
 
 export interface CBlock {

@@ -324,6 +324,12 @@ export const C_PASSING: readonly string[] = [
   // failing rather than by a decision -- which is exactly why it wants a guard. Phase G4 leans on it:
   // every std/iter/linq terminal takes `coll <- Iterable<T>`, so a generator reaches C through here.
   "80-adversarial/interface_typed_slot.lisp",
+  // D16's destructuring `for :each`, which C refused outright (ELL0106 foreach-destructuring) and now
+  // lowers: the element is held in a temp and each name reads one slot. Two things it pins beyond
+  // "it works" -- the read is BOUNDS-GUARDED, because `ll_index_vec` traps out of range while JS's
+  // `let [a,b,c] = [1,2]` leaves `c` nil; and the names are declared beside the element variable
+  // rather than in the loop body, because `:else` runs after the loop and may read them.
+  "80-adversarial/foreach_destructuring.lisp",
   // `deep-copy` on the floor, and told apart from D11's STORE copy -- pointing it at `ll_copy` would
   // have shared a vector's elements here and copied them on JS.
   "80-adversarial/deep_copy_floor.lisp",

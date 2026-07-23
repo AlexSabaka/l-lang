@@ -722,3 +722,56 @@ its `yield` surfaced as `LL0106 Cannot generate C for 'yield': no CIR lowering e
 this ledger exists to measure. `lift` now calls `refuseCoroutine` like every other body-resolving path,
 so the answer is `LL0105 'inner' is a generator (:gen)` — the honest one, and it names the function
 rather than pointing at an expression. The JS crash is untouched and stays open.
+
+## 12. Phase G4 prerequisites: one gap that was not there, one that was (2026-07-23)
+
+Two non-coroutine C gaps were predicted to sit between the state-machine transform and the three
+`:gen`-refusing corpus files. **Measurement retired the first and confirmed the second.**
+
+### 12.1 Interface-typed slots — NOT a gap (prediction wrong)
+
+The prediction: `mapType` shares one arm across `class | struct | interface` (`ctype.ts`), so an
+interface-typed slot claims `{k:"obj"}` — a layout — and an array reaching `to-list<T> [coll <-
+Iterable<T>]` would make P2 mint a `c-cast vec -> obj` the emitter cannot write. Since *every*
+`std/iter/linq` terminal takes `coll <- Iterable<T>`, that would have blocked all three files.
+
+It does not happen. The arm is unreachable for these annotations: `typeNodeToCType` cannot resolve
+`Iterable` (interfaces are erased per D24, so `classes.has` is false and `ensureClassRegistered`
+handles only structs and classes), and the symbol table does not report `kind:"interface"` here
+either. Both channels return nothing and `declareParam` falls through to boxed —
+`u_count_2dall(ll_value u_coll)`.
+
+So the correct CType arrives **by two lookups failing rather than by a decision**, which is why
+`80-adversarial/interface_typed_slot.lisp` now pins it. Teaching `ensureClassRegistered` about
+interfaces, or making the checker report a real interface type here, would silently re-type every
+interface-typed slot as an `ll_obj*` claim and break arrays, strings and generators at once.
+
+### 12.2 `for :each` destructuring — a real gap, now closed
+
+`ELL0106 foreach-destructuring` refused D16's `(for :each [key val] :from ...)` outright, which made
+three files unreachable for reasons unrelated to what they are about: `16-stdlib/02_linq_pipeline`
+(`[i e]` over `enumerate`), `13-generators/00` (`[up down]` over `zip`), and
+`05-data-structures/02_maps` (`[key val]` over map entries — an xfail for its own unrelated reasons,
+so it stays one). Both `:gen` files now refuse for **LL0105 alone**.
+
+Two details are load-bearing and are guarded by `80-adversarial/foreach_destructuring.lisp`:
+
+- **The element read is bounds-guarded** (`i < len ? elem[i] : nil`). `ll_index_vec` traps out of
+  range — a process exit — while JS's `let [a, b, c] = [1, 2]` leaves `c` undefined, which D9 makes
+  nil. An unguarded index would have turned a short element into a crash on one backend and a quiet
+  nil on the other, inside the construct whose whole appeal is that it reads like a pattern match.
+- **The names are declared beside the element variable, not in the loop body.** `:else` runs after
+  the loop and may read the final binding (`03-loops/04_foreach.lisp` does exactly that), so a
+  body-scoped declaration would not compile in C. This is the same shape the JS emitter reaches for,
+  for the same reason: `let [x, y];` is not legal JavaScript either.
+
+Nested patterns, `...rest` and MAP patterns still refuse, each under its own reason string
+(`foreach-destructuring:map-pattern`, `foreach-destructuring-element:<kind>`) so a closed gap is not
+reported as an open one. No corpus site wants any of them.
+
+### 12.3 A divergence found in passing, not fixed
+
+The two backends render the bottom value differently in string interpolation: C's ToString says
+`null` (`ll_to_string_sb`'s `LL_NIL` arm), JS's `${undefined}` says `undefined`. Surfaced while
+choosing how to assert the arity-mismatch case above, which is why that guard asserts `(== r nil)`
+rather than printing `r`. Unrelated to destructuring; recorded so it is not re-derived.

@@ -2,7 +2,7 @@
 // default. Consumes ONLY the CIR -- no AST, no nodeTypes, no symbol table. If a case here would need
 // a judgment call, that judgment belongs in P1/P2.
 
-import { CBlock, CExpr, CStmt, CFunction, CModule, CLValue, CLifted, CParam } from "./cir";
+import { CBlock, CExpr, CStmt, CFunction, CModule, CLValue, CLifted, CParam, CForEach } from "./cir";
 import { CType } from "./ctype";
 import { computeVolatileLocals } from "./volatiles";
 
@@ -320,6 +320,21 @@ export class EmitCirToC {
     for (const s of b.stmts) this.emitStmt(s);
   }
 
+  /**
+   * D16 destructuring loop bindings, DECLARED beside the element variable -- outside the loop, inside
+   * the block the for-each opens. That placement is the requirement, not a style choice: the `:else`
+   * clause is emitted after the loop inside the same block and may read the final binding, so a name
+   * declared in the loop BODY would be out of scope by then and C would reject the program.
+   */
+  private emitDestructureDecls(d: CForEach["destructure"]): void {
+    for (const b of d ?? []) this.line(`${this.declType(b.ctype, b.cName)} ${b.cName} = ${defaultInit(b.ctype)};`);
+  }
+
+  /** ...and ASSIGNED per iteration, right after the element variable itself is set. */
+  private emitDestructureAssigns(d: CForEach["destructure"]): void {
+    for (const b of d ?? []) this.line(`${b.cName} = ${this.expr(b.value)};`);
+  }
+
   /** A `return`, routed through every enclosing `try` frame. The value is evaluated FIRST -- while the
    *  innermost frame is still installed, so a throw inside the return expression is still caught here --
    *  then each frame is unwound inner-to-outer: restore its `ll_handler_top`, run its finalizer. With no
@@ -480,6 +495,7 @@ export class EmitCirToC {
           this.indent++;
           this.line(`ll_value ${it} = ll_iter(${this.expr(s.collection)});`);
           this.line(`${cType(s.varCType)} ${s.varCName} = ${defaultInit(s.varCType)};`);
+          this.emitDestructureDecls(s.destructure);
           this.line(`for (;;) {`);
           this.indent++;
           this.line(`ll_value ${e} = ll_next(${it});`);
@@ -487,6 +503,7 @@ export class EmitCirToC {
           const got = `ll_copy(${e})`; // D11 per-iteration copy (identity for non-structs)
           if (s.varCType.k === "value") this.line(`${s.varCName} = ${got};`);
           else this.line(`${s.varCName} = ${UNBOX_FN[s.varCType.k]}(${got});`);
+          this.emitDestructureAssigns(s.destructure);
           this.emitBlockStmts(s.body);
           this.indent--;
           this.line("}");
@@ -499,6 +516,7 @@ export class EmitCirToC {
         this.indent++;
         this.line(`ll_vec* ${v} = ${this.expr(s.collection)};`);
         this.line(`${cType(s.varCType)} ${s.varCName} = ${defaultInit(s.varCType)};`);
+        this.emitDestructureDecls(s.destructure);
         this.line(`for (size_t ${i} = 0; ${i} < ${v}->len; ${i}++) {`);
         this.indent++;
         const elem = `ll_copy(${v}->items[${i}])`; // D11 per-iteration copy (identity for non-structs)
@@ -507,6 +525,7 @@ export class EmitCirToC {
         } else {
           this.line(`${s.varCName} = ${UNBOX_FN[s.varCType.k]}(${elem});`);
         }
+        this.emitDestructureAssigns(s.destructure);
         this.emitBlockStmts(s.body);
         this.indent--;
         this.line("}");
