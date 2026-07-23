@@ -32,6 +32,7 @@ import { HirModule } from "./HirModule";
 import { TempAllocator } from "./TempAllocator";
 import { RuntimeProvider } from "../runtime";
 import { freeVariables } from "./freevars";
+import { conformedInterfaceNames } from "../reflection/metadata";
 import {
   HBase,
   HBlock,
@@ -533,7 +534,8 @@ export class LowerAstToHirVisitor {
       const isStruct = node._type === "struct";
       const fields = this.classFields(cls);
       const ctor = this.lowerCtor(cls);
-      return { stmts: [{ ...this.base(node), kind: "class", name, superName, sourceName, isStruct, fields, ctor }], value: null };
+      const interfaces = sourceName ? conformedInterfaceNames(this.context, sourceName) : [];
+      return { stmts: [{ ...this.base(node), kind: "class", name, superName, sourceName, isStruct, interfaces, fields, ctor }], value: null };
     }
     return this.leaf(node, dest);
   }

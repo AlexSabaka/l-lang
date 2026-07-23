@@ -448,6 +448,13 @@ function __ll_is_type(val, type) {
         // name, stamped on the class, and immune to the rename.
         if (current.constructor && current.constructor.__ll_name === type) return true;
         if (current.constructor && current.constructor.name === type) return true;
+        // INTERFACE conformance (D24 erases interfaces, so the prototype chain cannot carry it).
+        // \`__ll_interfaces\` is the TRANSITIVE closure the class builder emitted -- own \`:implements\`,
+        // each interface's own supers, and everything inherited through \`:extends\` -- so this stays a
+        // flat scan. Without it \`(x :of Iterable)\` answered false for a type whose \`:implements\` the
+        // checker had verified, on both backends (gap ledger §14.1).
+        const ifaces = current.constructor && current.constructor.__ll_interfaces;
+        if (Array.isArray(ifaces) && ifaces.indexOf(type) !== -1) return true;
         current = Object.getPrototypeOf(current);
         if (current === Object.prototype || !current) break;
       }

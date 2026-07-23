@@ -4,6 +4,7 @@ import { Context } from "../../Context";
 import { encodeIdentifier, asMemberKey } from "../../utils";
 import { hasModifier } from "../../helpers/modifiers";
 import { report, CodegenDiagnostics } from "../../rules/diagnostics";
+import { conformedInterfaceNames } from "../../reflection/metadata";
 
 /**
  * A constructor parameter: its name, and the AST node of its DEFAULT, if it declared one.
@@ -537,6 +538,51 @@ export class ClassBuilder {
   }
 
   /**
+   * `static __ll_interfaces = ["Iterable", "Disposable"]` -- every interface this type conforms to.
+   *
+   * `(x :of SomeInterface)` used to answer FALSE for every interface, on BOTH backends, even for a
+   * type whose `:implements` the checker had verified (LL0209 fires when a member is missing). The
+   * reason was simply that the claim never reached run time: `__ll_is_type` walks the prototype chain
+   * comparing `__ll_name`, which is the `:extends` chain, and interfaces are erased (D24) so there was
+   * nothing else to consult. Gap ledger §14.1.
+   *
+   * The list is the TRANSITIVE closure -- own `:implements`, each interface's own supers, and
+   * everything inherited through `:extends` -- computed once at codegen by the shared
+   * `conformedInterfaceNames`, so the runtime test stays a flat string scan and the two backends
+   * cannot answer differently. The C half emits the identical list onto `ll_class`.
+   *
+   * Static, for the same reasons as `__ll_name`: it rides on the class object, survives the import
+   * inliner's rename, stays off the instance, and is inherited.
+   */
+  private buildInterfacesMarker(): ESTree.PropertyDefinition[] {
+    const names = this.conformedInterfaces();
+    if (names.length === 0) return [];
+    return [
+      {
+        type: "PropertyDefinition",
+        key: { type: "Identifier", name: "__ll_interfaces" },
+        value: {
+          type: "ArrayExpression",
+          elements: names.map((n) => ({ type: "Literal", value: n }) as ESTree.Literal),
+        } as ESTree.ArrayExpression,
+        computed: false,
+        static: true,
+        loc: loc(this.node),
+      } as ESTree.PropertyDefinition,
+    ];
+  }
+
+  private conformedInterfaces(): string[] {
+    const name = (this.node as any).__ll_source_name ?? this.node.name?.name;
+    if (!name) return [];
+    try {
+      return conformedInterfaceNames(this.context, name);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * `static __ll_fields = { first2dname: "first-name" }` -- the SOURCE spelling of any field whose JS
    * property name is encoded.
    *
@@ -630,6 +676,7 @@ export class ClassBuilder {
     const ctor = this.buildConstructor();
     const body = [
       ...this.buildTypeNameMarker(),
+      ...this.buildInterfacesMarker(),
       ...this.buildFieldNameMarker(),
       ...this.buildValueTypeMarker(),
       ...this.buildFields(),

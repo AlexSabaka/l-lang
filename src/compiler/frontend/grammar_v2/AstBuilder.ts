@@ -846,10 +846,25 @@ export class LLangAstBuilder extends BaseCstVisitor {
       (a: any, b: any) => a.location.startOffset - b.location.startOffset
     );
 
-    for (let i = 0; i < clauses.length && i < refs.length; i++) {
-      const ref = this.visit(refs[i]);
-      const node = this.makeNode(clauses[i].kind, ctx, { type: ref.type, generics: ref.generics });
-      (clauses[i].kind === "extends" ? extendsNodes : implementsNodes).push(node);
+    // A keyword owns EVERY typeRef up to the next keyword, not just one.
+    //
+    // The pairing used to be one-to-one (`for i < clauses.length && i < refs.length`), which reads
+    // right and silently dropped interfaces: `:implements A B` is ONE `ImplementsModKw` and TWO
+    // typeRefs, so the loop ran once and `B` vanished before any pass could see it. The grammar
+    // accepts the form, the checker's own loop walks `node.implements` in full, and the D54 metadata
+    // maps over all of them -- every layer downstream was ready for a list that only ever had one
+    // element. `(defclass Both :implements A B)` reported `:implements ["A"]`, and
+    // `08-generics/06_multiple_interfaces.lisp` was green over exactly that wrong answer, because its
+    // golden does not print the list. Gap ledger §14.2.
+    for (let i = 0; i < clauses.length; i++) {
+      const from = clauses[i].at;
+      const to = i + 1 < clauses.length ? clauses[i + 1].at : Infinity;
+      for (const r of refs) {
+        if (r.location.startOffset < from || r.location.startOffset >= to) continue;
+        const ref = this.visit(r);
+        const node = this.makeNode(clauses[i].kind, ctx, { type: ref.type, generics: ref.generics });
+        (clauses[i].kind === "extends" ? extendsNodes : implementsNodes).push(node);
+      }
     }
 
     return { extendsNodes, implementsNodes };

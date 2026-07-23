@@ -871,7 +871,7 @@ Surfaced by G5, which needed to answer "is this value disposable?" and found tha
 named for it does not exist. Both defects are **pre-existing, on BOTH backends, and unrelated to
 disposal** — G5 was designed to route around them (see D58's amendment) rather than absorb them.
 
-### 14.1 `(x :of SomeInterface)` answers false, always
+### 14.1 `(x :of SomeInterface)` answers false, always **[CLOSED 2026-07-23]**
 
 ```lisp
 (defstruct Res :implements Iterable<Int> ... )
@@ -889,7 +889,23 @@ concrete types only, with conformance left to `:extension` dispatch (which is no
 `30-applications/02_interface_conformance.lisp` is built on exactly that distinction). Nothing states
 either. **D58 assumed it worked**, which is how the gap surfaced.
 
-### 14.2 `:implements A B` records only the first interface
+> **Closed 2026-07-23.** Ruled a bug, not a restriction: the language verifies `:implements` at
+> compile time (LL0209), so having no way to ask about it at run time is a hole rather than a design.
+>
+> The cause was structural. D24 erases interfaces — no class, no prototype, no descriptor — and both
+> type tests walk the INHERITANCE chain (`__ll_name` up the prototypes on JS, `cls->name` up
+> `:extends` on C). An interface is not on that chain, so there was nothing to find; the tests were
+> not wrong, they were asking a question the runtime could not represent.
+>
+> Conformance is now CARRIED. The transitive closure — own `:implements`, each interface's own
+> supers, everything inherited through `:extends` — is resolved once at lowering onto
+> `HClass.interfaces` (A-0: both backends need the same answer, so it is decided once) and emitted as
+> `static __ll_interfaces` on JS and `ll_class.interfaces` on C. Both tests then do a flat string
+> scan, which is the only form available to them. Guarded by
+> `80-adversarial/interface_conformance_runtime.lisp`, negative half included — a `:of` that failed
+> OPEN would silently widen every `match` type-pattern and every operator overload dispatching on it.
+
+### 14.2 `:implements A B` records only the first interface **[CLOSED 2026-07-23]**
 
 ```lisp
 (defclass Both :implements A B ...)
@@ -903,6 +919,18 @@ sequence source is, and why 14.1 could not have been worked around by fixing onl
 **`08-generics/06_multiple_interfaces.lisp` is currently green while dropping an interface**: its
 golden does not print the `:implements` list, so nothing catches it. Recorded here explicitly because
 a green golden over a wrong answer is the exact shape this ledger exists to make visible.
+
+> **Closed 2026-07-23, and the diagnosis above was WRONG in a way worth recording.** Nothing
+> "recorded only the first" — the checker's own loop walks `node.implements` in full and the D54
+> metadata maps over all of them. Every layer downstream was ready for a list that only ever had one
+> element, because the defect was in the GRAMMAR: `classDecl`/`structDecl`/`interfaceDecl` each took
+> exactly ONE `typeRef` per inheritance keyword. So in `:implements A B`, the name `B` fell through
+> into the class BODY (`MANY3(expression)`) and was silently parsed as a bare expression — and
+> `:implements A B :extends Base` did not parse at all, because `:extends` is not an expression.
+>
+> Fixed by letting a keyword own every type ref up to the next one (`AT_LEAST_ONE(typeRef)`),
+> unambiguous because a type ref is a bare identifier and a body form always starts with `(`. This is
+> what 14.1 needed first: a type could not otherwise claim to be both `Iterable` and `Disposable`.
 
 ### 14.3 `iter` does not agree on what a cursor IS
 

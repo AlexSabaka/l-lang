@@ -137,6 +137,14 @@ export class EmitCirToC {
       if (c.methods.length) {
         this.line(`static const ll_method_entry __ll_methods_${c.name}[] = {${c.methods.map((mm) => `{${JSON.stringify(mm.name)}, ${mm.cName}_dyn}`).join(", ")}};`);
       }
+      // D24 erases interfaces, so the class descriptor is conformance's only runtime carrier: without
+      // it `(x :of Iterable)` is false even for a verified `:implements` (gap ledger §14.1). The list
+      // is the transitive closure, identical to the JS `static __ll_interfaces`.
+      const ifaces = c.interfaces ?? [];
+      if (ifaces.length) {
+        this.line(`static const char* __ll_ifaces_${c.name}[] = {${ifaces.map((i) => `"${cEscape(i)}"`).join(", ")}};`);
+      }
+      const ifacesPtr = ifaces.length ? `__ll_ifaces_${c.name}` : "0";
       const methodsPtr = c.methods.length ? `__ll_methods_${c.name}` : "0";
       // A generator's descriptor carries its SOURCE name (`fibs`, not the synthesized tag) and its
       // step function; the runtime reads both. `name` stays the C-safe tag because it is also the
@@ -144,7 +152,7 @@ export class EmitCirToC {
       // identifier. D58: the display name is what `#<generator ...>` and `(type g)` show.
       const display = c.sourceName ?? c.name;
       const gen = c.genStep ? `true, ${c.genStep}` : "false, 0";
-      this.line(`static ll_class __ll_class_${c.name} = {"${display}", ${c.isStruct ? "true" : "false"}, ${c.fields.length}, ${fieldsPtr}, ${c.parent ? `"${c.parent}"` : "0"}, ${c.methods.length}, ${methodsPtr}, ${gen}};`);
+      this.line(`static ll_class __ll_class_${c.name} = {"${display}", ${c.isStruct ? "true" : "false"}, ${c.fields.length}, ${fieldsPtr}, ${c.parent ? `"${c.parent}"` : "0"}, ${c.methods.length}, ${methodsPtr}, ${ifaces.length}, ${ifacesPtr}, ${gen}};`);
     }
     // A registry of every class, for `type-by-name` reflection. External linkage so the prepended
     // runtime's reflection helpers (which forward-declare it `extern`) can reach it in this one TU.

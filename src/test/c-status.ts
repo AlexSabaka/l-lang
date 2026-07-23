@@ -357,6 +357,12 @@ export const C_PASSING: readonly string[] = [
   // would work on one backend and silently no-op on the other). Line 7 is the load-bearing negative:
   // `dispose` must be TOTAL, or every lazy chain over an ordinary array would die in `take`.
   "80-adversarial/disposal.lisp",
+  // `(x :of SomeInterface)` answering at run time. It used to be false ALWAYS, on both backends, even
+  // for a `:implements` the checker had verified -- D24 erases interfaces, so the prototype/`:extends`
+  // walk both tests perform had nothing to find (ledger §14.1). Conformance is now carried as the
+  // transitive closure on the class. Includes the negative half, because a `:of` that failed OPEN
+  // would silently widen every `match` type-pattern and every operator overload dispatching on it.
+  "80-adversarial/interface_conformance_runtime.lisp",
   // Unblocked by the above: the corpus's only method-surface site, and the last of the three files
   // Phase G4 set out to green.
   "16-stdlib/02_linq_pipeline.lisp",

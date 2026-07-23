@@ -836,6 +836,19 @@ export interface HClass extends HBase {
   /** A struct is a VALUE TYPE -- the `static __ll_struct = true` marker (D11); a class omits it. This is
    *  exactly the by-value discrimination a native backend needs, so it rides the node, not just the JS. */
   isStruct: boolean;
+  /**
+   * Every interface this type conforms to, TRANSITIVELY -- the `static __ll_interfaces` marker on JS
+   * and `ll_class.interfaces` on C.
+   *
+   * D24 ERASES interfaces, so conformance had no runtime representation at all and `(x :of Iterable)`
+   * answered false on both backends even for a type whose `:implements` the checker had verified
+   * (gap ledger §14.1). It rides the node for the same reason `isStruct` does: both backends need the
+   * same answer, so A-0 says the decision is made once, here, rather than twice below.
+   *
+   * The CLOSURE is resolved at lowering (own `:implements`, each interface's supers, and everything
+   * inherited through `:extends`), which is what keeps the runtime test a flat string scan.
+   */
+  interfaces: string[];
   /** The class-body FIELDS (non-`:ctor` member variables), in source order. Emitted as PropertyDefinitions
    *  before the constructor; a native backend reads the struct layout from them. */
   fields: HFieldDecl[];

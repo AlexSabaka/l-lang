@@ -170,6 +170,12 @@ typedef struct ll_class {
   const char *parent;      /* `:extends` base name, or NULL (for reflection) */
   size_t method_count;     /* dynamic-dispatch table (statically-unknown receivers) */
   const ll_method_entry *methods;
+  /* The TRANSITIVE `:implements` closure. D24 erases interfaces, so this list is the only thing that
+     can answer `(x :of SomeInterface)` at run time -- without it the test walked the `:extends` chain
+     alone and answered false for every interface, including ones the checker had verified
+     (gap ledger 14.1). Flat because the closure is computed at compile time. */
+  size_t interface_count;
+  const char **interfaces;
   /* D58: this class is a GENERATOR's frame type, and `gen_step` resumes it.
    *
    * These two fields are the whole of a generator's runtime identity, and they are read in exactly
@@ -2224,6 +2230,12 @@ static bool ll_is_type(ll_value v, const char *name, int primitive) {
   if (v.tag == LL_OBJ) {
     for (const ll_class *c = v.as.o->cls; c; ) {
       if (strcmp(c->name, name) == 0) return true;
+      /* INTERFACE conformance, which the `:extends` walk alone cannot see (D24 erases interfaces).
+         Checked per level, so a parent's `:implements` counts for the child exactly as the class
+         identity above does. */
+      for (size_t i = 0; i < c->interface_count; i++) {
+        if (strcmp(c->interfaces[i], name) == 0) return true;
+      }
       c = c->parent ? ll_class_by_name(c->parent) : (const ll_class *)0;
     }
   }

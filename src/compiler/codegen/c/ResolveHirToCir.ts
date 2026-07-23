@@ -29,7 +29,7 @@ import { INTRINSIC_CALLS, NATIVE_METHODS, NATIVE_FIELDS } from "./intrinsics";
 import { nativeMemberDeclared } from "../../types/nativeMembers";
 import { freeVariables, freeVariablesOfBody } from "../../hir/freevars";
 import { isBuiltinModifier } from "../../helpers/modifiers";
-import { buildTypesMetadata } from "../../reflection/metadata";
+import { buildTypesMetadata, conformedInterfaceNames } from "../../reflection/metadata";
 import { buildExtensionTable, conformingExtensionFn, memberKindIn, receiverType, ExtCandidate } from "../../hir/extensionResolution";
 import { lowerCoroutine, CoroutineRefusal } from "../../hir/LowerCoroutines";
 import { promoteFrame, PromotedFrame, FramePromotionRefusal, STATE_SLOT, GEN_STATE_NAME } from "./promoteFrame";
@@ -85,6 +85,9 @@ interface ClassDesc {
   parent?: string; // `:extends` base class name (for inheritance + reflection)
   fields: { name: string; ctype: CType; default?: ast.ASTNode }[];
   fieldSlot: Map<string, number>;
+  /** The transitive `:implements` closure -- D24 erases interfaces, so this is conformance's only
+   *  runtime carrier (gap ledger §14.1). Consumed from the modeled `HClass.interfaces`. */
+  interfaces: string[];
   methods: Map<string, { cName: string; params: CType[]; ret: CType }>;
   /** C names of `:ctor` initializer methods, in declaration order -- run on the object right after
    *  construction to compute derived fields (`this.full-name := ...`). */
@@ -301,7 +304,7 @@ export class ResolveHirToCir {
       const methods = [...c.methods.entries()]
         .filter(([, m]) => m.cName.startsWith(ownPrefix))
         .map(([name, m]) => ({ name, cName: m.cName, params: m.params, ret: m.ret }));
-      return { name: c.name, isStruct: c.isStruct, parent: c.parent, fields: c.fields, methods };
+      return { name: c.name, isStruct: c.isStruct, parent: c.parent, fields: c.fields, methods, interfaces: c.interfaces };
     });
     return {
       functions: this.functions,
@@ -349,7 +352,7 @@ export class ResolveHirToCir {
       if (this.classes.has(name)) continue;
       const fields = [{ name: "message", ctype: C_STR }];
       const fieldSlot = new Map([["message", 0]]);
-      this.classes.set(name, { name, isStruct: false, parent: name === "Error" ? undefined : "Error", fields, fieldSlot, methods: new Map(), ctorMethods: [] });
+      this.classes.set(name, { name, isStruct: false, parent: name === "Error" ? undefined : "Error", fields, fieldSlot, methods: new Map(), ctorMethods: [], interfaces: [] });
     }
   }
 
@@ -496,7 +499,11 @@ export class ResolveHirToCir {
     const ctorMethods: string[] = parentDesc ? [...parentDesc.ctorMethods] : [];
     // Register the descriptor NOW (before processing members) so a self-referential member type --
     // an operator returning its own class, a method taking the same struct -- resolves to obj.
-    this.classes.set(name, { name, isStruct, parent: parentDesc ? parent : undefined, fields, fieldSlot, methods, ctorMethods });
+    // The conformance closure rides the modeled HClass (A-0: both backends need the same answer, so
+    // it is decided once at lowering). Falls back to computing it here for an IMPORTED class, whose
+    // HClass this module never lowered.
+    const interfaces = hc?.interfaces ?? (() => { try { return conformedInterfaceNames(this.context, name); } catch { return []; } })();
+    this.classes.set(name, { name, isStruct, parent: parentDesc ? parent : undefined, fields, fieldSlot, methods, ctorMethods, interfaces });
     for (const m of this.memberFunctions(node)) {
       if (!m.name) continue;
       const mn = ast.symbolName(m.name);

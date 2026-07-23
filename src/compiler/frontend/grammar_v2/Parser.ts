@@ -896,13 +896,19 @@ class LLangParser extends CstParser {
           {
             ALT: () => {
               this.CONSUME(t.ExtendsModKw);
-              this.SUBRULE(this.typeRef);
+              this.AT_LEAST_ONE(() => this.SUBRULE(this.typeRef));
             },
           },
           {
             ALT: () => {
+              // ONE keyword, MANY type refs -- `:implements Drawable Serializable`. This took a
+              // SINGLE `typeRef`, so every name after the first fell through into the class BODY
+              // (the `MANY3(expression)` below) and was silently parsed as a bare expression: the
+              // claim vanished before any pass could see it. `:implements A B :extends Base` did not
+              // even parse, because `:extends` is not an expression. Unambiguous because a type ref
+              // is an identifier and a body form always starts with `(`. Gap ledger §14.2.
               this.CONSUME(t.ImplementsModKw);
-              this.SUBRULE2(this.typeRef);
+              this.AT_LEAST_ONE2(() => this.SUBRULE2(this.typeRef));
             },
           },
         ]);
@@ -976,13 +982,19 @@ class LLangParser extends CstParser {
           {
             ALT: () => {
               this.CONSUME(t.ExtendsModKw);
-              this.SUBRULE(this.typeRef);
+              this.AT_LEAST_ONE(() => this.SUBRULE(this.typeRef));
             },
           },
           {
             ALT: () => {
+              // ONE keyword, MANY type refs -- `:implements Drawable Serializable`. This took a
+              // SINGLE `typeRef`, so every name after the first fell through into the class BODY
+              // (the `MANY3(expression)` below) and was silently parsed as a bare expression: the
+              // claim vanished before any pass could see it. `:implements A B :extends Base` did not
+              // even parse, because `:extends` is not an expression. Unambiguous because a type ref
+              // is an identifier and a body form always starts with `(`. Gap ledger §14.2.
               this.CONSUME(t.ImplementsModKw);
-              this.SUBRULE2(this.typeRef);
+              this.AT_LEAST_ONE2(() => this.SUBRULE2(this.typeRef));
             },
           },
         ]);
@@ -1032,7 +1044,8 @@ class LLangParser extends CstParser {
       });
       this.OPTION2(() => {
         this.CONSUME(t.ImplementsModKw);
-        this.SUBRULE(this.typeRef);
+        // An interface may extend SEVERAL supers too (`Iterator :implements Iterable`).
+        this.AT_LEAST_ONE(() => this.SUBRULE(this.typeRef));
       });
       this.MANY2(() => {
         this.SUBRULE(this.expression);

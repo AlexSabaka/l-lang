@@ -104,6 +104,40 @@ function convertCodegenMetadataToRuntimeFormat(metadata: any): Record<string, an
   return result;
 }
 
+/**
+ * Every interface a type conforms to, TRANSITIVELY -- its own `:implements`, each of those
+ * interfaces' own supers, and everything inherited through the `:extends` chain.
+ *
+ * It reads `getAllTypeMetadata()`, the SAME channel `buildTypesMetadata` reads, so `(x :of Foo)` and
+ * `(type x).implements` cannot answer differently about the same type. That is the whole reason it
+ * lives in this module rather than beside the conformance predicates in `hir/extensionResolution`:
+ * those read the symbol table's inferred types, which for a struct do not carry the interface list at
+ * all -- the first attempt at this emitted an empty list for every type and looked like it worked.
+ *
+ * The CLOSURE is computed here, at compile time, and emitted as a FLAT list onto the class (JS:
+ * `static __ll_interfaces`; C: `ll_class.interfaces`). The runtime type test is then a string scan
+ * with no graph to walk and no symbol table to consult -- which is the only form available to it,
+ * since D24 erases interfaces entirely.
+ */
+export function conformedInterfaceNames(context: Context, typeName: string): string[] {
+  const all = context.symbolTable.getAllTypeMetadata();
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const visit = (n: string): void => {
+    if (seen.has(n)) return;
+    seen.add(n);
+    const m: any = all.get(n);
+    if (!m) return;
+    for (const i of m.implementedInterfaces ?? []) {
+      if (!out.includes(i.interfaceName)) out.push(i.interfaceName);
+      visit(i.interfaceName);
+    }
+    if (m.parentClass) visit(m.parentClass);
+  };
+  visit(typeName);
+  return out;
+}
+
 export function buildTypesMetadata(context: Context): Record<string, any> {
   const out: Record<string, any> = {};
   // The six primitives, which the table has never contained (Zi).

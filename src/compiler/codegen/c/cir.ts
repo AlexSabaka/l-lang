@@ -498,6 +498,10 @@ export interface CClass {
   /** OWN methods (not inherited), for the runtime dynamic-dispatch table: each gets a boxed adapter.
    *  `params` excludes self; the emitter unboxes argv to these, calls cName, boxes ret. */
   methods: { name: string; cName: string; params: CType[]; ret: CType }[];
+  /** The transitive `:implements` closure. D24 erases interfaces, so `ll_class` carrying this list is
+   *  the only way `(x :of SomeInterface)` can answer at run time (gap ledger §14.1). The JS backend
+   *  emits the identical list as `static __ll_interfaces`, from the same modeled `HClass.interfaces`. */
+  interfaces?: string[];
   /**
    * D58: this class is a GENERATOR's synthesized frame type, and `genStep` names its step function.
    *

@@ -103,6 +103,22 @@ function ident(name: string, src: ast.ASTNode): ESTree.Identifier {
  * Carried, not decoded: the encoding is not reversible -- `a2db` encodes `a-b` and is also a legal
  * source name. Only fields that actually differ are listed, so an all-ASCII class emits nothing.
  */
+/** `static __ll_interfaces = ["Iterable", "Disposable"]` -- the transitive conformance closure, which
+ *  D24's erasure leaves no other runtime carrier for. Consumed by `__ll_is_type` (gap ledger §14.1). */
+function staticInterfacesMarker(names: string[], src: ast.ASTNode): ESTree.PropertyDefinition {
+  return {
+    type: "PropertyDefinition",
+    key: { type: "Identifier", name: "__ll_interfaces" },
+    value: {
+      type: "ArrayExpression",
+      elements: names.map((n) => ({ type: "Literal", value: n }) as ESTree.Literal),
+    } as ESTree.ArrayExpression,
+    computed: false,
+    static: true,
+    loc: loc(src),
+  } as ESTree.PropertyDefinition;
+}
+
 function fieldNameMarker(pairs: Array<[string, string]>, src: ast.ASTNode): ESTree.PropertyDefinition[] {
   if (!pairs.length) return [];
   return [{
@@ -273,6 +289,10 @@ export class EmitHirToEstree {
         const markers: ESTree.PropertyDefinition[] = [];
         if (h.sourceName != null) markers.push(staticMarker("__ll_name", h.sourceName, h.src));
         if (h.isStruct) markers.push(staticMarker("__ll_struct", true, h.src));
+        // D24 erases interfaces, so conformance has no other runtime carrier: without this marker
+        // `(x :of Iterable)` is false even for a type whose `:implements` the checker verified
+        // (gap ledger §14.1). The list is the transitive closure, resolved at lowering.
+        if (h.interfaces.length > 0) markers.push(staticInterfacesMarker(h.interfaces, h.src));
         // The source spelling of any encoded field name. Both lists: a `:ctor` field lands on
         // `h.ctor.params` and every other member variable on `h.fields`, and a defstruct's fields are
         // almost always the former -- covering only `h.fields` finds nothing for the common case.
