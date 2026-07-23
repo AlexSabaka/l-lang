@@ -87,6 +87,14 @@ Because nothing ever ran it, nothing ever found out that:
   `types.lisp`*. Both export it. Silent.
 - `math.lisp` exports `Vector3` but **not** `Complex`. Both are defined; `complex_math_test` uses
   `Complex` anyway (see §2).
+  - **Resolved (2026-07-23, D57).** `math.lisp` no longer defines *either*. `std/math` is now a
+    modular package — `constants`, `elementary`, `complex` (`Complex`, re/im, the full field),
+    `rational`, `vector` (`Vec2`/`Vec3`/`Vec`), `stats`, `special`, `integrate`, and a `symbolic`
+    subpackage — and `math.lisp` keeps only the everyday scalar umbrella (the `Math.*` wrappers +
+    `E`/`PI`/`TAU`). The old `Vector3` carried `(fn :operator ·)`, the U+00B7 head operator D57 bans;
+    it and the placeholder `Complex` are retired, and their three consumers migrated to `Vec3` /
+    `std/math/complex`. Everything is still reachable through one `(import "std/math")` (siblings).
+    `random` and `fft` are held back — see `docs/inbox/std-math-numerics-blockers.md`.
 - `functional.lisp` exports **`apply`** — colliding with the `.apply` method call of **D17**. This
   is the exact collision `05_matching.lisp` had to hand-roll a workaround for.
 

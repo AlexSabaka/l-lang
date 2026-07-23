@@ -1,9 +1,9 @@
 (
     ;; ============================================================
-    ;; Vector toolkit — free functions over std/math's Vector3.
+    ;; Vector toolkit — free functions over std/math's Vec3.
     ;; ============================================================
     ;; Extracted from examples/30-games/boids-p5/vec.lisp. std/math
-    ;; ships `Vector3` (a 3D float value struct) with `.mag` and the
+    ;; ships `Vec3` (a 3D float value struct) with `.mag` and the
     ;; operators + - * / and · (dot). It does NOT ship normalize /
     ;; limit / set-mag / heading / dist — the pieces a flock steers
     ;; with — so the game adds them as plain prefix free functions.
@@ -18,46 +18,46 @@
     (import "std/math")
 
     ;; Squared magnitude — a sqrt-free radius test.
-    (fn mag-sq [v <- Vector3] -> Real
+    (fn mag-sq [v <- Vec3] -> Real
         (return (+ (* v.x v.x) (+ (* v.y v.y) (* v.z v.z)))))
 
     ;; Unit vector. A zero vector has no direction — return zero rather
     ;; than divide by zero and spray NaN everywhere.
-    (fn normalize [v <- Vector3] -> Vector3
-        (let m (v.mag))
-        (if (== m 0.0) (return (new Vector3 0 0 0)))
+    (fn normalize [v <- Vec3] -> Vec3
+        (let m (v.length))
+        (if (== m 0.0) (return (new Vec3 0 0 0)))
         (return (/ v m)))
 
     ;; Clamp magnitude to `mx`, direction preserved.
-    (fn limit [v <- Vector3 mx <- Real] -> Vector3
-        (if (> (v.mag) mx) (return (* (normalize v) mx)))
+    (fn limit [v <- Vec3 mx <- Real] -> Vec3
+        (if (> (v.length) mx) (return (* (normalize v) mx)))
         (return v))
 
     ;; Rescale to a chosen length.
-    (fn set-mag [v <- Vector3 m <- Real] -> Vector3
+    (fn set-mag [v <- Vec3 m <- Real] -> Vec3
         (return (* (normalize v) m)))
 
     ;; Euclidean distance between two points.
-    (fn dist [a <- Vector3 b <- Vector3] -> Real
+    (fn dist [a <- Vec3 b <- Vec3] -> Real
         (let d (- a b))
-        (return (d.mag)))
+        (return (d.length)))
 
     ;; Facing angle in radians. std/math has no atan2, so reach the
     ;; host `Math.atan2` global directly.
-    (fn heading [v <- Vector3] -> Real
+    (fn heading [v <- Vec3] -> Real
         (return (Math.atan2 v.y v.x)))
 
     ;; ---- formatting: round to 3 decimals so output is deterministic ----
     (fn r3 [x <- Real] -> Real
         (return (/ (Math.round (* x 1000.0)) 1000.0)))
 
-    (fn vstr [v <- Vector3] -> String
+    (fn vstr [v <- Vec3] -> String
         (return '"({(r3 v.x)},{(r3 v.y)},{(r3 v.z)})"))
 
     ;; ---- three fixed vectors ----
-    (let a (new Vector3 3 4 0))
-    (let b (new Vector3 1 2 2))
-    (let zero (new Vector3 0 0 0))
+    (let a (new Vec3 3 4 0))
+    (let b (new Vec3 1 2 2))
+    (let zero (new Vec3 0 0 0))
 
     (console.log '"mag-sq {(vstr a)} -> {(r3 (mag-sq a))}")
     (console.log '"normalize {(vstr a)} -> {(vstr (normalize a))}")

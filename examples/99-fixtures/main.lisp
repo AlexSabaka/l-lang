@@ -62,10 +62,10 @@
 
     ;; ==================== PLAYER CLASS ====================
     (defclass Player
-        (let :ctor pos <- Vector3)
+        (let :ctor pos <- Vec3)
         (let width <- Real PLAYER-SIZE)
         (let height <- Real PLAYER-SIZE)
-        (let vel <- Vector3 (new Vector3 0 0 0))
+        (let vel <- Vec3 (new Vec3 0 0 0))
         (let is-jumping <- Bool false)
 
         (fn update [] (
@@ -206,7 +206,7 @@
 
     ;; ==================== GAME INITIALIZATION ====================
     (fn init-game [] (
-        (game-state.player := (new Player (new Vector3 (/ WIDTH 2) (/ HEIGHT 2) 0)))
+        (game-state.player := (new Player (new Vec3 (/ WIDTH 2) (/ HEIGHT 2) 0)))
         (game-state.platforms := (generate-initial-platforms))
         (game-state.boosters := [])
         (game-state.camera-y := 0)

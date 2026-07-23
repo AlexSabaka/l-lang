@@ -9,11 +9,18 @@
   ;; blast radius of D20 was this one list.
   (export sqr sqrt sin cos tan log exp
           abs floor ceil round truncate pow min max inc dec
-          E PI TAU
-          Complex Vector3)
+          E PI TAU)
   ;; NOT `Number`. It belongs to std/types now, and a module cannot re-export a symbol it does not
   ;; define -- `visitExport` refuses ("Cannot export undefined symbol"). Anyone who wants the type
   ;; imports std/types, which is where it is declared, once.
+  ;;
+  ;; NOT `Complex`/`Vector3` either, as of D57. This file used to define both -- a real/imag `Complex`
+  ;; and an x/y/z `Vector3` carrying `(fn :operator ·)`, the U+00B7 head operator D57 bans (its JS
+  ;; encoding `b7` collides with a hand-writable member). They were placeholders from before the tower
+  ;; was modular. The real types now live in `std/math/complex` (`Complex`, re/im, the full field) and
+  ;; `std/math/vector` (`Vec2`/`Vec3`/`Vec`, dot/cross/norm), and both are reachable through this same
+  ;; `(import "std/math")` because they are package siblings. This file keeps only the everyday scalar
+  ;; layer -- the `Math.*` wrappers and the three constants -- which is the umbrella most callers want.
 
   (let E 2.718281828459045)
   (let PI 3.141592653589793)
@@ -98,93 +105,6 @@
   ;;
   ;; `Number` now comes from std/types, which is the single place it is defined.
 
-  ;; Complex Number Struct and Operations
-  (defstruct Complex
-    (let :ctor real <- Real 0.0)
-    (let :ctor imag <- Real 0.0)
-
-    (fn str [] -> String
-      '"{(this.real)} + {(this.imag)}i"
-    )
-
-    (fn :operator + [c2 <- Complex] -> Complex
-        (let result (new Complex))
-        (result.real := (+ this.real c2.real))
-        (result.imag := (+ this.imag c2.imag))
-        (return result)
-    )
-
-    (fn :operator - [c2 <- Complex] -> Complex
-        (let result (new Complex))
-        (result.real := (- this.real c2.real))
-        (result.imag := (- this.imag c2.imag))
-        (return result)
-    )
-
-    (fn :operator * [c2 <- Complex] -> Complex
-        (let result (new Complex))
-        (result.real := (- (* this.real c2.real) (* this.imag c2.imag)))
-        (result.imag := (+ (* this.real c2.imag) (* this.imag c2.real)))
-        (return result)
-    )
-
-    (fn :operator / [c2 <- Complex] -> Complex
-        (let denom (+ (* c2.real c2.real) (* c2.imag c2.imag)))
-        (let result (new Complex))
-        (result.real := (/ (+ (* this.real c2.real) (* this.imag c2.imag)) denom))
-        (result.imag := (/ (- (* this.imag c2.real) (* this.real c2.imag)) denom))
-        (return result)
-    )
-  )
-
-  ;; 3D Vector Struct and Operations
-  (defstruct Vector3
-    (let :ctor x <- Real 0.0)
-    (let :ctor y <- Real 0.0)
-    (let :ctor z <- Real 0.0)
-
-    (fn str [] -> String
-      '"(X: {(this.x.toFixed 2)}, Y: {(this.y.toFixed 2)}, Z: {(this.z.toFixed 2)})"
-    )
-
-    (fn mag [] -> Real
-      (sqrt (+ (sqr this.x) (sqr this.y) (sqr this.z)))
-    )
-
-    (fn :operator + [v2 <- Vector3] -> Vector3
-        (let result (new Vector3))
-        (result.x := (+ this.x v2.x))
-        (result.y := (+ this.y v2.y))
-        (result.z := (+ this.z v2.z))
-        (return result)
-    )
-
-    (fn :operator - [v2 <- Vector3] -> Vector3
-        (let result (new Vector3))
-        (result.x := (- this.x v2.x))
-        (result.y := (- this.y v2.y))
-        (result.z := (- this.z v2.z))
-        (return result)
-    )
-
-    (fn :operator * [scalar <- Real] -> Vector3
-        (let result (new Vector3))
-        (result.x := (* this.x scalar))
-        (result.y := (* this.y scalar))
-        (result.z := (* this.z scalar))
-        (return result)
-    )
-
-    (fn :operator / [scalar <- Real] -> Vector3
-        (let result (new Vector3))
-        (result.x := (/ this.x scalar))
-        (result.y := (/ this.y scalar))
-        (result.z := (/ this.z scalar))
-        (return result)
-    )
-
-    (fn :operator · [v2 <- Vector3] -> Real
-        (+ (* this.x v2.x) (+ (* this.y v2.y) (* this.z v2.z)))
-    )
-  )
+  ;; Complex and Vector3 used to live here; they moved to std/math/complex and std/math/vector (D57).
+  ;; See the export block above for why.
 )
