@@ -195,6 +195,9 @@ export class EmitCirToC {
     this.volatiles = computeVolatileLocals(m.main); // top-level statements are main's locals
     this.indent++;
     this.line("ll_argc = argc; ll_argv = argv;");
+    // D59 step 1: the heap census, dumped at exit when LL_GC_STATS is set. A diagnostic, not a
+    // feature -- it adds no language surface, and `test/memory.ts` is its only reader.
+    this.line("atexit(ll_gc_report);");
     this.emitMetadata(m.metadata);
     this.withFreshTryStack(() => this.emitBlockStmts(m.main));
     this.line("return 0;");

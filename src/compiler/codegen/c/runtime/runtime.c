@@ -69,6 +69,113 @@ static void *ll_alloc(size_t n) {
   return p;
 }
 
+/* -- the GC heap (D59, step 1: accounting) ---------------------------------------------------------
+ *
+ * TWO HEAPS, and the split is the point of this layer.
+ *
+ *   THE GC HEAP   -- everything a running program can still reach: strings, vectors, maps, objects,
+ *                    closures, mutable-capture cells, and the backing arrays of the containers.
+ *                    Allocated through `ll_gc_alloc`, headered, threaded onto one list, and never
+ *                    freed by hand. This is what a collector will trace and sweep.
+ *
+ *   RUNTIME SCRATCH -- string builders, the cycle-detection set, parse buffers. Deterministically
+ *                    freed by the code that made them, invisible to any program, and never a root or
+ *                    a referent. It stays on bare `ll_alloc`/`free`.
+ *
+ * Drawing that line FIRST is what keeps the collector honest later: a sweep over the whole malloc
+ * arena would have to decide what a `char*` buffer inside `ll_to_str` is, and the answer would be a
+ * guess. Here the question never arises -- scratch is not on the list.
+ *
+ * THE HEADER carries KIND (what the payload is, hence how to trace it), SIZE, a MARK bit, and the
+ * list link. Kind is recorded at the allocation site because that is the only place it is known:
+ * `ll_alloc` sees a byte count, and `v->items` and `m->vals` are both "an array of ll_value" only
+ * from where they are created. D59's premise that "every shape carries its own layout" holds for
+ * `ll_obj`/`ll_vec`/`ll_map` and does NOT hold for the raw arrays hanging off them, nor for a
+ * closure's env -- which is why the kind tag exists rather than a tag-dispatch on the pointer.
+ *
+ * Nothing collects yet. This step makes the heap MEASURABLE and gives the mark phase somewhere to
+ * put a bit; `LL_GC_STATS=1` dumps the census at exit, which is what `test/memory.ts` reads. */
+typedef enum {
+  LL_H_STR,      /* ll_str header (its `data` is a separate LL_H_BYTES block) */
+  LL_H_BYTES,    /* raw bytes -- no references inside, nothing to trace */
+  LL_H_VEC,      /* ll_vec header (its `items` is a separate LL_H_VALUES block) */
+  LL_H_MAP,      /* ll_map header (its `keys`/`vals` are separate blocks) */
+  LL_H_OBJ,      /* ll_obj: cls->field_count boxed fields, in slot order */
+  LL_H_CLOSURE,  /* ll_closure: its `env` is a separate block, LAYOUT NOT YET KNOWN (see D59 note) */
+  LL_H_CELL,     /* one ll_value -- a mutable binding captured by reference */
+  LL_H_VALUES,   /* an array of ll_value (a vec's items, a map's vals) */
+  LL_H_STRS,     /* an array of ll_str* (a map's keys) */
+  LL_H_CURSOR,   /* ll_cursor_env: one ll_value plus an index */
+  LL_H__COUNT
+} ll_hkind;
+
+static const char *const LL_HKIND_NAME[LL_H__COUNT] = {
+  "str", "bytes", "vec", "map", "obj", "closure", "cell", "values", "strs", "cursor"
+};
+
+typedef struct ll_header {
+  struct ll_header *next;
+  size_t size;      /* payload bytes, excluding this header */
+  uint8_t kind;
+  uint8_t mark;     /* reserved for the mark phase; always 0 for now */
+} ll_header;
+
+static ll_header *ll_heap = (ll_header *)0;   /* every GC allocation, newest first */
+static size_t ll_heap_bytes = 0;              /* live payload bytes (nothing is freed yet) */
+static size_t ll_heap_count = 0;
+static size_t ll_heap_by_kind[LL_H__COUNT];
+static size_t ll_bytes_by_kind[LL_H__COUNT];
+
+#define LL_HDR(p) (((ll_header *)(p)) - 1)
+#define LL_PAYLOAD(h) ((void *)((h) + 1))
+
+static void *ll_gc_alloc(size_t n, ll_hkind kind) {
+  ll_header *h = (ll_header *)malloc(sizeof(ll_header) + (n ? n : 1));
+  if (!h) ll_trap("OutOfMemory", "allocation failed");
+  h->next = ll_heap;
+  h->size = n;
+  h->kind = (uint8_t)kind;
+  h->mark = 0;
+  ll_heap = h;
+  ll_heap_bytes += n;
+  ll_heap_count++;
+  ll_heap_by_kind[kind]++;
+  ll_bytes_by_kind[kind] += n;
+  return LL_PAYLOAD(h);
+}
+
+/* Grow a GC block in place. The header moves with it, so the LIST has to be repaired: `realloc` may
+ * return a different address, and the previous node's `next` still points at the old one. Walking to
+ * find the predecessor is O(n) per grow, which is why containers double their capacity -- and why
+ * this is the only mutation the list supports. */
+static void *ll_gc_realloc(void *p, size_t n) {
+  ll_header *old = LL_HDR(p);
+  size_t was = old->size;
+  ll_hkind kind = (ll_hkind)old->kind;
+  ll_header **link = &ll_heap;
+  while (*link && *link != old) link = &(*link)->next;
+  ll_header *h = (ll_header *)realloc(old, sizeof(ll_header) + (n ? n : 1));
+  if (!h) ll_trap("OutOfMemory", "reallocation failed");
+  h->size = n;
+  if (*link == old) *link = h;   /* the block moved: re-point whoever referenced it */
+  ll_heap_bytes += n - was;
+  ll_bytes_by_kind[kind] += n - was;
+  return LL_PAYLOAD(h);
+}
+
+/* The census, for `test/memory.ts`. Behind an env var because it is a diagnostic, not a feature:
+ * D59 keeps `:gc`/`:stack`/`:manual` reserved, and this deliberately adds no language surface. */
+static void ll_gc_report(void) {
+  if (!getenv("LL_GC_STATS")) return;
+  fprintf(stderr, "ll_gc: blocks=%zu bytes=%zu\n", ll_heap_count, ll_heap_bytes);
+  for (int k = 0; k < LL_H__COUNT; k++) {
+    if (ll_heap_by_kind[k]) {
+      fprintf(stderr, "ll_gc:   %-8s blocks=%zu bytes=%zu\n",
+              LL_HKIND_NAME[k], ll_heap_by_kind[k], ll_bytes_by_kind[k]);
+    }
+  }
+}
+
 /* -- constructors -------------------------------------------------------------------------------- */
 
 static ll_value ll_nil(void) { ll_value v; v.tag = LL_NIL; v.as.i = 0; return v; }
@@ -81,9 +188,9 @@ static ll_value ll_box_vec(ll_vec *x) { ll_value v; v.tag = LL_VEC; v.as.v = x; 
 static ll_value ll_box_map(ll_map *m) { ll_value v; v.tag = LL_MAP; v.as.m = m; return v; }
 
 static ll_str *ll_str_new(size_t len) {
-  ll_str *s = (ll_str *)ll_alloc(sizeof(ll_str));
+  ll_str *s = (ll_str *)ll_gc_alloc(sizeof(ll_str), LL_H_STR);
   s->len = len;
-  s->data = (char *)ll_alloc(len + 1);
+  s->data = (char *)ll_gc_alloc(len + 1, LL_H_BYTES);
   s->data[len] = '\0';
   return s;
 }
@@ -97,10 +204,10 @@ static ll_str *ll_str_from(const char *bytes, size_t len) {
 static ll_str *ll_str_lit(const char *cstr) { return ll_str_from(cstr, strlen(cstr)); }
 
 static ll_vec *ll_vec_new(size_t cap) {
-  ll_vec *v = (ll_vec *)ll_alloc(sizeof(ll_vec));
+  ll_vec *v = (ll_vec *)ll_gc_alloc(sizeof(ll_vec), LL_H_VEC);
   v->len = 0;
   v->cap = cap ? cap : 4;
-  v->items = (ll_value *)ll_alloc(v->cap * sizeof(ll_value));
+  v->items = (ll_value *)ll_gc_alloc(v->cap * sizeof(ll_value), LL_H_VALUES);
   return v;
 }
 
@@ -114,16 +221,16 @@ static ll_vec *ll_vec_of(size_t n, ll_value *items) {
 static void ll_vec_grow(ll_vec *v, size_t need) {
   if (need <= v->cap) return;
   while (v->cap < need) v->cap *= 2;
-  v->items = (ll_value *)realloc(v->items, v->cap * sizeof(ll_value));
+  v->items = (ll_value *)ll_gc_realloc(v->items, v->cap * sizeof(ll_value));
   if (!v->items) ll_trap("OutOfMemory", "vector grow failed");
 }
 
 static ll_map *ll_map_new(size_t cap) {
-  ll_map *m = (ll_map *)ll_alloc(sizeof(ll_map));
+  ll_map *m = (ll_map *)ll_gc_alloc(sizeof(ll_map), LL_H_MAP);
   m->len = 0;
   m->cap = cap ? cap : 4;
-  m->keys = (ll_str **)ll_alloc(m->cap * sizeof(ll_str *));
-  m->vals = (ll_value *)ll_alloc(m->cap * sizeof(ll_value));
+  m->keys = (ll_str **)ll_gc_alloc(m->cap * sizeof(ll_str *), LL_H_STRS);
+  m->vals = (ll_value *)ll_gc_alloc(m->cap * sizeof(ll_value), LL_H_VALUES);
   return m;
 }
 
@@ -137,8 +244,8 @@ static void ll_map_set(ll_map *m, ll_str *key, ll_value val) {
   }
   if (m->len == m->cap) {
     m->cap *= 2;
-    m->keys = (ll_str **)realloc(m->keys, m->cap * sizeof(ll_str *));
-    m->vals = (ll_value *)realloc(m->vals, m->cap * sizeof(ll_value));
+    m->keys = (ll_str **)ll_gc_realloc(m->keys, m->cap * sizeof(ll_str *));
+    m->vals = (ll_value *)ll_gc_realloc(m->vals, m->cap * sizeof(ll_value));
     if (!m->keys || !m->vals) ll_trap("OutOfMemory", "map grow failed");
   }
   m->keys[m->len] = key;
@@ -205,7 +312,7 @@ static ll_obj *ll_unbox_obj(ll_value v) {
 }
 
 static ll_obj *ll_obj_new(const ll_class *cls, size_t argc, ll_value *args) {
-  ll_obj *o = (ll_obj *)ll_alloc(sizeof(ll_obj) + cls->field_count * sizeof(ll_value));
+  ll_obj *o = (ll_obj *)ll_gc_alloc(sizeof(ll_obj) + cls->field_count * sizeof(ll_value), LL_H_OBJ);
   o->cls = cls;
   for (size_t i = 0; i < cls->field_count; i++) o->fields[i] = i < argc ? args[i] : ll_nil();
   return o;
@@ -387,7 +494,7 @@ static ll_value ll_box_closure(ll_closure *c) { ll_value v; v.tag = LL_CLOSURE; 
 
 /* Returns the RAW pointer (the "closure" ctype). P2 boxes it (ll_box_closure) at value boundaries. */
 static ll_closure *ll_closure_make(ll_value (*fn)(void *, int, ll_value *), void *env, int arity, const char *name) {
-  ll_closure *c = (ll_closure *)ll_alloc(sizeof(ll_closure));
+  ll_closure *c = (ll_closure *)ll_gc_alloc(sizeof(ll_closure), LL_H_CLOSURE);
   c->fn = fn;
   c->env = env;
   c->arity = arity;
@@ -429,7 +536,7 @@ static ll_value ll_call_dyn(int argc, ll_value *argv) {
 /* A heap cell for a mutable-captured binding, shared between the origin frame and every closure that
  * captured it (spec A5 -- the shared mutable state the HIR does not express). */
 static ll_value *ll_cell(ll_value initial) {
-  ll_value *cell = (ll_value *)ll_alloc(sizeof(ll_value));
+  ll_value *cell = (ll_value *)ll_gc_alloc(sizeof(ll_value), LL_H_CELL);
   *cell = initial;
   return cell;
 }
@@ -1116,7 +1223,7 @@ static bool ll_strict_eq(ll_value a, ll_value b) {
 static ll_value ll_copy(ll_value v) {
   if (v.tag != LL_OBJ || !v.as.o->cls->is_struct) return v; /* not a struct -> value or shared ref */
   const ll_obj *src = v.as.o;
-  ll_obj *dst = (ll_obj *)ll_alloc(sizeof(ll_obj) + src->cls->field_count * sizeof(ll_value));
+  ll_obj *dst = (ll_obj *)ll_gc_alloc(sizeof(ll_obj) + src->cls->field_count * sizeof(ll_value), LL_H_OBJ);
   dst->cls = src->cls;
   for (size_t i = 0; i < src->cls->field_count; i++) dst->fields[i] = ll_copy(src->fields[i]);
   return ll_box_obj(dst);
@@ -1146,7 +1253,7 @@ static ll_value ll_deep_copy(ll_value v) {
   }
   if (v.tag == LL_OBJ && v.as.o->cls->is_struct) {
     const ll_obj *src = v.as.o;
-    ll_obj *dst = (ll_obj *)ll_alloc(sizeof(ll_obj) + src->cls->field_count * sizeof(ll_value));
+    ll_obj *dst = (ll_obj *)ll_gc_alloc(sizeof(ll_obj) + src->cls->field_count * sizeof(ll_value), LL_H_OBJ);
     dst->cls = src->cls;
     for (size_t i = 0; i < src->cls->field_count; i++) dst->fields[i] = ll_deep_copy(src->fields[i]);
     return ll_box_obj(dst);
@@ -1167,8 +1274,8 @@ static ll_value *ll_map_slot(ll_map *m, ll_value key) {
   }
   if (m->len == m->cap) {
     m->cap *= 2;
-    m->keys = (ll_str **)realloc(m->keys, m->cap * sizeof(ll_str *));
-    m->vals = (ll_value *)realloc(m->vals, m->cap * sizeof(ll_value));
+    m->keys = (ll_str **)ll_gc_realloc(m->keys, m->cap * sizeof(ll_str *));
+    m->vals = (ll_value *)ll_gc_realloc(m->vals, m->cap * sizeof(ll_value));
     if (!m->keys || !m->vals) ll_trap("OutOfMemory", "map grow failed");
   }
   m->keys[m->len] = ks;
@@ -2047,7 +2154,7 @@ static ll_value ll_iter(ll_value x) {
    * A map is not Iterable until something RULES that it is. Until then both backends refuse, and the
    * JS shim's own wording is the specification being matched here. */
   if (x.tag != LL_VEC && x.tag != LL_STR) ll_trap("TypeError", "value is not iterable");
-  ll_cursor_env *e = (ll_cursor_env *)ll_alloc(sizeof(ll_cursor_env));
+  ll_cursor_env *e = (ll_cursor_env *)ll_gc_alloc(sizeof(ll_cursor_env), LL_H_CURSOR);
   e->src = x;
   e->i = 0;
   return ll_box_closure(ll_closure_make(ll_cursor_step, e, 0, "cursor"));

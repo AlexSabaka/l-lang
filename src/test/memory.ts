@@ -54,21 +54,35 @@ function baseOptions(language: CompilationLanguage): CompilerOptions {
   };
 }
 
+interface Run {
+  rss: number | null;
+  /** The heap census `ll_gc_report` dumps under LL_GC_STATS (D59 step 1). */
+  blocks: number | null;
+  bytes: number | null;
+}
+
 /** Peak RSS in bytes for one run, via `/usr/bin/time -l` (BSD) or `-v` (GNU). */
 function peakRssBytes(cmd: string, args: string[], iterations: number): number | null {
+  return runOnce(cmd, args, iterations).rss;
+}
+
+function runOnce(cmd: string, args: string[], iterations: number): Run {
   const r = spawnSync("/usr/bin/time", ["-l", cmd, ...args], {
     encoding: "utf-8",
     timeout: 120_000,
-    env: { ...process.env, LL_GC_N: String(iterations) },
+    env: { ...process.env, LL_GC_N: String(iterations), LL_GC_STATS: "1" },
   });
   const text = `${r.stdout ?? ""}${r.stderr ?? ""}`;
   // BSD/macOS: "  12345678  maximum resident set size" (BYTES).
   const bsd = text.match(/(\d+)\s+maximum resident set size/);
-  if (bsd) return Number(bsd[1]);
   // GNU: "Maximum resident set size (kbytes): 12345".
   const gnu = text.match(/Maximum resident set size \(kbytes\):\s*(\d+)/);
-  if (gnu) return Number(gnu[1]) * 1024;
-  return null;
+  const census = text.match(/ll_gc: blocks=(\d+) bytes=(\d+)/);
+  return {
+    rss: bsd ? Number(bsd[1]) : gnu ? Number(gnu[1]) * 1024 : null,
+    blocks: census ? Number(census[1]) : null,
+    bytes: census ? Number(census[2]) : null,
+  };
 }
 
 function compile(language: CompilationLanguage): string {
@@ -105,8 +119,10 @@ function main(): void {
     process.exit(1);
   }
 
-  const c1 = peakRssBytes(binPath, [], N);
-  const c2 = peakRssBytes(binPath, [], 2 * N);
+  const r1 = runOnce(binPath, [], N);
+  const r2 = runOnce(binPath, [], 2 * N);
+  const c1 = r1.rss;
+  const c2 = r2.rss;
   if (c1 === null || c2 === null) {
     console.log("  SKIP  no `/usr/bin/time` RSS reporting on this host");
     process.exit(0);
@@ -128,6 +144,34 @@ function main(): void {
     console.log(`  FAIL  C ratio is already bounded -- the collector landed, so flip EXPECT_RED to false.`);
   } else {
     console.log(`  PASS  C memory is bounded by the live set.`);
+  }
+
+  // -- the heap census (D59 step 1) ----------------------------------------------------------------
+  //
+  // Every GC allocation is headered and threaded onto one list, so the runtime can say exactly what
+  // it is holding and of what kind. Asserted here rather than merely printed, because the census is
+  // what the mark phase will be checked against: a collector that frees 90% of the heap is only
+  // provable if the heap was countable first.
+  //
+  // The check is that the census SCALES WITH THE WORK -- doubling the iterations doubles the blocks.
+  // That is the same unbounded growth the RSS ratio reports, measured at the allocator instead of at
+  // the OS, and it is the number that should collapse to ~1.0 when the collector lands.
+  if (r1.blocks !== null && r2.blocks !== null) {
+    const ratio = r2.blocks / r1.blocks;
+    console.log(`\n  heap  N=${N}   ${r1.blocks} blocks / ${mb(r1.bytes!)}`);
+    console.log(`  heap  N=${2 * N}   ${r2.blocks} blocks / ${mb(r2.bytes!)}`);
+    console.log(`  heap  ratio blocks(2N)/blocks(N) = ${ratio.toFixed(2)}`);
+    if (Math.abs(ratio - cRatio) > 0.25) {
+      failures++;
+      console.log(`  FAIL  the census and RSS disagree about growth (${ratio.toFixed(2)} vs ${cRatio.toFixed(2)}).`);
+      console.log(`        One of them is not measuring the heap -- most likely an allocation site`);
+      console.log(`        that still bypasses ll_gc_alloc, so the census under-counts.`);
+    } else {
+      console.log(`  PASS  the census agrees with RSS -- every allocation is accounted for.`);
+    }
+  } else {
+    failures++;
+    console.log(`\n  FAIL  no heap census in the output -- LL_GC_STATS / ll_gc_report is not wired up.`);
   }
 
   // -- JS: the control -----------------------------------------------------------------------------
