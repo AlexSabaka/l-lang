@@ -5090,3 +5090,48 @@ protocol have all been blocked on exactly these six names.
 Guarded by `examples/80-adversarial/bit_operators.lisp`, on the C ratchet and graded at `-O2` as well
 — which is where a UB disagreement would actually surface. Its golden was derived by hand from this
 ruling before either backend ran.
+
+## D62 — std/core/errors: a typed-error tower on the ambient Error (2026-07-23)
+
+The stdlib threw a bare `(Error "message")` in 14 places, so a program could only ever `catch :of Error`.
+`std/core/errors` gives failures names in a subtype tree: `catch :of ValueError` takes a `KeyError`,
+`catch :of Error` takes everything. This is the BOILERPLATE tier of the deferred errors foundation —
+it sits on the ambient `Error` rather than redefining it.
+
+**The hierarchy** (every class `:extends` the ambient `Error`):
+
+```
+ValueError(message)      -> KeyError(message, key), IndexError(message, index)
+ArithmeticError(message)
+IOError(message)         -> FileError(message, path), NotFound(message, path)
+FatalError(message)
+```
+
+**Three rulings, each measured this session (Phase E), not chosen for taste:**
+
+1. **Extend the ambient `Error`; do not redefine it.** `Error` is preluded (`std/js`, plus a builtin
+   class on C). Redefining it reopens the extern collision and forces migrating every corpus file that
+   writes `:extends Error`. The runtime type test walks the `:extends` chain to the host `Error`, so
+   `catch :of Error` matches every type below — verified on both backends.
+
+2. **Ctor fields only — no plain-default fields.** The C field-layout trap (gap ledger §9.2) fires
+   when an inherited plain-default field meets a deeper local ctor field. A tower built entirely from
+   `(let :ctor …)` fields dodges it by construction. Measured: `KeyError(message, key)` works on both
+   backends; the same shape with a `(mut retriable <- Boolean false)` traps on C.
+
+3. **No `cause` field yet.** The ruled `Error(message, cause)` wants `cause` on the root, the one class
+   this tier will not touch; putting it on a mid-level class reopens §9.2. Deferred with the rest of
+   the full foundation (root ownership, `cause`, un-externing `TypeError`/`RangeError`).
+
+**Getting a typed error catchable across a module boundary required fixing three cross-module class
+bugs first** (Phase E1/E2): the JS catch filter used `instanceof <bareName>` (E1), the JS inliner
+emitted an imported subclass's `extends` with the bare parent name (E2-JS), and C's
+`ensureClassRegistered` never registered the `:extends` parent (E2-C). All three were the general
+cross-module class-hierarchy gap; errors were simply the first code to exercise it.
+
+Pinned by `examples/18-error-handling/22_typed_errors.lisp` on both backends. The 14 stdlib throw
+sites migrate onto this tower in E4.
+
+**Still deferred** (the full foundation): `Error` itself l-lang-owned, `cause`, `TypeError`/`RangeError`
+un-externed, and the ~26-file corpus `:extends Error (let :ctor message)` migration. And gap ledger
+§9.2 (the C field-layout trap) remains open — the ctor-only rule dodges it rather than fixing it.

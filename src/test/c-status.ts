@@ -110,6 +110,9 @@ export const C_PASSING: readonly string[] = [
   // `extends <bareParent>`); C was broken (`ensureClassRegistered` never registered the imported
   // parent, so the class chain was incomplete). Both fixed.
   "18-error-handling/21_imported_error_tower.lisp",
+  // E3: the std/core/errors module itself -- the typed-error tower imported and exercised the way a
+  // program uses it (subtype catch, structured fields, one broad :of Error handler). D62.
+  "18-error-handling/22_typed_errors.lisp",
   // Phase-0 finally-drop fix: `finally` runs on EVERY exit from a try (return / return-in-catch /
   // rethrow-propagation / nested), and a `return`-in-try restores ll_handler_top. Inline-finalizer
   // routing in EmitCirToC (no runtime rework). See examples' headers + DECISIONS D12/D47.
