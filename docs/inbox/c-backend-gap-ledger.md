@@ -1230,3 +1230,26 @@ fall-through works on both backends and is what `parse-int` uses instead.
 Minimal: a value-position match where one arm is a bare `(throw ...)` and another yields a value. The
 throwing arm produces a statement where the JS emitter expects an expression. Its own commit; not
 chased inside the Tier-0 build.
+
+## 17. Cross-module class-hierarchy bugs, closed by Phase E (2026-07-23)
+
+Errors were the first code with a DEEP hierarchy defined in one module and used across an import, and
+they uncovered three cross-module class bugs — the same "the machinery was never load-bearing until
+now" pattern as the S1/games findings. All three closed as E1/E2, each with a both-backends guard in
+`examples/18-error-handling/`.
+
+- **§17.1 [CLOSED] — JS `catch :of ImportedClass` emitted `instanceof <bareName>`.** The import inliner
+  renames a class (`__ll_inlined_ValueError_1`), so `instanceof ValueError` was a ReferenceError. The
+  boolean `(x :of T)` guard was unaffected — it uses `__ll_is_type(v, "T")`, a test by name against
+  `static __ll_name`. The catch filter now uses the same (`EmitHirToEstree`), which also handles
+  interfaces and the `:extends` chain, so it is strictly more capable than `instanceof`.
+- **§17.2 [CLOSED] — JS inlined subclass emitted `extends <bareParent>`.** `JSClassBuilder.processExtends`
+  now routes an imported parent through `ensureSymbolInlined`, which both defines the parent and yields
+  its inlined name — the class analog of S1d's enum-member inlining.
+- **§17.3 [CLOSED] — C `ensureClassRegistered` never registered the `:extends` parent.** Registering an
+  imported `IndexError` left `ValueError` absent from the class registry (`ll_is_type` chain walk found
+  nothing; field flattening had no parent). It now recurses the parent chain, terminating at the
+  ambient builtin `Error`.
+
+Note §9.2 (the C field-layout trap) remains OPEN — Phase E's ctor-only rule dodges it rather than
+fixing it.
