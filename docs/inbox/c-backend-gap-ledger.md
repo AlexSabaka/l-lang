@@ -1097,3 +1097,42 @@ file, at the use site.
 Both halves are guarded in `test/imports.ts`: the positive (linq + seq both offering `map` warns AND
 still compiles) and the negative control (a same-package re-export must stay silent) — a diagnostic
 that cannot stay quiet gets ignored, which is a worse failure than one that never fires.
+
+### 15.6 N11 — an imported `defenum`'s members were undefined identifiers **[CLOSED 2026-07-23]**
+
+`(defenum Dir :up :down)` emits one binding per member, named from the ENUM's source spelling
+(`Dir3aup` on JS, `u_Dir_3aup` on C). **The symbol table registers the enum and never its members**,
+so across an import `Dir:up` resolved to *nothing at all* — and each backend then failed its own way,
+with zero diagnostics from either:
+
+- **JS** — `visitIdentifier` never reached the inliner (that branch needs a resolved symbol) and fell
+  through to the bare mangled name: `ReferenceError: Dir3aup is not defined`.
+- **C** — `registerEnum` is driven off `topLevelStmtNodes(body)`, the ROOT module's declarations, so an
+  imported enum was never scanned: `use of undeclared identifier 'u_Dir_3aup'`, caught by cc.
+
+Same finding, two pipelines, two fixes.
+
+**JS — `ensureEnumInlined`, and deliberately NOT renamed.** Every other inlined symbol becomes
+`__ll_inlined_X_1` because only its own references must agree. An enum's members are referenced by a
+name derived from the SOURCE at every site, including sites inside other inlined bodies, so renaming
+the declaration would mean rewriting reference sites the inliner does not own. Emitting the
+declaration verbatim makes every existing reference correct at once. Visiting the node also refills
+`enumKeys`, so an imported enum works in a `match` for the same reason a local one does.
+
+*Residual, named:* two modules exporting a same-named enum would emit colliding `const` bindings.
+That is exactly the shape LL0240 (15.5) warns about.
+
+**C — `lookupEnumMember`, resolved lazily on first reference.** The same route imported CLASSES
+already take here (`registerClass`'s "no HClass — imported/desugared copy" fallback also reads the
+symbol table). The head of `Dir:up` is enough to find the declaration and fold the member to its
+constant. Nothing is emitted on this backend — an enum member is a compile-time constant — so there
+is no collision and no rename question.
+
+Guarded on BOTH backends in `test/imports.ts` (the suite gained a `buildC` helper for exactly this:
+a JS-only guard would leave half the finding unprotected), across all four use sites the games report
+names — argument position, an imported function body, a class field default, and the importer's top
+level.
+
+Verified by removing a workaround: `snake/core.lisp` uses `let` constants and its header says why
+("DIRECTIONS ARE Int CONSTANTS, NOT A `defenum`, AND THAT IS FORCED"). Converting them back to the
+`defenum` it wanted keeps snake green on both backends against its authored golden.

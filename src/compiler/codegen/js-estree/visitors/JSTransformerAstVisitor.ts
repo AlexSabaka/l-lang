@@ -2678,6 +2678,15 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       if (resolved && this.isImportedSymbol(resolved)) {
         return ESTreeBuilder.identifier(node, this.ensureSymbolInlined(resolved));
       }
+
+      // An ENUM MEMBER resolves to nothing at all -- the symbol table registers `Dir`, never
+      // `Dir:up` -- so the branch above cannot see it and the name would fall through to a bare
+      // mangled identifier the importer never declared (S1d / N11). Inline the enum's whole
+      // declaration instead, under its own member names, and let the encoded name below stand.
+      if (!resolved) {
+        const owningEnum = this.importedEnumFor(node.id, node);
+        if (owningEnum) this.ensureEnumInlined(owningEnum);
+      }
     } catch (e) {
       // Fall through
     }
@@ -4066,6 +4075,64 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       const t = k === undefined ? undefined : byKey.get(k);
       if (t !== undefined) this.context.recordSynthesizedNodeType(n, t);
     });
+  }
+
+  /**
+   * Emit an imported enum's WHOLE declaration, under its own member names (S1d / N11).
+   *
+   * `(defenum Dir :up :down)` emits `const Dir3aup = 0, Dir3adown = 1` -- one binding per member,
+   * named from the ENUM's source spelling. A member reference `Dir:up` is a single identifier that
+   * `encodeIdentifier` mangles to exactly that name, and the symbol table has no entry for it: it
+   * registers the enum, never its members. So across an import the reference resolved to NOTHING, the
+   * inliner was never consulted, and `visitIdentifier` fell through to the bare mangled name -- which
+   * the importer never declared. `ReferenceError: Dir3aup is not defined` on JS, and
+   * `use of undeclared identifier 'u_Dir_3aup'` on C. Zero diagnostics from either backend, and it
+   * survived because every enum user in the corpus was a single file.
+   *
+   * NOT RENAMED, unlike every other inlined symbol. A class becomes `__ll_inlined_Money_1` because
+   * only its own references need to agree; an enum's members are referenced by a name DERIVED FROM
+   * THE SOURCE at every site, including sites in other inlined bodies, so renaming the declaration
+   * would require rewriting reference sites the inliner does not own. Emitting the declaration
+   * verbatim is what makes every existing reference correct at once.
+   *
+   * The residual is a real one and worth naming: two modules exporting a same-named enum would now
+   * emit colliding `const` bindings. That is the shape LL0240 (S1c) exists to warn about, and it is
+   * the same trade the language already makes for enum members inside one file.
+   *
+   * Visiting the enum node also refills `enumKeys`, which pattern matching reads -- so an imported
+   * enum works in a `match` for the same reason a local one does.
+   */
+  private ensureEnumInlined(symbol: SymbolEntry): void {
+    const src = (symbol.value as any)?._location?.source ?? "";
+    const symName =
+      (symbol.name as any).id ?? (symbol.name as any).name ?? "";
+    if (!symName) return;
+
+    // Keyed by the ENUM, not by the member: one declaration serves every member reference.
+    const key = `__ll_enum::${src}::${symName}`;
+    if (this.inlinedSymbols[key]) return;
+    this.inlinedSymbols[key] = key;
+
+    const emitted = this.visit(
+      this.cloneNode(symbol.value as ast.EnumNode) as any
+    ) as ESTree.Node;
+    if (emitted && emitted.type === "VariableDeclaration") {
+      this.inlinedDefinitions[key] = emitted as ESTree.Statement;
+    }
+  }
+
+  /**
+   * Does `name` look like `Enum:member`, and does `Enum` resolve to an ENUM in another module?
+   *
+   * Returns the enum's symbol, so the caller can inline the declaration the member needs.
+   */
+  private importedEnumFor(name: string, from: ast.ASTNode): SymbolEntry | undefined {
+    const cut = name.indexOf(":");
+    if (cut <= 0) return undefined;
+    const head = name.slice(0, cut);
+    const owner = this.context?.symbolTable?.resolveSymbol?.(head as any, from);
+    if (!owner || owner.nodeType !== "enum") return undefined;
+    return this.isImportedSymbol(owner) ? owner : undefined;
   }
 
   private ensureSymbolInlined(symbol: SymbolEntry): string {

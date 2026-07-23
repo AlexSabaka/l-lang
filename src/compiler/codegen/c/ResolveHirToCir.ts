@@ -420,6 +420,37 @@ export class ResolveHirToCir {
     });
   }
 
+  /**
+   * The enum table, asked about a member that may live in ANOTHER MODULE (S1d / N11).
+   *
+   * `registerEnum` is driven off `topLevelStmtNodes(body)` -- the ROOT module's declarations -- so an
+   * imported enum was never scanned and `Dir:up` was simply absent. The reference then fell through
+   * to `resolveAstExpr`'s identifier path and emitted `u_Dir_3aup`, a name nothing declares:
+   * `use of undeclared identifier`, caught by cc rather than by a diagnostic. Same finding as the JS
+   * side's `ReferenceError: Dir3aup is not defined`; different pipeline, so a second fix.
+   *
+   * Resolved LAZILY, on first reference, which is the same route imported CLASSES already take here
+   * (`registerClass`'s "no HClass -- imported/desugared copy" fallback reads the symbol table too).
+   * The symbol table registers the ENUM even though it never registers its members, so the head of
+   * `Dir:up` is enough to find the declaration and fold the member to its constant.
+   *
+   * Nothing is emitted either way -- an enum member is a compile-time constant on this backend -- so
+   * unlike the JS fix there is no declaration to collide, and no rename question.
+   */
+  private lookupEnumMember(name: string): { valueNode: ast.ASTNode | null; ordinal: number } | undefined {
+    const known = this.enumValues.get(name);
+    if (known) return known;
+
+    const cut = name.indexOf(":");
+    if (cut <= 0) return undefined;
+    const head = name.slice(0, cut);
+    const owner: any = this.context?.symbolTable?.resolveSymbol?.(head as any);
+    if (!owner || owner.nodeType !== "enum" || owner.value?._type !== "enum") return undefined;
+
+    this.registerEnum(owner.value as ast.EnumNode);
+    return this.enumValues.get(name);
+  }
+
   /** The value expression of an enum member: the explicit value, or the ordinal as an Int literal. */
   private enumValueExpr(entry: { valueNode: ast.ASTNode | null; ordinal: number }, src: ast.ASTNode): CExpr {
     if (entry.valueNode) return this.resolveAstExpr(entry.valueNode);
@@ -1673,7 +1704,7 @@ export class ResolveHirToCir {
       case "enum-equals": {
         // The test-vs-bind decision came from the HIR; the member's constant is still folded here,
         // where the enum table lives (A4 -- the HIR keeps no enum node).
-        const entry = this.enumValues.get(p.member);
+        const entry = this.lookupEnumMember(p.member);
         const lit = entry ? this.enumValueExpr(entry, src) : this.resolveAstExpr({ _type: "simple-identifier", id: p.member } as any);
         return { src, ctype: C_BOOL, kind: "c-binop", op: "==", mode: "eq-deep", lhs: scrut, rhs: lit };
       }
@@ -2392,7 +2423,7 @@ export class ResolveHirToCir {
       return { src: node, ctype: { k: "obj", className: this.selfClass }, kind: "c-ref", cName: "__self" };
     }
     // An enum member reference `HttpMethod:GET` -- a compile-time constant, not a binding.
-    const enumEntry = this.enumValues.get(name);
+    const enumEntry = this.lookupEnumMember(name);
     if (enumEntry) {
       this.ledger.record("A4", "enum-ref", node, "enum member reference folded to its constant value (not the HIR)");
       return this.enumValueExpr(enumEntry, node);

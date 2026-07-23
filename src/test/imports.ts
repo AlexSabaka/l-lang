@@ -85,6 +85,55 @@ function build(entry: string): Outcome {
   };
 }
 
+/**
+ * The same, through the C backend: compile, `cc`, run.
+ *
+ * Most of this suite is JS-only because the module system is a frontend concern and the two backends
+ * share it. A finding that lands in BOTH pipelines needs both graded, though -- N11's imported
+ * `defenum` is a `ReferenceError` on JS and an `undeclared identifier` on C, and the fixes are in
+ * different files, so a JS-only guard would leave half of it unprotected.
+ */
+function buildC(entry: string): Outcome {
+  const context = new Context(entry, { ...options(), language: "c" } as CompilerOptions);
+
+  let result: any;
+  try {
+    result = context.process(entry);
+  } catch (e: any) {
+    return { compiled: false, diagnostics: [], crash: String(e?.message ?? e).split("\n")[0].slice(0, 120) };
+  }
+
+  const diagnostics = context.results.all.map(
+    (m) => `${m.code} ${String(m.message).split("\n").pop()!.trim()}`
+  );
+  if (context.results.hasErrors || !result?.code) return { compiled: false, diagnostics };
+
+  const cPath = entry.replace(/\.lisp$/, ".c");
+  const binPath = entry.replace(/\.lisp$/, ".bin");
+  fs.writeFileSync(cPath, result.code);
+
+  const cc = spawnSync("cc", ["-std=c11", "-fwrapv", cPath, "-o", binPath, "-lm"], {
+    encoding: "utf-8",
+    timeout: 60_000,
+  });
+  if (cc.status !== 0) {
+    return {
+      compiled: false,
+      diagnostics,
+      runtimeError: `cc: ${String(cc.stderr).split("\n").find((l) => /error:/.test(l)) ?? "failed"}`.slice(0, 160),
+    };
+  }
+
+  const run = spawnSync(binPath, [], { encoding: "utf-8", timeout: 10_000 });
+  return {
+    compiled: true,
+    diagnostics,
+    code: result.code,
+    stdout: (run.stdout ?? "").trim(),
+    runtimeError: run.status !== 0 ? (run.stderr ?? "").trim().split("\n").slice(0, 2).join(" ") : undefined,
+  };
+}
+
 /** Write a set of files into a fresh case directory and return the entry path. */
 function fixture(name: string, files: Record<string, string>, entry: string): string {
   const dir = path.join(TMP, name);
@@ -1228,6 +1277,60 @@ const CASES: Case[] = [
       return out.stdout === "true"
         ? { ok: true, detail: "no warning for a package republishing its own file's export" }
         : { ok: false, detail: `expected "true", got ${JSON.stringify(out.stdout)}` };
+    },
+  },
+
+  // S1d / N11 -- graded on BOTH backends, because it broke on both and the fixes are in different
+  // pipelines (the JS inliner; the C enum table).
+  {
+    name: "S1d/N11: an imported defenum's members resolve, on both backends",
+    why:
+      "`(defenum Dir :up :down)` emits one binding per member, named from the ENUM's source spelling " +
+      "(`Dir3aup`). The symbol table registers the ENUM and never its MEMBERS, so across an import " +
+      "`Dir:up` resolved to nothing at all: the JS inliner was never consulted and the reference fell " +
+      "through to a bare mangled name (`ReferenceError: Dir3aup is not defined`), while the C backend " +
+      "builds its enum table only from the ROOT module's declarations and emitted " +
+      "`use of undeclared identifier 'u_Dir_3aup'`. Zero diagnostics from either backend. It survived " +
+      "because every enum user in the corpus was a single file -- the audit's own test, 'do not ask " +
+      "is it implemented, ask who calls it'.\n" +
+      "All four use sites the games report names are covered: a member passed as an argument, one " +
+      "read inside an imported function body, one in a class field default, and one at the " +
+      "importer's own top level.",
+    run: () => {
+      const files = {
+        "lib.lisp":
+          `(\n` +
+          `  (defenum Dir :up :down)\n` +
+          `  (fn name-of [d <- Dir] -> String (return (if (== d Dir:up) "up" "down")))\n` +
+          `  (defclass Marker (mut facing <- Int Dir:down))\n` +
+          `  (export Dir name-of Marker)\n` +
+          `)\n`,
+        "main.lisp":
+          `(\n` +
+          `  (import "lib.lisp")\n` +
+          // Bound, not read inline: `(new Marker).facing` is a separate pre-existing ELL0210 and has
+          // nothing to do with enums -- inlining it here would grade the wrong thing.
+          `  (let m (new Marker))\n` +
+          `  (console.log (name-of Dir:up) (name-of Dir:down) m.facing Dir:up)\n` +
+          `)\n`,
+      };
+      const expected = "up down 1 0";
+
+      const js = build(fixture("imported-enum-js", files, "main.lisp"));
+      if (!js.compiled) return { ok: false, detail: `JS did not compile: ${js.diagnostics.join(", ") || "(none)"}` };
+      if (js.runtimeError) return { ok: false, detail: `JS runtime: ${js.runtimeError}` };
+      if (js.stdout !== expected) {
+        return { ok: false, detail: `JS expected ${JSON.stringify(expected)}, got ${JSON.stringify(js.stdout)}` };
+      }
+
+      const c = buildC(fixture("imported-enum-c", files, "main.lisp"));
+      if (!c.compiled) return { ok: false, detail: `C did not build: ${c.runtimeError ?? (c.diagnostics.join(", ") || "(none)")}` };
+      if (c.runtimeError) return { ok: false, detail: `C runtime: ${c.runtimeError}` };
+      if (c.stdout !== expected) {
+        return { ok: false, detail: `C expected ${JSON.stringify(expected)}, got ${JSON.stringify(c.stdout)}` };
+      }
+
+      return { ok: true, detail: `both backends agree: ${expected}` };
     },
   },
 
