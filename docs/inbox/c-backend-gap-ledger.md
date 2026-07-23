@@ -1073,7 +1073,7 @@ the decisions would silently degrade").
 Guard: `test/imports.ts`, "S1a: an imported body keeps its static types". Red before, green after,
 goldens derived from D49d rather than captured.
 
-### 15.2 OPEN (Lane B) — `field := (/ Int Int)` in an IMPORTED METHOD traps on C
+### 15.2 CLOSED (2026-07-24) — `field := (/ Int Int)` in an IMPORTED METHOD traps on C
 
 Found while removing the games repo's `int-div` workaround to prove 15.1 — which is what the
 workaround-removal test is for. **Pre-existing and NOT caused by S1a**: verified against a clean
@@ -1098,6 +1098,13 @@ lands on the right answer by accident". That holds for a free function; in the f
 it is a hard trap instead. Narrowed by bisection — a free function is fine, returning the quotient is
 fine, and it is specifically ASSIGNING an int quotient to a field inside an imported method. Same
 shape in a single file is correct on both backends.
+
+**FIXED together with §15.7 by one change** — see there. The C backend re-lowers every imported body
+from a `desugaredCopyOf` clone that carried NO node types, so `isIntDivision` (D49d) saw undefined
+operand types and divided as `real`. Porting the JS backend's `carryTypesInto` into the C
+`desugaredCopyOf` (the imported-class clone path is `collectClassMembers`) restores the types, so the
+division is Int, the quotient stays an `int64_t`, and the store into the `Int` field no longer traps.
+Pinned by `test/imports.ts` "S15.2: an imported method's `field := (/ Int Int)` does not trap on C".
 
 ### 15.3 OPEN (Lane B) — N12 survives S1a
 
@@ -1207,7 +1214,7 @@ Verified by removing a workaround: `snake/core.lisp` uses `let` constants and it
 ("DIRECTIONS ARE Int CONSTANTS, NOT A `defenum`, AND THAT IS FORCED"). Converting them back to the
 `defenum` it wanted keeps snake green on both backends against its authored golden.
 
-### 15.7 OPEN (Lane B) — an imported body's `Int / Int` with a LOCAL operand is REAL division on C
+### 15.7 CLOSED (2026-07-24) — an imported body's `Int / Int` was REAL division on C
 
 Found while building `parse-int` (Tier-0). The C-side residual of N14: S1a fixed the JS inliner's type
 channel for imported bodies, but the C backend's imported-body lowering does not get a LOCAL's Int
@@ -1228,6 +1235,21 @@ parameter carries its type through the C signature, a local does not.
 (precomputed `Q = INT64_MIN / 10`, comparisons only) precisely so it is robust regardless of this gap.
 The real fix is to carry local-node types into the C imported-body lowering, the C analog of what S1a
 did for JS.
+
+**FIXED (2026-07-24).** The real root cause was broader than the param-vs-local framing above: re-measured
+at HEAD, an imported free function dividing its own PARAMETERS emitted `(double)(u_a) / (double)(u_b)`
+too — so *every* imported `Int/Int` degraded, not only the local-operand ones. The unified cause: the C
+backend re-lowers each imported body from a `desugaredCopyOf` clone (`hirBodyFor` →
+`LowerAstToHirVisitor.lowerBody`), and that clone carried NO node types, so `isIntDivision` (D49d) read
+`undefined` for both operands and returned false. The C `desugaredCopyOf` was clone + desugar and simply
+never carried the types across; the JS backend had solved the identical thing in S1a with
+`carryTypesInto` (kind@span index, walk the clone, stamp, never overwrite). Porting that method verbatim
+into the C `desugaredCopyOf` fixes both §15.2 and §15.7 at once — the emitted body switches from
+`(int64_t)((double)(u_m) / (double)(2))` to `(u_m / INT64_C(2))`. Pinned by `test/imports.ts` "S15.7:
+an imported body's `Int / Int` stays integer division on C (past 2^53)", whose dividend
+(`9007199254740995`) makes int-division and double-then-truncate land on provably different integers, so
+output parity is proof rather than luck. §15.3 (N12) is a SEPARATE hoisted-global boxing bug and stays
+open.
 
 ## 16. Codegen findings surfaced by the Tier-0 stdlib build (2026-07-23)
 

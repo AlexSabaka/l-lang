@@ -3391,7 +3391,74 @@ export class ResolveHirToCir {
    *  implicit-return desugaring, exactly as the JS backend's `desugaredCopyOf` does for the same reason.
    *  Applies to classes too: their methods are function bodies like any other. */
   private desugaredCopyOf<T extends ast.ASTNode>(node: T): T {
-    return new DesugarAstVisitor(this.context, true).visit(this.cloneNode(node)) as unknown as T;
+    const copy = new DesugarAstVisitor(this.context, true).visit(this.cloneNode(node)) as unknown as T;
+    this.carryTypesInto(copy, node);
+    return copy;
+  }
+
+  /**
+   * Give the copy the TYPES its original carries (the C analog of S1a / N14, mirroring the JS backend's
+   * `JSTransformerAstVisitor.carryTypesInto` byte-for-byte).
+   *
+   * `context.nodeTypes` is identity-keyed, and `desugaredCopyOf` produces objects that by construction
+   * have no identity in it: `cloneNode` mints a fresh tree and the desugarer then rebuilds parts of it.
+   * So every IMPORTED body -- which the C backend re-lowers on demand from exactly such a clone
+   * (`hirBodyFor` -> `LowerAstToHirVisitor.lowerBody`) -- arrived at the HIR lowering completely
+   * untyped, and every type-driven decision silently degraded. The one that changed answers: `(/ Int
+   * Int)` is INTEGER division decided from the static operand types (D49d,
+   * `LowerAstToHirVisitor.isIntDivision`), so with the types gone it fell to `real` division and a
+   * function declared `-> Int` divided as `double` -- silently right below 2^53, wrong above it; and in
+   * an imported METHOD assigning the quotient to an `Int` field, a hard `TypeError` trap (ledger §15.2 /
+   * §15.7). The JS side of the same bug was fixed by S1a; this is its C twin, in the one clone helper
+   * both imported-body paths (`lowerImportedFunction`, imported-class `collectClassMembers`) funnel
+   * through.
+   *
+   * MATCHED ON KIND + EXACT SOURCE SPAN, once, between two trees already known to correspond. A copy
+   * preserves the span each construct occupies, and two constructs of the same kind cannot occupy the
+   * same span in one file, so the correspondence is exact rather than heuristic. Nothing is invented:
+   * only nodes the ORIGINAL was given a type for get one, and an existing entry is never overwritten.
+   *
+   * Depends on `SymbolTable.repointAfterDesugar` (S1a) having run: until `symbol.value` points at the
+   * DESUGARED, typed tree, the original passed here carries no types and there is nothing to carry.
+   */
+  private carryTypesInto(copy: ast.ASTNode, original: ast.ASTNode): void {
+    const nodeTypes = this.context?.nodeTypes;
+    if (!nodeTypes || nodeTypes.size === 0) return;
+
+    const key = (n: any): string | undefined => {
+      const s = n?._location?.start?.offset;
+      const e = n?._location?.end?.offset;
+      if (s === undefined || e === undefined) return undefined;
+      return `${n._type}@${s}..${e}`;
+    };
+
+    const walk = (n: any, seen: Set<any>, visit: (n: any) => void): void => {
+      if (!n || typeof n !== "object" || seen.has(n)) return;
+      seen.add(n);
+      if (n._type) visit(n);
+      for (const prop of Object.keys(n)) {
+        if (prop === "_parent" || prop === "_location") continue;
+        const v = n[prop];
+        if (Array.isArray(v)) v.forEach((x) => walk(x, seen, visit));
+        else if (v && typeof v === "object") walk(v, seen, visit);
+      }
+    };
+
+    // Index the original's types by kind+span. First writer wins, matching the copy's own walk order.
+    const byKey = new Map<string, InferredType>();
+    walk(original, new Set(), (n) => {
+      const t = nodeTypes.get(n);
+      const k = key(n);
+      if (t !== undefined && k !== undefined && !byKey.has(k)) byKey.set(k, t);
+    });
+    if (byKey.size === 0) return;
+
+    walk(copy, new Set(), (n) => {
+      if (nodeTypes.has(n)) return; // already answered -- never overwrite
+      const k = key(n);
+      const t = k === undefined ? undefined : byKey.get(k);
+      if (t !== undefined) this.context.recordSynthesizedNodeType(n, t);
+    });
   }
 
   private cloneNode<T extends ast.ASTNode>(n: T): T {

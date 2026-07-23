@@ -1441,6 +1441,102 @@ const CASES: Case[] = [
     },
   },
 
+  // S15.7 -- the C twin of S1a/N14. S1a fixed the JS inliner's type channel for imported bodies; the C
+  // backend RE-LOWERS every imported body from a fresh `desugaredCopyOf` clone (hirBodyFor ->
+  // LowerAstToHirVisitor.lowerBody), and that clone carried NO node types, so `isIntDivision` (D49d)
+  // saw undefined operand types and fell to `real` division for EVERY imported `Int/Int`. Silent below
+  // 2^53, wrong above it. Fixed by porting JS's `carryTypesInto` into the C `desugaredCopyOf`.
+  {
+    name: "S15.7: an imported body's `Int / Int` stays integer division on C (past 2^53)",
+    why:
+      "The value is chosen so the two dispositions give DIFFERENT integers: 9007199254740995 / 2 is " +
+      "4503599627370497 as C integer division, but 4503599627370498 as `(double)/(double)` then " +
+      "truncate -- because 9007199254740995 is not exactly representable as a double (it rounds to " +
+      "...996). So output parity at this value is not a lucky answer; it is proof the imported body " +
+      "divided as Int, not Real. The dividend flows through a LOCAL (`let m`), the case §15.7 singled " +
+      "out: a param carries its type through the C signature, a local did not until the clone got its " +
+      "types back. JS is the oracle (it was already correct after S1a).",
+    run: () => {
+      const files = {
+        "lib.lisp":
+          `(\n` +
+          `  (fn div-through-local [n <- Int] -> Int\n` +
+          `    (let m <- Int n)\n` +
+          `    (/ m 2))\n` +
+          `  (export div-through-local)\n` +
+          `)\n`,
+        "main.lisp":
+          `(\n` +
+          `  (import "lib.lisp")\n` +
+          `  (console.log (div-through-local 9007199254740995))\n` +
+          `)\n`,
+      };
+      const expected = "4503599627370497";
+
+      const js = build(fixture("imported-intdiv-c-js", files, "main.lisp"));
+      if (!js.compiled) return { ok: false, detail: `JS did not compile: ${js.diagnostics.join(", ") || "(none)"}` };
+      if (js.runtimeError) return { ok: false, detail: `JS runtime: ${js.runtimeError}` };
+      if (js.stdout !== expected) return { ok: false, detail: `JS expected ${JSON.stringify(expected)}, got ${JSON.stringify(js.stdout)}` };
+
+      const c = buildC(fixture("imported-intdiv-c-c", files, "main.lisp"));
+      if (!c.compiled) return { ok: false, detail: `C did not build: ${c.runtimeError ?? (c.diagnostics.join(", ") || "(none)")}` };
+      if (c.runtimeError) return { ok: false, detail: `C runtime: ${c.runtimeError}` };
+      if (c.stdout !== expected) {
+        return {
+          ok: false,
+          detail: `C expected ${JSON.stringify(expected)}, got ${JSON.stringify(c.stdout)} -- a double-divided imported body would print 4503599627370498`,
+        };
+      }
+
+      return { ok: true, detail: `imported body divides as Int on both backends: ${expected}` };
+    },
+  },
+
+  // S15.2 -- the same root cause, sharper symptom: an imported METHOD assigning `(/ Int Int)` to an
+  // `Int` field. Without the clone's types, the division is `real`, the quotient boxes as a Real, and
+  // storing it into the Int field HARD-TRAPS on C (`TypeError: expected an Int`) rather than merely
+  // diverging. Same `carryTypesInto` fix, via the imported-class clone path (collectClassMembers).
+  {
+    name: "S15.2: an imported method's `field := (/ Int Int)` does not trap on C",
+    why:
+      "25 / 10 is 2 as Int division; as `(double)/(double)` it is 2.5, and boxing 2.5 into the Int " +
+      "`result` field traps on C at run time (exit 70). The method lives in an IMPORTED class, so it " +
+      "reaches the backend through the same on-demand desugared clone as an imported free function -- " +
+      "the clone that carried no types until this fix. JS was always correct here.",
+    run: () => {
+      const files = {
+        "lib.lisp":
+          `(\n` +
+          `  (defclass Ratio\n` +
+          `    (mut num <- Int 25)\n` +
+          `    (mut result <- Int 0)\n` +
+          `    (fn compute [] -> Void (this.result := (/ this.num 10))))\n` +
+          `  (export Ratio)\n` +
+          `)\n`,
+        "main.lisp":
+          `(\n` +
+          `  (import "lib.lisp")\n` +
+          `  (let r (Ratio))\n` +
+          `  (r.compute)\n` +
+          `  (console.log r.result)\n` +
+          `)\n`,
+      };
+      const expected = "2";
+
+      const js = build(fixture("imported-method-intdiv-js", files, "main.lisp"));
+      if (!js.compiled) return { ok: false, detail: `JS did not compile: ${js.diagnostics.join(", ") || "(none)"}` };
+      if (js.runtimeError) return { ok: false, detail: `JS runtime: ${js.runtimeError}` };
+      if (js.stdout !== expected) return { ok: false, detail: `JS expected ${JSON.stringify(expected)}, got ${JSON.stringify(js.stdout)}` };
+
+      const c = buildC(fixture("imported-method-intdiv-c", files, "main.lisp"));
+      if (!c.compiled) return { ok: false, detail: `C did not build: ${c.runtimeError ?? (c.diagnostics.join(", ") || "(none)")}` };
+      if (c.runtimeError) return { ok: false, detail: `C runtime (was the §15.2 trap): ${c.runtimeError}` };
+      if (c.stdout !== expected) return { ok: false, detail: `C expected ${JSON.stringify(expected)}, got ${JSON.stringify(c.stdout)}` };
+
+      return { ok: true, detail: `imported method field-assign division is Int on both backends: ${expected}` };
+    },
+  },
+
 ];
 
 function main() {
