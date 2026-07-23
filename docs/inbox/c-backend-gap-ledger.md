@@ -663,3 +663,62 @@ both paths. The real fix is either to implement `visitCondCase` on the leaf visi
 bodies through the HIR desugar that already handles it. A minimal guard would be any `library` module
 that uses `cond` and an example that imports and runs it — none exists today, which is why this sat
 latent until a stdlib module reached for `cond`.
+
+---
+
+## 11. Generator gaps, surfaced by G2's probes (2026-07-23)
+
+Three pre-existing defects found while adversarially probing `HYield` (Phase G2). **All three were
+confirmed identical before and after G2** — none is a regression. They share a cause: the corpus's only
+generators live in `13-generators/00` and `std/iter/linq`, and they all have the *same shape* — a
+top-level `:gen` whose body is a `while` loop. Every shape outside that is untested, and all three
+defects are outside it.
+
+### 11.1 A `:gen` whose body TAIL is a `(yield x)` is rejected — LL0223
+
+```lisp
+(fn :gen tailyield [] -> Iterator<Int> ((yield 1)))
+;; ELL0223 a ':gen' function stops with a valueless '(return)'; it cannot '(return x)'.
+```
+
+**This contradicts D31 directly.** That ruling's own table says *"implicit return of the tail —
+**suppressed.** A generator's tail value is not a sequence element."* The implicit-return desugar wraps
+the tail anyway, so `checkGeneratorRules` then sees a `(return <yield-expr>)` and fires LL0223 at a
+program that never wrote a value-`return`. Both backends, since it is a checker/desugar defect.
+
+D49a made `-> Void` bind by suppressing the same desugar, and the note there says `:gen` "already"
+does — the measurement says otherwise, at least for a tail yield. The fix belongs with whatever
+suppression D49a added. Latent because every corpus generator ends in a `while`, whose value is not a
+yield.
+
+### 11.2 An anonymous `(fn :gen [] ...)` does not parse
+
+```lisp
+(let g (fn :gen [] ((yield 1))))
+;; Expecting token of type --> LBracket <-- but found --> '(' <--
+```
+
+A plain anonymous lambda parses; a **named** `:gen` parses in every position. Only the anonymous
+generator is unreachable, and it is a grammar defect rather than a ruling — nothing in D31 says a
+generator must be named. Low priority (no corpus site wants one), recorded so the next person to try it
+does not assume it is a deliberate restriction.
+
+### 11.3 A nested `:gen` bound with `let` crashes the JS backend
+
+```lisp
+(fn outer [] -> Int (
+  (let g (fn :gen inner [] -> Iterator<Int> ...))
+  (for :each v :from (g) :then (console.log v))
+  (return 0)))
+;; Error: asExpression: 'VariableDeclaration' in expression position -- control flow must be HIR-lowered
+```
+
+An uncaught **exception**, not a diagnostic — the LL0100 totality net does not cover it. So nested
+generators are unusable on both backends today: JS crashes, and C refuses.
+
+**C's half is fixed here.** `lift` did not gate coroutines, so a nested `:gen`'s body was resolved and
+its `yield` surfaced as `LL0106 Cannot generate C for 'yield': no CIR lowering exists` — which files a
+**modeled, deliberately-deferred** construct as an *unmodeled* one, mislabelling the refusal frontier
+this ledger exists to measure. `lift` now calls `refuseCoroutine` like every other body-resolving path,
+so the answer is `LL0105 'inner' is a generator (:gen)` — the honest one, and it names the function
+rather than pointing at an expression. The JS crash is untouched and stays open.

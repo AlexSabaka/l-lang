@@ -1365,15 +1365,11 @@ export class ResolveHirToCir {
         return { src: h.src, ctype: C_VALUE, kind: "c-signal", condition: this.resolveExpr(h.condition) };
 
       case "yield":
-        // A8, until G4 lands the state-machine pass that CONSUMES this node.
-        //
-        // Normally unreachable: `refuseCoroutine` gates every path that resolves a `:gen` BODY
-        // (collectFunction, collectMethod, the on-demand imported body), so the honest LL0105 fires at
-        // the function before an expression is ever reached. The gap is a `:gen` LAMBDA -- `lift` does
-        // not gate coroutines, so a generator closure would arrive here. Refusing explicitly keeps that
-        // an A8 refusal rather than an LL0106 "no CIR lowering exists", which would file a modeled,
-        // deliberately-deferred construct as an unmodeled one and pollute the ledger's frontier.
-        this.ledger.record("A8", "generator", h.src, "yield reached CIR (a `:gen` lambda); state-machine pass not built yet");
+        // A8, until G4 lands the state-machine pass that CONSUMES this node. Defensive only:
+        // `refuseCoroutine` now gates EVERY path that resolves a `:gen` body -- collectFunction,
+        // collectMethod, the on-demand imported body, and (since G2) `lift` for a nested one -- so the
+        // honest LL0105 always fires at the function first. Kept because the exhaustiveness check
+        // requires an arm, and a silent fallthrough here would be worse than a loud one.
         throw this.refuse(h.src, "yield", "resolveExpr");
 
       default: {
@@ -3104,6 +3100,14 @@ export class ResolveHirToCir {
    * is the env the HIR does not model (spec A3 -- callee identity and closed-over state as a value).
    */
   private lift(fn: ast.FunctionNode, modeled?: Extract<HExpr, { kind: "closure" }>): CExpr {
+    // A8: a NESTED `:gen`/`:async` refuses here, at the function, exactly as a top-level one does in
+    // collectFunction. Without this the nested body was resolved anyway and its `yield` surfaced as
+    // LL0106 "no CIR lowering exists for 'yield'" -- which files a modeled, deliberately-deferred
+    // construct as an *unmodeled* one, mislabelling the ledger's refusal frontier. LL0105 is the
+    // honest answer, and it names the function rather than pointing at an expression.
+    if (this.refuseCoroutine(fn, fn.name ? ast.symbolName(fn.name) : "<anonymous>")) {
+      throw new Refusal("coroutine");
+    }
     if (!modeled) this.ledger.record("A3", "closure-lift", fn, "nested function lifted with an explicit captured environment (not in the HIR)");
     const id = this.liftCounter++;
     const baseName = fn.name ? mangleC(ast.symbolName(fn.name)) : "lam";
