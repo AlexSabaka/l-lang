@@ -395,6 +395,11 @@ export const C_PASSING: readonly string[] = [
   //   visitCondCase on the JS leaf path (works at top level and on C) -- a real gap tracked in the
   //   ledger. Regression outputs round to 6dp; everything else is byte-identical.
   "40-math/06_stats.lisp",
+  //   special -- gamma/lgamma, beta/lbeta, erf/erfc, and factorial/binomial-real for the regime past
+  //   int64. Goldens are closed forms: gamma(5)=24, gamma(1/2)=sqrt(pi), B(1/2,1/2)=pi, erf(1)=0.842701,
+  //   erf(x)+erfc(x)=1. The Numerical-Recipes erf is ~-3e-8 at 0 (rounds to -0); the example's r6
+  //   normalizes the signed zero so erf(0) prints 0. Byte-identical on both backends.
+  "40-math/07_special.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the

@@ -1,0 +1,31 @@
+-- gamma extends factorial: gamma(n) = (n-1)! --
+gamma 1      = 1
+gamma 2      = 1
+gamma 3      = 2
+gamma 4      = 6
+gamma 5      = 24
+gamma 0.5    = 1.772454
+gamma 1.5    = 0.886227
+-- lgamma: the overflow-proof log --
+lgamma 5     = 3.178054
+lgamma 171   = 706.573062
+-- beta from gammas --
+beta 2 3     = 0.083333
+beta 1 1     = 1
+beta .5 .5   = 3.141593
+-- error function --
+erf 0        = 0
+erf 1        = 0.842701
+erf 2        = 0.995322
+erf -1       = -0.842701
+erfc 0       = 1
+erfc 1       = 0.157299
+erf+erfc = 1 = 1
+-- factorial / binomial via gamma, landing on integers --
+fact-real 0  = 1
+fact-real 5  = 120
+fact-real 10 = 3628800
+lfact 10     = 15.104413
+binom 10 3   = 120
+binom 52 5   = 2598960
+lbinom 10 3  = 4.787492
