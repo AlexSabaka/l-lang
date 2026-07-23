@@ -964,6 +964,18 @@ export class EmitHirToEstree {
         } as ESTree.LogicalExpression;
       }
 
+      case "yield":
+        // D31/D58: byte-identical to the legacy arm this replaced (JSTransformerAstVisitor's
+        // `headId === "yield"` branch), which is the whole test for G2 -- a nodify that changes
+        // output changed semantics. `delegate` is false: l-lang has no `yield*`, and `concat`
+        // re-yields in a loop rather than delegating.
+        return {
+          type: "YieldExpression",
+          argument: h.argument ? this.emitExpr(h.argument) : null,
+          delegate: false,
+          loc: loc(h.src),
+        } as ESTree.YieldExpression;
+
       case "signal":
       case "invoke-restart":
         // D47 refused on JS (LL0108). Report the located diagnostic and emit the harmless `undefined`

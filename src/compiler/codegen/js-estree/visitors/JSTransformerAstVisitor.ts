@@ -2827,10 +2827,17 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         return ESTreeBuilder.returnStatement(node, this.asValue(returnValue, rest[0]));
       }
 
-      // `(yield x)` / `(yield)` -> a JS YieldExpression (D31). `yield` is a SPECIAL_FORM, so without
-      // this it fell through to the call path and emitted `_yield(x)` -- a call to a function that does
-      // not exist. Only legal inside a `:gen` function; the checker enforces that (Gb). An empty
-      // `(yield)` yields nil.
+      // `(yield x)` -> a JS YieldExpression. MODELED as `HYield` since G2 (D58): the live emission is
+      // `EmitHirToEstree`'s `case "yield"`, which builds the identical node, and this arm is now only
+      // the fallback for a yield reached through a subtree that stayed legacy (an un-lowered body, an
+      // opaque-stmt).
+      //
+      // MEASURED dead, not assumed: throwing here instead of emitting leaves the JS corpus at 185/0,
+      // codegen at 312/0 and C at 164/0 -- every yield in the tree, including all three generator
+      // files, goes through the node. Kept anyway, because deleting it does not FAIL, it MISCOMPILES:
+      // `yield` is a SPECIAL_FORM, so with no arm here it falls through to the call path and emits
+      // `_yield(x)`, a call to a function that does not exist. A guard that costs six lines beats a
+      // silent wrong answer on whatever first reaches the legacy path.
       if (head._type === "simple-identifier" && headId === "yield") {
         return {
           type: "YieldExpression",

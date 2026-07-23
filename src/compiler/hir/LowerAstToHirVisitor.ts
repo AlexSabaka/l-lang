@@ -717,7 +717,10 @@ export class LowerAstToHirVisitor {
         if (form.name === "return") return this.lowerReturn(node, form.args);
         // `quote` is DATA, not evaluated -- never lower its operand.
         if (form.name === "quote") return this.leaf(node, dest);
-        // new / yield / throw / typeof / delete / instanceof / in (and operand-less this / super):
+        // `(yield x)` is the suspension point -- a MODELED node (D58/G2), not a legacy leaf, because
+        // the native state-machine pass has to find it. JS emits it directly; see lowerYield.
+        if (form.name === "yield") return this.lowerYield(node, form.args, dest);
+        // new / throw / typeof / delete / instanceof / in (and operand-less this / super):
         // keep the special form legacy, atomize its operands through the HIR (the class name of a
         // `new` is a plain identifier, so it stays inline and constructor detection is unaffected).
         return this.lowerCallLike(node, dest);
@@ -1551,6 +1554,25 @@ export class LowerAstToHirVisitor {
       body: { stmts: this.lowerSeq(c.body ?? [], EFFECT).stmts },
     }));
     return { ...this.base(node), kind: "handle", body, clauses };
+  }
+
+  /**
+   * `(yield x)` -> the modeled `HYield` (D31/D58). The operand goes through the HIR like any other
+   * value-position child, so a compound argument hoists correctly instead of arriving raw.
+   *
+   * Not a diverging node, unlike `invoke-restart`: a `yield` SUSPENDS and is resumed, so control does
+   * come back and the value contract is an ordinary expression's. A valueless `(yield)` keeps a null
+   * argument -- the checker rejects it (LL0237), and lowering stays total rather than assuming the
+   * program is well-formed.
+   */
+  private lowerYield(node: ast.ListNode, args: ast.ASTNode[], dest: Dest): Lowered {
+    if (args.length === 0) {
+      return this.placeValue({ ...this.base(node), kind: "yield", argument: null }, [], dest);
+    }
+    const operand = this.lowerNode(args[0], VALUE);
+    if (operand.value === null) return { stmts: operand.stmts, value: null }; // operand diverged
+    const y: HExpr = { ...this.base(node), kind: "yield", argument: operand.value };
+    return this.placeValue(y, operand.stmts, dest);
   }
 
   private lowerSignal(node: ast.SignalNode, dest: Dest): Lowered {

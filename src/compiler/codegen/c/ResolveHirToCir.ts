@@ -1364,6 +1364,18 @@ export class ResolveHirToCir {
         // walk. No ledger record (mirrors invoke-restart; the A8 record lives on the installing form).
         return { src: h.src, ctype: C_VALUE, kind: "c-signal", condition: this.resolveExpr(h.condition) };
 
+      case "yield":
+        // A8, until G4 lands the state-machine pass that CONSUMES this node.
+        //
+        // Normally unreachable: `refuseCoroutine` gates every path that resolves a `:gen` BODY
+        // (collectFunction, collectMethod, the on-demand imported body), so the honest LL0105 fires at
+        // the function before an expression is ever reached. The gap is a `:gen` LAMBDA -- `lift` does
+        // not gate coroutines, so a generator closure would arrive here. Refusing explicitly keeps that
+        // an A8 refusal rather than an LL0106 "no CIR lowering exists", which would file a modeled,
+        // deliberately-deferred construct as an unmodeled one and pollute the ledger's frontier.
+        this.ledger.record("A8", "generator", h.src, "yield reached CIR (a `:gen` lambda); state-machine pass not built yet");
+        throw this.refuse(h.src, "yield", "resolveExpr");
+
       default: {
         const never: never = h;
         throw this.refuse((never as any).src, `hir:${(never as any).kind}`, "resolveExpr");

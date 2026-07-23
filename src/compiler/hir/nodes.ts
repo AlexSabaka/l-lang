@@ -49,6 +49,7 @@ export type HExpr =
   | HNil
   | HSignal
   | HInvokeRestart
+  | HYield
   | HTernary
   | HSeq
   | HMatchTest
@@ -324,6 +325,28 @@ export interface HInvokeRestart extends HBase {
   kind: "invoke-restart";
   name: string;
   args: HExpr[];
+}
+
+/**
+ * D31/D58 `(yield x)` -- the SUSPENSION POINT of a `:gen`, and a CORE SOURCE node.
+ *
+ * Core because BOTH backends emit it (A-0): JS builds a `YieldExpression` from it directly, and the
+ * native pipeline's state-machine pass CONSUMES it -- the spec's category 2, "emitted but lowered away
+ * on the native side," exactly as `match` is core-but-always-lowered. That is the difference between
+ * this node and the pass's own dispatch nodes, which are pipeline-introduced and non-core because JS
+ * never sees them.
+ *
+ * `argument` is the lowered operand. It is typed `HExpr | null` because the AST still admits a
+ * valueless `(yield)`, which the checker now rejects (LL0237, D58) -- the null arm exists so lowering
+ * stays total on a program that already reported an error, not because a valueless yield is meaningful.
+ *
+ * VALUE CONTRACT: a `yield` EXPRESSION evaluates to whatever resumed it. l-lang exposes no way to send
+ * a value back in -- `next` takes no argument (D30) -- so in practice that is always nil; the node
+ * carries the expression shape anyway because JS's `yield` is one and the two must not disagree.
+ */
+export interface HYield extends HBase {
+  kind: "yield";
+  argument: HExpr | null;
 }
 
 /** The peephole for a value-position `if` whose BOTH arms lowered to pure atoms -- `test ? then : else`. */
