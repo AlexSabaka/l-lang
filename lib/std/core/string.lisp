@@ -48,7 +48,9 @@
   ;; Space, tab, LF, CR -- and NOT the ~25 characters JS's `.trim` removes (it takes the whole of
   ;; Unicode White_Space plus BOM). C's `ll_str_trim` has always been exactly these four, so once
   ;; again this is JS narrowing to a stated rule rather than C growing to match a host library.
-  (fn ascii-space [c <- Int] -> Boolean (|| (== c 32) (|| (== c 9) (|| (== c 10) (== c 13)))))
+  ;; Kept as the name `trim` (below) already calls; the rule itself now lives once, in the public
+  ;; `is-space` at the foot of the module.
+  (fn ascii-space [c <- Int] -> Boolean (is-space c))
 
   ;; -- measurement and indexing --------------------------------------------------------------------
 
@@ -285,6 +287,111 @@
     (return (string-from-codepoints out))
   ))
 
+  ;; -- ASCII CHARACTER CLASSES (Tier-0) ------------------------------------------------------------
+  ;;
+  ;; Predicates over a CODEPOINT (Int), which is the representation this module works in end to end --
+  ;; `string-to-codepoints` decodes once, everything scans the Int[] , `string-from-codepoints`
+  ;; encodes once. A caller holding a String character passes `(codepoint-at s i)`; there is no `Char`
+  ;; type to receive, and a one-character String would raise the "" / multi-char questions these avoid.
+  ;;
+  ;; ASCII-RULED, exactly like `upcase`/`downcase`/`trim` above and for the same reason (the header):
+  ;; where the hosts disagree (JS's `.trim` takes all of Unicode White_Space; case folding is
+  ;; locale-shaped), l-lang states a small rule both backends implement identically. Unicode-aware
+  ;; classes are a separate, later story with a table behind them; these are the bytes `parse-int` and
+  ;; a hand-written scanner actually need.
+  (fn is-digit [c <- Int] -> Boolean (&& (>= c 48) (<= c 57)))
+  (fn is-upper [c <- Int] -> Boolean (&& (>= c 65) (<= c 90)))
+  (fn is-lower [c <- Int] -> Boolean (&& (>= c 97) (<= c 122)))
+  (fn is-alpha [c <- Int] -> Boolean (|| (is-upper c) (is-lower c)))
+  (fn is-alnum [c <- Int] -> Boolean (|| (is-alpha c) (is-digit c)))
+  ;; The four whitespace characters the rest of the module already rules on (space, tab, LF, CR). The
+  ;; private `ascii-space` delegates here now, so the rule lives in exactly one place.
+  (fn is-space [c <- Int] -> Boolean
+    (|| (== c 32) (|| (== c 9) (|| (== c 10) (== c 13)))))
+
+  ;; -- INTEGER PARSING (Tier-0) --------------------------------------------------------------------
+  ;;
+  ;; The single highest-value function in the stdlib roadmap: without it a program cannot read a
+  ;; number from a file, stdin, or its own argv -- the first thing most real programs do.
+  ;;
+  ;; TWO NAMES, the try- convention the whole stdlib follows (`read-file` / `try-read-file`):
+  ;;
+  ;;   (parse-int s)       -> Int    THROWS on anything unparseable -- the default, because a program
+  ;;                                 that KNOWS it has a number wants the failure to be loud.
+  ;;   (try-parse-int s)   -> Int?   answers nil instead -- for untrusted input, where "not a number"
+  ;;                                 is an expected answer, not a defect.
+  ;;
+  ;; `try-parse-int` is the primitive; `parse-int` wraps it. (This overrides the roadmap's earlier
+  ;; sketch of a total `parse-int -> Int?`: the tree's convention is base-throws, and "two conventions,
+  ;; never three" says match it.)
+  ;;
+  ;; STRICT grammar, stated rather than discovered: an optional leading `+`/`-`, then ONE OR MORE ASCII
+  ;; digits, and nothing else. No surrounding whitespace (the caller has `trim`), no underscores, no
+  ;; radix prefix, base 10 only. Empty, a lone sign, and any trailing character all answer nil.
+  ;;
+  ;; OVERFLOW IS DETECTED, NEVER SUFFERED, and this is the whole subtlety. D51 makes Int a 64-bit
+  ;; wrapping value on BOTH backends -- INT64_MAX+1 measured as INT64_MIN on JS and C alike -- so the
+  ;; check must never COMPUTE an out-of-range value, only predict one. Two consequences:
+  ;;
+  ;;   * Accumulate toward the NEGATIVE. |INT64_MIN| is one larger than INT64_MAX, so building the
+  ;;     magnitude as a positive would have no room for INT64_MIN itself. Accumulating `acc*10 - d`
+  ;;     toward MIN does, and positive results negate at the end.
+  ;;   * The check is DIVISION-FREE, and that is deliberate. The natural form -- `acc < (MIN + d) / 10`
+  ;;     -- is an `Int / Int`, and an imported body's `Int / Int` still lowers to REAL division on the C
+  ;;     backend (gap ledger 15.7), which loses the low digits of a near-INT64_MIN limit and lets the
+  ;;     boundary wrap. So the limit is precomputed as a constant instead: `Q = INT64_MIN / 10`
+  ;;     (= -922337203685477580, and INT64_MIN = Q*10 - 8), and the per-digit test is a pair of
+  ;;     comparisons. No literal for INT64_MIN itself, which also sidesteps its -Wimplicitly-unsigned
+  ;;     spelling on C.
+  ;;
+  ;; The one asymmetry the negative accumulator leaves: a POSITIVE INT64_MAX+1 accumulates to exactly
+  ;; INT64_MIN without tripping the per-digit check, and negating INT64_MIN would wrap. So a
+  ;; non-negative result equal to INT64_MIN is its own overflow.
+  (fn try-parse-int [s <- String] -> Int? (
+    (let cps (string-to-codepoints s))
+    (let n cps.length)
+    (when (== n 0) :then (return nil))
+
+    (mut i 0)
+    (mut neg false)
+    (let c0 cps[0])
+    (when (== c0 45) :then ((neg := true) (i := 1)))   ;; '-'
+    (when (== c0 43) :then (i := 1))                    ;; '+'
+    (when (>= i n) :then (return nil))                  ;; a sign with no digits
+
+    (let Q -922337203685477580)   ;; INT64_MIN / 10, truncated toward zero. INT64_MIN = Q*10 - 8.
+    (mut acc <- Int 0)
+    (while (< i n) (
+      ;; `c`/`d` annotated Int so the comparisons stay Int on both backends.
+      (let c <- Int cps[i])
+      (when (== (is-digit c) false) :then (return nil)) ;; any non-digit fails the whole parse
+      (let d <- Int (- c 48))                           ;; '0' is 48
+      ;; Would `acc*10 - d` fall below INT64_MIN? True when acc is already past MIN/10, or exactly at
+      ;; it with a digit past the remainder (8). Comparisons only -- no division to lose (15.7).
+      (when (|| (< acc Q) (&& (== acc Q) (> d 8))) :then (return nil))
+      (acc := (- (* acc 10) d))
+      (i := (+ i 1))
+    ))
+
+    (when neg :then (return acc))
+    ;; +INT64_MAX+1 accumulated to exactly INT64_MIN (= Q*10 - 8); negating it would wrap.
+    (when (== acc (- (* Q 10) 8)) :then (return nil))
+    (return (- 0 acc))
+  ))
+
+  (fn parse-int [s <- String] -> Int (
+    (let r (try-parse-int s))
+    ;; A nil-guard that THROWS narrows the fall-through: after this line `r` is a plain `Int`, so
+    ;; `(return r)` returns `Int`, not `Int?`. (The other two shapes both fail today, measured: a
+    ;; positive `(if (!= r nil) (return r))` does not carry its narrowing to the return type -- LL0213 --
+    ;; and a value-position `match` with a throwing arm hits a JS codegen bug, ledger 16.1. This form
+    ;; works on both backends.)
+    (if (== r nil) (throw (Error (+ "cannot parse integer: " s))))
+    (return r)
+  ))
+
   (export strlen substr upcase downcase trim split join contains starts-with ends-with
-          char-at pad-start pad-end repeat format-args)
+          char-at pad-start pad-end repeat format-args
+          is-digit is-alpha is-alnum is-space is-upper is-lower
+          parse-int try-parse-int)
 )

@@ -42,6 +42,11 @@ export const C_PASSING: readonly string[] = [
   "03-loops/04_foreach.lisp",
   "03-loops/05_while.lisp",
   "17-strings/00_strings.lisp",
+  // The Tier-0 string shelf: ASCII char classes + integer parsing with its try- twin. Pure l-lang
+  // over codepoints, so both backends must agree -- the interesting lines are the four INT64
+  // overflow boundaries, where D51's wrap would make a naive parser diverge. The overflow check is
+  // division-free on purpose (ledger 15.7: an imported body's Int/Int is real division on C).
+  "17-strings/01_parse_and_classes.lisp",
   // Ratcheted in by the first full-corpus run (passed without being targeted):
   "05-data-structures/03_matrices.lisp",
   "07-types/00_primitives.lisp",

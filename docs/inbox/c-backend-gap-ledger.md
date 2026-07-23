@@ -1194,3 +1194,39 @@ level.
 Verified by removing a workaround: `snake/core.lisp` uses `let` constants and its header says why
 ("DIRECTIONS ARE Int CONSTANTS, NOT A `defenum`, AND THAT IS FORCED"). Converting them back to the
 `defenum` it wanted keeps snake green on both backends against its authored golden.
+
+### 15.7 OPEN (Lane B) — an imported body's `Int / Int` with a LOCAL operand is REAL division on C
+
+Found while building `parse-int` (Tier-0). The C-side residual of N14: S1a fixed the JS inliner's type
+channel for imported bodies, but the C backend's imported-body lowering does not get a LOCAL's Int
+type into the `isIntDivision` (D49d) decision, so `(/ Int Int)` degrades to double division.
+
+Precise trigger, bisected:
+
+- imported function, division of **parameters** → integer division, correct (`idiv [a <- Int b <- Int]`).
+- imported function, division involving a **local** (even `(let d <- Int (- x 48))`) → **double**:
+  emitted `(int64_t)(((double)((INT64_C(100) + u_d)) / (double)(INT64_C(10))))`.
+
+**Silent, and only wrong past 2^53**, where a double can no longer represent the integer exactly. For
+small values the double round-trips and the answer is right, which is why it hid — the failure surfaces
+only at a near-INT64 boundary. It is the same family as 15.2 (the field-assignment trap), narrowed: a
+parameter carries its type through the C signature, a local does not.
+
+**Worked around, not blocking:** `try-parse-int`'s overflow check is written DIVISION-FREE
+(precomputed `Q = INT64_MIN / 10`, comparisons only) precisely so it is robust regardless of this gap.
+The real fix is to carry local-node types into the C imported-body lowering, the C analog of what S1a
+did for JS.
+
+## 16. Codegen findings surfaced by the Tier-0 stdlib build (2026-07-23)
+
+### 16.1 OPEN — a value-position `match` with a THROWING arm emits invalid JS
+
+`parse-int` was first written as `(match (try-parse-int s) { nil => (throw ...) v => v })` — a match in
+VALUE position (its result is the function's return value) with one arm that throws and one that yields.
+On C this compiles and runs correctly; on JS it is **ELL0101** ("the JS backend emitted code that is
+not valid JavaScript"), so no file is written. A guard-`if` that throws on nil and returns on the
+fall-through works on both backends and is what `parse-int` uses instead.
+
+Minimal: a value-position match where one arm is a bare `(throw ...)` and another yields a value. The
+throwing arm produces a statement where the JS emitter expects an expression. Its own commit; not
+chased inside the Tier-0 build.
