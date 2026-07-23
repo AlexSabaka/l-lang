@@ -316,6 +316,14 @@ export const C_PASSING: readonly string[] = [
   // a String and a hand-written Iterable each CRASHED the emitter, and an `Iterable<T>` parameter
   // compiled clean and trapped on data.
   "80-adversarial/iteration_protocol.lisp",
+  // The `Iterable<T>` PARAMETER the line above claims and does not test. Written expecting red (the
+  // prediction was `mapType`'s shared class|struct|interface arm giving the slot `{k:"obj"}`, so an
+  // array reaching it would need a `c-cast vec -> obj` the emitter cannot write) and came back green:
+  // the arm is never reached, because neither the symbol table nor `typeNodeToCType` resolves an
+  // erased interface, so `declareParam` falls through to boxed. Right answer, reached by two lookups
+  // failing rather than by a decision -- which is exactly why it wants a guard. Phase G4 leans on it:
+  // every std/iter/linq terminal takes `coll <- Iterable<T>`, so a generator reaches C through here.
+  "80-adversarial/interface_typed_slot.lisp",
   // `deep-copy` on the floor, and told apart from D11's STORE copy -- pointing it at `ll_copy` would
   // have shared a vector's elements here and copied them on JS.
   "80-adversarial/deep_copy_floor.lisp",
