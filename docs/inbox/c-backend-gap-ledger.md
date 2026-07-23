@@ -973,7 +973,7 @@ form of it (pulling through the returned value must advance the ORIGINAL — a c
 and the container arm, so the file says which arm is which rather than implying every `iter` is
 identity.
 
-### 14.4 Not built: `for :each` disposal at exit edges
+### 14.4 Not built: `for :each` disposal at exit edges **[UNBLOCKED 2026-07-23 — needs a RULING]**
 
 D58 also specifies the compiler half — "dispose on statically known exit edges — exhaustion and an
 early `return` crossing the loop". **G5 does not build it**, and the reason is a consequence of 14.3
@@ -988,6 +988,30 @@ available form therefore either diverges across backends (dispose the cursor) or
 
 The library half — which D58 itself calls "where the real leak lives" — is unaffected and is built:
 `take`, `take-while` and `zip` own their `coll` parameter and are abandoning it by construction.
+
+**S2b changed the situation, and it is now a decision rather than an obstacle.** 14.3 is closed, so a
+cursor is the SAME OBJECT on both backends and disposing it would mean the same thing in both places.
+The mechanism D58 originally specified — dispose the cursor, not the collection — is available again.
+
+What is left is a semantics call with real breakage potential, and it is not the compiler's to make:
+
+**Should `for :each` dispose the cursor it obtained?**
+
+- **For a generator** — clearly yes. It is single-use, the loop is what exhausted or abandoned it, and
+  `.return()` / `ll_dispose` is exactly the hook.
+- **For an `Iterable` whose `iterator()` returns a FRESH cursor** — yes, and this is the C# `foreach`
+  semantics the split was modelled on.
+- **For a type whose `iterator()` returns `this`** — this is the hazard. Cursor and collection are one
+  object, so an ordinary loop would dispose the SOURCE, and a second loop over the same value would
+  find it spent. Note C# has exactly this hazard and accepts it: a class that implements both
+  interfaces and hands back `this` *does* get disposed by `foreach`. The counter-argument is that
+  l-lang's corpus writes `(fn iterator [] -> Iterator<T> (return this))` as the idiom, so the hazard
+  would be the common case here rather than the exotic one.
+
+Three defensible answers: dispose always (C# semantics, accept the hazard); dispose only what the loop
+itself created (a generator, or a cursor not identical to the source — narrow and safe, but a rule with
+an `if` in it); or leave `for :each` alone and keep disposal purely in the library, where `take` /
+`take-while` / `zip` already do it by construction. **Not chosen unilaterally.**
 
 ## 15. The module boundary, root-caused (Phase S1, 2026-07-23)
 
