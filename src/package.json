@@ -18,6 +18,7 @@
     "test:type-errors": "ts-node test/type-errors.ts",
     "test:diagnostics": "ts-node test/diagnostics.ts",
     "test:imports": "ts-node test/imports.ts",
+    "test:memory": "ts-node test/memory.ts",
     "test:codegen": "ts-node test/codegen.ts",
     "test:repl": "ts-node test/repl.ts",
     "grammar:ebnf": "ts-node test/export-grammar.ts",

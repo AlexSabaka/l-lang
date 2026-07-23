@@ -140,6 +140,11 @@ examples/**/*.json
 examples/**/*.c
 src/test/.compiled/
 src/test/.compiled-c/
+# The memory suite compiles its fixture in place when driven by the CLI by hand; the suite itself
+# writes into .compiled-c/. Either way the emitted artifacts are build output, not sources.
+src/test/fixtures/**/*.c
+src/test/fixtures/**/*.js
+src/test/fixtures/**/*.js.map
 # The REPL writes its replayed program here so AstProvider (which can only read from disk)
 # can parse it. ReplSession.dispose() removes it; this catches a hard crash.
 .llang-repl.lisp
