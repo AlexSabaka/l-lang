@@ -165,9 +165,26 @@ export class ClassBuilder {
   private processExtends(node: ast.ClassNode): void {
     if (node.extends && node.extends.length > 0) {
       const parentClass = node.extends[0];
+      const parentName = parentClass.type.name;
+      // If the parent is an IMPORTED class, `extends` must name its INLINED binding, not the source
+      // spelling (E2). An inlined `IndexError` otherwise emitted `extends ValueError`, and `ValueError`
+      // -- renamed to `__ll_inlined_ValueError_1` by the import inliner -- is undefined, so the class
+      // would not even define. Routing the parent through `ensureSymbolInlined` both pulls its
+      // definition into `inlinedDefinitions` (so it exists) and returns the inlined name to extend --
+      // the class analog of what `ensureEnumInlined` did for enum members (S1d). A same-file or ambient
+      // parent (e.g. the host `Error`) resolves to nothing importable and keeps its source name.
+      let emittedName = parentName;
+      try {
+        const resolved = this.context.symbolTable.resolveSymbol(parentName as any, parentClass as any);
+        if (resolved && this.visitor.isImportedSymbol?.(resolved)) {
+          emittedName = this.visitor.ensureSymbolInlined(resolved);
+        }
+      } catch {
+        // resolution failure -> keep the source name; nothing importable to rewrite to.
+      }
       this.superClass = {
         type: "Identifier",
-        name: parentClass.type.name,
+        name: emittedName,
         loc: loc(parentClass)
       };
     }

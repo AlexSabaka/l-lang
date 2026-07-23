@@ -105,6 +105,11 @@ export const C_PASSING: readonly string[] = [
   // `__ll_is_type` (by name, chain-walking) instead of `instanceof <bareName>` -- which was a
   // ReferenceError on JS once the import inliner renamed the class. C single-level already worked.
   "18-error-handling/20_imported_error_catch.lisp",
+  // E2: a TWO-LEVEL imported error hierarchy (IndexError -> ValueError -> Error), constructed with
+  // structured data, thrown, caught by precise/base/root type. JS was broken (inlined child emitted
+  // `extends <bareParent>`); C was broken (`ensureClassRegistered` never registered the imported
+  // parent, so the class chain was incomplete). Both fixed.
+  "18-error-handling/21_imported_error_tower.lisp",
   // Phase-0 finally-drop fix: `finally` runs on EVERY exit from a try (return / return-in-catch /
   // rethrow-propagation / nested), and a `return`-in-try restores ll_handler_top. Inline-finalizer
   // routing in EmitCirToC (no runtime rework). See examples' headers + DECISIONS D12/D47.

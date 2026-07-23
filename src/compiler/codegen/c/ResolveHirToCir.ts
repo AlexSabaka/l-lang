@@ -3320,6 +3320,16 @@ export class ResolveHirToCir {
       // definition, never a second definition.
       const declared = ast.symbolName((val as any).name) ?? name;
       if (!this.classes.has(declared)) {
+        // Register the `:extends` PARENT first (E2). An imported class was registered on demand but
+        // its parent never was, so registering an imported `IndexError` left `ValueError` absent from
+        // the class registry -- the `ll_is_type` chain walk could not find it (a `catch :of ValueError`
+        // on a thrown `IndexError` matched nothing), and `collectClassMembers`' field flattening had no
+        // parent layout to inherit `message` from. Recurse the chain here; it terminates at the ambient
+        // builtin `Error` (a `let :extern`, not a struct/class, so the guard above returns false for
+        // it) which C already has registered. Idempotent via the `classes.has` guard, so a diamond or a
+        // re-reference does not loop.
+        const parent = this.extendsName(val as ast.StructNode | ast.ClassNode);
+        if (parent && !this.classes.has(parent)) this.ensureClassRegistered(parent, node);
         this.ledger.record("A9-extern", "imported-class", node, `imported class '${declared}' registered + methods lowered on demand (class analog of imported-body)`);
         this.collectClassMembers(this.desugaredCopyOf(val) as ast.StructNode | ast.ClassNode);
       }
