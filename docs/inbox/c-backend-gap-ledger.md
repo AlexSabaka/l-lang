@@ -963,3 +963,74 @@ available form therefore either diverges across backends (dispose the cursor) or
 
 The library half — which D58 itself calls "where the real leak lives" — is unaffected and is built:
 `take`, `take-while` and `zip` own their `coll` parameter and are abandoning it by construction.
+
+## 15. The module boundary, root-caused (Phase S1, 2026-07-23)
+
+Phase S1 exists because two independent audits converged: Dove's stdlib roadmap wanted to roughly
+double the module count, and `../l-lang-games` — the project's first multi-file programs — measured
+nine distinct failures crossing a file boundary. See `docs/inbox/stdlib-games-recon.md`.
+
+### 15.1 N14 — an imported body lost its static types **[CLOSED 2026-07-23, JS]**
+
+The most expensive finding the games corpus produced: `(/ Int Int)` in an IMPORTED body silently
+became REAL division, so a function declared `-> Int` returned `3.5` on JS with no diagnostic from
+either backend. It produced a correct minesweeper board on C and a wrong one on JS from one source
+file.
+
+**Two root causes, in series. Both had to go.**
+
+*(a) The compiler has TWO trees per module and the symbol table indexed the wrong one.* The stage
+order is `symbols -> desugar -> types`, deliberately — `Context`'s desugar comment explains it cannot
+move, because the scope index is built over the pre-desugar tree and `scopeOf` climbs `_parent` back
+into it. But `DesugarAstVisitor` REBUILDS nodes, so afterwards `SymbolEntry.value` still pointed at
+pre-desugar objects while type inference — and therefore `Context.nodeTypes` — worked on the new ones.
+Measured on the two-file repro: the two trees carry the SAME source spans (`33..49`, `41..48`,
+`44..45`, `46..47`) and share **no object identity at all**. Fixed by
+`SymbolTable.repointAfterDesugar`, matching on kind + exact span, root entries only.
+
+*(b) `Context.nodeTypes` was REPLACED per module rather than accumulated.* Imports are processed in
+the symbols stage (`BuildDependencyGraphAstVisitor` recurses into `process(..., "types")`), which
+published the imported module's node types — and the importer's own types stage then overwrote them.
+The map is identity-keyed and modules own distinct nodes, so accumulating is sound and cannot
+overwrite an answer.
+
+*(c) and the inliner then discarded what (a) and (b) restored.* `desugaredCopyOf` is
+`DesugarAstVisitor.visit(cloneNode(node))` — a fresh tree by construction, with no identity in the
+channel. `carryTypesInto` now transfers the original's types onto the copy through
+`recordSynthesizedNodeType`, the seam built for exactly this ("a fresh node object has no entry and
+the decisions would silently degrade").
+
+Guard: `test/imports.ts`, "S1a: an imported body keeps its static types". Red before, green after,
+goldens derived from D49d rather than captured.
+
+### 15.2 OPEN (Lane B) — `field := (/ Int Int)` in an IMPORTED METHOD traps on C
+
+Found while removing the games repo's `int-div` workaround to prove 15.1 — which is what the
+workaround-removal test is for. **Pre-existing and NOT caused by S1a**: verified against a clean
+`git worktree` at `02a33d0`, where the emitted C is byte-identical.
+
+```
+(defclass C1 (mut lines <- Int 25) (mut lvl <- Int 0)
+    (fn calc [] -> Void (this.lvl := (/ this.lines 10))))     ;; in lib.lisp, IMPORTED
+```
+```c
+ll_value __ll_st0 = ll_box_real(((double)(ll_unbox_int((__self)->fields[0])) / (double)(INT64_C(10))));
+(__self)->fields[1] = __ll_st0;      /* a Real into an Int field -> TypeError: expected an Int */
+```
+
+|                       | HEAD (02a33d0) | after S1a |
+|---|---|---|
+| JS | `2.5` — N14's wrong answer | **`2`** — fixed |
+| C  | `TypeError: expected an Int` | `TypeError` — unchanged |
+
+**This refines N14's write-up.** The games report says C "re-coerces at the next typed parameter and
+lands on the right answer by accident". That holds for a free function; in the field-assignment shape
+it is a hard trap instead. Narrowed by bisection — a free function is fine, returning the quotient is
+fine, and it is specifically ASSIGNING an int quotient to a field inside an imported method. Same
+shape in a single file is correct on both backends.
+
+### 15.3 OPEN (Lane B) — N12 survives S1a
+
+`.length` on an imported module-level vector still emits `ll_dyn_length(u_GLYPHS)` against an
+`ll_vec*`. Re-measured after 15.1 on the hypothesis that it shared the missing-type root; it does not.
+A missed box on the hoisted-global path, and a C-side fix.

@@ -968,6 +968,88 @@ const CASES: Case[] = [
     },
   },
 
+  // S1a / N14 -- the most expensive finding the games repo produced, and the reason Phase S1 exists.
+  {
+    name: "S1a: an imported body keeps its static types -- `(/ Int Int)` stays integer division",
+    why:
+      "D49d decides division from the STATIC types of the operands, at HIR lowering " +
+      "(LowerAstToHirVisitor.isIntDivision reads args[].type). Across an import those types were " +
+      "GONE, so `/` fell back to the generic operator shim and a function declared `-> Int` " +
+      "returned 3.5 -- silently, with no diagnostic from either backend, and with the two backends " +
+      "disagreeing (C re-coerced at the next typed parameter and landed on the right answer by " +
+      "accident). It produced a correct minesweeper board on C and a wrong one on JS from one source " +
+      "file.\n" +
+      "ROOT CAUSE: `Context.nodeTypes` was REPLACED per module, not accumulated. The dependency-graph " +
+      "pass (symbols stage) recurses into each import and publishes ITS node types; the importer's own " +
+      "types stage then overwrites the channel. By codegen the imported body's types no longer exist, " +
+      "and the on-demand HIR lowering of an inlined body reads an empty map. The map is identity-keyed " +
+      "by AST node and modules own distinct node objects, so accumulating is sound.\n" +
+      "The goldens below are derived from D49d, not captured: 7/2=3, 1/9=0, 7/2=3.",
+    run: () => {
+      const entry = fixture(
+        "imported-int-division",
+        {
+          "lib.lisp":
+            `(\n` +
+            `  ;; a free function -- the minimal shape\n` +
+            `  (fn half [n <- Int] -> Int (return (/ n 2)))\n` +
+            `  ;; both operands LITERAL: proves the Int literal keeps its BigInt-ness across the boundary\n` +
+            `  (fn seven-halved [] -> Int (return (/ 7 2)))\n` +
+            `  ;; the shape that actually bit -- a method recovering a row from a flat index\n` +
+            `  (defclass Grid\n` +
+            `    (let :ctor width <- Int 9)\n` +
+            `    (fn row-of [i <- Int] -> Int (return (/ i this.width))))\n` +
+            `  (export half seven-halved Grid)\n` +
+            `)\n`,
+          "main.lisp":
+            `(\n` +
+            `  (import "lib.lisp")\n` +
+            `  ;; a SAME-FILE control: this shape has always been correct and must stay correct\n` +
+            `  (fn local-half [n <- Int] -> Int (return (/ n 2)))\n` +
+            `  (let g (new Grid 9))\n` +
+            `  (console.log (half 7) (seven-halved) (g.row-of 1) (local-half 7))\n` +
+            `)\n`,
+        },
+        "main.lisp"
+      );
+      const out = build(entry);
+
+      if (!out.compiled || out.runtimeError) {
+        return {
+          ok: false,
+          detail: out.runtimeError ? `runtime: ${out.runtimeError}` : "did not compile",
+        };
+      }
+
+      // 7/2 -> 3, 7/2 -> 3, 1/9 -> 0, 7/2 -> 3. Every one truncates, per D49d.
+      if (out.stdout !== "3 3 0 3") {
+        return {
+          ok: false,
+          detail:
+            `expected "3 3 0 3", got ${JSON.stringify(out.stdout)} ` +
+            `-- a fractional answer means the imported body lost its types and took the generic '/' shim`,
+        };
+      }
+
+      // The stronger assertion, and the one that survives a lucky answer: the IMPORTED body must
+      // emit `__ll_intdiv`, not the generic `_2f` operator shim. Output alone would go green on a
+      // backend that re-coerces downstream, which is exactly how this hid on C.
+      const code = out.code ?? "";
+      const inlinedHalf = /function __ll_inlined_half\w*\([^)]*\)\s*{[^}]*}/.exec(code)?.[0] ?? "";
+      if (!inlinedHalf) {
+        return { ok: false, detail: "premise gone: `half` is no longer inlined under a mangled name" };
+      }
+      if (!/__ll_intdiv/.test(inlinedHalf)) {
+        return {
+          ok: false,
+          detail: `the inlined body still uses the generic '/' shim: ${inlinedHalf.replace(/\s+/g, " ")}`,
+        };
+      }
+
+      return { ok: true, detail: "imported bodies divide as Int; the same-file control is unchanged" };
+    },
+  },
+
 ];
 
 function main() {

@@ -636,6 +636,86 @@ export class SymbolTable {
   }
 
   /**
+   * Re-point this module's top-level entries at the DESUGARED nodes (S1a).
+   *
+   * There are two trees per module and the symbol table indexes the wrong one. The stage order is
+   * symbols -> desugar -> types, deliberately (the desugar comment in Context explains why it cannot
+   * move: the scope index is built over the pre-desugar tree and `scopeOf` climbs `_parent` back into
+   * it). But `DesugarAstVisitor` REBUILDS nodes, so after it runs, `SymbolEntry.value` still points at
+   * pre-desugar objects while everything downstream -- type inference, and therefore `Context.nodeTypes`
+   * -- works on the new ones.
+   *
+   * For the module being compiled that is harmless: codegen walks the desugared tree directly and never
+   * consults `entry.value` for its own bodies. For an IMPORTED module it is the N14 bug. The JS inliner
+   * emits `resolved.value` -- the pre-desugar body -- and the on-demand HIR lowering then asks the type
+   * channel about nodes that were never typed, because the typed copies are different objects. Every
+   * type-driven decision degrades at once: `(/ Int Int)` loses D49d's integer division and an Int
+   * literal loses its BigInt suffix.
+   *
+   * Measured on the two-file repro: the two trees carry the SAME source ranges (`33..49`, `41..48`,
+   * `44..45`, `46..47`) and share no object identity at all -- which is both the proof and the fix.
+   * Matching on `_type` + exact source range is unambiguous: a rebuild preserves the span a construct
+   * occupies, and two different constructs of the same kind cannot occupy the same span.
+   *
+   * Only ROOT entries are re-pointed. A local or a class member never crosses a module boundary as a
+   * free name (the same cut `isVisibleFrom` and `moduleOffering` make), so nothing else can be reached
+   * through an import, and leaving them alone keeps the change as small as the bug.
+   *
+   * Returns the number of entries re-pointed -- the instrument. A module whose count is 0 while it
+   * declares top-level names means the match failed and N14 is silently back.
+   */
+  repointAfterDesugar(moduleFile: string, desugared: ast.ASTNode): number {
+    const root = this.rootFor(moduleFile);
+    if (!root) return 0;
+
+    const key = (n: any): string | undefined => {
+      const s = n?._location?.start?.offset;
+      const e = n?._location?.end?.offset;
+      if (s === undefined || e === undefined) return undefined;
+      return `${n._type}@${s}..${e}`;
+    };
+
+    // Index the desugared tree by kind+span. First writer wins: an outer node is visited before the
+    // inner one it wraps, and a definition is the outermost thing at its own span.
+    const index = new Map<string, ast.ASTNode>();
+    const seen = new Set<any>();
+    const walk = (n: any): void => {
+      if (!n || typeof n !== "object" || seen.has(n)) return;
+      seen.add(n);
+      if (n._type) {
+        const k = key(n);
+        if (k !== undefined && !index.has(k)) index.set(k, n as ast.ASTNode);
+      }
+      for (const prop of Object.keys(n)) {
+        if (prop === "_parent" || prop === "_location") continue;
+        const v = n[prop];
+        if (Array.isArray(v)) v.forEach(walk);
+        else if (v && typeof v === "object") walk(v);
+      }
+    };
+    walk(desugared);
+
+    let repointed = 0;
+    for (const entry of root.table.values()) {
+      const k = key(entry.value);
+      if (k === undefined) continue;
+      const replacement = index.get(k);
+      if (replacement && replacement !== entry.value) {
+        entry.value = replacement;
+        repointed++;
+      }
+    }
+
+    // The entries moved, so any cached view of them is stale.
+    if (repointed > 0) {
+      this.cacheValid = false;
+      this.indexValid = false;
+      this.symbolCache.clear();
+    }
+    return repointed;
+  }
+
+  /**
    * Merge another module's symbols into this table. Keyed by the MODULE, and idempotent.
    *
    * `this.scopes` is a FOREST of module roots, and `resolveSymbol`'s flat root-union is what makes a

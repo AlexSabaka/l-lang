@@ -580,6 +580,16 @@ export class Context {
     const desugarVisitor = new DesugarAstVisitor(this, true);
     ast = desugarVisitor.visit(ast) as ASTNode;
 
+    // The desugarer REBUILT the tree, so this module's top-level symbols now point at nodes nothing
+    // downstream will ever see again (S1a / N14). Re-point them before the types stage runs, so that
+    // `SymbolEntry.value` and `Context.nodeTypes` agree about which objects the module is made of.
+    //
+    // This is what makes an IMPORTED body carry its types: the JS inliner emits `resolved.value`, and
+    // until now that was the pre-desugar copy, whose nodes were never typed. See
+    // `SymbolTable.repointAfterDesugar` for the measurement and the matching rule.
+    this.symbolTable.repointAfterDesugar(fullPath, ast as ASTNode);
+    moduleSymbols.repointAfterDesugar(fullPath, ast as ASTNode);
+
     const desugaredNodeCount = this.countNodes(ast);
     const desugarVisitCount = (comptimeVisitor as any).getVisitCount?.() || 0;
     this.performanceMetrics.endTimer("desugar", desugaredNodeCount, desugarVisitCount, {
@@ -617,8 +627,34 @@ export class Context {
     // wrapped around EVERY value on the chance it might be a struct.
     //
     // It can ask now.
-    this.nodeTypes =
-      inferTypesVisitor.getTypeEnvironment()?.getNodeTypes() ?? new Map();
+    //
+    // ACCUMULATED, NOT REPLACED (S1a / N14), and the difference is a silent wrong answer.
+    //
+    // `getNodeTypes()` returns the types of the module JUST inferred, and this used to assign them
+    // over the channel. But imports are processed EARLIER, in the symbols stage a hundred lines up:
+    // `BuildDependencyGraphAstVisitor` recurses into each imported module's `process(..., "types")`,
+    // which publishes ITS node types here -- and then this line threw them away when the importer's
+    // own types stage arrived. By codegen, only the root module's types existed.
+    //
+    // Codegen still needs them. An INLINED imported function body is lowered on demand (the body seam
+    // in JSTransformerAstVisitor: "Any function body the root-module lowering never walked"), and that
+    // lowering reads this channel for every decision it makes. With the map emptied of the imported
+    // module's nodes, `isIntDivision` saw two untyped operands and `(/ Int Int)` -- integer division
+    // by D49d -- fell back to the generic `/` shim. A function declared `-> Int` returned 3.5, on JS,
+    // with no diagnostic; C re-coerced at the next typed parameter and got the right answer by
+    // accident, so the two backends disagreed. The same channel loses the Int literal's BigInt-ness,
+    // which is why the emitted call was `_2f(n, 2)` and not `__ll_intdiv(n, 2n)`.
+    //
+    // Merging is sound because the map is IDENTITY-KEYED by AST node and each module owns distinct
+    // node objects: two modules cannot collide on a key, so accumulation cannot overwrite an answer,
+    // only add ones that were previously missing. (A re-processed module in a reused Context yields a
+    // fresh parse and therefore fresh nodes; its stale entries are unreachable rather than wrong --
+    // the same property `SymbolTable.join` relies on, one key per module.)
+    const inferred = inferTypesVisitor.getTypeEnvironment()?.getNodeTypes();
+    if (inferred) {
+      const channel = this.nodeTypes as Map<ASTNode, InferredType>;
+      for (const [node, type] of inferred) channel.set(node, type);
+    }
 
     // TypeCheckingValidatorAstVisitor used to run here. It was deleted: its dispatch built
     // `visit${node._type}` with no capitalisation at all, so even "variable" resolved to

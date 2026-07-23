@@ -3997,7 +3997,75 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * like any other, and their implicit returns went missing the same way.
    */
   private desugaredCopyOf(node: ast.ASTNode): ast.ASTNode {
-    return new DesugarAstVisitor(this.context, true).visit(this.cloneNode(node));
+    const copy = new DesugarAstVisitor(this.context, true).visit(this.cloneNode(node));
+    this.carryTypesInto(copy, node);
+    return copy;
+  }
+
+  /**
+   * Give the copy the TYPES its original carries (S1a / N14).
+   *
+   * `nodeTypes` is identity-keyed, and `desugaredCopyOf` produces objects that by construction have no
+   * identity in it: `cloneNode` mints a fresh tree and the desugarer then rebuilds parts of that. So an
+   * inlined imported body arrived at the HIR lowering completely untyped, and every type-driven decision
+   * silently degraded at once. The one that changed answers: `(/ Int Int)` is INTEGER division decided
+   * from the static operand types (D49d, `LowerAstToHirVisitor.isIntDivision`), so with the types gone it
+   * fell back to the generic `/` shim and a function declared `-> Int` returned 3.5 -- on JS, with no
+   * diagnostic, while C re-coerced downstream and returned 3. One source file, two answers, and the
+   * failure looked exactly like a bug in the caller's own logic.
+   *
+   * This is the same situation `recordSynthesizedNodeType` was built for -- "a fresh node object has no
+   * entry and the decisions would silently degrade to unknown" -- applied to a whole subtree rather than
+   * a single substituted temp, so it goes through that same sanctioned seam.
+   *
+   * MATCHED ON KIND + EXACT SOURCE SPAN, once, between two trees already known to correspond. A copy
+   * preserves the span each construct occupies, and two constructs of the same kind cannot occupy the
+   * same span in one file, so the correspondence is exact rather than heuristic. Nothing is invented:
+   * only nodes the ORIGINAL was given a type for get one, so an untyped original stays untyped and
+   * gradual typing is preserved.
+   *
+   * Depends on `SymbolTable.repointAfterDesugar` having run: until the symbol table points at the
+   * DESUGARED tree, `symbol.value` is the pre-desugar copy, nothing in it is typed, and there is
+   * nothing here to carry. The two changes are one fix.
+   */
+  private carryTypesInto(copy: ast.ASTNode, original: ast.ASTNode): void {
+    const nodeTypes = this.context?.nodeTypes;
+    if (!nodeTypes || nodeTypes.size === 0) return;
+
+    const key = (n: any): string | undefined => {
+      const s = n?._location?.start?.offset;
+      const e = n?._location?.end?.offset;
+      if (s === undefined || e === undefined) return undefined;
+      return `${n._type}@${s}..${e}`;
+    };
+
+    const walk = (n: any, seen: Set<any>, visit: (n: any) => void): void => {
+      if (!n || typeof n !== "object" || seen.has(n)) return;
+      seen.add(n);
+      if (n._type) visit(n);
+      for (const prop of Object.keys(n)) {
+        if (prop === "_parent" || prop === "_location") continue;
+        const v = n[prop];
+        if (Array.isArray(v)) v.forEach((x) => walk(x, seen, visit));
+        else if (v && typeof v === "object") walk(v, seen, visit);
+      }
+    };
+
+    // Index the original's types by kind+span. First writer wins, matching the copy's own walk order.
+    const byKey = new Map<string, InferredType>();
+    walk(original, new Set(), (n) => {
+      const t = nodeTypes.get(n);
+      const k = key(n);
+      if (t !== undefined && k !== undefined && !byKey.has(k)) byKey.set(k, t);
+    });
+    if (byKey.size === 0) return;
+
+    walk(copy, new Set(), (n) => {
+      if (nodeTypes.has(n)) return; // already answered -- never overwrite
+      const k = key(n);
+      const t = k === undefined ? undefined : byKey.get(k);
+      if (t !== undefined) this.context.recordSynthesizedNodeType(n, t);
+    });
   }
 
   private ensureSymbolInlined(symbol: SymbolEntry): string {
