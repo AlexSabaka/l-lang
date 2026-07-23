@@ -721,6 +721,26 @@ function __ll_is_type(val, type) {
     //
     // O(n) per call, and knowingly: a codepoint index into UTF-8 is a walk on C too. \`std/string\`
     // above this scans once and indexes by position, so the quadratic shape stays in one place.
+    // BIT OPERATIONS (S2). Int only, 64-bit wrap, masked shifts, arithmetic shr.
+    //
+    // Every result goes through \`BigInt.asIntN(64, ...)\`, and unlike C -- where the wrap is what the
+    // hardware does -- here it is the whole job. A BigInt is UNBOUNDED, so \`bnot\` on a big value or
+    // \`shl\` by 40 would produce a number with no int64 counterpart and silently disagree with the
+    // native backend. D51 already rules Int as exact 64-bit on both sides; asIntN is how that ruling
+    // is kept at this boundary.
+    //
+    // The shift COUNT is masked to 0-63 (\`n & 63n\`) for the same reason C needs it: C leaves a shift
+    // by >= the width undefined, and BigInt would happily shift by a million and try to allocate the
+    // result. One rule, exactly implementable on both.
+    //
+    // \`>>\` on BigInt is arithmetic by definition, which is the \`shr\` ruling for free.
+    "band": `const band = (a, b) => BigInt.asIntN(64, BigInt(a) & BigInt(b));`,
+    "bor": `const bor = (a, b) => BigInt.asIntN(64, BigInt(a) | BigInt(b));`,
+    "bxor": `const bxor = (a, b) => BigInt.asIntN(64, BigInt(a) ^ BigInt(b));`,
+    "bnot": `const bnot = (a) => BigInt.asIntN(64, ~BigInt(a));`,
+    "shl": `const shl = (a, n) => BigInt.asIntN(64, BigInt(a) << (BigInt(n) & 63n));`,
+    "shr": `const shr = (a, n) => BigInt.asIntN(64, BigInt(a) >> (BigInt(n) & 63n));`,
+
     "codepoint-length": `const codepoint2dlength = (s) => BigInt([...String(s)].length);`,
     "codepoint-at": `const codepoint2dat = (s, i) => {
   const a = [...String(s)];

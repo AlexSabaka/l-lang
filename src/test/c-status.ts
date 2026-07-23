@@ -350,6 +350,13 @@ export const C_PASSING: readonly string[] = [
   // expression, which `classifyCall` leaves opaque and which resolves off the receiver's inferred
   // type), plus the precedence control: a type's OWN method still beats a same-named extension.
   "80-adversarial/extension_method_surface.lisp",
+  // The BIT OPERATORS (S2). Six floor entries, so six operations implemented twice -- and the two
+  // clauses that can diverge pull in opposite directions: 64-bit WRAP is the one JS cannot get for
+  // free (a BigInt is unbounded, so the shim must mask with `asIntN(64)`), and MASKED SHIFT COUNTS is
+  // the one C cannot get for free (a shift by >= the width is UNDEFINED, C11 6.5.7p3, and the answer
+  // would otherwise change with the target CPU). Graded at -O2 as well, which is where a UB
+  // disagreement would actually surface.
+  "80-adversarial/bit_operators.lisp",
   // D58's disposal (Phase G5). Two amendments to that ruling are pinned here, both forced by
   // measurement: recognition is DUCK-TYPED (`(x :of SomeInterface)` answers false on both backends,
   // so the type test D58 named does not exist), and what gets disposed is the COLLECTION rather than

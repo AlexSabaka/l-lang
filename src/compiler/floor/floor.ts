@@ -160,6 +160,41 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   // representation that is a walk on both backends (UTF-8 here, `[...s]` there).
   ["string-to-codepoints", fn("ll_string_to_codepoints", [Str], arr(Int))],
 
+  // -- BIT OPERATIONS (S2). Int only, 64-bit wrap, masked shifts, arithmetic `shr`.
+  //
+  // The highest-leverage small language item in Dove's stdlib roadmap, and the block under
+  // `std/math/random` (xoshiro256** is nothing but shifts and xors), `std/math/fft` (the bit-reversal
+  // permutation), and any future hash protocol. All three have been waiting on these six names.
+  //
+  // WORD SPELLINGS, not operator symbols -- a D21 naming call, ruled. `&` and `|` are already spoken
+  // for by nothing, but `band`/`bor` read unambiguously next to the logical operators and leave the
+  // symbol space free; more importantly a floor entry is a NAME a program writes, and the floor has no
+  // operator-dispatch machinery to hang a symbol on.
+  //
+  // THE SEMANTICS RULING, stated here because both backends must implement exactly it:
+  //
+  //   * DEFINED ON Int ONLY. Not Real, not Any. A bitwise operation on a float is a category error,
+  //     and D51 already makes Int an exact 64-bit integer on both backends -- BigInt masked with
+  //     `asIntN(64)` on JS, `int64_t` under `-fwrapv` on C -- so the two representations already agree
+  //     bit for bit. That agreement is what makes these safe to add at all.
+  //   * WRAP AT 64 BITS. Same regime as every other Int operation (D51). On JS the mask is explicit
+  //     (`BigInt.asIntN(64, ...)`) because BigInt is unbounded; on C it is what the hardware does.
+  //   * SHIFT COUNTS MASKED TO 0-63 (`n & 63`). C leaves a shift by >= the width UNDEFINED (C11
+  //     6.5.7p3) and JS BigInt would happily shift by a million and allocate, so an unmasked shift is
+  //     the one place these could diverge catastrophically rather than merely differ. Masking is the
+  //     cheapest total rule that both can implement exactly, and it is what x86 and ARM already do.
+  //   * `shr` IS ARITHMETIC -- sign-propagating. A logical `ushr` is not defined: no consumer asks for
+  //     one yet, and an unused second shift is a second thing to keep in agreement. Add it when
+  //     something needs it.
+  //   * `shl` of a negative value, and shifts that push bits off the top, wrap rather than trap --
+  //     the D51 regime again, and the reason `-fwrapv` is already in the C flags.
+  ["band", fn("ll_bit_and", [Int, Int], Int)],
+  ["bor", fn("ll_bit_or", [Int, Int], Int)],
+  ["bxor", fn("ll_bit_xor", [Int, Int], Int)],
+  ["bnot", fn("ll_bit_not", [Int], Int)],
+  ["shl", fn("ll_bit_shl", [Int, Int], Int)],
+  ["shr", fn("ll_bit_shr", [Int, Int], Int)],
+
   // -- container/sequence primitives the runtime provides (the SYMBOL_MAP surface).
   ["get", fn("ll_get", [Any, Key], Any)],
   ["head", fn("ll_head", [Any], Any)],

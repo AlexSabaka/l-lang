@@ -5057,3 +5057,36 @@ epistemology stands on that control.
 
 **Revisit when a real consumer exists.** The `:gen` transform D58 builds *is* the async transform's
 hard half; only the scheduler waits, and the scheduler is the regrettable commitment.
+
+## D61 — bit operators: Int only, 64-bit wrap, masked shifts, arithmetic `shr` (2026-07-23)
+
+Six floor entries: **`band` `bor` `bxor` `bnot` `shl` `shr`**. Word spellings, not operator symbols
+— a D21 naming call. A floor entry is a NAME a program writes, and the floor has no operator-dispatch
+machinery to hang a symbol on.
+
+**The semantics, stated once because both backends implement it:**
+
+- **Int only.** Not Real, not Any. A bitwise operation on a float is a category error. D51 already
+  makes Int an exact 64-bit integer on both backends — BigInt masked with `asIntN(64)` on JS,
+  `int64_t` under `-fwrapv` on C — and *that pre-existing agreement is what makes these safe to add*.
+- **Wrap at 64 bits.** The D51 regime. On JS the mask is explicit because BigInt is unbounded; on C
+  it is what the hardware does.
+- **Shift counts masked to 0–63** (`n & 63`). The load-bearing clause. C leaves a shift by ≥ the
+  operand width **undefined** (C11 6.5.7p3) — typically `x` on x86 because the CPU masks the count
+  itself, 0 elsewhere — so an unmasked shift is not merely a divergence but one that *changes with
+  the machine*. BigInt would shift by a million and allocate. Masking is the cheapest total rule both
+  can implement exactly, and it is what x86 and ARM already do.
+- **`shr` is arithmetic** (sign-propagating). Free on JS (BigInt `>>` is arithmetic by definition),
+  implementation-defined-but-universal on C (6.5.7p5). **No `ushr`**: no consumer asks for one, and an
+  unused second shift is a second thing to keep in agreement. Add it when something needs it.
+- **`shl` of a negative value wraps** rather than trapping. The C implementation shifts through
+  `uint64_t` and casts back, because left-shifting a negative `int64_t` is undefined (6.5.7p4) and
+  `-fwrapv` covers signed *arithmetic* overflow, not this.
+
+**Why now:** the highest-leverage small language item in Dove's stdlib roadmap. `std/math/random`
+(xoshiro256\*\* is shifts and xors), `std/math/fft` (the bit-reversal permutation) and any future hash
+protocol have all been blocked on exactly these six names.
+
+Guarded by `examples/80-adversarial/bit_operators.lisp`, on the C ratchet and graded at `-O2` as well
+— which is where a UB disagreement would actually surface. Its golden was derived by hand from this
+ruling before either backend ran.

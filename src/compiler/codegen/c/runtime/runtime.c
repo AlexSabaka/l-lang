@@ -2303,6 +2303,32 @@ static double ll_math_trunc(double x) { return trunc(x); }
    Real-valued so the narrowing is always written down at the site that wants it. */
 static int64_t ll_truncate(double x) { return (int64_t)trunc(x); }
 
+/* BIT OPERATIONS (S2). Int only, 64-bit wrap, masked shifts, arithmetic shr.
+
+   The shift COUNT is masked to 0-63 on both backends, and that is the load-bearing line here rather
+   than a defensive habit: C leaves a shift by >= the operand width UNDEFINED (C11 6.5.7p3), so
+   `(shl x 64)` would be whatever the hardware felt like -- typically `x` on x86, because the CPU masks
+   the count itself, and 0 elsewhere. JS BigInt has no width at all and would shift by a million
+   happily. Masking is the cheapest TOTAL rule both can implement exactly, and it agrees with what
+   x86 and ARM already do.
+
+   `ll_bit_shl` shifts through UINT64 and casts back. Left-shifting a negative int64_t, or shifting a
+   1 into the sign bit, is also undefined in C (6.5.7p4) -- `-fwrapv` covers signed overflow in
+   arithmetic but not this. The unsigned round trip is well-defined for every input and gives exactly
+   the wrapping D51 already rules for Int.
+
+   `ll_bit_shr` stays SIGNED, so it propagates the sign bit. That is implementation-defined rather
+   than undefined in C (6.5.7p5), and every compiler this targets defines it as arithmetic; the JS
+   side gets it for free because BigInt `>>` is arithmetic by definition. */
+static int64_t ll_bit_and(int64_t a, int64_t b) { return a & b; }
+static int64_t ll_bit_or(int64_t a, int64_t b) { return a | b; }
+static int64_t ll_bit_xor(int64_t a, int64_t b) { return a ^ b; }
+static int64_t ll_bit_not(int64_t a) { return ~a; }
+static int64_t ll_bit_shl(int64_t a, int64_t n) {
+  return (int64_t)((uint64_t)a << (n & 63));
+}
+static int64_t ll_bit_shr(int64_t a, int64_t n) { return a >> (n & 63); }
+
 /* Look up a class descriptor by name in the module registry (for the :extends chain walk). */
 static const ll_class *ll_class_by_name(const char *name) {
   for (size_t i = 0; i < __ll_class_count; i++) {
