@@ -101,6 +101,10 @@ export const C_PASSING: readonly string[] = [
   "09-oop/00_inheritance.lisp",   // :extends field/method flattening + type/type-by-name reflection
   "07-types/02_runtime_type_info.lisp", // unlocked by type/type-by-name reflection
   "18-error-handling/00_errors.lisp",   // try/catch/throw via setjmp/longjmp + :of filter chain
+  // E1: catching an IMPORTED error class by type across a module boundary. The catch filter now uses
+  // `__ll_is_type` (by name, chain-walking) instead of `instanceof <bareName>` -- which was a
+  // ReferenceError on JS once the import inliner renamed the class. C single-level already worked.
+  "18-error-handling/20_imported_error_catch.lisp",
   // Phase-0 finally-drop fix: `finally` runs on EVERY exit from a try (return / return-in-catch /
   // rethrow-propagation / nested), and a `return`-in-try restores ll_handler_top. Inline-finalizer
   // routing in EmitCirToC (no runtime rework). See examples' headers + DECISIONS D12/D47.

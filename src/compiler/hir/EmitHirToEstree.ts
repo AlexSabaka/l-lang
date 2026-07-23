@@ -513,12 +513,25 @@ export class EmitHirToEstree {
             const c = filtered[i];
             chainTail = {
               type: "IfStatement",
+              // `__ll_is_type(e, "T")`, NOT `e instanceof T` (E1). The `instanceof` form named the
+              // class by its SOURCE spelling, but the import inliner renames an imported class
+              // (`__ll_inlined_ValueError_1`), so `instanceof ValueError` was a ReferenceError -- a
+              // `catch :of` on any imported error class crashed. `__ll_is_type` tests by NAME against
+              // `static __ll_name` (the source spelling, immune to the rename) while walking the
+              // `:extends` chain and `__ll_interfaces` -- so it is both correct across a module
+              // boundary AND strictly more capable: `catch :of SomeInterface` now works too, where
+              // `instanceof` (an interface has no JS class) never could. This is the same runtime test
+              // the expression-position `(x :of T)` guard already used, so the two can no longer
+              // disagree about what a catch filter matches.
               test: {
-                type: "BinaryExpression",
-                operator: "instanceof",
-                left: catchVarId,
-                right: { type: "Identifier", name: c.filterTypeName! } as ESTree.Identifier,
-              } as ESTree.BinaryExpression,
+                type: "CallExpression",
+                callee: { type: "Identifier", name: "__ll_is_type" } as ESTree.Identifier,
+                arguments: [
+                  catchVarId,
+                  { type: "Literal", value: c.filterTypeName! } as ESTree.Literal,
+                ],
+                optional: false,
+              } as ESTree.CallExpression,
               consequent: { type: "BlockStatement", body: [...errBinding(c.errorName), ...this.emitBlock(c.body)], loc: loc(h.src) } as ESTree.BlockStatement,
               alternate: chainTail,
               loc: loc(h.src),
