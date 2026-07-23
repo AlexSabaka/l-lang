@@ -1073,3 +1073,27 @@ it is a separate phase.
 Verified by removing a workaround rather than by a green suite: `../l-lang-games` renamed `iabs` to
 `int-abs` *because of N15*; renaming it back in a scratchpad copy keeps the corpus 15/15 on both
 backends.
+
+### 15.5 LL0240 — the duplicate cross-module symbol gate **[BUILT 2026-07-23]**
+
+Dove's stdlib roadmap asks for this "before the module count doubles", and names the warning shot
+already fired (`Number` defined twice). Note the code: the roadmap says LL0218, but **LL0218 is
+occupied** (`TypeOfStringLiteral`, a Warning). Next free in the band was LL0240.
+
+S1b made resolution deterministic, but determinism is not the same as unambiguous: when two directly
+imported packages each export the name, the priority pass takes whichever root comes first in the
+forest, and that order is an accident of module processing. LL0240 is the question that notices.
+
+**Compared by PACKAGE, not by file, and that distinction is what makes it usable.** 25 exported names
+in the current stdlib are already owned by more than one module — but most are same-package
+re-exports (`std/math/math` republishes `std/math/constants`' `PI`), which is Mb working as designed.
+Firing on those would put a warning on every math program.
+
+**WARNING, not Error.** What is left after the package test is real and legal: `map`/`filter`/`zip`/
+`reduce` across `std/iter/linq` and `std/seq`, which the corpus does on purpose under D33's two
+conventions. Erroring would break working programs to warn about a hazard. Reported once per name per
+file, at the use site.
+
+Both halves are guarded in `test/imports.ts`: the positive (linq + seq both offering `map` warns AND
+still compiles) and the negative control (a same-package re-export must stay silent) — a diagnostic
+that cannot stay quiet gets ignored, which is a worse failure than one that never fires.

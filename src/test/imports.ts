@@ -1164,6 +1164,73 @@ const CASES: Case[] = [
     },
   },
 
+  // S1c -- the duplicate-symbol gate Dove's stdlib roadmap asks for "before the module count
+  // doubles". S1b made resolution deterministic; this says when determinism was never the file's to
+  // rely on.
+  {
+    name: "S1c: two directly-imported PACKAGES offering one name is LL0240",
+    why:
+      "`std/iter/linq` and `std/seq` both export `map` -- legally, under D33's two conventions " +
+      "(lazy/collection-first vs eager/collection-last). A file importing both gets whichever root " +
+      "the forest reaches first, which is an accident of module processing order, so a program that " +
+      "reads correctly today can change meaning when an unrelated import is added. A WARNING, not an " +
+      "error: this is legal and the corpus does it on purpose. It must still compile and run.",
+    run: () => {
+      const entry = fixture(
+        "ambiguous-import",
+        {
+          "main.lisp":
+            `(\n` +
+            `  (import "std/iter")\n` +
+            `  (import "std/iter/linq")\n` +
+            `  (import "std/seq")\n` +
+            `  (console.log ((map [1 2 3] (fn [x] (* x 2))).length))\n` +
+            `)\n`,
+        },
+        "main.lisp"
+      );
+      const out = build(entry);
+      const warned = out.diagnostics.some((d) => /LL0240/.test(d));
+      if (!warned) {
+        return {
+          ok: false,
+          detail: `expected LL0240, got: ${out.diagnostics.join(", ") || "(none)"}`,
+        };
+      }
+      // A warning must not break the build -- that is the whole reason it is a warning.
+      return out.compiled
+        ? { ok: true, detail: "LL0240 warns, and the program still compiles" }
+        : { ok: false, detail: "LL0240 fired but the program stopped compiling -- it must be a warning" };
+    },
+  },
+
+  {
+    name: "S1c: a SAME-package duplicate does not warn (negative control)",
+    why:
+      "25 exported names in the stdlib are owned by more than one module, and most are same-package " +
+      "re-exports -- `std/math/math` republishes `std/math/constants`' PI. A package publishing the " +
+      "union of its files' exports is Mb working as designed, not a collision. If LL0240 fired here " +
+      "it would be noise on every math program, and a diagnostic that cannot stay quiet gets ignored.",
+    run: () => {
+      const entry = fixture(
+        "same-package-dup",
+        { "main.lisp": `(\n  (import "std/math")\n  (console.log (> PI 3.0))\n)\n` },
+        "main.lisp"
+      );
+      const out = build(entry);
+      const warned = out.diagnostics.filter((d) => /LL0240/.test(d));
+      if (warned.length > 0) {
+        return { ok: false, detail: `LL0240 fired on a same-package re-export: ${warned.join(", ")}` };
+      }
+      if (!out.compiled) {
+        return { ok: false, detail: `did not compile: ${out.diagnostics.join(", ") || "(none)"}` };
+      }
+      return out.stdout === "true"
+        ? { ok: true, detail: "no warning for a package republishing its own file's export" }
+        : { ok: false, detail: `expected "true", got ${JSON.stringify(out.stdout)}` };
+    },
+  },
+
 ];
 
 function main() {

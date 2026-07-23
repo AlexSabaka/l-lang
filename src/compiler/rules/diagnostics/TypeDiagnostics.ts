@@ -319,6 +319,34 @@ export const TypeDiagnostics = {
       `iterator implementing 'Disposable'.`
   ),
 
+  // LL0240 (S1c) -- two DIRECTLY imported packages offer the same name.
+  //
+  // The gate Dove's stdlib roadmap asks for "before the module count doubles", and the warning shot
+  // it names was already fired: `Number` defined twice. S1b made resolution deterministic -- a
+  // directly-imported declaration now beats a transitively-reached one -- but determinism is not the
+  // same as unambiguous. When TWO directly-imported packages each export the name, S1b picks the
+  // first root in the forest, and that order is still an accident of processing.
+  //
+  // WARNING, not Error, and the reason is measured rather than cautious: 25 exported names are
+  // already owned by more than one stdlib module. Most are same-PACKAGE re-exports (`math/math`
+  // re-exports `math/constants`), which is a package publishing a union of its files and entirely
+  // deliberate -- so those are excluded by the cross-package test rather than by lowering severity.
+  // What is left (`map`/`filter`/`zip`/`reduce` across `std/iter/linq` and `std/seq`) is real,
+  // legal, and something the corpus does on purpose under D33's two conventions. Erroring would
+  // break working programs to warn about a hazard.
+  //
+  // The advice is the fix that always works and never guesses: name the module you meant.
+  AmbiguousImport: def<{ name: string; a: string; b: string; chosen: string }>(
+    "LL0240",
+    Warning,
+    (p) =>
+      `'${p.name}' is offered by both '${p.a}' and '${p.b}', which this file both imports. ` +
+      `Resolution takes '${p.chosen}', and which one that is depends on module processing order -- ` +
+      `so a program that reads correctly today can change meaning when an import is added. ` +
+      `Import it selectively from the one you mean: (import { ${p.name} } from "..."), or rename ` +
+      `with ':as'.`
+  ),
+
   // LL0227
   AwaitOutsideAsync: def(
     "LL0227",

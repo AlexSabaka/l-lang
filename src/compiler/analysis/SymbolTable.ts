@@ -544,6 +544,50 @@ export class SymbolTable {
   }
 
   /**
+   * Do two DIRECTLY imported packages both offer `name`? (S1c, LL0240.)
+   *
+   * S1b made resolution deterministic -- a directly-imported declaration beats a transitively-reached
+   * one -- but determinism is not the same as unambiguous. When two directly-imported modules each
+   * export the name, the priority pass takes whichever root comes first in the forest, and THAT order
+   * is still an accident of module processing. This is the question that notices.
+   *
+   * Compared by PACKAGE, not by file. A package publishes the union of its files' exports (Mb), so
+   * `math/math` re-exporting `math/constants`' `PI` is the design working, not a collision: 25
+   * exported names in the current stdlib are owned by more than one module and most are exactly that
+   * shape. Two different packages offering one name is the case with no owner.
+   *
+   * Returns the two module files, or undefined when there is no ambiguity. Reported once per use
+   * site by the checker, which is where a node and a location exist.
+   */
+  ambiguousDirectImports(
+    name: string,
+    from: ast.ASTNode,
+    packageOf: (file: string) => string | undefined
+  ): { a: string; b: string } | undefined {
+    if (!this.directImportsOf) return undefined;
+    const askingFile = (from as any)?._location?.source;
+    if (!askingFile) return undefined;
+    const direct = this.directImportsOf(askingFile);
+    if (!direct || direct.size < 2) return undefined;
+
+    const offerers: string[] = [];
+    const packagesSeen = new Set<string>();
+    for (const scope of this.scopes) {
+      const mod = moduleOf(scope);
+      if (!mod || !direct.has(path.resolve(mod))) continue;
+      const found = scope.table.get(name);
+      if (!found || found.exportName === undefined || found.isOperator) continue;
+      // One entry per PACKAGE. A file outside any package is its own unit, keyed by its own path.
+      const pkg = packageOf(mod) ?? path.resolve(mod);
+      if (packagesSeen.has(pkg)) continue;
+      packagesSeen.add(pkg);
+      offerers.push(mod);
+      if (offerers.length === 2) return { a: offerers[0], b: offerers[1] };
+    }
+    return undefined;
+  }
+
+  /**
    * Resolve `name` as seen FROM `from` -- i.e. lexically.
    *
    * With `from`, this walks the real scope chain outward from the node's own scope, so a parameter

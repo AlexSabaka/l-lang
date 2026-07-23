@@ -4536,6 +4536,40 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         where,
       });
     }
+
+    // AMBIGUITY (S1c / LL0240). Asked last, because it is the only question here that is not about
+    // whether the name is allowed to cross -- it is about whether the answer was ever the file's to
+    // rely on. S1b made resolution deterministic, but when two directly-imported PACKAGES each export
+    // the name, "deterministic" means "the first root in the forest wins", and that order is an
+    // accident of module processing. Same-package duplicates are excluded inside the query: a package
+    // publishing the union of its files' exports is the design, not a collision.
+    this.reportAmbiguousImport(node, name, entry);
+  }
+
+  /** Reported once per name per file: a use site is where the ambiguity matters, but not N times. */
+  private readonly reportedAmbiguous = new Set<string>();
+
+  private reportAmbiguousImport(node: ast.ASTNode, name: string, entry: SymbolEntry): void {
+    if (entry.isOperator) return;
+    const askingFile = node._location?.source;
+    if (!askingFile) return;
+
+    const seenKey = `${askingFile}::${name}`;
+    if (this.reportedAmbiguous.has(seenKey)) return;
+
+    const symbols = this.context.symbolTable ?? this.symbolTable;
+    const registry = PackageRegistry.forPaths(this.context.libPaths);
+    const clash = symbols.ambiguousDirectImports(name, node, (f) => registry.packageOf(f));
+    if (!clash) return;
+
+    this.reportedAmbiguous.add(seenKey);
+    const chosen = (entry.value as any)?._location?.source;
+    this.report(TD.AmbiguousImport, node, {
+      name,
+      a: path.basename(clash.a),
+      b: path.basename(clash.b),
+      chosen: chosen ? path.basename(chosen) : path.basename(clash.a),
+    });
   }
 
   /**
