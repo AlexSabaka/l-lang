@@ -1,2 +1,2 @@
-name: std/linq
+name: std/iter/linq
 sources: ["*.lisp"]

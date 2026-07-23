@@ -1,7 +1,7 @@
 ;; std/linq - LAZY sequence operators over a table of records
 ;;
 ;; This example demonstrates:
-;; - (import "std/linq"): the LAZY, collection-FIRST counterpart to std/seq (D33).
+;; - (import "std/iter/linq"): the LAZY, collection-FIRST counterpart to std/seq (D33).
 ;;   Both packages export map/filter/reduce - import exactly ONE of them per file.
 ;; - the PIPE surface (D33's primary surface): (coll |> (filter p) |> (map f) |> to-list)
 ;; - the METHOD surface (Phase Nd): ((seq coll).filter p) - the same operators, C#-style
@@ -9,7 +9,7 @@
 ;; - LAZINESS: a chain is a pipeline of generators; no work happens until a terminal pulls
 
 (
-    (import "std/linq")
+    (import "std/iter/linq")
 
     ;; A tiny table of records. Map keys are plain identifiers, so dot-access reads them back.
     (let employees [

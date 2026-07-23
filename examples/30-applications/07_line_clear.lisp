@@ -13,7 +13,7 @@
     ;;   shared lazy cursor — and `board` is exactly that fresh array.
     ;; - a scoring `cond` chain (`line-score`): 1/2/3/4 lines -> points.
     ;; ============================================================
-    (import "std/linq")
+    (import "std/iter/linq")
 
     (let EMPTY 0)
     (let WIDTH 6)

@@ -12,7 +12,7 @@
 
 (
     (import "std/iter")
-    (import "std/linq")
+    (import "std/iter/linq")
 
     ;; 1. A finite generator. Each (yield i) produces one value and suspends the function;
     ;;    the `while` resumes only when the consumer pulls again.

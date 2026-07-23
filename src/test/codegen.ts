@@ -2197,27 +2197,27 @@ const CASES: Case[] = [
   },
 
   // ===============================================================================================
-  // Phase L / Lb -- the STRAIGHT-THROUGH lazy operators (`std/linq`). Each is a collection-FIRST
+  // Phase L / Lb -- the STRAIGHT-THROUGH lazy operators (`std/iter/linq`). Each is a collection-FIRST
   // `:gen` over `for :each`, so the working infix `|>` threads the collection through: `(coll |> (map
   // f) |> (filter p))` is `filter(map(coll, f), p)`, a pipeline of generators. Consumed here by
   // `for :each` (Lc adds the terminal `to-list`). This is the roadmap's "C# LINQ steal", pure stdlib.
   // ===============================================================================================
   {
     name: "Lb: map |> filter, piped and consumed by for :each",
-    source: `(import "std/linq")
+    source: `(import "std/iter/linq")
 (fn square [x <- Int] -> Int (* x x))
 (fn is-even [x] (== (% x 2) 0))
 (for :each v :from ([1 2 3 4 5] |> (map square) |> (filter is-even)) :then (console.log v))`,
     expect: ["4", "16"],
     emitted: { must: [/function\*/] },
     wasBroken:
-      "RED first: `std/linq` did not exist, so `map`/`filter` were undefined. Lb ships them as " +
+      "RED first: `std/iter/linq` did not exist, so `map`/`filter` were undefined. Lb ships them as " +
       "collection-first `:gen` functions. The pipe threads `[1..5]` first -> `map` squares (1 4 9 16 " +
       "25), `filter` keeps evens (4 16); both are lazy generators, driven by the outer `for :each`.",
   },
   {
     name: "Lb: enumerate yields [index value], destructured in the loop var",
-    source: `(import "std/linq")
+    source: `(import "std/iter/linq")
 (for :each [i x] :from (["a" "b" "c"] |> enumerate) :then (console.log i x))`,
     expect: ["0 a", "1 b", "2 c"],
     wasBroken:
@@ -2226,7 +2226,7 @@ const CASES: Case[] = [
   },
   {
     name: "Lb: concat |> skip",
-    source: `(import "std/linq")
+    source: `(import "std/iter/linq")
 (for :each v :from ([1 2] |> (concat [3 4 5]) |> (skip 1)) :then (console.log v))`,
     expect: ["2", "3", "4", "5"],
     wasBroken:
@@ -2235,7 +2235,7 @@ const CASES: Case[] = [
   },
   {
     name: "Lb: flat-map |> skip-while",
-    source: `(import "std/linq")
+    source: `(import "std/iter/linq")
 (fn dup [x <- Int] -> Int[] [x x])
 (for :each v :from ([1 2 3] |> (flat-map dup) |> (skip-while (fn [n] (< n 2)))) :then (console.log v))`,
     expect: ["2", "2", "3", "3"],
@@ -2252,7 +2252,7 @@ const CASES: Case[] = [
   // ===============================================================================================
   {
     name: "Lc: the LAZINESS PROOF -- take over an unbounded generator terminates",
-    source: `(import "std/linq")
+    source: `(import "std/iter/linq")
 (fn :gen nats [] (
   (mut i 0)
   (while true (
@@ -2288,7 +2288,7 @@ const CASES: Case[] = [
   },
   {
     name: "LB1: `take n` pulls EXACTLY n from its cursor, not n+1",
-    source: `(import "std/linq")
+    source: `(import "std/iter/linq")
 (mut pulls 0)
 (fn :gen counter [] -> Iterator<Int> (
   (mut i 0)
@@ -2306,7 +2306,7 @@ const CASES: Case[] = [
   },
   {
     name: "Lc: take-while stops at the first failure, over an unbounded source",
-    source: `(import "std/linq")
+    source: `(import "std/iter/linq")
 (fn :gen nats [] (
   (mut i 0)
   (while true (
@@ -2323,7 +2323,7 @@ const CASES: Case[] = [
   },
   {
     name: "Lc: zip advances two cursors in lockstep, stops at the shorter",
-    source: `(import "std/linq")
+    source: `(import "std/iter/linq")
 (for :each [n s] :from ([1 2 3] |> (zip ["a" "b"])) :then (console.log n s))`,
     expect: ["1 a", "2 b"],
     wasBroken:
@@ -2332,7 +2332,7 @@ const CASES: Case[] = [
   },
   {
     name: "Lc: reduce folds, count sizes",
-    source: `(import "std/linq")
+    source: `(import "std/iter/linq")
 (console.log ([1 2 3 4] |> (reduce (fn [a b] (+ a b)) 0)))
 (console.log ([10 20 30] |> count))`,
     expect: ["10", "3"],
@@ -2342,7 +2342,7 @@ const CASES: Case[] = [
   },
   {
     name: "Lc: for-each drives a sequence for its side effects",
-    source: `(import "std/linq")
+    source: `(import "std/iter/linq")
 ([1 2 3] |> (for-each (fn [x] (console.log (* x 10)))))`,
     expect: ["10", "20", "30"],
     wasBroken:
@@ -2351,15 +2351,15 @@ const CASES: Case[] = [
   },
 
   {
-    name: "Mb: std/linq is a TWO-FILE package -- one import, union of both files' ops",
-    source: `(import "std/linq")
+    name: "Mb: std/iter/linq is a TWO-FILE package -- one import, union of both files' ops",
+    source: `(import "std/iter/linq")
 (fn square [x <- Int] -> Int (* x x))
 (console.log ([1 2 3 4 5] |> (map square) |> (take 3) |> count))`,
     expect: ["3"],
     wasBroken:
-      "The Mb demonstrator on real code: `map` lives in `lib/std/linq/linq.lisp`, `take` and `count` " +
-      "in `lib/std/linq/linq-early.lisp` -- two files, ONE package (`std/linq`). A single `(import " +
-      "\"std/linq\")` yields the union of both files' exports (co-processing joins the sibling; neither " +
+      "The Mb demonstrator on real code: `map` lives in `lib/std/iter/linq/linq.lisp`, `take` and `count` " +
+      "in `lib/std/iter/linq/linq-early.lisp` -- two files, ONE package (`std/iter/linq`). A single `(import " +
+      "\"std/iter/linq\")` yields the union of both files' exports (co-processing joins the sibling; neither " +
       "file imports the other). Before Mb an import resolved to a single file, so half these ops would " +
       "be undefined. Squares 1 4 9 16 25 -> take 3 -> count = 3.",
   },
@@ -2503,7 +2503,7 @@ const CASES: Case[] = [
   },
   {
     name: "Nd: METHOD-CHAINING laziness proof -- `(((ns.map).filter).take).to-list` over infinite nats",
-    source: `(import "std/linq")
+    source: `(import "std/iter/linq")
 (fn :gen nats [] -> Iterator<Int> (
   (mut i 0)
   (while true (
@@ -2529,7 +2529,7 @@ const CASES: Case[] = [
   },
   {
     name: "Nd: the `seq` gateway lifts an array into a lazy method chain",
-    source: `(import "std/linq")
+    source: `(import "std/iter/linq")
 (let out (((seq [10 20 30]).map (fn [x] (+ x 1))).to-list))
 (console.log out[0] out[1] out[2])`,
     expect: ["11 21 31"],

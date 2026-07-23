@@ -3137,7 +3137,12 @@ inference (a case in inferExpressionType), the payload-return check (checkReturn
 return-type error (LL0228). The last two live in `checkAsyncRules`, which runs for every function --
 the await-outside rule is about the NON-async ones -- exactly as `checkGeneratorRules` does for yield.
 
-## D33 — LINQ: the lazy sequence library (`std/linq`)
+## D33 — LINQ: the lazy sequence library (`std/iter/linq`)
+
+> **Moved (2026-07-23):** `std/linq` is now `std/iter/linq` — a submodule of `std/iter`, the root
+> home for the iteration protocol it derives from. `std/seq` (eager, collection-first array ops) stays
+> a peer package; the eager/lazy two-convention split (Le, below) is unchanged. Paths in the prose
+> below predate the move.
 
 The first real *consumer* of the D29 protocols. The operators a query language needs -- `map`, `filter`,
 `take`, `zip`, `enumerate`, the C# LINQ steal -- are now **pure stdlib**, in `lib/std/linq.lisp`, with no

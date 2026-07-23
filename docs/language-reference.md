@@ -2,7 +2,7 @@
 
 Complete API reference for the **l-lang** standard library and compiler introspection.
 
-> Note: the standard library ships as ten packages under `lib/std/` — `iter`, `linq`, `seq`, `async`, `io`, `math`, `fn`, `js`, `types`, `string`. Each is a `package.yaml` compilation unit; import one by name, e.g. `(import "std/seq")`. `std/linq` adds lazy, pipe-surfaced sequence operators (`(coll |> (map f) |> (filter p))`).
+> Note: the standard library ships as packages under `lib/std/` — `iter` (with its `linq` submodule at `std/iter/linq`), `seq`, `io`, `math`, `fn`, `js`, `core`, plus `llang` and `sys`. Each is a `package.yaml` compilation unit; import one by name, e.g. `(import "std/seq")`. `std/iter/linq` adds lazy, pipe-surfaced sequence operators (`(coll |> (map f) |> (filter p))`) built on the `std/iter` protocol.
 
 ---
 

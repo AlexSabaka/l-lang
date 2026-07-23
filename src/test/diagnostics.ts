@@ -263,7 +263,7 @@ const PROBES: Probe[] = [
   { name: "LL0229 :extension without receiver", source: "(fn :extension foo [] -> Int 1)" },
   {
     name: "LL0230 lazy op on a bare array",
-    source: '(import "std/linq")\n(let xs [1 2 3])\n(console.log (xs.take 2))',
+    source: '(import "std/iter/linq")\n(let xs [1 2 3])\n(console.log (xs.take 2))',
   },
 
   // --- syntax/modifier band (LL0015-LL0019, LL0023), emitted by SyntaxRulesAstVisitor ---

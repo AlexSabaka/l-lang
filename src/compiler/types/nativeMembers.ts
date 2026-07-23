@@ -127,7 +127,7 @@ const ARRAY_MEMBERS: Record<string, NativeMember> = {
   // turned a compile-time refusal into a runtime trap -- fail-closed into fail-open, which is worse.
   // Written instead, one level deep, matching JS's default.
   flat: method(arrOf(Unknown), cfn("ll_vec_flat", [anyArr], anyArr)),
-  // The higher-order methods that share a NAME with a lazy `std/linq` operator (Ne). Modelling them keeps
+  // The higher-order methods that share a NAME with a lazy `std/iter/linq` operator (Ne). Modelling them keeps
   // `(arr.map f)` a native EAGER method call -- its natural JS meaning -- rather than mistaking it for the
   // lazy `map` extension a bare array cannot dispatch, and (the point) it keeps these OUT of the LL0230
   // "arrays lack this lazy operator" diagnostic. `map`'s element changes (Any); `filter` preserves it;

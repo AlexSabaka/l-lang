@@ -1049,18 +1049,18 @@ ${PRODUCER}
   // points at the pipe or the `seq` gateway. Native array methods (`map`/`filter`) are NOT flagged. ---
   {
     name: "Ne: a lazy-only op method-style on a bare array is LL0230",
-    source: '(import "std/linq")\n(let a [1 2 3])\n(a.take 3)',
+    source: '(import "std/iter/linq")\n(let a [1 2 3])\n(a.take 3)',
     expect: /LL0230/,
     why: "Ne: arrays lack `take`; it can't dispatch (arrays aren't nominal Iterable). Use the pipe or `seq`.",
   },
   {
     name: "Ne: a native array method (map) method-style is NOT flagged",
-    source: '(import "std/linq")\n(let a [1 2 3])\n(a.map (fn [x] x))',
+    source: '(import "std/iter/linq")\n(let a [1 2 3])\n(a.map (fn [x] x))',
     silent: true,
   },
   {
     name: "Ne: the `seq` gateway makes the array chainable -- no diagnostic",
-    source: '(import "std/linq")\n(let a [1 2 3])\n((seq a).take 3)',
+    source: '(import "std/iter/linq")\n(let a [1 2 3])\n((seq a).take 3)',
     silent: true,
   },
 
@@ -1151,18 +1151,18 @@ ${PRODUCER}
   // Iterator<Any>). The payoff of the tuple stream, closing the LINQ loose end. ---
   {
     name: "Ug: enumerate yields a typed [Int T], the destructured element checked",
-    source: '(import "std/linq")\n(for :each [i x] :from (["a" "b"] |> enumerate) :then ((let bad <- Int x)))',
+    source: '(import "std/iter/linq")\n(for :each [i x] :from (["a" "b"] |> enumerate) :then ((let bad <- Int x)))',
     expect: /LL0200|Type mismatch/,
     why: "Ug: enumerate over String[] is Iterator<[Int String]>, so `x` is String; assigning it to Int is caught.",
   },
   {
     name: "Ug: enumerate's index is Int (used correctly, silent)",
-    source: '(import "std/linq")\n(for :each [i x] :from (["a" "b"] |> enumerate) :then ((let n <- Int i)))',
+    source: '(import "std/iter/linq")\n(for :each [i x] :from (["a" "b"] |> enumerate) :then ((let n <- Int i)))',
     silent: true,
   },
   {
     name: "Ug: zip yields a typed [A B], the destructured element checked",
-    source: '(import "std/linq")\n(for :each [n s] :from ([1 2 3] |> (zip ["a" "b"])) :then ((let bad <- Int s)))',
+    source: '(import "std/iter/linq")\n(for :each [n s] :from ([1 2 3] |> (zip ["a" "b"])) :then ((let bad <- Int s)))',
     expect: /LL0200|Type mismatch/,
     why: "Ug: zip(Int[], String[]) is Iterator<[Int String]>, so `s` is String; assigning it to Int is caught.",
   },

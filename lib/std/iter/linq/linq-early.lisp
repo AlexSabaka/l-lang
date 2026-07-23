@@ -1,7 +1,7 @@
-;; std/linq (part 2 of 2) -- the EARLY-EXIT and TERMINAL operators.
+;; std/iter/linq (part 2 of 2) -- the EARLY-EXIT and TERMINAL operators.
 ;;
-;; Same package as `linq.lisp` (Phase M / Mb): `package.yaml` names `std/linq` over `sources:
-;; ["*.lisp"]`, so both files are one compilation unit and `(import "std/linq")` yields the union of
+;; Same package as `linq.lisp` (Phase M / Mb): `package.yaml` names `std/iter/linq` over `sources:
+;; ["*.lisp"]`, so both files are one compilation unit and `(import "std/iter/linq")` yields the union of
 ;; their exports. This file needs no import of `linq.lisp` -- a package's files share a unit, not a
 ;; boundary. (It DOES lean on the `iter`/`next` cursor builtins from La, which are language-level.)
 ;;

@@ -1,8 +1,8 @@
-;; std/linq -- the LAZY SEQUENCE operators (the C# LINQ steal). Phase L.
+;; std/iter/linq -- the LAZY SEQUENCE operators (the C# LINQ steal). Phase L.
 ;;
 ;; This package spans TWO files (Phase M / Mb): the STRAIGHT-THROUGH operators here, and the EARLY-EXIT
 ;; and TERMINAL operators in `linq-early.lisp`. They are one compilation unit -- `package.yaml` names
-;; `std/linq` over `sources: ["*.lisp"]` -- so `(import "std/linq")` brings in the union of both files'
+;; `std/iter/linq` over `sources: ["*.lisp"]` -- so `(import "std/iter/linq")` brings in the union of both files'
 ;; exports, and neither file imports the other.
 ;;
 ;; The counterpart to `std/seq` (D33): this module is LAZY, collection-FIRST, pipe-surfaced; `std/seq`

@@ -3793,7 +3793,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   }
 
   /**
-   * The EMITTED name a dispatched extension resolves to. An IMPORTED extension (`std/linq`'s `map`,
+   * The EMITTED name a dispatched extension resolves to. An IMPORTED extension (`std/iter/linq`'s `map`,
    * `to-list`) must be INLINED first -- otherwise the call names a function that was never emitted (the
    * bug: `(chain.to-list)` lowered to `to2dlist(...)` with no definition, because member syntax is not a
    * by-name reference the inliner sees). This mirrors `visitIdentifier` (:2571): resolve the symbol, and

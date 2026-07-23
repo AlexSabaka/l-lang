@@ -91,7 +91,7 @@ export class ModuleResolver {
     if (nearby || explicitlyRelative) return nearby;
 
     // 2. A PACKAGE by name (Phase M). At search-path priority -- after the importer's neighbours, before
-    //    a bare path scan -- so `(import "std/linq")` finds the package `std/linq` wherever its manifest
+    //    a bare path scan -- so `(import "std/iter/linq")` finds the package `std/iter/linq` wherever its manifest
     //    lives. Additive: an empty registry (no manifests) resolves nothing and falls through unchanged.
     const viaPackage = PackageRegistry.forPaths(searchPaths).resolve(spec);
     if (viaPackage) return viaPackage;
