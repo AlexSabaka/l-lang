@@ -369,6 +369,19 @@ export const C_PASSING: readonly string[] = [
   // Lg -- a `:ctor` field inherited through 2+ `:extends` levels was nil on JS; C flattened the
   // whole chain and was right. Fixed in the HIR lowering; this pins the multi-level forwarding.
   "80-adversarial/inherited_ctor_fields.lisp",
+  // std/math FOUNDATION (D57). Six modules that depend on nothing but the floor and each other's
+  // types: constants, elementary (the libm gaps + integer helpers), and the three algebras --
+  // Complex, Rational, Vec2/Vec3/Vec -- plus the symbolic-expression PoC. Every golden is DERIVED
+  // from mathematics (a 3-4-5 hypotenuse is 5; (1+i)^8 = 16; gcd 1071 462 = 21), never captured from
+  // a run, and transcendental results are rounded to 6dp so node's libm and clang's cannot split the
+  // digit. These run byte-identically on both backends. The NUMERICS layer (stats, special, random,
+  // fft, integrate) is held back -- its workflow agents died at verify; it lands per-module.
+  "40-math/00_constants.lisp",
+  "40-math/01_elementary.lisp",
+  "40-math/02_complex.lisp",
+  "40-math/03_rational.lisp",
+  "40-math/04_vector.lisp",
+  "40-math/10_symbolic_expr.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the

@@ -4719,3 +4719,59 @@ that can be goldened and one that can only assert `elapsed >= 0`, the single thi
 > samples need unbuffered single-keypress input (`process.stdin.on` + `setRawMode(true)`, 5 sites),
 > and `std/sys/timers` deliberately answers only the *pull* half of that problem. Raw-mode input is
 > the push half and belongs with the EVENTS ruling, not beside a clock.
+
+### D57 — `std/math` overloads exactly five operators; every other symbol is a name
+
+The math tower is the first corpus with a real appetite for operator notation — a `Complex` wants
+`+`, a `Vec3` wants `*`, a `Rational` wants `/` — and also the first place where the *seductive* wrong
+answer is "spell every operation as a glyph." `v · w` for a dot product reads beautifully and is a
+trap on both ends: it enlarges the closed set of head operators the checker recognises, and it feeds
+the encoder a character that does not survive the round-trip. This ruling draws the line once, so no
+later module has to argue it again.
+
+**The five, and only the five.** A math type may overload **binary `+ - * /` and unary `-`** — the
+field operations, the operators for which the reals already establish an unambiguous meaning that the
+complex numbers, the rationals and the vectors *extend* rather than *redefine*. `(fn :operator + ...)`
+is legal for these; anything else in head position is not. This is not a new mechanism — head
+operators are a **closed set** the checker already enforces (LL0204, "operator not defined"), and the
+ruling is simply the decision **not to petition to widen it** for math. Dot, cross, magnitude,
+comparison, equality, modulus, index — all of them are **ASCII method names** (`.dot`, `.cross`,
+`.abs`, `.eq`, `.near`) or free functions. The corpus proves it costs nothing: `(z.eq zc)`,
+`(v.dot w)`, `(z.near zl 0.001)` read exactly as well as the symbols would.
+
+**A glyph may exist, but only as a one-line synonym, and only from U+2000+.** A module *may* offer
+`(fn ⋅ [o] (return (this.dot o)))` — a member method whose entire body delegates to the ASCII method
+that does the work. The glyph is **never the only way in**, so deleting the whole notation block
+changes no behaviour. Two hard constraints on which glyph:
+
+- **It must be a *member*, never a head operator.** Member names are encoded *byte-identically* on
+  both backends (`encodeMemberName`), so `.⋅` is a safe key; a head `:operator ⋅` would have to enter
+  the closed operator set, which the first paragraph forbids anyway.
+- **It must come from U+2000+, and the Latin-1 block (U+0080–U+00FF) is *banned*.** This is a
+  *measured* encoder fact, not an aesthetic preference. `encodeIdentifier`/`encodeMemberName` escape a
+  non-identifier character to **bare hex of its code point** (`ch.charCodeAt(0).toString(16)`, no
+  separator). A Latin-1 glyph has a two-hex-digit code that begins with a letter, so it escapes to a
+  **bare, writable ASCII name**: `·` (U+00B7) → `b7`, `×` (U+00D7) → `d7`, `±` (U+00B1) → `b1`. That
+  is silently the *same* JS identifier a human could type as an ordinary member `b7` — the encoder is
+  **non-injective** exactly here, and the collision is undiagnosable because both sides are valid. A
+  U+2000+ glyph has a four-hex-digit code beginning with the digit `2`, so the leading-digit guard
+  prepends `_`: `⋅` (U+22C5) → `_22c5`, `‖` (U+2016) → `_2016`, `∠` → `_2220`. The `_`-prefixed form
+  is visibly machine-generated and cannot be confused for hand-written code.
+
+**House rule that closes the residual gap:** *no `std/math` identifier may match `^_?[0-9a-f]+$`* — no
+member or binding is allowed to be a bare (or `_`-prefixed) hex string. That is precisely the set every
+glyph escape lands in, so the rule guarantees a glyph synonym can never collide with a real name, and
+it lets a two-codepoint glyph like `⁻¹` (→ `_207bb9`) in on the same footing as a single U+2000+ one.
+
+**`==` is refused for these types; use `.eq` / `.near` / `≈`.** Structural equality on a `Complex` or a
+`Vec3` is a *method*, not the `==` operator, because `==` is one of the per-backend primitives whose
+meaning the two hosts do **not** already share for compound values (JS `===` on two objects is
+reference identity; C has no object `==` at all). A type that wants value equality says so by name —
+`.eq` for exact, `.near`/`≈` for tolerant — rather than overloading a token that would mean two
+different things depending on the backend. Floating-point math wants tolerant equality far more often
+than exact anyway, and `≈` fixes the tolerance (`1e-9`) that `.near` leaves as an argument.
+
+**Debt noted, not fixed:** `lib/std/math/math.lisp` (the pre-D57 aggregator) still defines
+`Vector3` with `(fn :operator ·)` — the U+00B7 head operator this ruling bans on both counts. It
+predates the ruling and its consumers (`complex_math_test`, `08_vector_toolkit`, `geometry/measure`)
+still import it, so retiring it is a migration, tracked separately from landing the new modules.

@@ -1,0 +1,31 @@
+-- structure --
+p            = (((x ^ 2) + (3 * x)) + 5)
+depth        = 4
+size         = 9
+free-vars    = x
+-- predicates --
+is-sum p           = true
+is-product (3*x)   = true
+is-power (x^2)     = true
+is-integer 5       = true
+is-symbol x        = true
+-- structural equality --
+equal p p          = true
+equal x^2 x^3      = false
+-- substitution x := (y+1) --
+q            = ((((y + 1) ^ 2) + (3 * (y + 1))) + 5)
+free-vars q  = y
+-- evaluation --
+p(2)               = 15
+p(0)               = 5
+q(1) [= p(2)]      = 15
+eval 2^10          = 1024
+eval sin(0)        = 0
+eval cos(0)        = 1
+eval log(1)        = 0
+eval exp(1) (6dp)  = 2.718282
+eval 2^0.5 (6dp)   = 1.414214
+-- general call --
+h            = hypot(x, 3)
+is-call h          = true
+size h             = 3

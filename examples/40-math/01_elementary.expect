@@ -1,0 +1,58 @@
+-- hypot --
+hypot 3 4      = 5
+hypot 8 15     = 17
+hypot3 2 3 6   = 7
+hypot 1e200    = 1.414213562373095e+200
+-- rounding --
+round 2.5      = 3
+round -2.5     = -2
+round 3.5      = 4
+floor 3.7      = 3
+ceil 3.2       = 4
+trunc -3.9     = -3
+fract 3.25     = 0.25
+fract -3.25    = -0.25
+-- clamp / lerp / angle --
+clamp 12 0 10  = 10
+clamp -3 0 10  = 0
+lerp 10 20 .5  = 15
+lerp 0 100 .25 = 25
+deg-to-rad 180 = 3.141592653589793
+rad-to-deg PI  = 180
+-- guarded asin / acos --
+asin 0.5       = 0.523599
+acos 1.000002  = 0
+asin 1.5       = 1.570796
+-- log gap --
+log2 1024      = 10
+log2 8         = 3
+log10 1000     = 3
+cbrt 27        = 3
+cbrt -8        = -2
+log1p e-1      = 1
+expm1 1        = 1.718282
+-- hyperbolics --
+sinh 0         = 0
+cosh 0         = 1
+sinh 1         = 1.175201
+cosh 1         = 1.543081
+tanh 1         = 0.761594
+asinh 1        = 0.881374
+acosh 2        = 1.316958
+atanh 0.5      = 0.549306
+acosh 0.5      = NaN
+atanh 2        = NaN
+-- integers --
+gcd 1071 462   = 21
+gcd 17 5       = 1
+lcm 21 6       = 42
+factorial 5    = 120
+factorial 10   = 3628800
+factorial 21   = -1
+binomial 52 5  = 2598960
+binomial 20 10 = 184756
+is-even 10     = true
+is-odd 7       = true
+pow-int 2 10   = 1024
+pow-int 3 4    = 81
+pow-int -2 3   = -8

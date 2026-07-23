@@ -1,0 +1,38 @@
+-- construction --
+z            = 3.0000+4.0000i
+w            = 1.0000-2.0000i
+polar(2,60d) = 1.000000+1.732051i
+-- parts --
+re, im       = 3.0000 4.0000
+abs |z|      = 5.0000
+abs2 |z|^2   = 25.0000
+arg(1+i)     = 0.785398
+-- operators --
+z + w        = 4.0000+2.0000i
+z - w        = 2.0000+6.0000i
+z * w        = 11.0000-2.0000i
+z / w        = -1.0000+2.0000i
+-z           = -3.0000-4.0000i
+-- elementary --
+exp(i*pi)    = -1.000000+0.000000i
+log(i)       = 0.000000+1.570796i
+sqrt(3+4i)   = 2.0000+1.0000i
+sqrt(-4)     = 0.0000+2.0000i
+(1+i)^8      = 16.0000+0.0000i
+2^i          = 0.769239+0.638961i
+-- trig --
+sin(i)       = 0.000000+1.175201i
+cos(i)       = 1.543081+0.000000i
+tan(pi/4)    = 1.000000+0.000000i
+-- equality --
+eq exact     = true
+near 5e-4    = true
+near 2e-2    = false
+-- glyphs --
+norm  glyph  = 5.0000
+arg   glyph  = 1.570796
+conj  glyph  = 3.0000-4.0000i
+near  glyph  = true
+-- overflow safety --
+smith 1e200  = 3.0000+4.0000i
+hypot 1e200  = 5.0000
