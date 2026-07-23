@@ -2062,6 +2062,48 @@ static ll_value ll_next(ll_value it) {
   return ll_next(ll_iter(it));
 }
 
+/* D58: release an ABANDONED sequence source. Total -- a value with no `dispose` member is left
+ * alone, which is what lets `take` call it unconditionally on whatever it was handed.
+ *
+ * DUCK-TYPED rather than a `Disposable` type test, and that is an amendment to D58 rather than a
+ * shortcut: `(x :of SomeInterface)` answers false on BOTH backends today, even for a type that
+ * declares `:implements`, so the nominal test the ruling named does not exist to call. A member
+ * check needs no type-system work and cannot be broken by that defect or by the one where
+ * `:implements A B` records only the first interface (both in the gap ledger).
+ *
+ * A GENERATOR has no user cleanup to run -- LL0239 forbids a suspend inside a protected region, so
+ * there is no `finally` to honour -- and it carries no method table either. Its disposal is to PARK
+ * the machine: set the state to a value the dispatch does not name, so a later pull answers nil
+ * instead of resuming into the middle of an abandoned body. */
+static void ll_dispose(ll_value v) {
+  if (v.tag != LL_OBJ) return;
+  const ll_class *cls = v.as.o->cls;
+  if (cls->is_gen) {
+    if (cls->field_count > 0) v.as.o->fields[0] = ll_box_int(-1); /* GEN_DONE */
+    return;
+  }
+  for (size_t i = 0; i < cls->method_count; i++) {
+    if (strcmp(cls->methods[i].name, "dispose") == 0) {
+      cls->methods[i].fn(v, 0, (ll_value *)0);
+      return;
+    }
+  }
+  /* A parent's `dispose` counts too -- conformance is inherited, so the walk is the same one
+     `ll_dyn_method` performs rather than a shallower rule that would answer differently. */
+  const char *parent = cls->parent;
+  while (parent) {
+    const ll_class *p = ll_class_by_name(parent);
+    if (!p) break;
+    for (size_t i = 0; i < p->method_count; i++) {
+      if (strcmp(p->methods[i].name, "dispose") == 0) {
+        p->methods[i].fn(v, 0, (ll_value *)0);
+        return;
+      }
+    }
+    parent = p->parent;
+  }
+}
+
 /* -- generic boxed operators (the JS operator shim's NATIVE tail; user-overload registry is
  *    Phase C). JS `+` semantics: string contagion, else numeric; int-ness preserved when exact. --- */
 

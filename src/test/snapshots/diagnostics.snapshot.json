@@ -232,11 +232,6 @@
     "probe": "LL0224 :gen wrong return type",
     "diagnostics": [
       {
-        "code": "LL0223",
-        "severity": "error",
-        "text": "a ':gen' function stops with a valueless '(return)'; it cannot '(return x)'. Produce values with '(yield x)'."
-      },
-      {
         "code": "LL0224",
         "severity": "error",
         "text": "a ':gen' function must return Iterator<T> (or Iterable<T>), but 'g' declares Int."
@@ -246,11 +241,6 @@
   {
     "probe": "LL0225 :gen yield type mismatch",
     "diagnostics": [
-      {
-        "code": "LL0223",
-        "severity": "error",
-        "text": "a ':gen' function stops with a valueless '(return)'; it cannot '(return x)'. Produce values with '(yield x)'."
-      },
       {
         "code": "LL0225",
         "severity": "error",
@@ -272,11 +262,6 @@
     "probe": "LL0237 valueless (yield)",
     "diagnostics": [
       {
-        "code": "LL0223",
-        "severity": "error",
-        "text": "a ':gen' function stops with a valueless '(return)'; it cannot '(return x)'. Produce values with '(yield x)'."
-      },
-      {
         "code": "LL0237",
         "severity": "error",
         "text": "'(yield)' needs a value. nil MEANS DONE in the iteration protocol (D30), so a valueless yield does not produce an empty element -- it ends the sequence. Write '(yield x)', or '(return)' to stop."
@@ -286,11 +271,6 @@
   {
     "probe": "LL0238 :gen with a nullable element type",
     "diagnostics": [
-      {
-        "code": "LL0223",
-        "severity": "error",
-        "text": "a ':gen' function stops with a valueless '(return)'; it cannot '(return x)'. Produce values with '(yield x)'."
-      },
       {
         "code": "LL0238",
         "severity": "error",

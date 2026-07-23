@@ -4941,6 +4941,41 @@ form only when the collection's static type is `Disposable`-or-Unknown, which wi
 information means most loops keep paying nothing. The library holds the other half: `take` and
 `take-while` dispose the source cursor they abandon, which is where the real leak lives.
 
+> **Amended 2026-07-23 (Phase G5) — two mechanisms this ruling named do not exist, and one half is
+> not built.**
+>
+> **(a) Recognition is DUCK-TYPED, not a type test.** The ruling above says consumers "type-test
+> instead: dispose what is `Disposable`, leave the rest alone". Measurement says `(x :of
+> SomeInterface)` answers **false on both backends**, even for a type that declares `:implements` and
+> whose claim the checker verified — and `:implements A B` records only the first interface anyway, so
+> a type cannot claim both `Iterable` and `Disposable` (ledger §14.1, §14.2). Both are pre-existing and
+> unrelated to disposal. So `dispose` is a floor operation that checks for a callable `dispose`
+> MEMBER, and is **total**: a value without one is left alone. Totality is load-bearing rather than
+> convenient — it is what lets `take` call it unconditionally on an ordinary array.
+>
+> The cost is that a type carrying a `dispose` member without declaring `Disposable` is disposed
+> anyway. For a cleanup hook that is the benign direction to err, and the `Disposable` interface
+> stays in `std/iter` as the DOCUMENTED contract even though nothing can currently test for it.
+>
+> **(b) What is disposed is the COLLECTION, not the cursor.** `(iter coll)` does not return the same
+> kind of thing on the two backends: C's `ll_iter` asks an object for `iterator()` and gets the object
+> back, while JS's `iter` shim always builds a fresh `{next(){...}}` wrapper with no `dispose` and no
+> identity (ledger §14.3). Disposing "the source cursor" would therefore have worked on C and silently
+> no-opped on JS. The operators dispose their own `coll` parameter, which is the same object on both.
+>
+> **(c) The `for :each` half is NOT built**, and that is a consequence of (b). With disposal keyed on
+> the collection, a loop that disposed its source would release something the program may still hold
+> and iterate again. C# is safe here because `foreach` disposes the *enumerator* and makes a fresh one
+> per loop; l-lang's `iterator()` returns `this`, so cursor and collection are one object and there is
+> no per-loop enumerator to dispose. Every available form either diverges across backends or breaks
+> source reuse, so it wants a ruling rather than a build. The library half — the one this paragraph
+> calls "where the real leak lives" — is built and guarded (`80-adversarial/disposal.lisp`).
+>
+> **A generator's disposal is PARKING**, on both backends and for the same reason: LL0239 forbids a
+> suspend inside a protected region, so there is no user `finally` to honour. C sets the frame's state
+> to a value the dispatch does not name; JS calls `function*`'s own `.return()`. Same observable
+> contract — a later pull answers nil instead of resuming into the middle of an abandoned body.
+
 ## D59 — memory: a precise tracing GC with shadow-stack roots; no finalizers
 
 **Direction: a precise tracing GC, shadow-stack root discipline.** Ruled now so D58's frame

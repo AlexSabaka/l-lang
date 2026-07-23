@@ -350,6 +350,13 @@ export const C_PASSING: readonly string[] = [
   // expression, which `classifyCall` leaves opaque and which resolves off the receiver's inferred
   // type), plus the precedence control: a type's OWN method still beats a same-named extension.
   "80-adversarial/extension_method_surface.lisp",
+  // D58's disposal (Phase G5). Two amendments to that ruling are pinned here, both forced by
+  // measurement: recognition is DUCK-TYPED (`(x :of SomeInterface)` answers false on both backends,
+  // so the type test D58 named does not exist), and what gets disposed is the COLLECTION rather than
+  // the cursor (C's `iter` returns the object, JS's returns a fresh wrapper -- disposing the cursor
+  // would work on one backend and silently no-op on the other). Line 7 is the load-bearing negative:
+  // `dispose` must be TOTAL, or every lazy chain over an ordinary array would die in `take`.
+  "80-adversarial/disposal.lisp",
   // Unblocked by the above: the corpus's only method-surface site, and the last of the three files
   // Phase G4 set out to green.
   "16-stdlib/02_linq_pipeline.lisp",

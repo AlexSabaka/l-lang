@@ -394,12 +394,19 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
 
     return {
       ...node,
-      // D49a: `-> Void` BINDS -- it suppresses the implicit return, the same exemption a `:gen` body
-      // needs (D31: a generator's tail value is not a sequence element). Without it the annotation
+      // D49a: `-> Void` BINDS -- it suppresses the implicit return. Without it the annotation
       // asserted something nothing enforced: D9 makes Void == Nil, so `checkReturns` bails on a
       // `-> Void` declaration, and the tail got returned anyway -- which is how
       // `(fn add [x] -> Void (this.items.push x))` came to return an Int.
-      body: this.injectImplicitReturns && !isVoidReturn(node) ? this.wrapTail(body) : body,
+      //
+      // A `:gen` takes THE SAME EXEMPTION, which this comment has claimed since D49a landed while the
+      // condition did not implement it (gap ledger §11.1). D31 is explicit -- "implicit return of the
+      // tail: SUPPRESSED. A generator's tail value is not a sequence element." Wrapping it anyway
+      // produced diagnostics at programs nobody wrote: a body ending in `(yield x)` became
+      // `(return (yield x))` and drew LL0223 "a ':gen' stops with a valueless '(return)'", and a body
+      // ending in any Void call drew LL0213 "declares Iterator<T>, but returns Void". Latent until
+      // now only because every corpus generator happened to end in a `while` loop.
+      body: this.injectImplicitReturns && !isVoidReturn(node) && !node.generator ? this.wrapTail(body) : body,
     } as ast.FunctionNode;
   }
 

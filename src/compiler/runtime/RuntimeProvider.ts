@@ -761,6 +761,25 @@ function __ll_is_type(val, type) {
     : r;
 };`,
 
+    // D58: release an ABANDONED sequence source (`take`, `take-while` and `zip` all stop early --
+    // that is what they are for). TOTAL: a value with no \`dispose\` member is left alone, so a
+    // consumer can call it unconditionally on whatever it was handed.
+    //
+    // DUCK-TYPED rather than the \`Disposable\` type test D58 named, because \`(x :of SomeInterface)\`
+    // answers false on BOTH backends today even for a type that declares \`:implements\` -- the
+    // mechanism the ruling described does not exist to call. Both defects are in the gap ledger.
+    //
+    // A GENERATOR is disposed through the protocol JS already gives it: \`function*\` objects carry
+    // \`.return()\`, which runs the generator to completion so a later \`next()\` answers done. The C
+    // half parks the state machine, which is the same observable contract -- no user cleanup runs on
+    // either backend, because LL0239 forbids a suspend inside a protected region.
+    "dispose": `const dispose = (v) => {
+  if (v == null || typeof v !== 'object') return null;
+  if (typeof v.dispose === 'function') { v.dispose(); return null; }
+  if (typeof v.return === 'function' && typeof v.next === 'function') { v.return(); return null; }
+  return null;
+};`,
+
     // Opt-in DEEP copy (CP3, games). The default struct copy (`__ll_copy`) is shallow-at-reference,
     // C#-style and goldened: it recurses a struct's own fields but returns an ARRAY unchanged, so
     // `(let snap world)` copies the player but SHARES the boxes -- a half-working undo. `deep-copy`

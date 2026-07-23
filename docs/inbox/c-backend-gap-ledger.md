@@ -674,7 +674,7 @@ generators live in `13-generators/00` and `std/iter/linq`, and they all have the
 top-level `:gen` whose body is a `while` loop. Every shape outside that is untested, and all three
 defects are outside it.
 
-### 11.1 A `:gen` whose body TAIL is a `(yield x)` is rejected — LL0223
+### 11.1 A `:gen` whose body TAIL is a `(yield x)` is rejected — LL0223 **[CLOSED 2026-07-23]**
 
 ```lisp
 (fn :gen tailyield [] -> Iterator<Int> ((yield 1)))
@@ -690,6 +690,20 @@ D49a made `-> Void` bind by suppressing the same desugar, and the note there say
 does — the measurement says otherwise, at least for a tail yield. The fix belongs with whatever
 suppression D49a added. Latent because every corpus generator ends in a `while`, whose value is not a
 yield.
+
+> **Closed in Phase G5.** The fix is exactly where this entry predicted — `DesugarAstVisitor`'s
+> implicit-return injection, whose own comment had claimed the `:gen` exemption since D49a landed while
+> the condition did not implement it: `!isVoidReturn(node)` became
+> `!isVoidReturn(node) && !node.generator`.
+>
+> It was found from the other side. G5 needed `take` to end with `(dispose coll)`, and that tail —
+> being `Void` rather than a yield — drew **LL0213** "declares Iterator<T>, but returns Void" instead
+> of LL0223. Same defect, second symptom.
+>
+> **The snapshot had been blessing it in four places.** `test:diagnostics` probes for LL0224, LL0225,
+> LL0237 and LL0238 each recorded a spurious LL0223 alongside the code they actually test; all four now
+> report only their own diagnostic. That the fix removed exactly four identical entries and nothing
+> else is the strongest evidence available that it was one bug.
 
 ### 11.2 An anonymous `(fn :gen [] ...)` does not parse
 
@@ -850,3 +864,74 @@ Two things the fix had to get right, both guarded by `80-adversarial/extension_m
 **The ratchet found a file nobody aimed at:** `30-applications/02_interface_conformance.lisp`, whose
 entire subject is `:extension` dispatch over an interface, went from failing to passing and reported
 itself as "newly passing -- add it". That is the unlisted-and-passing rule paying for itself.
+
+## 14. Interface conformance is not observable at run time (2026-07-23)
+
+Surfaced by G5, which needed to answer "is this value disposable?" and found that the mechanism D58
+named for it does not exist. Both defects are **pre-existing, on BOTH backends, and unrelated to
+disposal** — G5 was designed to route around them (see D58's amendment) rather than absorb them.
+
+### 14.1 `(x :of SomeInterface)` answers false, always
+
+```lisp
+(defstruct Res :implements Iterable<Int> ... )
+(let r (Res 0))
+(console.log (r :of Iterable))     ;; false   -- on BOTH backends
+(console.log (r :of Disposable))   ;; false
+```
+
+The type-test operator answers false for an interface even when the receiver's type declares
+`:implements` and the checker has verified the claim (LL0209 fires if a member is missing). The two
+backends agree, so this is not a divergence — it is a capability the language does not have.
+
+Whether that is a *bug* or an unwritten ruling is genuinely open: `:of` may have been intended for
+concrete types only, with conformance left to `:extension` dispatch (which is nominal and does work —
+`30-applications/02_interface_conformance.lisp` is built on exactly that distinction). Nothing states
+either. **D58 assumed it worked**, which is how the gap surfaced.
+
+### 14.2 `:implements A B` records only the first interface
+
+```lisp
+(defclass Both :implements A B ...)
+(console.log (type x))    ;; :implements ["A"]      -- B is dropped
+```
+
+Confirmed on `defclass` and `defstruct`, on both backends, in the D54 metadata graph. So a type
+cannot even *claim* to be both `Iterable` and `Disposable` — which is precisely what a disposable
+sequence source is, and why 14.1 could not have been worked around by fixing only the type test.
+
+**`08-generics/06_multiple_interfaces.lisp` is currently green while dropping an interface**: its
+golden does not print the `:implements` list, so nothing catches it. Recorded here explicitly because
+a green golden over a wrong answer is the exact shape this ledger exists to make visible.
+
+### 14.3 `iter` does not agree on what a cursor IS
+
+```
+C    ll_iter(obj)  ->  obj->iterator()  ->  the OBJECT itself
+JS   iter(x)       ->  { next() { ... } }   -- a fresh anonymous wrapper, always
+```
+
+`RuntimeProvider.ts`'s `iter` shim builds a wrapper unconditionally, so on JS a cursor has no
+`dispose`, no `__ll_name`, and no identity — `(type (iter r))` answers `Map` on JS and `Res` on C.
+A real divergence, and the reason D58's "dispose the source cursor" was amended to "dispose the
+collection": the cursor is not the same object on the two backends, so disposing it would have worked
+on C and silently done nothing on JS.
+
+Not fixed here because the shim is on every iteration path in the corpus; the blast radius belongs to
+its own gated commit, not to disposal.
+
+### 14.4 Not built: `for :each` disposal at exit edges
+
+D58 also specifies the compiler half — "dispose on statically known exit edges — exhaustion and an
+early `return` crossing the loop". **G5 does not build it**, and the reason is a consequence of 14.3
+rather than effort.
+
+With disposal keyed on the COLLECTION (forced by 14.3), a `for :each` that disposed its source would
+release a collection the program may still hold and loop over again. C# avoids this by disposing the
+*enumerator*, of which each `foreach` makes a fresh one — but in l-lang `iterator()` returns `this`,
+so cursor and collection are the same object and there is no per-loop enumerator to dispose. Every
+available form therefore either diverges across backends (dispose the cursor) or breaks source reuse
+(dispose the collection).
+
+The library half — which D58 itself calls "where the real leak lives" — is unaffected and is built:
+`take`, `take-while` and `zip` own their `coll` parameter and are abandoning it by construction.

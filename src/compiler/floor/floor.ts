@@ -304,6 +304,23 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   ["iter", fn("ll_iter", [Any], Any)],
   ["next", fn("ll_next", [Any], Any)],
 
+  // D58/D30's third protocol operation: release a sequence source that is being ABANDONED rather
+  // than exhausted. `take`, `take-while` and `zip` all stop early -- that is what they are for -- so
+  // "the sequence ended" and "the consumer walked away" are different events, and only the second
+  // wants a cleanup hook.
+  //
+  // DUCK-TYPED, deliberately, and this is an amendment to D58's stated design. That ruling said
+  // consumers would type-test (`dispose what is Disposable`), but `(x :of SomeInterface)` answers
+  // FALSE on both backends today -- even for a type that declares `:implements` -- so the mechanism
+  // it named does not exist. A member check does, needs no type-system work, and cannot be broken by
+  // the two interface defects the ledger now records. The cost is that a type carrying a `dispose`
+  // member without declaring `Disposable` is disposed anyway; for a cleanup hook that is the benign
+  // direction to err.
+  //
+  // TOTAL: a value with no `dispose` member is left alone, so `(dispose xs)` on an array is a no-op
+  // rather than a trap. That is what lets a consumer call it unconditionally.
+  ["dispose", fn("ll_dispose", [Any], Void)],
+
   // -- reflection: the backend emits the metadata graph, the accessor shape is spec (D54).
   ["type", fn("ll_type", [Any], Any)],
   ["type-by-name", fn("ll_type_by_name", [Any], Any)],

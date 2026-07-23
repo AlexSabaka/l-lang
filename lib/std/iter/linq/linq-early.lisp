@@ -33,7 +33,11 @@
         (i := n)          ;; exhausted -- stop without pulling again
         (
           (yield v)
-          (i := (+ i 1)))))))
+          (i := (+ i 1))))))
+    ;; D58: the source is ABANDONED here, not exhausted -- that is what `take` is for -- so release
+    ;; it. `dispose` is total (a value with no `dispose` member is left alone), which is why this is
+    ;; unconditional rather than guarded by a type test.
+    (dispose coll))
 
   ;; take-while -- the leading run where (pred x) holds, stopping at the first element that fails it.
   (fn :extension :gen take-while<T> [coll <- Iterable<T> pred] -> Iterator<T>
@@ -41,7 +45,9 @@
     (mut v (next it))
     (while (&& (!= v nil) (pred v)) (
       (yield v)
-      (v := (next it)))))
+      (v := (next it))))
+    ;; Abandoned at the first element that fails the predicate (D58).
+    (dispose coll))
 
   ;; zip -- pair elements of `a` and `b` in lockstep as `[x y]`, typed as the tuple `[A B]` (Phase U),
   ;; stopping when EITHER runs out. The two sides may differ (`A`, `B`).
@@ -53,7 +59,11 @@
     (while (&& (!= x nil) (!= y nil)) (
       (yield [x y])
       (x := (next ia))
-      (y := (next ib)))))
+      (y := (next ib))))
+    ;; Lockstep: when EITHER side runs out the other is abandoned mid-sequence, so both are released
+    ;; (D58). Disposing an already-exhausted source is harmless -- `dispose` is idempotent by shape.
+    (dispose a)
+    (dispose b))
 
   ;; ------------------------------------------------------------------------------------------------
   ;; TERMINALS. These CONSUME a sequence (not `:gen`) -- they are how a lazy chain becomes a value.

@@ -1,0 +1,19 @@
+1 total:
+  (no output above)
+2 direct:
+  [Res disposed]
+3 take 2 of 9:
+  [Res disposed]
+  -> 1 2
+4 take-while < 3:
+  [Res disposed]
+  -> 1 2
+5 zip (2 vs 9):
+  [Res disposed]
+  [Letters disposed]
+  -> 2
+6 generator parking:
+  first=0
+  after-dispose-nil=true
+7 no-dispose source:
+  -> 10 20

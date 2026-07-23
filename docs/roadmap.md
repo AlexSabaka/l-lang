@@ -519,8 +519,21 @@ refused by ruling (D60), and the collector (D59) is a separate lane.
         `13-generators/00` and `30-applications/07_line_clear` join the ratchet against their existing
         goldens; `16-stdlib/02_linq_pipeline` is blocked on ledger §13 (`:extension` method-surface
         dispatch is not resolved on C) and on nothing else.
-*   [ ] **G5 — disposal.** Statically-known exit edges only (exhaustion, early `return`; l-lang has no
-        `break`), so no `setjmp` per loop; `take`/`take-while` dispose the source they abandon.
+*   [x] **G4d — the `:extension` method surface.** Not planned; found the moment G4c let
+        `02_linq_pipeline` run. `(coll.filter p)` on a boxed receiver went to `ll_dyn_method`, which
+        searches a method table that by construction never holds a free function. Two receiver shapes,
+        resolved two ways (ledger §13.1). Unblocked `16-stdlib/02_linq_pipeline` and, via the ratchet,
+        `30-applications/02_interface_conformance`.
+*   [~] **G5 — disposal.** The LIBRARY half is built: `dispose` is a floor operation, and
+        `take`/`take-while`/`zip` release the source they abandon — "where the real leak lives" (D58).
+        Two of that ruling's mechanisms did not exist and are amended there: recognition is
+        **duck-typed** (`(x :of SomeInterface)` answers false on both backends, ledger §14.1/§14.2) and
+        what is disposed is the **collection**, not the cursor (`iter` returns different kinds of thing
+        per backend, §14.3). The `for :each` half is **not built** and wants a ruling: with disposal
+        keyed on the collection it would release a source the program may still reuse, and l-lang has
+        no per-loop enumerator to dispose instead (§14.4). Closed ledger §11.1 on the way — the
+        implicit-return desugar never honoured its documented `:gen` exemption, which four diagnostics
+        probes had been blessing.
 *   [ ] **G6 — the collector (D59).** Separate lane. The bounded-RSS acceptance test lands **RED
         first** — nothing in the corpus measures memory today.
 
