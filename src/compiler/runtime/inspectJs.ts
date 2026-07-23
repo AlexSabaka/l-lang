@@ -78,6 +78,14 @@ function __ll_inspect(v, indent, prefixLen, seen, flat) {
      naming a value the language did not name is not a name; falling through to #<fn> matches C. */
   if (t === "function") return v.__ll_name ? "#<fn " + v.__ll_name + ">" : "#<fn>";
   if (t !== "object") return String(v);
+  /* A GENERATOR instance (D58/G3): an unreadable object, rendered like a closure and for the same
+     reason -- its contents are the suspended frame (a state number and whatever locals live across the
+     yield), which are compiler-internal and exactly the leak F.7/F.8 removed for classes and lambdas.
+     __ll_gen is inherited from the generator function's prototype, where the emitter branded it.
+     Before this arm existed a generator fell through to the object arm with no own keys and printed
+     an empty map -- a generator was indistinguishable from one. Checked ahead of the cycle set, since
+     it never recurses. */
+  if (typeof v.__ll_gen === "string") return v.__ll_gen ? "#<generator " + v.__ll_gen + ">" : "#<generator>";
   if (seen.indexOf(v) !== -1) return "#<circular>";
   seen.push(v);
   try {

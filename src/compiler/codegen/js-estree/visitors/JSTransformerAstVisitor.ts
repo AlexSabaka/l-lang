@@ -268,6 +268,14 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    */
   private functionSourceNames = new Map<string, string>();
   /**
+   * `f.prototype.__ll_gen = "fibs";` for every top-level `:gen` -- the generator BRAND (G3/D58).
+   *
+   * Binding -> source name, emitted beside the `__ll_name` stamps above and under the same
+   * reachability rule. An empty string means "branded, but with no displayable name" (an anonymous or
+   * operator-spelled generator), which renders `#<generator>` exactly as `#<fn>` does.
+   */
+  private generatorSourceNames = new Map<string, string>();
+  /**
    * Is this source name one the READER would lex as an identifier? The same rule the display
    * formatter applies to map keys (the tokenizer's Identifier pattern).
    *
@@ -771,6 +779,43 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       this.functionSourceNames.clear();
     }
 
+    // The generator brands, same placement and the same reachability rule as the name stamps above:
+    // `fibs.prototype.__ll_gen = "fibs"`. A top-level `function*` hoists, so a stamp at the front of
+    // the body is safe; anything else is skipped rather than stamped into a ReferenceError.
+    if (this.generatorSourceNames.size > 0) {
+      const reachable = new Set<string>(Object.keys(this.inlinedDefinitions));
+      for (const st of statements as any[]) {
+        if (st && st.type === "FunctionDeclaration" && st.id && st.id.name) reachable.add(st.id.name);
+      }
+      const brands: ESTree.Statement[] = [];
+      for (const [binding, source] of this.generatorSourceNames) {
+        if (!reachable.has(binding)) continue;
+        brands.push({
+          type: "ExpressionStatement",
+          expression: {
+            type: "AssignmentExpression",
+            operator: "=",
+            left: {
+              type: "MemberExpression",
+              object: {
+                type: "MemberExpression",
+                object: { type: "Identifier", name: binding },
+                property: { type: "Identifier", name: "prototype" },
+                computed: false,
+                optional: false,
+              },
+              property: { type: "Identifier", name: "__ll_gen" },
+              computed: false,
+              optional: false,
+            },
+            right: { type: "Literal", value: source },
+          },
+        } as unknown as ESTree.Statement);
+      }
+      statements.unshift(...brands as any);
+      this.generatorSourceNames.clear();
+    }
+
     // Add operator registrations at the beginning of the program scope
     if (this.operatorRegistrations.length > 0) {
       statements.unshift(...this.operatorRegistrations as any);
@@ -1217,6 +1262,22 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
           JSTransformerAstVisitor.isDisplayableName(originalName)
         ) {
           this.functionSourceNames.set(name.name, originalName);
+        }
+
+        // G3/D58: brand a `:gen`'s PROTOTYPE with its source name, so a generator INSTANCE displays as
+        // `#<generator fibs>` and reflects as kind "generator" instead of leaking its host shape. It
+        // is stamped on `.prototype` rather than the instance because that is free -- every object a
+        // `function*` produces already inherits from it -- and because a prototype property is not an
+        // OWN key, so the formatter's field walk (`Object.keys`) still sees an empty object and no
+        // filtering is needed. Unlike `__ll_name` above this is collected for EVERY generator, encoded
+        // name or not: the name is not the point, the brand is, and without one JS cannot tell a
+        // generator from a plain object at all (it printed `{}` and typed as `Map`).
+        if ((result as any)?.type === "FunctionDeclaration" && node.generator) {
+          const src = typeof originalName === "string" && originalName ? originalName : name.name;
+          this.generatorSourceNames.set(
+            name.name,
+            JSTransformerAstVisitor.isDisplayableName(src) ? src : ""
+          );
         }
       } else {
         // A nested/anonymous function is normally an arrow -- but a generator CANNOT be an arrow
@@ -4098,6 +4159,25 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       if (isFnDef && typeof symName === "string" && symName && symName !== uniq &&
           JSTransformerAstVisitor.isDisplayableName(symName)) {
         this.functionSourceNames.set(uniq, symName);
+      }
+
+      // The same treatment for an imported `:gen` (G3/D58), and for exactly the same reason one line
+      // up. Without it every lazy operator in `std/iter/linq` -- all eleven are generators, and all
+      // eleven are imported -- displayed as `#<generator __ll_inlined_map_1>`: the mangler's symbol,
+      // in user-facing output, reintroduced by the very feature that exists to keep compiler-internal
+      // names out of it. Branded on the emitted FUNCTION's prototype, so it must be a real function
+      // definition (an arrow has no useful prototype, but an inlined generator is a FunctionExpression
+      // or Declaration -- a generator can never be an arrow).
+      const fnFormOk =
+        (defStmt as any)?.type === "FunctionDeclaration" || initType === "FunctionExpression";
+      const isGen =
+        (defStmt as any)?.generator === true ||
+        (defStmt as any)?.declarations?.[0]?.init?.generator === true;
+      if (fnFormOk && isGen && typeof symName === "string" && symName) {
+        this.generatorSourceNames.set(
+          uniq,
+          JSTransformerAstVisitor.isDisplayableName(symName) ? symName : ""
+        );
       }
       return uniq;
     } catch (ex) {

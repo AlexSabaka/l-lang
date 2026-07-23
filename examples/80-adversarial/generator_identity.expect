@@ -1,0 +1,11 @@
+#<generator fibs>
+#<generator count-up>
+#<generator map>
+#<generator filter>
+{:name "fibs" :kind "generator" :nullable false}
+{:name "map" :kind "generator" :nullable false}
+[#<generator count-up> #<generator fibs>]
+{:g #<generator fibs>}
+{}
+{:name "Map" :kind "container" :nullable false}
+[1 2 3 4]

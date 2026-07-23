@@ -826,6 +826,18 @@ function __ll_is_type(val, type) {
   }
 
   if (typeof v === 'object') {
+    // A GENERATOR instance (D58/G3), ahead of the class arm. Kind is 'generator' and the name is the
+    // SOURCE name the emitter branded onto the \`function*\`'s prototype. The lowering's own type -- the
+    // synthesized state-machine class on a native backend -- deliberately never enters the graph, so
+    // this answers the same on both backends. Without the arm a generator has no constructor worth
+    // reporting and fell through to the map fallback: \`{name:'Map', kind:'container'}\`.
+    // Shape matches the SEEDED entries in reflection/metadata.ts -- name, kind, nullable, and nothing
+    // else. A generator has no properties or methods to report: its members are the suspended frame,
+    // which is exactly what the display rule hides, and D54's "a container's elements are not its
+    // properties" is the same argument one type-constructor along.
+    if (typeof v.__ll_gen === 'string') {
+      return { name: v.__ll_gen || 'generator', kind: 'generator', nullable: false };
+    }
     // __ll_name FIRST, constructor.name only as a fallback -- the same order __ll_is_type uses, and
     // for the same reason (Zh). An import is INLINED under a mangled JS name, so \`constructor.name\`
     // is the MANGLER's name: \`(type m)\` on an imported Money reported \`__ll_inlined_Money_1\`, a name

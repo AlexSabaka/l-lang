@@ -351,6 +351,10 @@ inspect(v, indent):
   Char           -> #\c                      (PROVISIONAL: the reader has no Char literal yet, and
                                               no corpus example constructs one)
   Closure        -> #<fn name>  |  #<fn>     when anonymous
+  Generator      -> #<generator name>  |  #<generator>    (D58/G3: the value a `:gen` call returns.
+                                              An unreadable object, like a closure -- its members are
+                                              the suspended frame, and the synthesized state-machine
+                                              class never appears. `name` is the SOURCE name.)
   vec, empty     -> []
   map, empty     -> {}
   obj, no fields -> ClassName{}
