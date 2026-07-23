@@ -1034,3 +1034,42 @@ shape in a single file is correct on both backends.
 `.length` on an imported module-level vector still emits `ll_dyn_length(u_GLYPHS)` against an
 `ll_vec*`. Re-measured after 15.1 on the hypothesis that it shared the missing-type root; it does not.
 A missed box on the hoisted-global path, and a C-side fix.
+
+### 15.4 N1 + N15 + N2 — one bug, not three **[CLOSED 2026-07-23]**
+
+Three games-corpus findings with one root cause: `SymbolTable.resolveSymbol`'s fall-through is a flat
+FIRST-WINS union over every loaded module root, iterated in module-JOIN order. So which `write-line` /
+`iabs` / `rect` a file got was decided by which module happened to be processed first — and a stdlib
+module always wins, because the prelude and package co-processing get there earlier.
+
+- **N1** — a one-parameter `write-line` defined ONE FILE AWAY lost to `std/io/stream`'s two-parameter
+  one, reached only transitively. Reported as "expects 2 arguments, got 1".
+- **N15** — `std/math/rational.lisp`'s PRIVATE `iabs` beat a program's own exported `iabs`, and the
+  LL0215 that fired named a stdlib file the program never mentioned. 26 modules leak 32 private
+  top-level names this way.
+- **N2** — `std/math/complex`'s `rect` beat a local five-parameter `rect`. Loud only because the
+  arities differed; silent whenever they agree.
+
+**The fence was never wrong.** `checkSymbolVisible` asks the right two questions and `isVisibleFrom`
+is a single correct rule. Resolution handed them the wrong symbol, and the diagnostics faithfully
+described it.
+
+**Fix:** `resolveByImportPriority` — on a lexical miss, prefer a module the asking file DIRECTLY
+imports (exported entry first, then merely-declared, so package siblings still resolve) before the
+flat union. The graph is `Context.importBindings`, already populated by the dependency-graph pass and
+already read by `importBinds`; the table gets a reader, not a copy.
+
+Deliberately narrow, because the note on `isVisibleFrom` warns that filtering here "only LOOKED
+airtight" when most callers cannot say who is asking — still true, 63 call sites and 13 pass `from`.
+So this runs ONLY on the `from` path, and it is a REORDERING rather than a filter: a name reachable
+only transitively still resolves through the unchanged union. Nothing that resolved before stops
+resolving.
+
+**RESIDUAL, stated rather than discovered later:** type references, `:extends`, `new` and most of
+codegen call `resolveSymbol` bare, so a cross-module TYPE-name collision keeps the old first-wins
+behaviour. Fixing that is the `from`-passing migration the `resolveSymbolLexical` note describes, and
+it is a separate phase.
+
+Verified by removing a workaround rather than by a green suite: `../l-lang-games` renamed `iabs` to
+`int-abs` *because of N15*; renaming it back in a scratchpad copy keeps the corpus 15/15 on both
+backends.

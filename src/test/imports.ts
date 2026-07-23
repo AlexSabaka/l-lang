@@ -1050,6 +1050,120 @@ const CASES: Case[] = [
     },
   },
 
+  // S1b / N1 + N15 + N2 -- three findings, ONE bug. `resolveSymbol`'s fall-through is a flat
+  // first-wins union over every loaded module root, in module-JOIN order, so which `write-line` /
+  // `iabs` / `rect` you get is decided by which module happened to be processed first. A stdlib
+  // module always wins, because the prelude and the package co-processing get there earlier.
+  {
+    name: "S1b/N1: a DIRECTLY imported name beats a transitively-reached stdlib one",
+    why:
+      "`mid.lisp` defines and exports a one-parameter `write-line`; `std/io/stream` exports a " +
+      "two-parameter one and is reached only TRANSITIVELY (mid imports it, main does not). Main's " +
+      "call resolved to the stdlib's, so a one-argument call to a one-parameter function one file " +
+      "away reported `ELL0211 expects 2 arguments, got 1` and `ELL0203 expected Writer, got String`. " +
+      "A selective import does not contain it: the union is keyed by DECLARED name across all roots. " +
+      "The working rule the games corpus had to adopt -- never reuse a name the stdlib exports -- is " +
+      "not checkable without reading lib/.",
+    run: () => {
+      const entry = fixture(
+        "direct-beats-transitive",
+        {
+          "mid.lisp":
+            `(\n` +
+            `  (import { stdout } from "std/io/stream")\n` +
+            `  (fn write-line [text <- String] -> Void (stdout.write (+ text "\\n")))\n` +
+            `  (export write-line)\n` +
+            `)\n`,
+          "main.lisp": `(\n  (import "mid.lisp")\n  (write-line "hello")\n)\n`,
+        },
+        "main.lisp"
+      );
+      const out = build(entry);
+      if (!out.compiled) {
+        return { ok: false, detail: `did not compile: ${out.diagnostics.join(", ") || "(no diagnostics)"}` };
+      }
+      if (out.runtimeError) return { ok: false, detail: `runtime: ${out.runtimeError}` };
+      return out.stdout === "hello"
+        ? { ok: true, detail: "the directly-imported one-parameter `write-line` won" }
+        : { ok: false, detail: `expected "hello", got ${JSON.stringify(out.stdout)}` };
+    },
+  },
+
+  {
+    name: "S1b/N15: a package's PRIVATE sibling name does not shadow an importer's own export",
+    why:
+      "`std/math/rational.lisp` has a private `iabs`. Importing ONE name from the std/math package " +
+      "co-processes every sibling, and their private top-level names entered the same flat union -- " +
+      "where they outranked the importing module's own. The diagnostic was " +
+      "`ELL0215 'iabs' is defined in 'rational.lisp' but is not exported`: a stdlib file the program " +
+      "never named, about a function this module defines AND exports. The FENCE was right " +
+      "(checkSymbolVisible asked the correct question); resolution handed it the wrong symbol. " +
+      "26 modules leak 32 private top-level names this way today.",
+    run: () => {
+      const entry = fixture(
+        "private-sibling-leak",
+        {
+          "num.lisp":
+            `(\n` +
+            `  (import { truncate } from "std/math")\n` +
+            `  (fn iabs [n <- Int] -> Int (if (< n 0) (- 0 n) n))\n` +
+            `  (export iabs)\n` +
+            `)\n`,
+          "main.lisp": `(\n  (import "num.lisp")\n  (console.log (iabs -5))\n)\n`,
+        },
+        "main.lisp"
+      );
+      const out = build(entry);
+      if (!out.compiled) {
+        return {
+          ok: false,
+          detail: `did not compile: ${out.diagnostics.join(", ") || "(no diagnostics)"}`,
+        };
+      }
+      if (out.runtimeError) return { ok: false, detail: `runtime: ${out.runtimeError}` };
+      return out.stdout === "5"
+        ? { ok: true, detail: "the importer's own `iabs` won over the stdlib's private one" }
+        : { ok: false, detail: `expected "5", got ${JSON.stringify(out.stdout)}` };
+    },
+  },
+
+  {
+    name: "S1b/N2: a package sibling does not shadow the importing module's own declaration",
+    why:
+      "Importing ANY member of a package brings its siblings. `std/math/complex` exports a " +
+      "two-parameter `rect`, which outranked a local five-parameter `rect` in a module that had " +
+      "imported std/math/vector for an unrelated reason -- and the module then re-exported the " +
+      "sibling's under its own name. Loud here only because the arities differ; SILENT whenever " +
+      "they agree, which is the case worth fearing.",
+    run: () => {
+      const entry = fixture(
+        "sibling-shadows-local",
+        {
+          "bind.lisp":
+            `(\n` +
+            `  (import "std/math/vector")\n` +
+            `  (fn rect [x <- Int y <- Int w <- Int h <- Int r <- Int] -> String\n` +
+            `      (return '"rect {(x)} {(y)} {(w)} {(h)} {(r)}"))\n` +
+            `  (export rect)\n` +
+            `)\n`,
+          "main.lisp": `(\n  (import "bind.lisp")\n  (console.log (rect 1 2 3 4 5))\n)\n`,
+        },
+        "main.lisp"
+      );
+      const out = build(entry);
+      if (!out.compiled) {
+        return {
+          ok: false,
+          detail: `did not compile: ${out.diagnostics.join(", ") || "(no diagnostics)"}`,
+        };
+      }
+      if (out.runtimeError) return { ok: false, detail: `runtime: ${out.runtimeError}` };
+      return out.stdout === "rect 1 2 3 4 5"
+        ? { ok: true, detail: "the module's own five-parameter `rect` won" }
+        : { ok: false, detail: `expected "rect 1 2 3 4 5", got ${JSON.stringify(out.stdout)}` };
+    },
+  },
+
 ];
 
 function main() {

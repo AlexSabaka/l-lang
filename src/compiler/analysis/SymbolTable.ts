@@ -467,12 +467,90 @@ export class SymbolTable {
   }
 
   /**
+   * Which modules does `importer` DIRECTLY import? Absolute paths. Installed by `Context`, which owns
+   * the import graph (`importBindings`, populated by the dependency-graph pass and already read by
+   * `importBinds`). Undefined in a table nobody wired up, where `resolveByImportPriority` is a no-op
+   * and resolution behaves exactly as it did before S1b.
+   */
+  public directImportsOf?: (importer: string) => Set<string> | undefined;
+
+  /** Memo for `resolveByImportPriority`, keyed `askingFile::name`. Cleared with the symbol cache. */
+  private importPriorityCache: Map<string, SymbolEntry | undefined> = new Map();
+
+  /**
+   * Resolve `name` by asking WHAT THIS FILE IMPORTED, before falling back to the flat union (S1b).
+   *
+   * THE BUG THIS FIXES. `resolveSymbol`'s fall-through is a flat first-wins union over every loaded
+   * module root, built by iterating `this.scopes` in module-JOIN order. So which `write-line` /
+   * `iabs` / `rect` a file gets was decided by which module happened to be processed first -- and a
+   * stdlib module always wins, because the prelude and package co-processing get there earlier. Three
+   * separate games-corpus findings (N1, N15, N2) were this one bug:
+   *
+   *   - a one-parameter `write-line` defined ONE FILE AWAY lost to `std/io/stream`'s two-parameter
+   *     one, which the program reached only transitively -- reported as "expects 2 arguments, got 1";
+   *   - `std/math/rational.lisp`'s PRIVATE `iabs` beat a program's own exported `iabs`, and the
+   *     resulting LL0215 named a stdlib file the program never mentioned;
+   *   - `std/math/complex`'s `rect` beat a local five-parameter `rect`, silently whenever arities agree.
+   *
+   * The FENCE was never wrong: `checkSymbolVisible` asks the right two questions and `isVisibleFrom`
+   * is a single correct rule. Resolution simply handed them the wrong symbol.
+   *
+   * WHY THIS IS NOT THE FIX THAT "ONLY LOOKED AIRTIGHT". The note on `isVisibleFrom` warns that
+   * filtering inside the fall-through does not work, because it can only judge visibility if the
+   * caller passed `from` -- and measured, most do not (63 `resolveSymbol` call sites, 13 pass it). That
+   * is still true, and this respects it: the priority pass runs ONLY on the `from` path and changes
+   * nothing for a bare call. It is also a REORDERING, never a filter -- a name reachable only
+   * transitively still resolves, through the unchanged union below. Nothing that resolved before
+   * stops resolving, which is what bounds the blast radius of touching resolution at all.
+   *
+   * TIERS. A directly-imported module that EXPORTS the name wins; failing that, a directly-imported
+   * module that merely declares it (so a package sibling, which reaches this file by belonging to the
+   * unit rather than by name-binding, still resolves). An operator counts as exported for the same
+   * reason it is exempt everywhere else (W): it is found by DISPATCH and has no name to export.
+   *
+   * The prelude and package siblings are recorded as direct imports too (`injectPrelude`,
+   * `injectPackageSiblings` both call `recordImport`), which is correct: `console` must resolve, and a
+   * package is one compilation unit. It does not re-open N15, because the leak there is TRANSITIVE --
+   * `main.lisp` imports `num.lisp`, whose own import of the std/math package is one hop further out.
+   */
+  private resolveByImportPriority(name: string, from: ast.ASTNode): SymbolEntry | undefined {
+    if (!this.directImportsOf) return undefined;
+    const askingFile = (from as any)?._location?.source;
+    if (!askingFile) return undefined;
+
+    const memoKey = `${askingFile}::${name}`;
+    if (this.importPriorityCache.has(memoKey)) return this.importPriorityCache.get(memoKey);
+
+    let answer: SymbolEntry | undefined;
+    const direct = this.directImportsOf(askingFile);
+    if (direct && direct.size > 0) {
+      let declaredButNotExported: SymbolEntry | undefined;
+      for (const scope of this.scopes) {
+        const mod = moduleOf(scope);
+        if (!mod || !direct.has(path.resolve(mod))) continue;
+        const found = scope.table.get(name);
+        if (!found) continue;
+        if (found.exportName !== undefined || found.isOperator) {
+          answer = found;
+          break;
+        }
+        declaredButNotExported ??= found;
+      }
+      answer ??= declaredButNotExported;
+    }
+
+    this.importPriorityCache.set(memoKey, answer);
+    return answer;
+  }
+
+  /**
    * Resolve `name` as seen FROM `from` -- i.e. lexically.
    *
    * With `from`, this walks the real scope chain outward from the node's own scope, so a parameter
-   * or a local `let` shadows a module-level or imported symbol of the same name, as it must.
-   * Without it, the old behaviour is preserved: a flat search of the module-root tables. Callers
-   * migrate one at a time rather than in one risky sweep.
+   * or a local `let` shadows a module-level or imported symbol of the same name, as it must. On a
+   * miss it prefers what the file actually IMPORTED (`resolveByImportPriority`, S1b) before the flat
+   * union. Without `from`, the old behaviour is preserved: a flat search of the module-root tables.
+   * Callers migrate one at a time rather than in one risky sweep.
    */
   resolveSymbol(
     name: ast.IdentifierNode | ast.TypeNameNode | string,
@@ -486,8 +564,12 @@ export class SymbolTable {
         const found = current.table.get(symbolName);
         if (found) return found;
       }
-      // Not in the lexical chain. Fall through to the root union below -- that is where symbols
-      // from OTHER modules live, and they are legitimately visible here.
+      // Not in the lexical chain. Before the flat union, ask what THIS FILE actually imported (S1b).
+      const preferred = this.resolveByImportPriority(symbolName, from);
+      if (preferred) return preferred;
+
+      // Still nothing. Fall through to the root union below -- that is where symbols from OTHER
+      // modules live, and they are legitimately visible here.
     }
 
     // Check cache first for O(1) lookup
@@ -498,6 +580,7 @@ export class SymbolTable {
     // If cache is not valid, build it now from the scopes.
     if (!this.cacheValid) {
       this.symbolCache.clear();
+      this.importPriorityCache.clear();
       for (const s of this.scopes) {
         let current: Scope | undefined = s;
         while (current !== undefined) {
@@ -627,6 +710,7 @@ export class SymbolTable {
     this.cacheValid = false;
     this.indexValid = false;
     this.symbolCache.clear();
+    this.importPriorityCache.clear();
   }
 
   private rootFor(moduleFile: string): Scope | undefined {
@@ -711,6 +795,7 @@ export class SymbolTable {
       this.cacheValid = false;
       this.indexValid = false;
       this.symbolCache.clear();
+      this.importPriorityCache.clear();
     }
     return repointed;
   }
@@ -755,6 +840,7 @@ export class SymbolTable {
     this.cacheValid = false;
     this.indexValid = false;
     this.symbolCache.clear();
+    this.importPriorityCache.clear();
     return this;
   }
 

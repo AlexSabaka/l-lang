@@ -290,7 +290,25 @@ export class Context {
     if (names === null) return true;      // whole module
     return names.has(name);
   }
-  
+
+  /**
+   * Which modules does `importer` DIRECTLY import? Absolute paths (S1b).
+   *
+   * The same `importBindings` graph `importBinds` reads, asked the other way round: not "did this file
+   * bind that name" but "which modules is this file entitled to see first". `SymbolTable` uses it to
+   * prefer a directly-imported declaration over one that is merely reachable through the flat root
+   * union, which is what stops a stdlib module from outranking the file next door.
+   *
+   * The prelude and package siblings are in here, both by way of `recordImport` -- deliberately. The
+   * prelude must resolve `console`, and a package is one compilation unit whose files see each other
+   * without an import between them.
+   */
+  directImportsOf(importer: string): Set<string> | undefined {
+    const byModule = this.importBindings.get(path.resolve(importer));
+    if (!byModule) return undefined;
+    return new Set(byModule.keys());
+  }
+
   private moduleCache: Map<string, { ast: ASTNode; symbols: SymbolTable }> = new Map();
 
   /**
@@ -505,6 +523,15 @@ export class Context {
 
     const moduleSymbols = buildSymbolTableVisitor.buildSymbolTable();
     this.symbolTable.join(moduleSymbols);
+
+    // Let resolution ask what a file actually IMPORTED (S1b). The import graph lives here -- the
+    // dependency-graph pass fills `importBindings` and `importBinds` already reads it -- so the table
+    // gets a reader rather than a copy, and cannot go stale as more modules are processed. Installed
+    // on BOTH tables because the checker is handed the joined one while some paths still resolve
+    // against the module's own. See `SymbolTable.resolveByImportPriority`.
+    const directImports = (importer: string) => this.directImportsOf(importer);
+    this.symbolTable.directImportsOf = directImports;
+    moduleSymbols.directImportsOf = directImports;
 
     // The `:as` bindings, after BOTH halves exist: the imported modules' symbols (joined by the
     // dependency-graph pass above) and this module's own root scope (just built). The join is first
