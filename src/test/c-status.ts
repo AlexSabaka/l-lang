@@ -382,6 +382,12 @@ export const C_PASSING: readonly string[] = [
   "40-math/03_rational.lisp",
   "40-math/04_vector.lisp",
   "40-math/10_symbolic_expr.lisp",
+  // std/math NUMERICS, landing per-module as each is verified on both backends.
+  //   integrate -- quadrature (trapezoid/Simpson/adaptive) + root-finding (bisect/newton/secant)
+  //   over a RealFn interface object (l-lang's `(call f)` does not spread, so the integrand is a
+  //   one-method class, not a bare function value). Goldens are exact closed forms with the
+  //   trapezoid error PREDICTED from Euler-Maclaurin, so the coarse values are derived not observed.
+  "40-math/09_integrate.lisp",
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the
