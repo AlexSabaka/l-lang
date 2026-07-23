@@ -210,7 +210,11 @@ function convertAstTypeCore(
     // still becomes Unknown below -- the gradual-typing behaviour the corpus depends on.
     const userType = symbolTable.resolveSymbol(name);
     if (userType && (userType.inferredType || declaresAType(userType))) {
-      return withArray({ kind: "type-ref", name, refName: name, resolved: !!userType.inferredType });
+      // Stamp the ASKING SOURCE (T). This is the one place a type reference still has its AST node --
+      // `unwrapType` resolves the deferred `refName` far downstream, where the node is gone, so it can
+      // only prefer a directly-imported definition (S1b, for types) if the source rides along here.
+      const askingSource = (typeNode as any)?._location?.source;
+      return withArray({ kind: "type-ref", name, refName: name, resolved: !!userType.inferredType, askingSource });
     }
 
     if (name === "Any") {
@@ -726,10 +730,14 @@ class CollectTypesPass extends BaseAstTreeWalker {
     
     // Extract inheritance information
     let parentClass: string | undefined;
+    let parentSource: string | undefined;
     if (node.extends && node.extends.length > 0) {
       const parentRef = node.extends[0];
       if (parentRef && parentRef.type) {
         parentClass = parentRef.type.name;
+        // The file this `:extends` was written in (T), so `constructorParams` can prefer the parent
+        // this file DIRECTLY imported over a same-named one reached transitively.
+        parentSource = (parentRef as any)?._location?.source ?? (node as any)?._location?.source;
       }
     }
     
@@ -817,6 +825,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
       implementedInterfaces,
       typeParameters,
       parentClass,
+      parentSource,
       requiresRuntimeMetadata: codegenMetadata.requiresRuntimeMetadata,
       codegenMetadata
     };
@@ -4172,7 +4181,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const classEntry = (this.context.symbolTable ?? this.symbolTable).resolveSymbol(name, target);
     if (classEntry) this.checkForwardReference(target, name, classEntry);
 
-    const resolved = this.typeEnv.resolveIdentifier(name);
+    // Resolve FROM the `new` site (T), not bare. Without the node, `resolveIdentifier` falls to a
+    // first-wins flat lookup, so `(new Widget …)` in a module that DEFINES `Widget` picked a
+    // same-named class from another module instead of its own -- an `ELL0203` against the wrong
+    // constructor. With `target`, the lexical walk finds the module's own `Widget`, and a genuinely
+    // imported class resolves with S1b's import priority.
+    const resolved = this.typeEnv.resolveIdentifier(name, target);
 
     if (resolved && (resolved.kind === "class" || resolved.kind === "struct")) {
       // `(new Box 42)` is a `Box<Int>` just as surely as `(Box 42)` is. Two spellings of one form;
@@ -4726,9 +4740,15 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const parentName = (classType as any).parentClass;
     if (!parentName) return own;
 
-    const parent = this.symbolTable.resolveSymbol(
-      typeof parentName === "string" ? parentName : parentName?.name
-    )?.inferredType;
+    // Prefer the parent this class's file DIRECTLY imported over a same-named one reached transitively
+    // (T). `parentSource` is where the `:extends` was written; the bare `resolveSymbol` is the
+    // first-wins fallback, so a parent that resolves correctly today is unchanged.
+    const name = typeof parentName === "string" ? parentName : parentName?.name;
+    const parentSource = (classType as any).parentSource;
+    const parentEntry =
+      (parentSource ? this.symbolTable.resolveByImportPrioritySource(name, parentSource) : undefined) ??
+      this.symbolTable.resolveSymbol(name);
+    const parent = parentEntry?.inferredType;
     if (!parent || parent === classType) return own;
 
     return [...this.constructorParams(parent), ...own];

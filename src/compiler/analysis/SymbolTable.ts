@@ -88,6 +88,14 @@ export interface InferredType {
   // Type reference support (forward references to types)
   refName?: string;  // Name of the type being referenced
   resolved?: boolean;  // Whether this type-ref has been resolved
+  /**
+   * The SOURCE of the file that wrote this type reference (T). A `type-ref` resolves lazily, long
+   * after its AST node is gone, so without this the lazy `unwrapType` lookup cannot prefer the module
+   * the file DIRECTLY imported over one reached only transitively -- the S1b fix for value names, one
+   * namespace over. Stamped at `convertAstTypeCore`, read by `TypeChecker.unwrapType`. Advisory:
+   * absent means "resolve as before" (bare, first-wins).
+   */
+  askingSource?: string;
   // Struct support
   members?: StructMember[];  // Struct member information
   ctorInfo?: ConstructorInfo;  // Struct constructor information (renamed to avoid TypeScript 'constructor' conflict)
@@ -99,6 +107,13 @@ export interface InferredType {
   implementedInterfaces?: InterfaceImplementation[];
   typeParameters?: TypeParameter[];
   parentClass?: string;
+  /**
+   * The SOURCE of the file where this class's `:extends` was written (T). `parentClass` is a bare name
+   * string, and `constructorParams` resolves it far from the definition site, so without this it falls
+   * to first-wins for a cross-module parent-name collision. The `:extends` is always written in the
+   * class's own file, so this is that file's source, used to prefer the directly-imported parent.
+   */
+  parentSource?: string;
   requiresRuntimeMetadata?: boolean;
   codegenMetadata?: CodegenMetadata;
 }
@@ -514,9 +529,24 @@ export class SymbolTable {
    * `main.lisp` imports `num.lisp`, whose own import of the std/math package is one hop further out.
    */
   private resolveByImportPriority(name: string, from: ast.ASTNode): SymbolEntry | undefined {
-    if (!this.directImportsOf) return undefined;
     const askingFile = (from as any)?._location?.source;
     if (!askingFile) return undefined;
+    return this.resolveByImportPrioritySource(name, askingFile);
+  }
+
+  /**
+   * The same import-priority resolution, given the asking file's SOURCE directly instead of a node (T).
+   *
+   * A TYPE reference (`<- Widget`, `:extends Widget`) resolves LAZILY, from a deferred
+   * `type-ref{refName}` that carries only a name string -- so by the time `TypeChecker.unwrapType`
+   * looks it up, the AST node with its `_location.source` is long gone, and the bare `resolveSymbol`
+   * fell to the flat first-wins union the same way a bare value lookup did before S1b. The type-ref
+   * now carries its asking source as a string, and this is the entry it hands to; it is the exact
+   * body `resolveByImportPriority` used to inline, extracted so both the node path and the string path
+   * share one implementation and one memo.
+   */
+  resolveByImportPrioritySource(name: string, askingFile: string): SymbolEntry | undefined {
+    if (!this.directImportsOf || !askingFile) return undefined;
 
     const memoKey = `${askingFile}::${name}`;
     if (this.importPriorityCache.has(memoKey)) return this.importPriorityCache.get(memoKey);

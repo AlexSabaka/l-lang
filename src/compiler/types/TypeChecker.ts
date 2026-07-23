@@ -480,7 +480,15 @@ export class TypeChecker {
     // If it's a type-ref, look it up in the symbol table to get the actual type
     if (type.kind === "type-ref" && type.refName) {
       if (symbolTable) {
-        const symbol = symbolTable.resolveSymbol(type.refName);
+        // Prefer the definition the writing file DIRECTLY imported over one reached only transitively
+        // (T). `askingSource` is the source that wrote the reference, stamped at convertAstTypeCore;
+        // the bare `resolveSymbol` below is the first-wins flat union and is kept as the fallback --
+        // it preserves today's answer whenever the type is only transitively reachable (priority
+        // returns undefined), so a type that resolves correctly now cannot change.
+        const symbol =
+          (type.askingSource
+            ? symbolTable.resolveByImportPrioritySource(type.refName, type.askingSource)
+            : undefined) ?? symbolTable.resolveSymbol(type.refName);
         if (symbol && symbol.inferredType) {
           return carry(this.unwrapType(symbol.inferredType, symbolTable));
         }

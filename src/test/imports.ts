@@ -1334,6 +1334,68 @@ const CASES: Case[] = [
     },
   },
 
+  // T1 -- the S1b residual, one namespace over. S1b made a VALUE name prefer the module a file
+  // directly imports over one reached only transitively (N1). TYPE references took a different, bare
+  // path, so a cross-module TYPE-name collision still resolved by first-wins processing order.
+  {
+    name: "T1: a cross-module TYPE-name collision resolves to the directly-imported definition",
+    why:
+      "Two modules each export a class `Widget` of different shape. `mid.lisp` imports the Int one; " +
+      "`main.lisp` imports `mid` (so it reaches the Int `Widget` TRANSITIVELY) and then the String " +
+      "`Widget` DIRECTLY. A type annotation `<- Widget` and `(new Widget ...)` in main must bind the " +
+      "DIRECTLY-imported (String) one -- exactly as a value name would under S1b. It did not: a type " +
+      "reference lowers to a deferred `type-ref{refName}` (convertAstTypeCore) resolved lazily by " +
+      "`TypeChecker.unwrapType` via a BARE `resolveSymbol(refName)` with no asking-file, so it landed " +
+      "on whichever `Widget` was joined first -- a spurious `ELL0203 expected Int, got String`. Fixed " +
+      "by stamping the asking source on the type-ref and resolving it with import priority. Checker-" +
+      "level, so it reproduces identically on both backends; graded on both to keep it honest.",
+    run: () => {
+      const files = {
+        "wstr.lisp":
+          `(\n` +
+          `  (defclass Widget (let :ctor label <- String))\n` +
+          `  (fn make-widget [] -> Widget (return (new Widget "from-A")))\n` +
+          `  (export Widget make-widget)\n` +
+          `)\n`,
+        "wint.lisp":
+          `(\n` +
+          `  (defclass Widget (let :ctor code <- Int))\n` +
+          `  (export Widget)\n` +
+          `)\n`,
+        // mid reaches the Int Widget; main imports mid (transitive Int) THEN wstr (direct String).
+        "mid.lisp": `(\n  (import "wint.lisp")\n  (fn ping [] -> Int (return 1))\n  (export ping)\n)\n`,
+        "main.lisp":
+          `(\n` +
+          `  (import "mid.lisp")\n` +
+          `  (import "wstr.lisp")\n` +
+          `  ;; a TYPE annotation referencing the directly-imported Widget (String), even though the\n` +
+          `  ;; Int one is joined FIRST (transitively via mid)\n` +
+          `  (fn label-of [w <- Widget] -> String (return w.label))\n` +
+          `  ;; construction of the directly-imported Widget, and one built by the imported factory\n` +
+          `  (let w (new Widget "direct"))\n` +
+          `  (console.log (label-of w) (label-of (make-widget)))\n` +
+          `)\n`,
+      };
+      const expected = "direct from-A";
+
+      const js = build(fixture("type-collision-js", files, "main.lisp"));
+      if (!js.compiled) return { ok: false, detail: `JS did not compile: ${js.diagnostics.join(", ") || "(none)"}` };
+      if (js.runtimeError) return { ok: false, detail: `JS runtime: ${js.runtimeError}` };
+      if (js.stdout !== expected) {
+        return { ok: false, detail: `JS expected ${JSON.stringify(expected)}, got ${JSON.stringify(js.stdout)} -- the wrong Widget won` };
+      }
+
+      const c = buildC(fixture("type-collision-c", files, "main.lisp"));
+      if (!c.compiled) return { ok: false, detail: `C did not build: ${c.runtimeError ?? (c.diagnostics.join(", ") || "(none)")}` };
+      if (c.runtimeError) return { ok: false, detail: `C runtime: ${c.runtimeError}` };
+      if (c.stdout !== expected) {
+        return { ok: false, detail: `C expected ${JSON.stringify(expected)}, got ${JSON.stringify(c.stdout)}` };
+      }
+
+      return { ok: true, detail: `the directly-imported Widget won on both backends: ${expected}` };
+    },
+  },
+
 ];
 
 function main() {
