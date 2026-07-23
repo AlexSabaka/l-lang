@@ -10,15 +10,19 @@ const { Error } = RuleSeverity;
  * refuse and say so, never emit a guess.
  */
 export const CBackendDiagnostics = {
-  // LL0105 -- coroutines refused (spec A8). The HIR carries no suspend/resume model; generators and
-  // async need a state-machine lowering (the Rust MIR approach) that is deliberately out of scope.
+  // LL0105 -- coroutines refused (spec A8).
+  //
+  // Phase G4c built the state machine, so a TOP-LEVEL `:gen` is no longer refused. What still fires
+  // here is `:async` -- deliberately, per D60: l-lang owns await ordering and there is no native
+  // lowering to constrain yet -- and the `:gen` shapes the state machine does not reach, which are a
+  // nested or lambda generator (ledger §11.2/§11.3, both pre-existing defects rather than rulings).
   CoroutineRefused: def<{ form: string; name: string }>(
     "LL0105",
     Error,
     (p) =>
-      `'${p.name}' is ${p.form} -- the C backend does not support coroutines. Generators and ` +
-      `async functions need a state-machine lowering the HIR does not model yet (spec A8); the ` +
-      `backend records the gap and refuses.`
+      `'${p.name}' is ${p.form} -- the C backend does not lower this coroutine form. A top-level ` +
+      `':gen' compiles (D58); ':async' stays refused by ruling (D60), and a nested or lambda ` +
+      `generator has no lowering yet (spec A8). The backend records the gap and refuses.`
   ),
 
   // LL0106 -- the C totality net (the LL0100 analog). Every firing is also a gap-ledger entry.

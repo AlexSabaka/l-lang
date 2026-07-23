@@ -337,9 +337,16 @@ const PROBES: Probe[] = [
   // --- C backend refusals (LL0105 / LL0107): the probe's honest "not modeled" answers. These
   //     type-check clean (and compile on JS) but refuse on the C backend, so they run language:"c"
   //     at codegen. The generator needs std/iter for Iterator<T>/yield to type-check. ---
+  // A top-level `:gen` USED to be the probe here. Phase G4c lowered it, so the probe was moved to
+  // the coroutine surface that is still refused rather than deleted -- LL0105 must stay reachable
+  // and located, and D60 keeps `:async` C-refused deliberately (l-lang owns await ordering; there is
+  // no native lowering to constrain). A nested or lambda `:gen` also still refuses, under ledger
+  // §11.2/§11.3's own pre-existing defects.
   {
-    name: "LL0105 C backend refuses a generator",
-    source: '(import "std/iter")\n(fn :gen count-up [n <- Int] -> Iterator<Int> (mut i 1) (while (<= i n) (yield i) (i := (+ i 1))))\n(console.log 0)',
+    name: "LL0105 C backend refuses an async function",
+    // No return ANNOTATION: `-> Int` on an `:async` is LL0228 at the checker, so the probe would
+    // never reach codegen and would have snapshotted the wrong diagnostic entirely.
+    source: "(fn :async fetch-it [] (return 1))\n(console.log 0)",
     stage: "codegen", language: "c",
   },
   {

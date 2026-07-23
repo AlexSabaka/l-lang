@@ -30,6 +30,17 @@ import { nativeMemberDeclared } from "../../types/nativeMembers";
 import { freeVariables, freeVariablesOfBody } from "../../hir/freevars";
 import { isBuiltinModifier } from "../../helpers/modifiers";
 import { buildTypesMetadata } from "../../reflection/metadata";
+import { lowerCoroutine, CoroutineRefusal } from "../../hir/LowerCoroutines";
+import { promoteFrame, PromotedFrame, FramePromotionRefusal, STATE_SLOT, GEN_STATE_NAME } from "./promoteFrame";
+
+/** The state a generator parks in once it is exhausted. Any value the dispatch does not name works;
+ *  it must not be 0, which means "not started" and would restart the body. */
+const GEN_DONE = -1;
+
+/** Is this function a `:gen`? (The `:async` half of A8 stays refused -- D60.) */
+function isGenerator(fn: ast.FunctionNode): boolean {
+  return !!fn.generator && !fn.async;
+}
 
 const BINARY_OPS = new Set(["+", "-", "*", "/", "%", "==", "!=", "≠", "<", ">", "<=", ">=", "&&", "||"]);
 const NUMERIC = (t: CType) => t.k === "int" || t.k === "real";
@@ -153,6 +164,11 @@ export class ResolveHirToCir {
   private liftCounter = 0;
   /** Fresh-name counter for compiler-introduced locals (the destructuring element temp). */
   private tempCounter = 0;
+  /** D58: resolving a `:gen` body, so `for :each` desugars to an explicit cursor loop (its cursor
+   *  must be a real declaration for the frame promotion to see it) and `return` parks the machine. */
+  private inGenerator = false;
+  /** The synthesized frame classes, one per `:gen`. Not in `this.classes` -- see `toModule`. */
+  private readonly genClasses: CClass[] = [];
   /** True while resolving a FUNCTION body (top-level or lifted). A `function` statement seen when
    *  false is a module-level declaration; when true it is a nested closure. (Scope depth cannot tell
    *  them apart because each function resolves on an isolated scope stack.) */
@@ -287,7 +303,9 @@ export class ResolveHirToCir {
     return {
       functions: this.functions,
       lifted: this.lifted,
-      classes,
+      // D58 frame classes are appended rather than folded into `this.classes`: that map is keyed by
+      // the name a program can SPELL in a type annotation, and a generator's frame type is not one.
+      classes: [...classes, ...this.genClasses],
       globals: this.globalDecls,
       adapters: [...this.adapters.values()],
       main,
@@ -775,6 +793,17 @@ export class ResolveHirToCir {
           return [{ src: h.src, ctype: C_VOID, kind: "c-block", body: this.resolveBlock(h.body) }];
 
         case "return": {
+          // D31/D58: inside a `:gen`, `return` ENDS THE SEQUENCE. It is valueless by ruling -- a
+          // `(return x)` in a generator is LL0223, because its value has no place in the sequence --
+          // so the machine parks and answers nil, exactly as falling off the end does. Parking is
+          // what stops the next pull from dispatching back to the last suspend and re-running the
+          // tail forever.
+          if (this.inGenerator) {
+            return [
+              { src: h.src, ctype: C_VOID, kind: "c-assign", target: { kind: "name", cName: GEN_STATE_NAME, ctype: C_INT }, value: { src: h.src, ctype: C_INT, kind: "c-lit", lit: "int", value: String(GEN_DONE) } },
+              { src: h.src, ctype: C_VOID, kind: "c-return", value: { src: h.src, ctype: C_VALUE, kind: "c-nil" } },
+            ];
+          }
           let value = h.value ? this.resolveExpr(h.value) : null;
           // The copy decision rode the HIR node (A5) -- consume it, no re-derive, no dip.
           if (value) value = this.copyDecided(value, h.src, h.copies);
@@ -832,6 +861,24 @@ export class ResolveHirToCir {
           return this.resolveRestartCase(h);
         case "handle":
           return this.resolveHandle(h);
+
+        // D58's state machine (non-core, minted only by LowerCoroutines). The frame reference is
+        // filled in by `promoteFrame`, which is the only pass that knows the slot layout -- so a
+        // suspend is emitted here as its two halves (park the state, hand out the value) over a
+        // placeholder name target, and the promotion rewrites it into a field store like any other.
+        case "dispatch":
+          return [{ src: h.src, ctype: C_VOID, kind: "c-dispatch", stateSlot: STATE_SLOT, states: h.states }];
+
+        case "resume-point":
+          return [{ src: h.src, ctype: C_VOID, kind: "c-label", state: h.state }];
+
+        case "suspend": {
+          const value = this.resolveExpr(h.value);
+          return [
+            { src: h.src, ctype: C_VOID, kind: "c-assign", target: { kind: "name", cName: GEN_STATE_NAME, ctype: C_INT }, value: { src: h.src, ctype: C_INT, kind: "c-lit", lit: "int", value: String(h.state) } },
+            { src: h.src, ctype: C_VOID, kind: "c-return", value },
+          ];
+        }
 
         case "field-init":
         case "super-call":
@@ -1181,7 +1228,68 @@ export class ResolveHirToCir {
     return [{ src: h.src, ctype: C_VOID, kind: "c-handle", body, envStruct, captures, clauses }];
   }
 
+  /**
+   * D58: `for :each` inside a generator becomes an EXPLICIT cursor loop.
+   *
+   *     let __it = ll_iter(coll); let __e = ll_next(__it)
+   *     while (__e != nil) { v = __e; <body>; __e = ll_next(__it) }
+   *
+   * -- which is, not coincidentally, how `take-while` and `zip` are already written by hand in
+   * `std/iter/linq/linq-early.lisp`. The reason is storage, not style. `c-foreach` synthesises its
+   * cursor and element as locals OF THE EMITTED C FUNCTION, created inside `EmitCirToC` and therefore
+   * invisible to the frame promotion: resuming into such a loop would find the cursor indeterminate
+   * and walk a garbage pointer. Written out as real declarations, both become ordinary frame slots
+   * with no special case anywhere.
+   *
+   * Applied to EVERY `for :each` in a generator, not only the ones containing a suspend. Whether a
+   * loop can be re-entered is a question about the whole body, and answering it per loop would mean
+   * being right about it twice.
+   */
+  private resolveForEachInGenerator(h: Extract<HStmt, { kind: "for-each" }>): CStmt[] {
+    const node = h.src as ast.ForEachNode;
+    const variable = node.variable;
+    if (variable._type !== "simple-identifier" && variable._type !== "composite-identifier") {
+      throw this.refuse(node, "foreach-destructuring-in-generator", "resolveForEachInGenerator");
+    }
+    if (h.elseBlock) throw this.refuse(node, "foreach-else-in-generator", "resolveForEachInGenerator");
+    const collection = this.resolveExpr(h.collection);
+    const itName = `__ll_it_${this.tempCounter++}`;
+    const elName = `__ll_el_${this.tempCounter++}`;
+    const varCName = mangleC(ast.symbolName(variable as ast.IdentifierNode));
+    this.declareLocal(itName, C_VALUE);
+    this.declareLocal(elName, C_VALUE);
+    this.declareLocal(varCName, C_VALUE);
+    const ref = (cName: string): CExpr => ({ src: node, ctype: C_VALUE, kind: "c-ref", cName });
+    const call = (runtimeFn: string, arg: CExpr): CExpr => ({
+      src: node, ctype: C_VALUE, kind: "c-call",
+      callee: { kind: "intrinsic", runtimeFn, variadic: false, params: [C_VALUE], ret: C_VALUE },
+      args: [arg],
+    });
+    const decl = (cName: string, init: CExpr): CStmt =>
+      ({ src: node, ctype: C_VOID, kind: "c-decl", cName, declCType: C_VALUE, init });
+    const store = (cName: string, value: CExpr): CStmt =>
+      ({ src: node, ctype: C_VOID, kind: "c-assign", target: { kind: "name", cName, ctype: C_VALUE }, value });
+    this.ledger.record("A3", "generator-foreach", node, "for :each inside a :gen lowered to an explicit cursor loop (its cursor must be a frame slot)");
+    const test: CExpr = {
+      src: node, ctype: C_BOOL, kind: "c-binop", op: "!=", mode: "eq-deep",
+      lhs: ref(elName), rhs: { src: node, ctype: C_VALUE, kind: "c-nil" },
+    };
+    // D11: the per-iteration copy the emitter's own for-each arm applies, kept explicit here.
+    const bind = store(varCName, { src: node, ctype: C_VALUE, kind: "c-copy", inner: ref(elName) });
+    const body = this.resolveBlock(h.body);
+    return [
+      decl(itName, call("ll_iter", collection)),
+      decl(elName, call("ll_next", ref(itName))),
+      { src: node, ctype: C_VOID, kind: "c-decl", cName: varCName, declCType: C_VALUE, init: null },
+      {
+        src: node, ctype: C_VOID, kind: "c-while", test,
+        body: { stmts: [bind, ...body.stmts, store(elName, call("ll_next", ref(itName)))] },
+      },
+    ];
+  }
+
   private resolveForEach(h: Extract<HStmt, { kind: "for-each" }>): CStmt[] {
+    if (this.inGenerator) return this.resolveForEachInGenerator(h);
     const node = h.src as ast.ForEachNode;
     const variable = this.dipAst("A2", "foreach-variable", node, "loop binding read from raw ForEachNode (legacy emitForEach seam)", () => node.variable);
     // D16: the loop variable may be a PATTERN. A vector pattern is the only shape the corpus uses
@@ -2583,6 +2691,14 @@ export class ResolveHirToCir {
     this.importedLowered.add(alias);
     // `fn` is the symbol table's PRE-desugar node -- give it the implicit return the main module got.
     fn = this.desugaredCopyOf(fn);
+    // D58: an imported `:gen` takes the same path as a local one. This is not a corner -- ALL ELEVEN
+    // of `std/iter/linq`'s lazy operators are imported generators, so without this arm the library
+    // that motivated the whole phase stays refused.
+    if (isGenerator(fn) && fn.name) {
+      this.ledger.record("A9-extern", "imported-body", fn, `imported l-lang generator '${name}' lowered on demand`);
+      this.collectGenerator(fn, alias);
+      return alias;
+    }
     if (this.refuseCoroutine(fn, name)) return alias;
     this.ledger.record("A9-extern", "imported-body", fn, `imported l-lang function '${name}' lowered on demand (C analog of ensureSymbolInlined)`);
     this.registerTopLevel(fn, alias);
@@ -2858,7 +2974,10 @@ export class ResolveHirToCir {
     const useAnnotated = ret.k === "value" && annotatedRet && annotatedRet.k !== "void";
     this.topLevelFns.set(name, {
       params,
-      ret: useAnnotated ? annotatedRet! : ret,
+      // D58: a `:gen` returns its FRAME INSTANCE, boxed -- never whatever `-> Iterator<T>` maps to.
+      // The declared return type describes the SEQUENCE the generator produces, not the value the
+      // call hands back, and those are different things in every language that has both.
+      ret: isGenerator(fn) ? C_VALUE : useAnnotated ? annotatedRet! : ret,
       arity: fn.params.length,
       restAt: restAt >= 0 ? restAt : undefined,
     });
@@ -2903,6 +3022,7 @@ export class ResolveHirToCir {
   /** A TOP-LEVEL function declaration -> a typed C function. Isolated param scope + D11 copy prologue. */
   private collectFunction(fn: ast.FunctionNode): void {
     const name = fn.name ? ast.symbolName(fn.name) : "<anonymous>";
+    if (isGenerator(fn) && fn.name) { this.collectGenerator(fn, name); return; }
     if (this.refuseCoroutine(fn, name)) return;
     if (!fn.name) { this.refuse(fn, "lambda", "collectFunction"); return; }
     // A top-level `:operator` function compiles under its operator symbol, not its `+` name.
@@ -2916,6 +3036,108 @@ export class ResolveHirToCir {
       const body = this.resolveFunctionBody(fn);
       this.functions.push({ src: fn, cName: mangleC(name), params, ret: sig.ret, body: { stmts: [...prologue, ...body.stmts] } });
     });
+  }
+
+  /**
+   * D58: a `:gen` declaration -> a synthesized frame CLASS, a step function, and a factory.
+   *
+   * The three pieces, and why each is where it is:
+   *
+   *   THE CLASS is the generator instance. Its fields ARE the frame -- slot 0 the state, the rest
+   *   every param and local -- because `ll_obj` is already a header plus boxed slots and
+   *   `ll_obj_new` already nil-fills what the caller does not supply. It carries no method table:
+   *   `ll_iter`/`ll_next` read `is_gen`/`gen_step` off the descriptor instead of dispatching by
+   *   name, which is the per-element path of every lazy pipeline.
+   *
+   *   THE STEP FUNCTION is the body, re-enterable: a dispatch prologue jumps to the label of the
+   *   suspend it stopped at, and the body around it is emitted completely unchanged (`LowerCoroutines`
+   *   explains why that works, `promoteFrame` why it is safe).
+   *
+   *   THE FACTORY keeps the original name, arity and modifiers, so `(fn :extension :gen map<T> ...)`
+   *   still dispatches as an extension and every call site is untouched. It allocates the frame with
+   *   state 0 and the params in slot order -- one `ll_obj_new`, no store sequence.
+   *
+   * A refusal from either half is caught here so it names the FUNCTION and the shape, rather than
+   * surfacing as an unmodeled-construct error pointing at an expression.
+   */
+  private collectGenerator(fn: ast.FunctionNode, name: string): void {
+    if (this.refuseCustomModifier(fn, name)) return;
+    this.registerTopLevel(fn, name);
+    const sig = this.topLevelFns.get(name)!;
+    const cName = mangleC(name);
+    const tag = `__ll_gen_${cName}`;
+    const stepName = `${tag}_step`;
+    const sourceName = (fn as any).__ll_source_name ?? ast.symbolName(fn.name!);
+    const frameCType: CType = { k: "obj", className: tag };
+    try {
+      let params: CParam[] = [];
+      let promoted!: PromotedFrame;
+      let states: number[] = [];
+      this.isolated(fn, () => {
+        const saved = this.inGenerator;
+        this.inGenerator = true;
+        try {
+          params = fn.params.map((p, i) => this.declareParam(p, sig.params[i]));
+          const lowered = lowerCoroutine(this.hirBodyFor(fn), fn);
+          states = lowered.states;
+          const body = this.resolveBlock(lowered.body);
+          promoted = promoteFrame(body, params, fn);
+        } finally {
+          this.inGenerator = saved;
+        }
+      });
+      const self: CExpr = { src: fn, ctype: frameCType, kind: "c-ref", cName: "__f" };
+      // Falling off the end MUST park the machine, or the next pull would dispatch back to the last
+      // suspend's label and re-run the tail forever. The dispatch's `default` arm answers nil from
+      // then on; `DONE` is simply any state the switch does not name.
+      promoted.body.stmts.push(
+        { src: fn, ctype: C_VOID, kind: "c-assign", target: { kind: "field", object: self, slot: STATE_SLOT, fieldName: "state" }, value: { src: fn, ctype: C_INT, kind: "c-lit", lit: "int", value: String(GEN_DONE) } },
+        { src: fn, ctype: C_VOID, kind: "c-return", value: { src: fn, ctype: C_VALUE, kind: "c-nil" } },
+      );
+      const dispatched = states.length
+        ? promoted.body
+        : { stmts: promoted.body.stmts }; // a `:gen` with no yield: an empty sequence, no prologue
+      this.functions.push({
+        src: fn, cName: stepName, params: [{ cName: "__f", ctype: frameCType }], ret: C_VALUE, body: dispatched,
+      });
+      this.genClasses.push({
+        name: tag,
+        sourceName,
+        isStruct: false,
+        // Slot order IS the frame layout, state first (see promoteFrame). Every slot is declared
+        // boxed because that is what an `ll_obj` field is; the reader's static type comes back
+        // through P2's unbox at the `c-field-get`.
+        fields: promoted.slots.map((s) => ({ name: s.cName, ctype: C_VALUE })),
+        methods: [],
+        genStep: stepName,
+      });
+      // The factory: `ll_obj_new(&__ll_class_<tag>, 1 + argc, {0, ...params})`.
+      const zero: CExpr = { src: fn, ctype: C_INT, kind: "c-lit", lit: "int", value: "0" };
+      const make: CExpr = {
+        src: fn, ctype: frameCType, kind: "c-construct", className: tag, isStruct: false,
+        args: [zero, ...params.map((p) => ({ src: fn, ctype: p.ctype, kind: "c-ref", cName: p.cName } as CExpr))],
+        fieldCount: promoted.slots.length,
+      };
+      this.functions.push({
+        src: fn, cName, params, ret: C_VALUE,
+        body: { stmts: [{ src: fn, ctype: C_VOID, kind: "c-return", value: make }] },
+      });
+    } catch (e) {
+      if (e instanceof CoroutineRefusal || e instanceof FramePromotionRefusal) {
+        this.refuse(fn, `generator '${name}': ${e.message}`, "collectGenerator");
+        return;
+      }
+      throw e;
+    }
+  }
+
+  /** The lowered HIR body for a function -- the pre-lowered one when the pipeline produced it, else
+   *  lowered on demand (which is how every IMPORTED body arrives, `std/iter/linq` included). */
+  private hirBodyFor(fn: ast.FunctionNode): HBlock {
+    const pre = this.hir.bodyFor(fn);
+    if (pre) return pre;
+    this.ledger.record("A3", "on-demand-lower", fn, "function body not pre-lowered; lowered on demand");
+    return new LowerAstToHirVisitor(this.context, `__ll_hir_i${this.liftCounter}`).lowerBody(fn.body ?? []);
   }
 
   /** Compile a struct/class's method bodies (and in-struct operators) as free functions with self. */

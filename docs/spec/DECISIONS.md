@@ -4898,6 +4898,34 @@ corrects the brief, which asked for frames "registered in an enumerable set": a 
 GC-readiness constraint. It would institutionalise the exact leak it was meant to make collectable.
 Enumeration is legitimate only as a *weak* debug/stats facility and is not a design constraint.
 
+> **Amended 2026-07-23 (Phase G4c) — the frame is `ll_obj.fields[]`, not a typed `envStruct`.**
+>
+> The paragraph above specified the frame as the typed env struct plus an `int state`. The build took
+> the boxed-slot form instead, on Sabaka's ruling, and the reason is that `ll_obj` is *already* the
+> shape being described: a header plus a flexible array of `ll_value` slots, with `ll_obj_new`
+> nil-filling whatever the caller does not supply. So slot 0 is the state, slots 1..n are every param
+> and local, the factory is one `ll_obj_new` call, and **every frame access is a node that already
+> existed** — `c-field-get` to read, `CLValue{kind:"field"}` to store. P2 then needs no new code at
+> all: its `c-field-get` arm already unboxes a slot to the reader's static type and its assign arm
+> already boxes into a field, so a promoted `Int` local is stored tagged and read back as `int64_t`.
+>
+> The typed form would have bought unboxed slots at the cost of an env pointer on `ll_obj` — a
+> runtime shape change — plus a new CIR access mode. Boxing an `Int` here is a tag write into a
+> two-word union, not an allocation, and it is the same cost every `Unknown` local in this compiler
+> already pays. **The typed frame is named here as the optimisation, and is not built.**
+>
+> Two more things the build settled, both narrower than the ruling anticipated:
+>
+> - **Promote EVERYTHING** — every param, user local and lowering temp gets a slot, with no liveness
+>   analysis. That is what makes `goto` into a loop body safe by construction rather than by argument:
+>   with no C locals left in the step function, no jump can skip an initialisation. Deliberate debt;
+>   a liveness pass would elide the slots that never cross a suspend.
+> - **The synthesized class carries no method table.** `ll_class` gained `is_gen` and a `gen_step`
+>   pointer, and `ll_iter`/`ll_next` read those directly instead of dispatching by name — `ll_next` is
+>   the per-element path of every lazy pipeline, so a `strcmp` walk there is not free. `iterator()`
+>   answers the instance itself. The class stays out of `__ll_class_registry` and the metadata graph,
+>   as ruled.
+
 **The v1 restriction and the three narrowing rules** are D31's amendment (LL0237/38/39): no suspension
 inside a protected region, language-wide; no valueless `(yield)`; no nullable element type. The
 restriction is not a shortcut — the alternative was shown to be **undefined behaviour**, not a

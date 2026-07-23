@@ -130,6 +130,13 @@ export class InsertCoercions {
         // D47 (Cr-1b): recurse into the body only. Clause bodies live in lifted handlers (coerced via
         // m.lifted); captures are already-typed reads like c-closure-make's -- no edge to coerce.
         return { ...s, body: this.block(s.body, ret) };
+
+      case "c-dispatch":
+      case "c-label":
+        // D58's state machine carries no value edge: the dispatch reads a frame slot it unboxes
+        // itself, and a label is pure control flow. The suspend's own edges (the state store and the
+        // returned value) are an ordinary c-assign and c-return by the time this pass runs.
+        return s;
     }
   }
 

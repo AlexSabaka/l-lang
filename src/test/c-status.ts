@@ -330,6 +330,19 @@ export const C_PASSING: readonly string[] = [
   // `let [a,b,c] = [1,2]` leaves `c` nil; and the names are declared beside the element variable
   // rather than in the loop body, because `:else` runs after the loop and may read them.
   "80-adversarial/foreach_destructuring.lisp",
+  // Phase G4c -- D58's coroutine state machine. A `:gen` becomes a synthesized frame class (its
+  // fields ARE the frame), a step function re-entered through a `switch`/`goto` prologue, and a
+  // factory keeping the original name and modifiers. `13-generators/00` is the flagship: an INFINITE
+  // `fibs` consumed finitely through `take`, a `filter`/`take-while` chain over it, `zip` pulling a
+  // generator and a hand-written struct in lockstep -- byte-identical to the JS golden.
+  "13-generators/00_generators_and_iteration.lisp",
+  "30-applications/07_line_clear.lisp",
+  "80-adversarial/generator_identity.lisp",
+  // The state machine's own adversarial guard: two-level loop nesting, a suspend inside an `if`
+  // branch over an infinite source, two live instances pulled interleaved (the frame is
+  // per-instance), `(return)` ending a sequence, and pulling past exhaustion -- which without
+  // PARKING would dispatch back to the last suspend and re-run the tail forever.
+  "80-adversarial/generator_state_machine.lisp",
   // `deep-copy` on the floor, and told apart from D11's STORE copy -- pointing it at `ll_copy` would
   // have shared a vector's elements here and copied them on JS.
   "80-adversarial/deep_copy_floor.lisp",

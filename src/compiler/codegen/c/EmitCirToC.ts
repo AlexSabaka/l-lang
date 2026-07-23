@@ -6,6 +6,12 @@ import { CBlock, CExpr, CStmt, CFunction, CModule, CLValue, CLifted, CParam, CFo
 import { CType } from "./ctype";
 import { computeVolatileLocals } from "./volatiles";
 
+/** The generator step function's frame parameter, and the label prefix its resume points use. Both
+ *  are fixed names: only `promoteFrame` and this emitter ever write them, and they live in one
+ *  function each time (D58). */
+const GEN_FRAME = "__f";
+const GEN_LABEL = "__ll_resume_";
+
 function cType(t: CType): string {
   switch (t.k) {
     case "int": return "int64_t";
@@ -132,13 +138,23 @@ export class EmitCirToC {
         this.line(`static const ll_method_entry __ll_methods_${c.name}[] = {${c.methods.map((mm) => `{${JSON.stringify(mm.name)}, ${mm.cName}_dyn}`).join(", ")}};`);
       }
       const methodsPtr = c.methods.length ? `__ll_methods_${c.name}` : "0";
-      this.line(`static ll_class __ll_class_${c.name} = {"${c.name}", ${c.isStruct ? "true" : "false"}, ${c.fields.length}, ${fieldsPtr}, ${c.parent ? `"${c.parent}"` : "0"}, ${c.methods.length}, ${methodsPtr}};`);
+      // A generator's descriptor carries its SOURCE name (`fibs`, not the synthesized tag) and its
+      // step function; the runtime reads both. `name` stays the C-safe tag because it is also the
+      // symbol suffix -- a source name may be kebab-case, and `__ll_class_count-up` is not an
+      // identifier. D58: the display name is what `#<generator ...>` and `(type g)` show.
+      const display = c.sourceName ?? c.name;
+      const gen = c.genStep ? `true, ${c.genStep}` : "false, 0";
+      this.line(`static ll_class __ll_class_${c.name} = {"${display}", ${c.isStruct ? "true" : "false"}, ${c.fields.length}, ${fieldsPtr}, ${c.parent ? `"${c.parent}"` : "0"}, ${c.methods.length}, ${methodsPtr}, ${gen}};`);
     }
     // A registry of every class, for `type-by-name` reflection. External linkage so the prepended
     // runtime's reflection helpers (which forward-declare it `extern`) can reach it in this one TU.
-    const regEntries = m.classes.length ? m.classes.map((c) => `&__ll_class_${c.name}`).join(", ") : "0";
+    //
+    // A GENERATOR's synthesized class is deliberately absent (D58): it never enters the reflection
+    // graph, so `type-by-name "fibs"` must not find a frame type under that name.
+    const registered = m.classes.filter((c) => !c.genStep);
+    const regEntries = registered.length ? registered.map((c) => `&__ll_class_${c.name}`).join(", ") : "0";
     this.line(`ll_class* __ll_class_registry[] = {${regEntries}};`);
-    this.line(`size_t __ll_class_count = ${m.classes.length};`);
+    this.line(`size_t __ll_class_count = ${registered.length};`);
     this.line("");
     // Module-level bindings referenced by functions -> file-scope globals. A file-scope initializer
     // must be a compile-time constant, so use a zero-init (ll_value {0} == LL_NIL); the real value is
@@ -682,6 +698,27 @@ export class EmitCirToC {
         this.line("}");
         return;
       }
+      // D58's state machine. These two are the ENTIRE control-flow cost of the coroutine lowering:
+      // the body around them is emitted completely unchanged, and re-entry jumps straight to a label
+      // inside whatever (possibly nested) loop the generator suspended in. That is legal C -- a
+      // `goto` may enter a block -- and it is safe here because `promoteFrame` left the step function
+      // with no locals at all, so no jump can skip an initialisation.
+      case "c-dispatch": {
+        this.line(`switch ((int)ll_unbox_int((${GEN_FRAME})->fields[${s.stateSlot}])) {`);
+        this.indent++;
+        this.line("case 0: break;"); // 0 = not started: fall through into the body
+        for (const st of s.states) this.line(`case ${st}: goto ${GEN_LABEL}${st};`);
+        this.line("default: return ll_nil();"); // parked: exhausted, or ended by `return`
+        this.indent--;
+        this.line("}");
+        return;
+      }
+      case "c-label":
+        // The trailing `;` is required: C forbids a label at the end of a block, and a resume point
+        // that happens to be the last statement of a loop body is exactly that.
+        this.line(`${GEN_LABEL}${s.state}: ;`);
+        return;
+
       default: {
         const never: never = s;
         throw new Error(`C emit: unhandled statement kind '${(never as any).kind}'`);

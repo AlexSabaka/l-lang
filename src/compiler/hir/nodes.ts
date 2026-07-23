@@ -491,7 +491,44 @@ export type HStmt =
   | HCtorMethodCall
   | HClass
   | HClosureDecl
+  | HDispatch
+  | HSuspend
+  | HResumePoint
   | HOpaqueStmt;
+
+/**
+ * D58's coroutine state machine -- three NON-CORE, pipeline-introduced statements (A-0).
+ *
+ * They are the same category as `HBox`/`HUnbox`/`HCast`: the JS backend never consumes one, because
+ * `function*` is native there and `HYield` emits straight through. Only the native lowering
+ * (`LowerCoroutines`) mints them, and only a native backend reads them. `HYield` by contrast stays
+ * CORE -- both backends emit it from the AST, which is the spec's category 2.
+ *
+ * Recon found that neither the HIR nor the CIR had a switch, a label or a goto: both are structured
+ * (if/while/for/block/return), so labelled re-entry had no home at all and A-0 decides which side of
+ * the core line it lands on.
+ *
+ * `HDispatch` is the resume prologue -- "jump to the suspend point named by the frame's state".
+ * `HSuspend` replaces a `yield` STATEMENT: record the state, hand the value out, return.
+ * `HResumePoint` is the label control lands on when the consumer pulls again. A suspend and its
+ * resume point always come as a pair and share a state number.
+ */
+export interface HDispatch extends HBase {
+  kind: "dispatch";
+  /** The resume states, in source order. State 0 is the initial entry and is not listed. */
+  states: number[];
+}
+
+export interface HSuspend extends HBase {
+  kind: "suspend";
+  state: number;
+  value: HExpr;
+}
+
+export interface HResumePoint extends HBase {
+  kind: "resume-point";
+  state: number;
+}
 
 /** An expression evaluated for effect; its value is discarded. */
 export interface HExprStmt extends HBase {

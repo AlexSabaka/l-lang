@@ -579,6 +579,15 @@ export class EmitHirToEstree {
         this.legacy.reportRestartsRefused(h.src, h.kind);
         return { type: "EmptyStatement", loc: loc(h.src) } as ESTree.Statement;
 
+      case "dispatch":
+      case "suspend":
+      case "resume-point":
+        // D58's state-machine nodes are NON-CORE: only the native lowering mints them, and JS never
+        // runs that lowering because `function*` is native here. Reaching this arm means the
+        // coroutine pass ran on the JS pipeline, which is a wiring bug, not a missing feature --
+        // so it fails loudly rather than emitting something plausible.
+        throw new Error(`HIR emit: '${h.kind}' is a native-only coroutine node and must not reach the JS backend`);
+
       default: {
         const never: never = h;
         throw new Error(`HIR emit: unhandled statement kind '${(never as any).kind}'`);

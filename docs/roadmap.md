@@ -500,14 +500,25 @@ refused by ruling (D60), and the collector (D59) is a separate lane.
         the three rules that had **zero corpus sites**: a valueless `(yield)` is **LL0237**, a nullable
         element type **LL0238**, and `yield` inside a protected region **LL0239** — the last
         *language-wide*, because the alternative was shown to be UB rather than a tradeoff.
-*   [ ] **G2 — `HYield` as a core source node.** It is emitted on the legacy JS leaf path today, so the
-        native pass has nothing to consume. Pure nodify; the `13-generators` JS golden is the test.
-*   [ ] **G3 — the generator instance.** A synthesized class implementing `Iterator<T>` + `Disposable`,
-        one shape on both backends (JS wraps `function*`'s iterator), displaying as `#<generator name>`
-        with the class hidden from reflection — D58's parity ruling.
-*   [ ] **G4 — the state-machine pass.** `HResumePoint`/`HDispatch` as non-core pipeline nodes, the
-        frame as the existing typed `envStruct` + an `int state`, and `c-switch`/`c-goto` in the CIR.
-        The three refused files join the C ratchet against their existing goldens.
+*   [x] **G2 — `HYield` as a core source node.** It was emitted on the legacy JS leaf path, so the
+        native pass had nothing to consume. Pure nodify; the `13-generators` JS golden was the test.
+*   [x] **G3 — the generator instance.** Displays as `#<generator name>`, reflects as
+        `kind: "generator"`, class hidden — D58's parity ruling. JS brands the native `function*`'s
+        prototype rather than wrapping it in a class: same observable contract, no wrapper allocation,
+        native iteration untouched. Caught the leak Dove predicted (`#<generator __ll_inlined_map_1>`).
+*   [x] **G4a — the interface-typed slot.** Predicted blocker; **measurement retired it** — the slot
+        already boxes, by two lookups failing rather than by a decision, so it got a guard instead of
+        a fix (ledger §12.1).
+*   [x] **G4b — destructuring `for :each` on C.** A real blocker, and unrelated to coroutines: the
+        element read is bounds-guarded (JS gives nil where `ll_index_vec` traps) and the names are
+        declared beside the element variable so `:else` can read them (ledger §12.2).
+*   [x] **G4c — the state machine.** `HDispatch`/`HSuspend`/`HResumePoint` as non-core pipeline nodes;
+        `c-dispatch`/`c-label` in the CIR; the frame is `ll_obj.fields[]` with **every** local promoted
+        (D58 amended — see there for why the typed `envStruct` was not built). No CFG flattening and no
+        live-range analysis: C's `goto` enters a loop body, so the body is emitted verbatim.
+        `13-generators/00` and `30-applications/07_line_clear` join the ratchet against their existing
+        goldens; `16-stdlib/02_linq_pipeline` is blocked on ledger §13 (`:extension` method-surface
+        dispatch is not resolved on C) and on nothing else.
 *   [ ] **G5 — disposal.** Statically-known exit edges only (exhaustion, early `return`; l-lang has no
         `break`), so no `setjmp` per loop; `take`/`take-while` dispose the source they abandon.
 *   [ ] **G6 — the collector (D59).** Separate lane. The bounded-RSS acceptance test lands **RED

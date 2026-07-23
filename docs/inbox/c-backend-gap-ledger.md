@@ -775,3 +775,42 @@ The two backends render the bottom value differently in string interpolation: C'
 `null` (`ll_to_string_sb`'s `LL_NIL` arm), JS's `${undefined}` says `undefined`. Surfaced while
 choosing how to assert the arity-mismatch case above, which is why that guard asserts `(== r nil)`
 rather than printing `r`. Unrelated to destructuring; recorded so it is not re-derived.
+
+## 13. `:extension` method-surface dispatch is not resolved on C (2026-07-23)
+
+Found by G4c: with the state machine landed, `16-stdlib/02_linq_pipeline.lisp` gets **14 of its 18
+golden lines right** and then dies with `TypeError: no such method on this value` at section 5 — the
+METHOD SURFACE.
+
+```lisp
+(let chained ((((seq employees).filter is-eng).map name-of).to-list))
+```
+
+JS resolves that chain **statically**, into direct calls:
+
+```js
+const chained = __ll_inlined_to2dlist_1(__ll_inlined_map_1(__ll_inlined_filter_1(__ll_inlined_seq_1(employees), is2deng), name2dof));
+```
+
+C leaves it **dynamic**, and there is nothing at the other end to find:
+
+```c
+ll_dyn_method(2, (ll_value[]){ll_dyn_method(3, (ll_value[]){ll_dyn_method(3, (ll_value[]){u_seq(...), ll_str_lit("filter"), ...
+```
+
+`(x.filter f)` where `x` is an `:extension` receiver has to become `filter(x, f)` — a call to a free
+function — and on C it stays a method lookup on the receiver's class. A generator's synthesized frame
+class has no method table (D58: `ll_iter`/`ll_next` read `gen_step` off the descriptor instead), so
+the lookup traps; but the gap is **not about generators**. It would trap the same way on any
+`:extension` receiver whose class does not happen to define a method of that name. It was invisible
+because `02_linq_pipeline` is the corpus's only method-surface site and it was refused for `:gen`.
+
+The pieces to do it with already exist: the HIR has an `ext-call` node and
+`hir/extensionResolution.ts` is explicitly "the SAME logic JSTransformer's extensionFor /
+memberKindOn / receiverConformsTo use, re-expressed against a bare Context". What is missing is the C
+resolver consulting it on a dotted call, rather than falling through to `ll_dyn_method`.
+
+**Consequence for the ratchet.** `13-generators/00_generators_and_iteration.lisp` and
+`30-applications/07_line_clear.lisp` are C-green and listed. `16-stdlib/02_linq_pipeline.lisp` is
+**not** — it is blocked on this and nothing else, and it is the one file that would prove the method
+surface. Its pipe-surface half already works.

@@ -110,6 +110,13 @@ function walkStmt(s: CStmt, depth: number, out: Set<string>): void {
       walkBlock(s.body, depth, out);
       return;
 
+    case "c-dispatch":
+    case "c-label":
+      // D58's state machine. Nothing to analyse: a generator body contains no `setjmp` at all --
+      // LL0239 forbids a suspend inside a protected region, which is precisely what makes the
+      // clobber question moot here rather than merely unasked.
+      return;
+
     default: {
       const never: never = s;
       throw new Error(`volatiles: unhandled statement kind '${(never as any).kind}'`);

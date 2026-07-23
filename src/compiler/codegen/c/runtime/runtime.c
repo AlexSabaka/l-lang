@@ -170,6 +170,19 @@ typedef struct ll_class {
   const char *parent;      /* `:extends` base name, or NULL (for reflection) */
   size_t method_count;     /* dynamic-dispatch table (statically-unknown receivers) */
   const ll_method_entry *methods;
+  /* D58: this class is a GENERATOR's frame type, and `gen_step` resumes it.
+   *
+   * These two fields are the whole of a generator's runtime identity, and they are read in exactly
+   * four places: `ll_iter` (an Iterator IS an Iterable -- answer the instance), `ll_next` (call the
+   * step directly, rather than walking the method table by name once per element), `ll_inspect`
+   * (`#<generator fibs>` instead of `fibs{...}`) and `ll_type` (kind "generator"). `field_count`
+   * still describes the frame, so `ll_copy_obj` and everything else that walks fields keeps working
+   * without knowing what a generator is.
+   *
+   * Printing the frame would leak the state number and the spilled locals into user-facing output,
+   * which is the leak FLOOR.md's F.7/F.8 amendment already rejected for lambdas. */
+  bool is_gen;
+  ll_value (*gen_step)(struct ll_obj *frame);
 } ll_class;
 
 struct ll_obj {
@@ -791,6 +804,16 @@ static void ll_inspect_at(ll_sb *sb, ll_value v, int indent, int prefix, ll_seen
       return;
     }
     case LL_VEC: case LL_MAP: case LL_OBJ: {
+      /* D58/G3: a generator renders as an unreadable-object marker carrying its SOURCE name, exactly
+         parallel to `#<fn name>`. Never as `Name{...}`: a generator's members ARE the suspended frame
+         -- a state number plus whatever locals live across the yield -- so the container form would
+         put a program counter and compiler-generated storage into user-facing output. FLOOR.md 3.5. */
+      if (v.tag == LL_OBJ && v.as.o->cls->is_gen) {
+        const char *gn = v.as.o->cls->name;
+        if (gn && gn[0]) { ll_sb_puts(sb, "#<generator "); ll_sb_puts(sb, gn); ll_sb_puts(sb, ">"); }
+        else ll_sb_puts(sb, "#<generator>");
+        return;
+      }
       const void *p = v.tag == LL_VEC ? (const void *)v.as.v
                     : v.tag == LL_MAP ? (const void *)v.as.m : (const void *)v.as.o;
       if (ll_seen_has(seen, p)) { ll_sb_puts(sb, "#<circular>"); return; }
@@ -2000,6 +2023,10 @@ static ll_value ll_cursor_step(void *env, int argc, ll_value *argv) {
 }
 
 static ll_value ll_iter(ll_value x) {
+  /* D58: a generator instance IS its own cursor, answered without a method lookup. Taking this arm
+   * before the `iterator()` dispatch is not merely an optimisation -- the synthesized frame class
+   * carries no method table at all, so the general path would trap on it. */
+  if (x.tag == LL_OBJ && x.as.o->cls->is_gen) return x;
   /* D30: an Iterable answers `iterator()`, and an Iterator IS an Iterable -- it answers `this`. A user
    * type that has neither is not iterable, and `ll_dyn_method` traps saying so. */
   if (x.tag == LL_OBJ) return ll_dyn_method(2, (ll_value[]){x, ll_box_str(ll_str_lit("iterator"))});
@@ -2026,6 +2053,9 @@ static ll_value ll_iter(ll_value x) {
 static ll_value ll_next(ll_value it) {
   if (it.tag == LL_NIL) return ll_nil();
   if (it.tag == LL_CLOSURE) return ll_call(it, 0, (ll_value *)0);
+  /* D58: resume the state machine directly. This is the per-ELEMENT path of every lazy pipeline, so
+   * it deliberately does not go through `ll_dyn_method`'s name walk. */
+  if (it.tag == LL_OBJ && it.as.o->cls->gen_step) return it.as.o->cls->gen_step(it.as.o);
   if (it.tag == LL_OBJ) return ll_dyn_method(2, (ll_value[]){it, ll_box_str(ll_str_lit("next"))});
   /* A raw sequence handed straight to `next` -- take a cursor over it and step once. Not useful on
    * its own, but it keeps `next` total rather than trapping on a plain array. */
@@ -2253,6 +2283,17 @@ static ll_value ll_class_meta(const ll_class *cls) {
 }
 
 static ll_value ll_type(ll_value v) {
+  /* D58/G3: a generator reflects as its SOURCE name with kind "generator", in the seeded
+     `{name, kind, nullable}` shape -- and NOT through `ll_meta_or`, because the synthesized frame
+     class never enters the metadata graph (a lookup would miss and then invent a 5-key class stub
+     naming the frame type). The JS backend answers the same three keys from RuntimeProvider. */
+  if (v.tag == LL_OBJ && v.as.o->cls->is_gen) {
+    ll_str *k[3]; ll_value vals[3];
+    k[0] = ll_str_lit("name");     vals[0] = ll_box_str(ll_str_lit(v.as.o->cls->name));
+    k[1] = ll_str_lit("kind");     vals[1] = ll_box_str(ll_str_lit("generator"));
+    k[2] = ll_str_lit("nullable"); vals[2] = ll_box_bool(false);
+    return ll_box_map(ll_map_of(3, k, vals));
+  }
   if (v.tag == LL_OBJ) return ll_meta_or(v.as.o->cls->name, "object");
   /* A function VALUE reports its DECLARATION, when it has one (Lb). `ll_closure` has carried the
      source name all along -- for the inspect format -- and this arm is the only reader that needed

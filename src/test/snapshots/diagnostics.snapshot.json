@@ -481,12 +481,12 @@
     "diagnostics": []
   },
   {
-    "probe": "LL0105 C backend refuses a generator",
+    "probe": "LL0105 C backend refuses an async function",
     "diagnostics": [
       {
         "code": "LL0105",
         "severity": "error",
-        "text": "'count-up' is a generator (:gen) -- the C backend does not support coroutines. Generators and async functions need a state-machine lowering the HIR does not model yet (spec A8); the backend records the gap and refuses."
+        "text": "'fetch-it' is async (:async) -- the C backend does not lower this coroutine form. A top-level ':gen' compiles (D58); ':async' stays refused by ruling (D60), and a nested or lambda generator has no lowering yet (spec A8). The backend records the gap and refuses."
       }
     ]
   },

@@ -295,7 +295,31 @@ export type CStmt = CBase & (
   | CTry
   | CRestartCase
   | CHandle
+  | CDispatch
+  | CLabel
 );
+
+/**
+ * D58's resume prologue: `switch (state) { case k: goto __Lk; ... default: return nil; }`.
+ *
+ * The CIR had no switch and no goto before this, because everything in it is structured. That is not
+ * an oversight to correct in general -- it is why these two nodes are the ENTIRE cost of the state
+ * machine's control flow. Re-entry jumps straight to a label inside the (possibly nested) loop where
+ * the generator suspended, and the body around it is emitted completely unchanged.
+ *
+ * `stateSlot` is the frame field holding the machine's state; `states` are the live resume points.
+ */
+export interface CDispatch {
+  kind: "c-dispatch";
+  stateSlot: number;
+  states: number[];
+}
+
+/** The label a `c-dispatch` jumps to -- one per suspend point, emitted right after its `return`. */
+export interface CLabel {
+  kind: "c-label";
+  state: number;
+}
 
 /** A try/catch/finally. At emit time (Cr-0) it becomes up to two `ll_frame`s on the unified handler
  *  stack -- a CLEANUP frame (per `finally`) wrapping a CATCH frame (per catch chain) -- walked by
@@ -474,6 +498,24 @@ export interface CClass {
   /** OWN methods (not inherited), for the runtime dynamic-dispatch table: each gets a boxed adapter.
    *  `params` excludes self; the emitter unboxes argv to these, calls cName, boxes ret. */
   methods: { name: string; cName: string; params: CType[]; ret: CType }[];
+  /**
+   * D58: this class is a GENERATOR's synthesized frame type, and `genStep` names its step function.
+   *
+   * The runtime reads it in four places and they are the whole of the generator's identity:
+   * `ll_iter` answers the instance itself (an Iterator IS an Iterable), `ll_next` calls `genStep`
+   * directly rather than walking a method table by name, `ll_inspect` writes `#<generator NAME>`
+   * instead of `NAME{...}`, and `ll_type` answers `kind: "generator"`. `name` is the SOURCE name --
+   * `fibs`, not the synthesized tag -- because that is what all four of those surfaces show.
+   *
+   * The class is deliberately kept OUT of `__ll_class_registry` and out of the metadata graph, so
+   * `type-by-name` cannot find it: per D58 the synthesized class never enters the reflection graph.
+   * Printing it as `NAME{...}` would put a frame's state number and its spilled locals into
+   * user-facing output, which is the leak FLOOR.md's F.7/F.8 amendment already rejected for lambdas.
+   */
+  genStep?: string;
+  /** The name the RUNTIME reports (`ll_class.name`), when it differs from the C symbol suffix. A
+   *  generator's tag must be a C identifier while its source name may be kebab-case. */
+  sourceName?: string;
 }
 
 export interface CModule {
