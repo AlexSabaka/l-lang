@@ -30,6 +30,7 @@ import { nativeMemberDeclared } from "../../types/nativeMembers";
 import { freeVariables, freeVariablesOfBody } from "../../hir/freevars";
 import { isBuiltinModifier } from "../../helpers/modifiers";
 import { buildTypesMetadata } from "../../reflection/metadata";
+import { buildExtensionTable, conformingExtensionFn, memberKindIn, receiverType, ExtCandidate } from "../../hir/extensionResolution";
 import { lowerCoroutine, CoroutineRefusal } from "../../hir/LowerCoroutines";
 import { promoteFrame, PromotedFrame, FramePromotionRefusal, STATE_SLOT, GEN_STATE_NAME } from "./promoteFrame";
 
@@ -169,6 +170,8 @@ export class ResolveHirToCir {
   private inGenerator = false;
   /** The synthesized frame classes, one per `:gen`. Not in `this.classes` -- see `toModule`. */
   private readonly genClasses: CClass[] = [];
+  /** The shared `:extension` table, built once on first use (it walks the whole symbol table). */
+  private extTable?: Map<string, ExtCandidate[]>;
   /** True while resolving a FUNCTION body (top-level or lifted). A `function` statement seen when
    *  false is a module-level declaration; when true it is a nested closure. (Scope depth cannot tell
    *  them apart because each function resolves on an isolated scope stack.) */
@@ -1414,13 +1417,21 @@ export class ResolveHirToCir {
       case "free-call":
         return this.resolveFreeCall(h);
 
-      case "ext-call":
-        // A3: CONSUME HExtCall. An `:extension` call `(recv.method a)` is method-SHAPED -- its head is the
-        // `recv.method` member, and the extension dispatch already lives inside the method resolver
-        // (resolveNativeMethod's primitive-extension branch, resolveObjMethod's tryExtensionCall). So it
-        // routes through the same method dispatch as HMethodCall, bypassing resolveCall's re-classification
-        // (the A3:call-dispatch dip) and reproducing the extension-devirt result byte-identically.
-        return this.resolveMethodCall(h);
+      case "ext-call": {
+        // A3: CONSUME HExtCall -- INCLUDING its `fnName`, which is the whole point of the node.
+        //
+        // This used to route through the generic method dispatch on the theory that "the extension
+        // dispatch already lives inside the method resolver". It does, but only for receivers with a
+        // CONCRETE C type; a boxed one fell through to `ll_dyn_method`, which searches a method table
+        // that by construction never holds a free function, and trapped. So the node's own resolved
+        // answer was being recomputed by a weaker rule and then lost.
+        //
+        // Now it is used directly, exactly as the JS emitter uses it (`extFn(recv, ...args)`). The
+        // receiver comes from the head's first part; anything that shape does not cover falls back to
+        // the method dispatch, which still handles the primitive-extension and user-method cases.
+        const ext = this.extCallDirect(h);
+        return ext ?? this.resolveMethodCall(h);
+      }
 
       case "method-call":
       case "virtual-call":
@@ -1973,6 +1984,89 @@ export class ResolveHirToCir {
       default:
         throw this.refuse(node, node._type, "resolveAstExpr");
     }
+  }
+
+  /**
+   * An `HExtCall` emitted as the free call its `fnName` already names: `extFn(receiver, ...args)`.
+   *
+   * `undefined` when the receiver is not a plain 2-part `obj.method` head (the only shape
+   * `classifyCall` mints an ext-call for) or the function cannot be resolved here -- the caller then
+   * falls back to the generic method dispatch rather than guessing.
+   */
+  private extCallDirect(h: Extract<HExpr, { kind: "ext-call" }>): CExpr | undefined {
+    const head = h.head;
+    if (head._type !== "composite-identifier") return undefined;
+    const parts = (head as ast.CompositeIdentifierNode).parts;
+    if (parts.length !== 2 || !parts[0]) return undefined;
+    const target = this.ensureFreeFn(h.fnName, h.src);
+    if (!target) return undefined;
+    const recv = this.headObject(h.src, parts[0]);
+    if (!recv) return undefined;
+    this.ledger.record("A3", "extension-devirt-node", h.src, `'${parts[1]}' devirtualized to ':extension' ${h.fnName} off the HIR node`);
+    return {
+      src: h.src, ctype: target.sig.ret, kind: "c-call",
+      callee: { kind: "free", cName: target.cName, params: target.sig.params, ret: target.sig.ret },
+      args: [recv, ...h.args.map((a) => this.resolveExpr(a))],
+    };
+  }
+
+  /**
+   * `(recv.member args)` on a BOXED receiver -> the conforming `:extension`, as a free call.
+   *
+   * The dispatch DECISION comes from the shared resolver (`hir/extensionResolution`) -- the same
+   * `buildExtensionTable`/`conformingExtensionFn` pair the JS side and `classifyCall` use, so the two
+   * backends cannot disagree about which extension conforms. What is per-backend is only the
+   * materialization: JS emits `extFn(recv, ...args)`, and so does this, as a typed C call.
+   *
+   * Keyed on the receiver's INFERRED TYPE rather than its name, which is what makes it work for a
+   * chained receiver (`((seq xs).filter p)`) as well as a bound one (`(s.filter p)`). Those parse to
+   * different list shapes -- `classifyCall` models the second and leaves the first opaque -- but both
+   * arrive here with a resolved receiver expression, and `recv.src` is the node whose type answers.
+   */
+  private dynExtensionCall(node: ast.ASTNode, recv: CExpr, method: string, cArgs: CExpr[], recvName?: string): CExpr | undefined {
+    // The receiver's static type, from whichever channel actually describes IT. A chained receiver is
+    // an expression and the type channel has its node; a BOUND one arrives as a `c-ref` whose `src`
+    // is the enclosing `obj.method` node, so the channel there would answer about the call. For that
+    // shape the caller passes the source name and the symbol table answers -- the same `receiverType`
+    // lookup `classifyCall` performs.
+    const typeInfo = (recvName !== undefined ? receiverType(this.context as any, recvName, node) : undefined)
+      ?? this.context.nodeTypes?.get(recv.src);
+    if (!typeInfo) return undefined;
+    // A REAL member wins over an extension, and checking that here is not optional -- it is the same
+    // order `classifyCall` applies (method, then field, then a conforming extension). Without it, a
+    // boxed receiver whose type genuinely declares `m` would be silently redirected to an extension
+    // of the same name, which is a divergence from JS invented while closing one.
+    if (memberKindIn(typeInfo, method) !== undefined) return undefined;
+    this.extTable ??= buildExtensionTable(this.context as any);
+    const fnName = conformingExtensionFn(this.context as any, this.extTable, typeInfo, method);
+    if (!fnName) return undefined;
+    const target = this.ensureFreeFn(fnName, node);
+    if (!target) return undefined;
+    this.ledger.record("A3", "extension-devirt-dyn", node, `'${method}' devirtualized to the conforming :extension '${fnName}' on a boxed receiver`);
+    return {
+      src: node, ctype: target.sig.ret, kind: "c-call",
+      callee: { kind: "free", cName: target.cName, params: target.sig.params, ret: target.sig.ret },
+      args: [recv, ...cArgs],
+    };
+  }
+
+  /**
+   * A top-level function by SOURCE name, lowering it on demand if it belongs to another module --
+   * the same resolution `functionValue` does, factored out so extension devirtualization can reuse it.
+   * `undefined` means the name does not denote a lowerable function here.
+   */
+  private ensureFreeFn(name: string, node: ast.ASTNode): { cName: string; sig: { params: CType[]; ret: CType; arity: number } } | undefined {
+    let alias = name;
+    if (!this.ownFns.has(name)) {
+      const entry = this.resolveSymbolSafe(name, node);
+      const fnNode = entry?.value as ast.FunctionNode | undefined;
+      if (fnNode?._type === "function" && !this.isExtern(entry)
+          && ResolveHirToCir.moduleOfNode(fnNode) !== (this.rootSource ?? "")) {
+        alias = this.lowerImportedFunction(name, fnNode);
+      }
+    }
+    const sig = this.topLevelFns.get(alias);
+    return sig ? { cName: mangleC(alias), sig } : undefined;
   }
 
   /** The field name of a member `property` node (an identifier or a string key). */
@@ -2751,7 +2845,12 @@ export class ResolveHirToCir {
       // Intermediate `.a.b` parts are member reads; the LAST part is the method.
       for (const mid of callee.parts.slice(1, -1)) recv = this.memberRead(node, recv, mid);
       const method = callee.parts[callee.parts.length - 1];
-      return this.resolveNativeMethod(node, recv, method, args, argVals);
+      // For a 2-part `obj.method`, pass the receiver's SOURCE NAME down. The receiver CExpr built
+      // above carries `src: callee` -- the whole `obj.method` node -- so its type channel entry
+      // describes the call, not the binding, and extension devirtualization cannot key on it. Only
+      // a 2-part head names the receiver; `.a.b.method` resolves through member reads instead.
+      const recvName = callee.parts.length === 2 ? headName : undefined;
+      return this.resolveNativeMethod(node, recv, method, args, argVals, recvName);
     }
 
     if (intrinsic) {
@@ -2763,7 +2862,7 @@ export class ResolveHirToCir {
     throw this.refuseExtern(node, whole);
   }
 
-  private resolveNativeMethod(node: ast.ListNode, recv: CExpr, method: string, args: ast.ASTNode[], argVals?: CExpr[]): CExpr {
+  private resolveNativeMethod(node: ast.ListNode, recv: CExpr, method: string, args: ast.ASTNode[], argVals?: CExpr[], recvName?: string): CExpr {
     // A struct/class receiver -> a devirtualized user method (spec A3/A4).
     if (recv.ctype.k === "obj") return this.resolveObjMethod(node, recv, method, args, argVals);
     const baseKey = recv.ctype.k === "str" ? "str" : recv.ctype.k === "vec" ? "vec" : "dyn";
@@ -2780,6 +2879,17 @@ export class ResolveHirToCir {
     }
     if (!def) {
       if (baseKey === "dyn") {
+        // An `:extension` conforming to the receiver's STATIC type, devirtualized to a free call --
+        // tried BEFORE the runtime fallback, because the runtime has no answer for it.
+        //
+        // This is the method SURFACE (`(coll.filter p)`, D33's second surface). An extension is a free
+        // function, not a member of the receiver's class, so `ll_dyn_method` searches a method table
+        // that by construction never contains it and traps: "no such method on this value". The
+        // branch below only ever reached extensions on a CONCRETELY typed receiver (`(s.words)` on a
+        // String, keyed by C type name), so a boxed one -- which is what every `Iterable<T>` is --
+        // had no path at all.
+        const ext = this.dynExtensionCall(node, recv, method, cArgs, recvName);
+        if (ext) return ext;
         // `(recv.name)` on a BOXED receiver: the runtime decides method-vs-field (the __ll_member
         // rule -- a function member is called, a non-function is read). ll_dyn_method dispatches on
         // the actual tag and falls back to a field read for a non-method name (e.g. `err.message`).

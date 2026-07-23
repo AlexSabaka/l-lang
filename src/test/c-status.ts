@@ -343,6 +343,20 @@ export const C_PASSING: readonly string[] = [
   // per-instance), `(return)` ending a sequence, and pulling past exhaustion -- which without
   // PARKING would dispatch back to the last suspend and re-run the tail forever.
   "80-adversarial/generator_state_machine.lisp",
+  // D33's METHOD SURFACE -- `(coll.filter p)` as well as `(coll |> (filter p))`. An `:extension` is a
+  // FREE FUNCTION, so on a boxed receiver `ll_dyn_method` searched a method table that by
+  // construction never holds it and trapped. Both receiver shapes are guarded (a bound name, which
+  // the HIR models as `ext-call` and whose resolved `fnName` is now consumed; and a chained
+  // expression, which `classifyCall` leaves opaque and which resolves off the receiver's inferred
+  // type), plus the precedence control: a type's OWN method still beats a same-named extension.
+  "80-adversarial/extension_method_surface.lisp",
+  // Unblocked by the above: the corpus's only method-surface site, and the last of the three files
+  // Phase G4 set out to green.
+  "16-stdlib/02_linq_pipeline.lisp",
+  // Also unblocked, and found by the ratchet rather than aimed at -- its whole subject is
+  // `:extension` dispatch over an interface (`(fn :extension passable [self <- Entity] ...)`), which
+  // is exactly the boxed-receiver case that had no path.
+  "30-applications/02_interface_conformance.lisp",
   // `deep-copy` on the floor, and told apart from D11's STORE copy -- pointing it at `ll_copy` would
   // have shared a vector's elements here and copied them on JS.
   "80-adversarial/deep_copy_floor.lisp",

@@ -814,3 +814,39 @@ resolver consulting it on a dotted call, rather than falling through to `ll_dyn_
 `30-applications/07_line_clear.lisp` are C-green and listed. `16-stdlib/02_linq_pipeline.lisp` is
 **not** — it is blocked on this and nothing else, and it is the one file that would prove the method
 surface. Its pipe-surface half already works.
+
+### 13.1 Closed (2026-07-23) — and it was two gaps, not one
+
+The method surface works on C. `16-stdlib/02_linq_pipeline.lisp` matches its golden byte-for-byte and
+joins the ratchet, completing the three files Phase G4 set out to green.
+
+Measuring it split the gap in two, because the two receiver shapes **parse differently**:
+
+```
+(s.filter keep)          list[ composite-identifier{id:"s.filter", parts:["s","filter"]}, keep ]
+((seq xs).filter keep)   list[ list{(seq xs)}, composite-identifier{parts:[null,"filter"]}, keep ]
+```
+
+- **Bound receiver.** `classifyCall` models this one and mints an `ext-call` carrying the resolved
+  `fnName` — and the C backend was throwing that answer away, routing through the generic method
+  dispatch on the theory that "the extension dispatch already lives inside the method resolver". It
+  does, but only for a receiver with a CONCRETE C type. A boxed one fell through to `ll_dyn_method`.
+  Fixed by consuming `h.fnName` directly, exactly as `EmitHirToEstree` does.
+- **Chained receiver.** A different list shape, which `classifyCall` explicitly leaves opaque ("3+-part
+  chains stay opaque for now; the receiver-of-a-chain resolution differs"). Resolved instead from the
+  receiver's inferred type through the same shared `buildExtensionTable`/`conformingExtensionFn` pair,
+  so the dispatch DECISION still has one home and the two backends cannot disagree about it.
+
+Two things the fix had to get right, both guarded by `80-adversarial/extension_method_surface.lisp`:
+
+- **A type's OWN method beats a same-named extension.** `classifyCall` checks member-kind first and
+  only then looks for a conforming extension; the C path applies the same order via `memberKindIn`.
+  Without it, a boxed receiver whose type genuinely declares the member would have been silently
+  redirected to the extension — a divergence invented while closing one.
+- **The receiver's type must come from the channel that describes IT.** A bound receiver's `c-ref`
+  carries `src: <the whole obj.method node>`, so the type channel there answers about the CALL. That
+  shape resolves by source name through `receiverType`; a chained one resolves off its own node.
+
+**The ratchet found a file nobody aimed at:** `30-applications/02_interface_conformance.lisp`, whose
+entire subject is `:extension` dispatch over an interface, went from failing to passing and reported
+itself as "newly passing -- add it". That is the unlisted-and-passing rule paying for itself.
