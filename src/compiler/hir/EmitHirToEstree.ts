@@ -56,6 +56,10 @@ export interface LegacyLeafEmitter {
    *  the ClassDeclaration shell around them from the modeled `name` / `superName`. A per-backend seam --
    *  the JS `ClassBuilder.buildBodyMembers`; a native backend lays out fields/methods instead. */
   emitClassBody(src: ast.ASTNode): Array<ESTree.MethodDefinition | ESTree.PropertyDefinition>;
+  /** The JS binding name to `extends` for a super named `name` (T1b). Identity for a same-file or
+   *  ambient parent; the INLINED name for an imported one, which is also pulled into the emitted output
+   *  -- otherwise `class Sub extends Base` references the source name the import inliner renamed. */
+  superBindingName(name: string, src: ast.ASTNode): string;
   /** Finish an assembled class declaration: apply custom `defmodifier` wrapping (a `defmodifier` body is a
    *  runtime decorator, so a modified class becomes a `const` binding) and coerce to a statement. The
    *  remaining legacy post-pass around the modeled shell (JSTransformer.applyModifiersToClass). */
@@ -356,7 +360,7 @@ export class EmitHirToEstree {
         const decl: ESTree.ClassDeclaration = {
           type: "ClassDeclaration",
           id: ident(h.name, h.src),
-          superClass: h.superName != null ? ident(h.superName, h.src) : null,
+          superClass: h.superName != null ? ident(this.legacy.superBindingName(h.superName, h.src), h.src) : null,
           body: { type: "ClassBody", body: members },
           loc: loc(h.src),
         };

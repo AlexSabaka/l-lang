@@ -1881,6 +1881,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         encodeName: (n) => encodeIdentifier(n),
         emitClassBody: (n) => this.emitClassBody(n as ast.ClassNode),
         finishClass: (n, decl) => this.finishClass(n as ast.ClassNode, decl),
+        superBindingName: (name, src) => this.superBindingName(name, src),
         paramCopyPrologue: (params, types) => this.parameterCopyPrologue(params, types),
         reportDefaultBeforeRequired: (src, className, param, plural, required) =>
           this.report(CD.DefaultBeforeRequired, src, { className, param, plural, required }),
@@ -4119,6 +4120,31 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     if (emitted && emitted.type === "VariableDeclaration") {
       this.inlinedDefinitions[key] = emitted as ESTree.Statement;
     }
+  }
+
+  /**
+   * The JS binding a class should `extends` for a super named `name` (T1b).
+   *
+   * A module's OWN class can extend an IMPORTED parent (`Sub :extends Base`, `Base` from another
+   * file). The HIR class-shell emitter took the super name verbatim, so it emitted `extends Base` --
+   * the source name the import inliner renamed to `__ll_inlined_Base_1`, undefined at run time. This
+   * resolves the parent and, when it is imported, returns its inlined binding (also pulling the parent
+   * into `inlinedDefinitions`). A same-file or ambient parent (the host `Error`) resolves to nothing
+   * importable and keeps its source name. The class analog of E2's `JSClassBuilder.processExtends`,
+   * for the non-inlined path.
+   */
+  private superBindingName(name: string, src: ast.ASTNode): string {
+    try {
+      const resolved = this.context?.symbolTable?.resolveSymbol?.(name as any, src as any);
+      if (resolved && this.isImportedSymbol(resolved)) {
+        return this.ensureSymbolInlined(resolved);
+      }
+    } catch {
+      // resolution failure -> keep the source name; nothing importable to rewrite to.
+    }
+    // Same-file / ambient parent: the exact name the shell used before (raw, as the parent's own `id`
+    // is emitted), so a same-module `extends` is byte-identical.
+    return name;
   }
 
   /**

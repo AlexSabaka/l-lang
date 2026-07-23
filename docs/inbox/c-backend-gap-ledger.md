@@ -1253,3 +1253,34 @@ now" pattern as the S1/games findings. All three closed as E1/E2, each with a bo
 
 Note §9.2 (the C field-layout trap) remains OPEN — Phase E's ctor-only rule dodges it rather than
 fixing it.
+
+## 18. Cross-module TYPE-name resolution + a class extending an imported parent (Phase T)
+
+### 18.1 [CLOSED, T1] — the S1b type-name residual
+
+S1b made a cross-module VALUE name prefer the directly-imported module; TYPE references took a bare
+path, so a cross-module type-name collision resolved by first-wins processing order (two modules
+exporting `Widget` of different shape → the wrong one bound to `<- Widget` / `(new Widget)`, a spurious
+`ELL0203`). Checker-level, both backends identical. Closed by routing four bare-by-name resolution
+sites through S1b's import priority: `TypeChecker.unwrapType` (the deferred `type-ref`, which now
+carries an `askingSource` stamped at `convertAstTypeCore`), `constructorParams` (the `:extends` parent,
+via a stamped `parentSource`), and `inferNewExpression` (resolve the class FROM the `new` site). The
+bare `resolveSymbol` stays the fallback, so a transitively-reachable type is unchanged.
+
+**Residual of the residual:** the ~44 bare `resolveSymbol` callers were NOT swept blind; only the three
+sites the guard exposed were fixed. The `TypeChecker.ts` by-name conformance/assignability lookups
+(334/377/382/388) were audited and left — they operate on already-disambiguated types and no guard case
+reached them. This connects to the `TYPE_NAMED_GLOBALS` note (the `Number` story), which names the same
+root and the same eventual fix ("prefer a type-kind symbol when resolving a type name").
+
+### 18.2 [CLOSED, T1b] — a module's OWN class extending an IMPORTED parent
+
+Surfaced once T1 stopped the checker refusing a cross-module `:extends`. Pre-existing, independent of
+any collision, absent from the corpus, broken on BOTH backends: JS took the super name from
+`HClass.superName` verbatim (the HIR class-shell emitter), so `class Sub extends Base` referenced the
+bare name the inliner renamed → undefined; C's `registerClass` never registered an imported parent, so
+the inherited field layout was empty → `value has no such member`. The E2 fixes covered the INLINED
+subclass path; this is the same gap on the non-inlined (root-module class) path. JS: a
+`superBindingName` legacy hook resolves the parent through the inliner (mirrors `JSClassBuilder.
+processExtends`). C: `registerClass` now `ensureClassRegistered`s an imported parent before reading its
+descriptor. Guard also catches `:of Base` (subtype catch by the imported parent), composing with E1.

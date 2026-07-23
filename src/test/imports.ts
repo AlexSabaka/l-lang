@@ -1396,6 +1396,51 @@ const CASES: Case[] = [
     },
   },
 
+  // T1b -- a module's OWN class extending an IMPORTED parent. Surfaced while building T1: once the
+  // checker stopped refusing a `:extends` on a cross-module type, codegen was exposed. It is a
+  // pre-existing gap independent of any collision, absent from the corpus, and broken on BOTH backends:
+  // JS emitted `class Sub extends Base` with the bare (inliner-renamed) parent name; C never
+  // registered the imported parent so the inherited field layout was wrong. The E2 fixes covered the
+  // INLINED subclass path; this is the same gap on the non-inlined path (a root-module class).
+  {
+    name: "T1b: a module's own class extends an IMPORTED parent, on both backends",
+    why:
+      "`Sub :extends Base` where `Base` is imported. JS: the HIR class-shell emitter took the super " +
+      "name from `HClass.superName` verbatim, so `extends Base` referenced the bare name the import " +
+      "inliner had renamed to `__ll_inlined_Base_1` -- undefined at run time. C: a local class's " +
+      "imported parent was not registered, so the inherited ctor field layout was wrong " +
+      "(`value has no such member`). Both are the E2 gap on the non-inlined path; the fix resolves the " +
+      "parent through the inliner (JS) and the parent-chain registration (C).",
+    run: () => {
+      const files = {
+        "base.lisp": `(\n  (defclass Base (let :ctor name <- String))\n  (export Base)\n)\n`,
+        "main.lisp":
+          `(\n` +
+          `  (import "base.lisp")\n` +
+          `  (defclass Sub :extends Base (let :ctor n <- Int))\n` +
+          `  (let s (new Sub "hi" 5))\n` +
+          `  ;; inherited field + own field + a subtype catch by the imported parent type\n` +
+          `  (console.log s.name s.n)\n` +
+          `  (try (throw (new Sub "boom" 9))\n` +
+          `       catch e :of Base (console.log "caught" e.name))\n` +
+          `)\n`,
+      };
+      const expected = "hi 5\ncaught boom";
+
+      const js = build(fixture("own-extends-imported-js", files, "main.lisp"));
+      if (!js.compiled) return { ok: false, detail: `JS did not compile: ${js.diagnostics.join(", ") || "(none)"}` };
+      if (js.runtimeError) return { ok: false, detail: `JS runtime: ${js.runtimeError}` };
+      if (js.stdout !== expected) return { ok: false, detail: `JS expected ${JSON.stringify(expected)}, got ${JSON.stringify(js.stdout)}` };
+
+      const c = buildC(fixture("own-extends-imported-c", files, "main.lisp"));
+      if (!c.compiled) return { ok: false, detail: `C did not build: ${c.runtimeError ?? (c.diagnostics.join(", ") || "(none)")}` };
+      if (c.runtimeError) return { ok: false, detail: `C runtime: ${c.runtimeError}` };
+      if (c.stdout !== expected) return { ok: false, detail: `C expected ${JSON.stringify(expected)}, got ${JSON.stringify(c.stdout)}` };
+
+      return { ok: true, detail: `own class extends imported parent on both backends: ${JSON.stringify(expected)}` };
+    },
+  },
+
 ];
 
 function main() {

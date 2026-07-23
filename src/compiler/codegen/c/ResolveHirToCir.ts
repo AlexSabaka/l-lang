@@ -512,6 +512,11 @@ export class ResolveHirToCir {
     // the layout the JS ClassBuilder also produces. The whole hierarchy is a symbol-table walk the
     // HIR does not model (spec A4).
     const parent = this.extendsName(node) ?? (typeof t?.parentClass === "string" ? t.parentClass : undefined);
+    // A local class may extend an IMPORTED parent (T1b). The parent is registered on demand, not by
+    // the root-module pre-pass, so without this its descriptor is absent and the child inherits NO
+    // fields -- a missing inherited member trapped on C. E2 fixed this for an imported class's parent;
+    // this is the same, for a LOCAL class whose parent is imported.
+    if (parent && !this.classes.has(parent)) this.ensureClassRegistered(parent, node);
     const parentDesc = parent ? this.classes.get(parent) : undefined;
     if (parent && parentDesc) this.ledger.record("A4", "inherit", node, `'${name}' inherits '${parent}' fields/methods (hierarchy walked below the HIR)`);
     // Parent fields first, then own -- but a field that RE-declares a parent's keeps the parent slot
