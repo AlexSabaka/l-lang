@@ -410,10 +410,20 @@ export class ClassBuilder {
    * Only ONE bridge per type, even under diamond conformance.
    */
   private buildIterableBridge(): ESTree.MethodDefinition[] {
-    const implementsIterable = (this.node.implements ?? []).some(
-      (impl: any) => impl?.type?.name === "Iterable"
-    );
-    if (!implementsIterable) return [];
+    // TRANSITIVELY (S2b). This used to read the literally-written `:implements` list and look for the
+    // name `Iterable`, which meant `:implements Iterator<T>` got NO bridge -- even though D30 declares
+    // `Iterator<T> :implements Iterable<T>` precisely so a cursor can stand wherever a source is
+    // wanted, and even though `__ll_interfaces` two methods down already answers transitively.
+    //
+    // The consequence was total on JS and invisible on C: `(for :each x :from cursor ...)` emitted
+    // `for (x of cursor)`, which threw "is not iterable", and `(iter cursor)` threw from the shim's
+    // own guard -- while both worked natively, where `ll_iter` just asks for `iterator()`. The corpus
+    // never caught it because its one hand-written cursor (`13-generators/00`'s `Countdown`) declares
+    // `:implements Iterable` DIRECTLY. Declaring the more precise interface was the thing that broke.
+    //
+    // `conformedInterfaces()` is the same closure `__ll_interfaces` uses, so the bridge and the
+    // runtime type-test can no longer disagree about what a type conforms to.
+    if (!this.conformedInterfaces().includes("Iterable")) return [];
 
     const call = (callee: ESTree.Expression, args: ESTree.Expression[] = []): ESTree.CallExpression => ({
       type: "CallExpression",

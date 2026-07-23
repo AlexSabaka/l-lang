@@ -357,6 +357,13 @@ export const C_PASSING: readonly string[] = [
   // would otherwise change with the target CPU). Graded at -O2 as well, which is where a UB
   // disagreement would actually surface.
   "80-adversarial/bit_operators.lisp",
+  // What a CURSOR is, and that both backends agree (S2b, ledger 14.3). Two JS-only defects made
+  // D30's `Iterator<T> :implements Iterable<T>` untrue: the `[Symbol.iterator]` bridge tested the
+  // literally-written `:implements` list, so declaring the MORE PRECISE interface got no bridge at
+  // all; and `iter` wrapped unconditionally, so a JS cursor had no identity, no dispose and no type
+  // where C's `ll_iter` hands back the object itself. Pins identity, the strong form of it (pulling
+  // through the returned value advances the original), and the container arm that always agreed.
+  "80-adversarial/iterator_identity.lisp",
   // D58's disposal (Phase G5). Two amendments to that ruling are pinned here, both forced by
   // measurement: recognition is DUCK-TYPED (`(x :of SomeInterface)` answers false on both backends,
   // so the type test D58 named does not exist), and what gets disposed is the COLLECTION rather than

@@ -932,7 +932,7 @@ a green golden over a wrong answer is the exact shape this ledger exists to make
 > unambiguous because a type ref is a bare identifier and a body form always starts with `(`. This is
 > what 14.1 needed first: a type could not otherwise claim to be both `Iterable` and `Disposable`.
 
-### 14.3 `iter` does not agree on what a cursor IS
+### 14.3 `iter` does not agree on what a cursor IS **[CLOSED 2026-07-23, S2b]**
 
 ```
 C    ll_iter(obj)  ->  obj->iterator()  ->  the OBJECT itself
@@ -945,8 +945,33 @@ A real divergence, and the reason D58's "dispose the source cursor" was amended 
 collection": the cursor is not the same object on the two backends, so disposing it would have worked
 on C and silently done nothing on JS.
 
-Not fixed here because the shim is on every iteration path in the corpus; the blast radius belongs to
+Not fixed in G5 because the shim is on every iteration path in the corpus; the blast radius belonged to
 its own gated commit, not to disposal.
+
+**CLOSED in S2b, and it was TWO defects, both JS-only.**
+
+*(a) The `[Symbol.iterator]` bridge was not transitive.* `JSClassBuilder.buildIterableBridge` tested
+the literally-written `:implements` list for the name `Iterable`, so a type declaring the MORE PRECISE
+`:implements Iterator<T>` got no bridge at all — `for :each` over it emitted `for (x of c)` and threw
+"is not iterable", while C drove it happily through `iterator()`. **Declaring the better interface was
+the thing that broke**, which is why D30's `Iterator<T> :implements Iterable<T>` ruling was not
+actually true on JS. The corpus never caught it: its one hand-written cursor
+(`13-generators/00`'s `Countdown`) declares `:implements Iterable` directly. Now uses
+`conformedInterfaces()` — the same transitive closure `__ll_interfaces` uses, so the bridge and the
+runtime type-test can no longer disagree.
+
+*(b) `iter` wrapped unconditionally.* Now identity-preserving, mirroring `ll_iter`, narrowest test
+first: an l-lang Iterable answers `iterator()` and that result is returned untouched; a generator is
+already its own cursor on both backends and is returned unwrapped (which keeps `.return()`, the route
+`dispose` takes to a JS generator, reachable); everything else — arrays, strings, maps — gets the
+wrapper, which is the arm that always agreed because C builds a cursor there too (`LL_H_CURSOR`).
+
+`(== (iter c) c)` is now true on both backends for a hand-written cursor, and `(type (iter c))`
+answers the type's own name rather than `Map`. Guarded by
+`examples/80-adversarial/iterator_identity.lisp` on the C ratchet, which pins identity, the *strong*
+form of it (pulling through the returned value must advance the ORIGINAL — a clone would restart),
+and the container arm, so the file says which arm is which rather than implying every `iter` is
+identity.
 
 ### 14.4 Not built: `for :each` disposal at exit edges
 

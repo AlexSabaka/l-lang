@@ -767,8 +767,32 @@ function __ll_is_type(val, type) {
     // spans all three. This is the exact inverse of `__ll_js_iter`: that adapts our `T?` to JS's
     // `{value,done}`; this adapts `{value,done}` back to `T?`. The lazy LINQ operators stand on it, and
     // the early-exit ones (`take`, `take-while`) need this raw pull because `for :each` has no `break`.
+    // IDENTITY-PRESERVING, to match C's \`ll_iter\` (S2b, gap-ledger 14.3).
+    //
+    // This used to wrap UNCONDITIONALLY: every \`iter(x)\` answered a fresh anonymous
+    // \`{ next() {...} }\`. C's \`ll_iter\` asks an object for \`iterator()\` and returns exactly that, so
+    // the two backends disagreed about what a cursor even IS -- \`(type (iter r))\` said \`Map\` on JS and
+    // \`Res\` on C, and a JS cursor had no \`dispose\`, no \`__ll_name\` and no identity. That divergence is
+    // why D58's "dispose the source cursor" had to be amended to "dispose the collection": disposing
+    // the cursor would have worked natively and silently done nothing here.
+    //
+    // The order of the tests is the contract, narrowest first:
+    //
+    //   1. An l-lang ITERABLE answers \`iterator()\`. Return what it returns, untouched -- that is
+    //      exactly \`ll_iter\`'s LL_OBJ arm, and it is what gives a cursor its identity back. A
+    //      hand-written \`Iterator\` returns \`this\`, so \`(== (iter c) c)\` is now true on both backends.
+    //   2. A GENERATOR is already its own cursor on both backends (\`function*\` objects are their own
+    //      iterable, and C's \`ll_iter\` returns the generator object). Returning it unwrapped keeps
+    //      \`.return()\` -- which is how \`dispose\` reaches a JS generator -- reachable through the value
+    //      the program is holding. \`next\` unwraps \`{value, done}\` either way, so nothing downstream
+    //      has to know which kind it got.
+    //   3. Everything else -- arrays, strings, maps -- has no l-lang cursor of its own, so a wrapper
+    //      IS the cursor. C makes one too (LL_H_CURSOR), so this arm is the agreeing one already.
     "iter": `const iter = (x) => {
-  if (x == null || typeof x[Symbol.iterator] !== 'function') throw new TypeError('value is not iterable');
+  if (x == null) throw new TypeError('value is not iterable');
+  if (typeof x.iterator === 'function') return x.iterator();
+  if (typeof x.next === 'function' && typeof x[Symbol.iterator] === 'function') return x;
+  if (typeof x[Symbol.iterator] !== 'function') throw new TypeError('value is not iterable');
   const _cur = x[Symbol.iterator]();
   return { next() { const _r = _cur.next(); return _r.done ? null : _r.value; } };
 };`,
