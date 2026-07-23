@@ -973,7 +973,7 @@ form of it (pulling through the returned value must advance the ORIGINAL — a c
 and the container arm, so the file says which arm is which rather than implying every `iter` is
 identity.
 
-### 14.4 Not built: `for :each` disposal at exit edges **[UNBLOCKED 2026-07-23 — needs a RULING]**
+### 14.4 Not built: `for :each` disposal at exit edges **[RULED 2026-07-23 — deferred]**
 
 D58 also specifies the compiler half — "dispose on statically known exit edges — exhaustion and an
 early `return` crossing the loop". **G5 does not build it**, and the reason is a consequence of 14.3
@@ -1011,7 +1011,16 @@ What is left is a semantics call with real breakage potential, and it is not the
 Three defensible answers: dispose always (C# semantics, accept the hazard); dispose only what the loop
 itself created (a generator, or a cursor not identical to the source — narrow and safe, but a rule with
 an `if` in it); or leave `for :each` alone and keep disposal purely in the library, where `take` /
-`take-while` / `zip` already do it by construction. **Not chosen unilaterally.**
+`take-while` / `zip` already do it by construction.
+
+**RULED (Sabaka, 2026-07-23): dispose always — C# semantics, accept the price loudly.** A `for :each`
+disposes the cursor it obtained, including when `iterator()` returned `this`, so a self-cursoring
+source walked by an ordinary loop IS spent afterwards. The hazard is real and is documented rather than
+designed around — a program that needs to re-walk such a source rebinds a fresh one, exactly as it
+would in C#. **Deferred, not built:** the problem has library-level workarounds today (`take` /
+`take-while` / `zip` dispose by construction) and no corpus consumer is blocked, so this waits until it
+actually bites. When built, it lands with an adversarial guard that pins the self-cursoring source
+being spent, on both backends.
 
 ## 15. The module boundary, root-caused (Phase S1, 2026-07-23)
 
