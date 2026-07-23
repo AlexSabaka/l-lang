@@ -113,6 +113,9 @@ export const C_PASSING: readonly string[] = [
   // E3: the std/core/errors module itself -- the typed-error tower imported and exercised the way a
   // program uses it (subtype catch, structured fields, one broad :of Error handler). D62.
   "18-error-handling/22_typed_errors.lisp",
+  // F1: the typed errors are AMBIENT -- Error is an l-lang class in a second prelude, not a host
+  // extern, so this program uses the whole tower with no import.
+  "18-error-handling/23_ambient_errors.lisp",
   // Phase-0 finally-drop fix: `finally` runs on EVERY exit from a try (return / return-in-catch /
   // rethrow-propagation / nested), and a `return`-in-try restores ll_handler_top. Inline-finalizer
   // routing in EmitCirToC (no runtime rework). See examples' headers + DECISIONS D12/D47.

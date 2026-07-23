@@ -641,6 +641,12 @@ export class LowerAstToHirVisitor {
         // grandchild forwards a grandparent's field through `super`. Its own params alone stopped
         // at depth one (see inheritedCtorParamsOf).
         parentArgs = [...this.inheritedCtorParamsOf(parentNode), ...this.ctorParamsOf(parentNode)];
+        // A REDECLARED ctor field keeps ONE slot (F1), the same dedup JSClassBuilder applies. With an
+        // l-lang `Error(message)` root, `ValueError :extends Error (let :ctor message)` makes `message`
+        // both inherited and own, so a two-level child (`IndexError :extends ValueError`) flattened it
+        // twice -- `constructor(message, message, index)`, invalid JS. Keep the ancestor-most.
+        const seenParent = new Set<string>();
+        parentArgs = parentArgs.filter((p) => (seenParent.has(p.name) ? false : (seenParent.add(p.name), true)));
       }
     }
 

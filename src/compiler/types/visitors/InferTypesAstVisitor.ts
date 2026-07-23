@@ -4751,7 +4751,15 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     const parent = parentEntry?.inferredType;
     if (!parent || parent === classType) return own;
 
-    return [...this.constructorParams(parent), ...own];
+    // A REDECLARED ctor field shadows the parent's -- it keeps the parent's SLOT, it does not add a
+    // second parameter (F1). `(defclass X :extends Error (let :ctor message))` against an l-lang
+    // `Error(message)` is one `message` parameter, not two; the C backend already dedupes this way
+    // ("a field that re-declares a parent's keeps the parent slot"), and the checker must agree or a
+    // one-argument `(ValueError "msg")` is refused as expecting two. Parent params first, then own
+    // params whose name the parent did not already contribute.
+    const inherited = this.constructorParams(parent);
+    const inheritedNames = new Set(inherited.map((p: any) => p?.name));
+    return [...inherited, ...own.filter((p: any) => !inheritedNames.has(p?.name))];
   }
 
   private inferConstruction(

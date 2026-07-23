@@ -33,6 +33,20 @@
 ;; The subtype/catch behaviour this module promises is pinned by
 ;; `examples/18-error-handling/22_typed_errors.lisp` on both backends.
 (
+    ;; -- the ROOT (F1) ---------------------------------------------------------------------------
+    ;; `Error` is now an l-lang class, not a host `:extern`. Every error carries a `message`; the tower
+    ;; below extends it, and `catch :of Error` matches all of them by walking the `:extends` chain.
+    ;; Ctor field only (no `cause` yet -- that needs the C field-layout trap fixed, gap ledger 9.2).
+    ;; `TypeError` / `RangeError` were host externs too, and are never caught as host traps, so they
+    ;; become ordinary l-lang classes here. This module is a second AMBIENT prelude, so these resolve
+    ;; everywhere with no import -- the same way the extern used to.
+    (defclass Error
+        (let :ctor message <- String))
+    (defclass TypeError :extends Error
+        (let :ctor message <- String))
+    (defclass RangeError :extends Error
+        (let :ctor message <- String))
+
     ;; -- value / lookup errors -------------------------------------------------------------------
     ;; A value was the wrong shape or out of range -- the largest family, and the one `parse-int`,
     ;; string formatting, and the container accessors all land in.
@@ -67,5 +81,6 @@
     (defclass FatalError :extends Error
         (let :ctor message <- String))
 
-    (export ValueError KeyError IndexError ArithmeticError IOError FileError NotFound FatalError)
+    (export Error TypeError RangeError
+            ValueError KeyError IndexError ArithmeticError IOError FileError NotFound FatalError)
 )

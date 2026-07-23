@@ -164,8 +164,16 @@ export class Context {
    */
   private importAliases: Map<string, { local: string; source: string; from: string }[]> = new Map();
 
-  /** The module every module implicitly imports. Resolved against `libPaths`, like any other. */
-  private static readonly PRELUDE = "std/js";
+  /**
+   * The modules every module implicitly imports, in order. Resolved against `libPaths`, like any other.
+   *
+   * `std/js` is the host interop prelude (D50). `std/core/errors` joined it (F1) so the l-lang `Error`
+   * tower is ambient the way the host `:extern Error` used to be -- a program writes `(throw (Error …))`
+   * and `catch :of ValueError` with no import. Both are host-free leaves (the errors module uses only
+   * `defclass`/`String`), so their order relative to each other does not matter; each guards its own
+   * self-import.
+   */
+  private static readonly PRELUDES = ["std/js", "std/core/errors"];
 
   /**
    * Import the prelude into `file`, implicitly.
@@ -182,16 +190,34 @@ export class Context {
    * no-op: no prelude, no diagnostic, and programs that touch no JS global still compile. The prelude
    * is a library, and a missing library is not a compiler error.
    */
+  /** Is `file` one of the ambient prelude modules? (Preludes are self-contained -- no cross-prelude
+   *  injection, no package-sibling drag-in.) */
+  private isPreludeModule(file: string): boolean {
+    const here = path.resolve(file);
+    return Context.PRELUDES.some((n) => {
+      const p = ModuleResolver.resolve(n, file, this.libPaths);
+      return !!p && path.resolve(p) === here;
+    });
+  }
+
   private injectPrelude(file: string): void {
-    const prelude = ModuleResolver.resolve(Context.PRELUDE, file, this.libPaths);
-    if (!prelude) return;
+    const here = path.resolve(file);
+    const preludePaths = Context.PRELUDES.map((n) => ModuleResolver.resolve(n, file, this.libPaths))
+      .filter((p): p is string => !!p)
+      .map((p) => path.resolve(p));
 
-    // The prelude does not import itself. Without this the recursion is unbounded -- and `processing`
-    // would merely turn it into a silent no-op rather than a stack overflow, which is worse.
-    if (path.resolve(prelude) === path.resolve(file)) return;
+    // A PRELUDE gets no preludes injected into it. Preludes are foundational and must not depend on
+    // each other -- `std/js` and `std/core/errors` are both host-free leaves. Injecting each into the
+    // other created a mutual load-in-progress cycle (LL0300 on EVERY file: std/js -> errors -> std/js
+    // while errors is still loading). This also subsumes the old self-import guard.
+    if (preludePaths.includes(here)) return;
 
-    this.recordImport(file, prelude, null);
-    this.process(prelude, "types");
+    for (const name of Context.PRELUDES) {
+      const prelude = ModuleResolver.resolve(name, file, this.libPaths);
+      if (!prelude || path.resolve(prelude) === here) continue;
+      this.recordImport(file, prelude, null);
+      this.process(prelude, "types");
+    }
   }
 
   /**
@@ -205,6 +231,14 @@ export class Context {
    * prelude: a package with A<->B cross-references does not loop.
    */
   private injectPackageSiblings(file: string): void {
+    // A PRELUDE does not drag in its package siblings (F1). `std/core/errors` is ambient, and it lives
+    // in the `std/core` package next to `string`/`types`/`async` -- co-processing those would JOIN
+    // their symbols into every module's forest, where `std/core/string`'s `join`/`split` then shadow
+    // the native array/string methods a program calls as `(xs.join " ")`. The errors module is
+    // host-free and needs none of its siblings, so a prelude stays self-contained; an EXPLICIT import
+    // of a sibling still co-processes normally (this only affects the implicit prelude path).
+    if (this.isPreludeModule(file)) return;
+
     const registry = PackageRegistry.forPaths(this.libPaths);
     const pkgName = registry.packageOf(file);
     if (!pkgName) return;

@@ -56,9 +56,11 @@
 
 
   ;; --- Errors ---
-  (let :extern Error)
-  (let :extern TypeError)
-  (let :extern RangeError)
+  ;; `Error` / `TypeError` / `RangeError` are no longer host externs (F1). They are l-lang classes in
+  ;; `std/core/errors`, made ambient like this prelude, so a program still writes `(throw (Error ...))`
+  ;; and `catch :of Error` with no import -- but the type is l-lang's own, not the host global. A
+  ;; genuine host error is still catchable `:of Error` because `__ll_is_type` matches it by
+  ;; `constructor.name`.
 
   ;; --- Built-in constructors ---
   (let :extern Date)
@@ -97,7 +99,6 @@
   (fn :extern fetch [...args])
 
   (export console Math JSON Object Array Symbol Reflect Proxy BigInt
-          Error TypeError RangeError
           Date RegExp Map Set WeakMap WeakSet Promise
           NaN Infinity globalThis
           parseInt parseFloat isNaN isFinite

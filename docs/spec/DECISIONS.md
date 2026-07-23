@@ -5132,6 +5132,21 @@ cross-module class-hierarchy gap; errors were simply the first code to exercise 
 Pinned by `examples/18-error-handling/22_typed_errors.lisp` on both backends. The 14 stdlib throw
 sites migrate onto this tower in E4.
 
-**Still deferred** (the full foundation): `Error` itself l-lang-owned, `cause`, `TypeError`/`RangeError`
-un-externed, and the ~26-file corpus `:extends Error (let :ctor message)` migration. And gap ledger
-§9.2 (the C field-layout trap) remains open — the ctor-only rule dodges it rather than fixing it.
+**AMENDED (Phase F, 2026-07-24): `Error` is now l-lang-owned and AMBIENT.** `std/core/errors` defines
+`Error(message)` / `TypeError` / `RangeError` as l-lang classes; the `:extern`s left `std/js`; and the
+module is a SECOND ambient prelude, so `(throw (Error …))` and `catch :of ValueError` resolve with no
+import (the 60+ ambient sites). Un-externing exposed four latent defects the extern had masked, all
+fixed: (a) `constructorParams` (checker), (b) `JSClassBuilder.buildConstructor`, and (c) the HIR
+`lowerCtor` all double-counted a REDECLARED inherited ctor field, so `X :extends Error (let :ctor
+message)` produced `constructor(message, message, …)` — each now keeps the ancestor slot; (d) two
+ambient preludes injected each other (cycle, LL0300) and a packaged prelude dragged in its siblings
+(`std/core/string`'s `join` shadowing native `.join`) — a prelude is now self-contained.
+
+The corpus migration was **near-zero** as predicted: the 22 `:extends Error (let :ctor message)` files
+work unchanged (the dedup makes the redeclare a single slot). `TypeError`/`RangeError` are never caught
+as host traps and became ordinary l-lang classes. A genuine host error is still catchable `:of Error`
+(matched by `constructor.name`). On C the builtin `Error` descriptor stays (identical, message-only);
+fully removing it is the remaining symmetric follow-up.
+
+**Still deferred:** `cause` (needs §9.2), removing the C builtin. And gap ledger §9.2 (the C
+field-layout trap) remains open — the ctor-only rule dodges it rather than fixing it.

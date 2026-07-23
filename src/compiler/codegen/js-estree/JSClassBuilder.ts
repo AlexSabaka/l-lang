@@ -232,6 +232,13 @@ export class ClassBuilder {
         // grandchild forwards a grandparent's field. Its OWN params alone forwarded nothing past
         // depth one (see getInheritedCtorParams).
         parentArgs = [...getInheritedCtorParams(parentNode, this.context.symbolTable), ...getOwnCtorParams(parentNode)];
+        // A REDECLARED ctor field keeps ONE slot (F1). Once `Error(message)` is an l-lang class, the
+        // corpus idiom `X :extends Error (let :ctor message)` makes `message` appear both inherited and
+        // own, so the flattened list had it twice -- `constructor(message, message, key)`, invalid JS.
+        // Keep the ancestor-most occurrence of each name; the checker and the C backend dedupe the same
+        // way (parent slot wins).
+        const seenParent = new Set<string>();
+        parentArgs = parentArgs.filter((p) => (seenParent.has(p.name) ? false : (seenParent.add(p.name), true)));
       }
     }
 
