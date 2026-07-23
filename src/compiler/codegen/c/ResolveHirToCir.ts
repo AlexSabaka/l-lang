@@ -83,7 +83,11 @@ interface ClassDesc {
   name: string;
   isStruct: boolean;
   parent?: string; // `:extends` base class name (for inheritance + reflection)
-  fields: { name: string; ctype: CType; default?: ast.ASTNode }[];
+  /** `isCtor` = this field receives a positional CONSTRUCTION arg (it is a `:ctor` field / ctor
+   *  parameter), as opposed to a plain field that only ever takes its own default. Construction maps
+   *  the k-th arg to the k-th ctor field IN SLOT ORDER -- not to raw slot `k` -- so a plain field
+   *  interleaved below a ctor field (which inheritance introduces) does not steal a ctor arg (§9.2). */
+  fields: { name: string; ctype: CType; default?: ast.ASTNode; isCtor?: boolean }[];
   fieldSlot: Map<string, number>;
   /** The transitive `:implements` closure -- D24 erases interfaces, so this is conformance's only
    *  runtime carrier (gap ledger §14.1). Consumed from the modeled `HClass.interfaces`. */
@@ -476,7 +480,7 @@ export class ResolveHirToCir {
     // The whole layout+order lives on the HIR now (A4), so this is no longer a dip; only field TYPES stay
     // an AST read (`(let :ctor x <- Real)`), which is the A1 type layer the HIR does not carry yet. Without
     // an HClass (an imported/desugared copy) fall back to the checker's ctorInfo + body scan.
-    let ownFields: { name: string; ctype: CType; default?: ast.ASTNode }[];
+    let ownFields: { name: string; ctype: CType; default?: ast.ASTNode; isCtor?: boolean }[];
     if (hc) {
       // Layout AND field TYPES both ride HClass now (A4 + A1/D48 step 4): a `:ctor` field's type comes
       // from its constructor parameter, a plain field's from HFieldDecl.type. No class-body AST walk.
@@ -490,11 +494,12 @@ export class ResolveHirToCir {
         const ct = this.typeNodeToCType(f.type) ?? this.ctypeFromLiteral(f.valueSrc);
         if (ct) modeledType.set(nm, ct);
       }
-      const ownNames: string[] = [
-        ...((hc.ctor?.fieldInits ?? []) as any[]).map((fi) => ast.symbolName(fi.field)),
-        ...((hc.fields ?? []) as any[]).map((f) => ast.symbolName(f.name)),
-      ];
-      ownFields = ownNames.map((nm) => ({ name: nm, ctype: modeledType.get(nm) ?? memberType(nm), default: astFieldDefaults.get(nm) }));
+      // `fieldInits` are the `:ctor` fields (they take a construction arg); `hc.fields` are plain
+      // (default-only). Order is ctor fields first, then plain -- the same order the slots take.
+      const ctorNames = ((hc.ctor?.fieldInits ?? []) as any[]).map((fi) => ast.symbolName(fi.field));
+      const ctorNameSet = new Set(ctorNames);
+      const ownNames: string[] = [...ctorNames, ...((hc.fields ?? []) as any[]).map((f) => ast.symbolName(f.name))];
+      ownFields = ownNames.map((nm) => ({ name: nm, ctype: modeledType.get(nm) ?? memberType(nm), default: astFieldDefaults.get(nm), isCtor: ctorNameSet.has(nm) }));
     } else {
       this.ledger.record("A4", isStruct ? "defstruct" : "defclass", node, "construction/field-layout resolved from the symbol table (no HClass -- imported/desugared copy)");
       const ctorParams: any[] = t?.ctorInfo?.params ?? [];
@@ -502,6 +507,7 @@ export class ResolveHirToCir {
         name: p.name,
         ctype: astFieldTypes.get(p.name) ?? (p.type ? mapType(p.type) : memberType(p.name)),
         default: astFieldDefaults.get(p.name),
+        isCtor: true, // ctorInfo.params ARE the construction parameters
       }));
       const seen = new Set(ownFields.map((f) => f.name));
       for (const [fname, ct] of astFieldTypes) {
@@ -2332,9 +2338,27 @@ export class ResolveHirToCir {
   private buildConstruct(node: ast.ASTNode, classNameSpelled: string, argVals: CExpr[], fromHir: boolean): CExpr {
     const desc = this.classes.get(classNameSpelled)!;
     const className = desc?.name ?? classNameSpelled;
+    // Positional args map to the CTOR fields in SLOT ORDER (= flattened ctor-param order), not to raw
+    // slots: a plain (non-ctor) field interleaved below a ctor field -- which inheritance introduces --
+    // would otherwise steal a ctor arg and leave the ctor field nil (gap ledger §9.2). The k-th ctor
+    // field gets `argVals[k]`; every other slot (a plain field, or a ctor field whose arg was omitted)
+    // takes its declared default, else nil (`ll_obj_new` zero-fills).
+    //
+    // Fallback: if the descriptor marked NO ctor fields (an imported class whose ctorInfo was
+    // unavailable, or a plain-field-only struct), keep the by-slot-index fill -- the pre-§9.2 behaviour,
+    // correct wherever there is no interleaving to get wrong.
+    const argForSlot = new Map<number, CExpr>();
+    const hasCtorFields = desc.fields.some((f) => f.isCtor);
+    if (hasCtorFields) {
+      let k = 0;
+      desc.fields.forEach((f, i) => { if (f.isCtor) { if (k < argVals.length) argForSlot.set(i, argVals[k]); k++; } });
+    } else {
+      desc.fields.forEach((_f, i) => { if (i < argVals.length) argForSlot.set(i, argVals[i]); });
+    }
     const cArgs = desc.fields.map((f, i) => {
       // A field initializer is a store site: a struct-typed value is copied (D11), an array/class shared.
-      if (i < argVals.length) return this.copyStore(argVals[i], node, "field-init");
+      const arg = argForSlot.get(i);
+      if (arg !== undefined) return this.copyStore(arg, node, "field-init");
       if (f.default) {
         if (fromHir) this.ledger.record("A4", "construct-default", node, `omitted arg -> field '${f.name}' default read from AST (HConstruct carries args, not defaults)`);
         return this.copyStore(this.resolveAstExpr(f.default), node, "field-init");

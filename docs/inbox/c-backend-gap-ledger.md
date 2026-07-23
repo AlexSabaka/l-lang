@@ -621,7 +621,7 @@ intermediate broke the chain (`constructor() { super(); }`). C flattened the who
 correct. Fixed in `LowerAstToHirVisitor.inheritedCtorParamsOf` (and its dead mirror in
 `JSClassBuilder`); pinned by `80-adversarial/inherited_ctor_fields.lisp`.
 
-### 9.2 OPEN — C field-layout trap: inherited plain-default field + inherited ctor field + local ctor field, ≥2 levels
+### 9.2 CLOSED (2026-07-24) — C construction mapped positional args to slots by RAW INDEX
 
 The C backend traps (`TypeError: expected an Int`, exit 70) on this exact shape:
 
@@ -641,11 +641,23 @@ one and C is correct:
 - drop `extra` (the local ctor field) → both correct.
 
 So it is the *interaction* of an inherited plain-default field with a mixed inherited/local ctor
-parameter list across a level boundary — a C field-slot ordering or plain-field-init offset that goes
-wrong only when the flattened ctor params and the flattened field list disagree in a particular way.
-JS is correct on this shape. Not yet fixed; it blocks giving `std/core/errors` classes plain fields
-(e.g. `Error`'s `cause`) while the hierarchy is deep. The error module can dodge it for now by keeping
-plain fields off the deep nodes, but the C layout is the real fix.
+parameter list across a level boundary. **The layout was never wrong — the *construction* was.**
+`buildConstruct` filled field slots by RAW INDEX (`argVals[i] → fields[i]`), but positional
+construction args correspond to the flattened **ctor-parameter** list, not the field-slot list. They
+line up 1:1 only when no plain (non-ctor) field sits at a slot below a ctor field — and inheritance is
+exactly what interleaves them. For `C`, slots are `[tag(0), seen(1), extra(2)]` but the args `["c", 7]`
+belong to ctor params `[tag, extra]`: `seen` (slot 1) grabbed `7` and `extra` (slot 2) fell to nil, so
+`ll_unbox_int(nil)` trapped. JS was always correct (its constructor assigns each ctor param to its
+named field; plain fields take their own initializer).
+
+**Fixed** by giving each `ClassDesc` field an `isCtor` flag (set in `registerClass` from
+`hc.ctor.fieldInits` / `t.ctorInfo.params`) and rewriting `buildConstruct` to map the k-th positional
+arg to the k-th CTOR field *in slot order*; every other slot (a plain field, or a ctor field whose arg
+was omitted) takes its declared default, else nil. Byte-identical wherever the old index map already
+agreed with ctor order (all pre-existing green files); only the interleaved shape changes. This
+**unblocks giving `std/core/errors` classes plain fields** (e.g. `Error`'s `cause`) at any depth.
+Pinned by `examples/80-adversarial/inherited_plain_field_layout.lisp` (the complement of
+`inherited_ctor_fields.lisp`, which had deliberately dodged this shape).
 
 ## 10. JS-backend gap, surfaced by std/math/stats (2026-07-23)
 

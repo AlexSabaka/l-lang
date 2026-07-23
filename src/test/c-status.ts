@@ -457,6 +457,10 @@ export const C_PASSING: readonly string[] = [
   // Lg -- a `:ctor` field inherited through 2+ `:extends` levels was nil on JS; C flattened the
   // whole chain and was right. Fixed in the HIR lowering; this pins the multi-level forwarding.
   "80-adversarial/inherited_ctor_fields.lisp",
+  // §9.2 -- the COMPLEMENT of the above: a PLAIN default field interleaved among ctor fields across
+  // 2+ levels made C's construction fill slots by raw index and drop a ctor arg (`ll_unbox_int(nil)`
+  // trapped). JS was right. Fixed in `buildConstruct` (ctor args map to ctor fields in slot order).
+  "80-adversarial/inherited_plain_field_layout.lisp",
   // std/math FOUNDATION (D57). Six modules that depend on nothing but the floor and each other's
   // types: constants, elementary (the libm gaps + integer helpers), and the three algebras --
   // Complex, Rational, Vec2/Vec3/Vec -- plus the symbolic-expression PoC. Every golden is DERIVED
