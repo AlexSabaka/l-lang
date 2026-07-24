@@ -80,13 +80,15 @@
         (let :ctor message <- String))
 
     ;; -- error chaining --------------------------------------------------------------------------
-    ;; Attach an underlying `cause` to an error and return it, so a throw site chains in one expression:
-    ;;   (throw (caused-by (ValueError "parse failed") original))
+    ;; Attach an underlying `cause` to an error and return it, so a throw site chains in one expression.
+    ;; An `:extension` so it reads both as a free call and as a method on its receiver (D34):
+    ;;   (throw (caused-by (ValueError "parse failed") original))       ;; free
+    ;;   (throw ((ValueError "parse failed").caused-by original))       ;; method chain
     ;; `cause` is a PLAIN field (not a ctor arg): a ctor `cause` would land mid-list in every subclass
     ;; that adds its own field (`KeyError` -> [message, cause, key]) and mis-bind `(KeyError "m" "k")`.
     ;; A class is a reference type (D11 shares, does not copy), so mutating `e.cause` and returning `e`
     ;; hands back the same error, now carrying its cause.
-    (fn caused-by [e <- Error c <- Error] -> Error (
+    (fn :extension caused-by [e <- Error c <- Error] -> Error (
         (e.cause := c)
         e))
 

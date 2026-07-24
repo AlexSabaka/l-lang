@@ -5161,11 +5161,21 @@ field-layout trap) remains open — the ctor-only rule dodges it rather than fix
 - **`cause` is a PLAIN field, not a ctor arg.** The originally-ruled `Error(message, cause)` is not
   viable: measured, a `cause` ctor-param lands mid-list in every subclass's flattened ctor params
   (`KeyError` → `[message, cause, key]`), so `(KeyError "m" "k")` mis-binds `"k"` to `cause` (ELL0203).
-  So `Error` gains `(mut cause <- Error? nil)`, set at the throw site by a free helper
-  `caused-by(e, c)` (returns `e` with its cause attached — a class is a reference type, D11 shares).
+  So `Error` gains `(mut cause <- Error? nil)`, set at the throw site by `caused-by`, an **`:extension`**
+  (D34) so one definition serves both a free call `(caused-by e c)` and a method chain
+  `(e.caused-by c)`; it returns `e` with its cause attached (a class is a reference type, D11 shares).
   Ruling 3 above is superseded. Pinned by `examples/18-error-handling/24_error_cause.lisp` (both
-  backends), which also guards §9.2 on the real tower (`KeyError` = inherited plain `cause` + own ctor
-  `key`).
+  backends, both surfaces), which also guards §9.2 on the real tower (`KeyError` = inherited plain
+  `cause` + own ctor `key`).
+
+  Making it an `:extension` surfaced a C gap (closed here): the typed-receiver dispatch
+  (`ResolveHirToCir.tryExtensionCall`) used a root-module-only map keyed on the exact receiver type, so
+  an extension from an imported/ambient module was invisible and a BASE-class extension never dispatched
+  for a SUBCLASS receiver (`(indexError.caused-by …)` → ELL0106). It now resolves through the same
+  forest-wide `buildExtensionTable`/`conformingExtensionFn` the boxed path and the JS backend use (walks
+  the `:extends`/`:implements` chain), lowering the imported extension body on demand — the classic
+  "the machinery was never load-bearing until the stdlib exercised it" pattern (no corpus `:extension`
+  had ever targeted a class, only structs/primitives/interfaces).
 
 - **The C message-only builtin `Error` is retired.** `registerBuiltinClasses` now registers the l-lang
   `Error`/`TypeError`/`RangeError` (eager, via `ensureClassRegistered`), so C emits this module's

@@ -2427,18 +2427,29 @@ export class ResolveHirToCir {
     throw this.refuse(node, `method:${className}.${method}`, "resolveObjMethod");
   }
 
-  /** `(recv.method args)` where `method` is a registered `:extension` for the receiver's type ->
-   *  a direct call `method(recv, ...args)`. The devirtualization the HIR does not model (A3, Q4). */
+  /** `(recv.method args)` on a TYPED struct/class receiver where `method` is an `:extension` ->
+   *  a direct call `method(recv, ...args)`. The devirtualization the HIR does not model (A3, Q4).
+   *
+   *  Resolves through the FOREST-WIDE `buildExtensionTable`/`conformingExtensionFn` pair (the same the JS
+   *  side and `dynExtensionCall` use), NOT the root-module-only `this.extensions` map: that map is built
+   *  by `registerExtension` from the ROOT module's top-level items alone, so an extension defined in an
+   *  imported/ambient module (`std/core/errors`' `caused-by`) was invisible, and it keyed on the exact
+   *  receiver-type name, so a BASE-class extension never dispatched for a SUBCLASS receiver
+   *  (`(indexError.caused-by …)` -> ELL0106). `conformingExtensionFn` walks the `:extends`/`:implements`
+   *  chain, and `ensureFreeFn` lowers the imported extension body on demand. */
   private tryExtensionCall(node: ast.ASTNode, recv: CExpr, method: string, args: ast.ASTNode[], argVals?: CExpr[]): CExpr | undefined {
     const recvType = this.ctypeName(recv.ctype);
     if (!recvType) return undefined;
-    const extName = this.extensions.get(`${method}:${recvType}`);
-    if (!extName) return undefined;
-    const sig = this.topLevelFns.get(extName);
-    if (!sig) return undefined;
+    const typeInfo = this.resolveSymbolSafe(recvType, node)?.inferredType ?? { name: recvType, kind: "class" };
+    if (memberKindIn(typeInfo, method) !== undefined) return undefined; // a real member wins over an extension
+    this.extTable ??= buildExtensionTable(this.context as any);
+    const fnName = conformingExtensionFn(this.context as any, this.extTable, typeInfo, method);
+    if (!fnName) return undefined;
+    const target = this.ensureFreeFn(fnName, node);
+    if (!target) return undefined;
     this.ledger.record("A3", "extension-devirt", node, "extension method devirtualized to a free call on its first parameter (Q4 static case)");
     const cArgs = argVals ?? args.map((a) => this.resolveAstExpr(a));
-    return { src: node, ctype: sig.ret, kind: "c-call", callee: { kind: "free", cName: mangleC(extName), params: sig.params, ret: sig.ret }, args: [recv, ...cArgs] };
+    return { src: node, ctype: target.sig.ret, kind: "c-call", callee: { kind: "free", cName: target.cName, params: target.sig.params, ret: target.sig.ret }, args: [recv, ...cArgs] };
   }
 
   private resolveRawIndexer(node: ast.IndexerNode): CExpr {
