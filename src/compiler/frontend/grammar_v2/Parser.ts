@@ -64,6 +64,7 @@ class LLangParser extends CstParser {
   enumKey: ParserMethod<[], CstNode>;
   interfaceDecl: ParserMethod<[], CstNode>;
   typeDefDecl: ParserMethod<[], CstNode>;
+  refinementConstraint: ParserMethod<[], CstNode>;
   modifierDefDecl: ParserMethod<[], CstNode>;
   macroDecl: ParserMethod<[], CstNode>;
   importExpr: ParserMethod<[], CstNode>;
@@ -1074,6 +1075,26 @@ class LLangParser extends CstParser {
       this.SUBRULE(this.identifier);
       this.CONSUME(t.LeftArrow);
       this.SUBRULE(this.type);
+      // `:satisfies <constraint>` -- the value REFINEMENT (D46 amend). A refined deftype is a distinct
+      // NEWTYPE the compiler can lay out and check at boundaries; a bare deftype stays an alias. v1
+      // constraint is a range expression (`(0 .. 255)`), reusing the `..` grammar -- the semantic layer
+      // reads its static bounds. Enum/length constraints are a later increment.
+      this.OPTION(() => {
+        this.CONSUME(t.SatisfiesModKw);
+        this.SUBRULE(this.refinementConstraint);
+      });
+    });
+
+    // A value refinement's constraint. v1: a RANGE `( lo .. hi )` -- a descriptive interval with STATIC
+    // bounds (NOT a `Range` VALUE: it parses the parens itself, so it never routes through `list`'s
+    // range desugar and never references the `Range` type). Enum `(a | b | c)` and length
+    // `(length (lo .. hi))` constraints are later alternatives here.
+    this.refinementConstraint = this.RULE("refinementConstraint", () => {
+      this.CONSUME(t.LParen);
+      this.SUBRULE(this.expression);
+      this.CONSUME(t.Range);
+      this.SUBRULE2(this.expression);
+      this.CONSUME(t.RParen);
     });
 
     // defmodifier name [params] body*

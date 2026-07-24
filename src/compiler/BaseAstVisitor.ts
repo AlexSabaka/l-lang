@@ -86,6 +86,7 @@ export class BaseAstVisitor {
         "enum-key": this.visitEnumKey.bind(this),
         "struct": this.visitStruct.bind(this),
         "type-def": this.visitTypeDef.bind(this),
+        "range-refinement": this.visitRangeRefinement?.bind(this),
         "interface": this.visitInterface.bind(this),
         "implements": this.visitImplements.bind(this),
         "extends": this.visitExtends.bind(this),
@@ -302,6 +303,13 @@ export class BaseAstVisitor {
 
   visitModifierDef?(node: ast.ModifierDefNode): any {
     return this.onUnhandled(node, "visitModifierDef");
+  }
+
+  // A `:satisfies (...)` refinement rides on a TypeDefNode as metadata; passes that care about it read
+  // `typeDef.refinement` directly. This visitor exists so the node type is exhaustively mapped -- it is
+  // not reached in normal top-level traversal (a refinement is never a standalone statement).
+  visitRangeRefinement?(node: ast.RangeRefinementNode): any {
+    return this.onUnhandled(node, "visitRangeRefinement");
   }
 
   visitVariable(node: ast.VariableNode): any {

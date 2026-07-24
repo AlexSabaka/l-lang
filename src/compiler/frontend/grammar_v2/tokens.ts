@@ -159,6 +159,10 @@ const modKwTail = "(?![a-zA-Z0-9_-])";
 export const ImplementsModKw = createToken({ name: "ImplementsModKw", pattern: new RegExp(`:implements${modKwTail}`), categories: [ModKeyword] });
 export const ExtendsModKw = createToken({ name: "ExtendsModKw", pattern: new RegExp(`:extends${modKwTail}`), categories: [ModKeyword] });
 export const WhereModKw = createToken({ name: "WhereModKw", pattern: new RegExp(`:where${modKwTail}`), categories: [ModKeyword] });
+// `:satisfies` -- the value-REFINEMENT clause on `deftype` (D46 amend). Reads with the implicit subject
+// ("Int satisfies (0..255)"); `:where` dangled. Descriptive fragment only (ranges/enums/length) -- a
+// refined `deftype` is a distinct newtype the compiler can lay out and check at boundaries.
+export const SatisfiesModKw = createToken({ name: "SatisfiesModKw", pattern: new RegExp(`:satisfies${modKwTail}`), categories: [ModKeyword] });
 export const CondModKw = createToken({ name: "CondModKw", pattern: new RegExp(`:cond${modKwTail}`), categories: [ModKeyword] });
 export const ThenModKw = createToken({ name: "ThenModKw", pattern: new RegExp(`:then${modKwTail}`), categories: [ModKeyword] });
 export const ElseModKw = createToken({ name: "ElseModKw", pattern: new RegExp(`:else${modKwTail}`), categories: [ModKeyword] });
@@ -364,7 +368,7 @@ export const defaultModeTokens: TokenType[] = [
   KeyOfKw, MutKw, LetKw, FnKw,
   TrueKw, FalseKw, NilKw,
   // Modifier Keywords (start with :)
-  ImplementsModKw, ExtendsModKw, WhereModKw,
+  ImplementsModKw, ExtendsModKw, WhereModKw, SatisfiesModKw,
   CondModKw, ThenModKw, ElseModKw,
   InitModKw, StepModKw, EachModKw, FromModKw,
   AsModKw, OfModKw, IsModKw, WhenModKw, OnModKw,
@@ -410,7 +414,7 @@ export const formatExprModeTokens: TokenType[] = [
   KeyOfKw, MutKw, LetKw, FnKw,
   TrueKw, FalseKw, NilKw,
   // Modifier Keywords
-  ImplementsModKw, ExtendsModKw, WhereModKw,
+  ImplementsModKw, ExtendsModKw, WhereModKw, SatisfiesModKw,
   CondModKw, ThenModKw, ElseModKw,
   InitModKw, StepModKw, EachModKw, FromModKw,
   AsModKw, OfModKw, IsModKw, WhenModKw, OnModKw,

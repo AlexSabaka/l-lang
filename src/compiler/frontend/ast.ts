@@ -89,6 +89,7 @@ export type NodeType =
   | "enum-key"
   | "struct"
   | "type-def"
+  | "range-refinement"
   | "interface"
   | "implements"
   | "extends"
@@ -408,6 +409,15 @@ export interface TypeDefNode extends ASTNode<"type-def"> {
   name: IdentifierNode;
   type: TypeNode;
   modifiers: ModifierNode[];
+  // `:satisfies (...)` (D46 amend). Present => this is a distinct NEWTYPE the compiler lays out and
+  // checks at boundaries; absent => a transparent alias. v1 carries only a range refinement.
+  refinement?: RangeRefinementNode | null;
+}
+
+/** A `:satisfies ( lo .. hi )` constraint: a STATIC, inclusive descriptive interval (not a Range value). */
+export interface RangeRefinementNode extends ASTNode<"range-refinement"> {
+  lo: ASTNode;
+  hi: ASTNode;
 }
 
 export interface ModifierDefNode extends ASTNode<"modifier-def"> {

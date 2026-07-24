@@ -976,7 +976,17 @@ export class LLangAstBuilder extends BaseCstVisitor {
     const modifiers = ctx.modifier ? ctx.modifier.map((m: any) => this.visit(m)) : [];
     const name = ctx.identifier ? this.visit(ctx.identifier[0]) : null;
     const type = ctx.type ? this.visit(ctx.type[0]) : null;
-    return this.makeNode("type-def", ctx, { name, type, modifiers });
+    // `:satisfies (...)` -- the refinement that makes this a distinct newtype (D46 amend), attached as
+    // metadata. A bare deftype (no refinement) stays a transparent alias; the type layer reads this.
+    const refinement = ctx.refinementConstraint ? this.visit(ctx.refinementConstraint[0]) : null;
+    return this.makeNode("type-def", ctx, { name, type, modifiers, refinement });
+  }
+
+  refinementConstraint(ctx: any): ast.RangeRefinementNode {
+    // v1: a range `( lo .. hi )` -- STATIC descriptive bounds, both inclusive.
+    const lo = this.visit(ctx.expression[0]);
+    const hi = this.visit(ctx.expression[1]);
+    return this.makeNode("range-refinement", ctx, { lo, hi });
   }
 
   /** `(defmacro ...)` -- parsed so it can be REFUSED by name (LL0023). See ast.MacroDefNode. */
