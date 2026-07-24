@@ -86,6 +86,13 @@ function __ll_inspect(v, indent, prefixLen, seen, flat) {
      an empty map -- a generator was indistinguishable from one. Checked ahead of the cycle set, since
      it never recurses. */
   if (typeof v.__ll_gen === "string") return v.__ll_gen ? "#<generator " + v.__ll_gen + ">" : "#<generator>";
+  /* Formattable (std/core/protocols): a value that :implements it renders through its own format
+     method rather than the default field dump -- EVERYWHERE display reaches (interpolation, print,
+     console.log), since this is the one object renderer. Gated on NOMINAL conformance (__ll_is_type
+     walks the :implements closure), not on "has a method named format", so an unrelated method of that
+     name never hijacks display. Returned as-is, unquoted: format yields the object's chosen
+     representation, the same way a nested object renders as a brace group, not a quoted datum. */
+  if (__ll_is_type(v, "Formattable") && typeof v.format === "function") return v.format();
   if (seen.indexOf(v) !== -1) return "#<circular>";
   seen.push(v);
   try {

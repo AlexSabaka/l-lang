@@ -88,6 +88,10 @@ export const C_PASSING: readonly string[] = [
   "10-modifiers/01_basic_modifier.lisp",  // defmodifier desugars before codegen
   "05-data-structures/00_data.lisp",       // maps, dynamic member access
   "20-algorithms/04_mutual_recursion.lisp",
+  // Greened by the Formattable display rewire: it splices an Int[] into a string (`{squares}`), which
+  // C used to comma-join (`1,4,9`) where JS inspects (`[ 1, 4, 9 ]`) -- §5.2 #4. Interp now renders via
+  // ll_display_str on both.
+  "20-algorithms/03_functional.lisp",
   "20-algorithms/05_memoization.lisp",
   "20-algorithms/06_memoization_manual.lisp", // module-global memo cache + index assignment
   // A container-slot store now evaluates its value BEFORE taking the slot address: this one
@@ -317,6 +321,9 @@ export const C_PASSING: readonly string[] = [
   // `(/ 7 2)` REAL division inside a string and integer division outside it -- on BOTH backends, the
   // one class of bug cross-backend grading can never find.
   "80-adversarial/interp_is_an_expression.lisp",
+  // §5.2 cluster 2: interpolating a container/object rendered `[object]` / comma-joined vec / `null` on
+  // C vs JS's inspect form. The Formattable display rewire routes interpolation through ll_display_str.
+  "80-adversarial/interp_container_format.lisp",
   // `:as` on both sides of the boundary. The C half needed three fixes the JS half did not:
   // `ensureClassRegistered` short-circuited on the SPELLED name while registering under the
   // DEFINITION's, so an aliased class lowered again on every reference; the class list was emitted
@@ -458,6 +465,10 @@ export const C_PASSING: readonly string[] = [
   // `compare-to` dispatches on an Any narrowed by `:of`; the djb2 hash uses D61 bit ops, identical on
   // both backends.
   "16-stdlib/05_protocols.lisp",
+  // Formattable drives the display path: a type that :implements it renders via its `format` in
+  // console.log, interpolation, and nested. The interp arm also aligned C's `{x}` with JS's display
+  // (was `[object]` / comma-joined vec / `null`; gap ledger §5.2 #4, §12.3).
+  "16-stdlib/06_formattable.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.
@@ -507,8 +518,8 @@ export const C_PASSING: readonly string[] = [
   // has a crisp target: when C reaches parity the ratchet turns RED ("newly passing -- add it"),
   // which is the signal to MOVE the corresponding line down into the array above.
   //   (cluster 1 -- print_positional_format -- PROMOTED above; the mechanism worked as designed.)
-  //   80-adversarial/interp_container_format.lisp    -- cluster 2: container interpolation depth
-  //                                                    (EmitCirToC routes interp through ToString, not ll_inspect_sb)
+  //   (cluster 2 -- interp_container_format + 20-algorithms/03_functional -- PROMOTED above; the
+  //    Formattable display rewire routed interpolation through ll_display_str/ll_inspect, not ToString.)
   //   (cluster 3 -- reflection_metadata_depth -- PROMOTED above; Fd emits the graph.)
   // Cluster 4 (modifier side effects) is intentionally absent: C REFUSES body-carrying defmodifiers
   // fail-closed, which is already the correct loud signal -- there is no silent-wrong to guard.

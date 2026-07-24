@@ -5183,3 +5183,35 @@ field-layout trap) remains open — the ctor-only rule dodges it rather than fix
   (the runtime is layout-independent: message-by-name, catch-by-name up the `:extends` chain, `ll_trap`
   builds no object), which the byte-identical corpus confirmed. `SyntaxError`/`ReferenceError` have no
   l-lang class and stay synthetic host-error stand-ins.
+
+## D63 — the protocol family: Comparable / Hashable / Formattable (2026-07-24)
+
+§10 of the stdlib roadmap ("complete the set") calls for the three small universal protocols the
+existing interface family (Iterable/Writer/Clock) implies but never shipped. `std/core/protocols` adds
+them, each a one-method nominal interface (`:implements`, checked LL0235):
+
+- `Comparable<T>` — `(fn compare-to [other <- T] -> Int)`; the sign is the whole order (negative /
+  0 / positive gives `<` `=` `>`). A single method rather than four operator overloads.
+- `Hashable` — `(fn hash [] -> Int)`.
+- `Formattable` — `(fn format [] -> String)`.
+
+Two generic dispatchers make them usable without ceremony, protocol-first with a total fallback:
+
+- `(compare a b)` — `a.compare-to b` when `a` is `Comparable`, else the natural order of an ordered
+  primitive (Int/Real/String/Char) via `</>`. Sort/min/max route through it (D-round consumer).
+- `(hash-of x)` — `x.hash` when `Hashable`, else djb2 over the codepoints of `(display x)`, in D51's
+  wrapping int64 with D61's bit operators — identical on both backends by construction. This is a v1
+  default, NOT the final hash protocol (a `Hashable`-derives design round is future work, roadmap
+  Tier-3 #4); it exists so the interface and its consumers are testable today.
+
+**Formattable drives `display`, nominally.** The floor `display` (`ll_display_str`, and its JS twin
+`__ll_inspect`) renders a value that conforms to `Formattable` through its own `format` instead of the
+default `Name{:field …}` dump — everywhere display reaches: `console.log`, `print`, and string
+interpolation. Gated on NOMINAL conformance (the runtime `is-type` walk over the `:implements` closure,
+the same test `:of` and `Disposable` dispatch use), NOT on "has a method named `format`", so an
+unrelated method of that name never hijacks rendering, and every non-conforming type is untouched
+(the whole corpus renders byte-identical). Wiring it in surfaced and fixed a pre-existing C divergence:
+interpolation `{x}` routed through the JS-`String()` path (`ll_to_string_sb` — `[object]` for an object,
+comma-joined vectors, `null` for nil) rather than the display path, so C's `{x}` disagreed with JS's for
+containers and nil (gap ledger §5.2 #4, §12.3). Interpolation now renders each hole via `ll_display_str`
+on both backends; `+` string concat keeps `String()` semantics (`ll_concat_vals`), matching JS `"" + x`.

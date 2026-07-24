@@ -423,6 +423,8 @@ static void ll_throw(ll_value err) {
  * ============================================================================================== */
 
 static bool ll_is_type(ll_value v, const char *name, int primitive); /* defined with the D41 type tests below */
+static ll_value ll_dyn_method(int n, ll_value *vals); /* fwd: the display path's Formattable dispatch */
+static ll_str *ll_display_str(ll_value v); /* fwd: interpolation renders each hole via display */
 
 /* (signal <cond>) -- walk the LL_HANDLER frames innermost->outermost IN PLACE, trying every matching
  * clause in SOURCE order (first-written gets first crack) with the frame inert while one runs
@@ -730,7 +732,17 @@ static ll_str *ll_concat_vals(ll_value a, ll_value b) {
 static ll_str *ll_str_concat_n(int n, ll_value *vals) {
   ll_sb sb;
   ll_sb_init(&sb);
-  for (int i = 0; i < n; i++) ll_to_string_sb(&sb, vals[i]);
+  /* Each interpolation hole renders via DISPLAY (FLOOR.md 3.5) -- a String bare, everything else
+     inspected -- matching the JS interp path (`__ll_display`). `ll_to_string_sb` was the JS `String()`
+     rule instead: it prints `[object]` for an object, comma-joins a vector, and spells nil `null`, all
+     of which diverge from JS's interpolation (field dump / `[ 1, 2 ]` / `nil` -- gap ledger §5.2 #4 and
+     §12.3). It is also the arm where a Formattable value's `format` takes effect in interpolation, since
+     `ll_display_str` -> `ll_inspect_at` is what dispatches it. `+` string concat keeps `ll_to_string_sb`
+     (its own `ll_concat_vals`), matching JS `"" + x`. */
+  for (int i = 0; i < n; i++) {
+    ll_str *s = ll_display_str(vals[i]);
+    ll_sb_put(&sb, s->data, s->len);
+  }
   return ll_sb_finish(&sb);
 }
 
@@ -926,6 +938,14 @@ static void ll_inspect_at(ll_sb *sb, ll_value v, int indent, int prefix, ll_seen
         if (gn && gn[0]) { ll_sb_puts(sb, "#<generator "); ll_sb_puts(sb, gn); ll_sb_puts(sb, ">"); }
         else ll_sb_puts(sb, "#<generator>");
         return;
+      }
+      /* Formattable (std/core/protocols): a value that :implements it renders through its own `format`
+         rather than the default `Name{...}` dump -- everywhere the display path reaches. NOMINAL
+         (ll_is_type walks the :implements closure), mirroring the JS inspectJs arm, so the two backends
+         render an opted-in type identically and leave every other type untouched. */
+      if (v.tag == LL_OBJ && ll_is_type(v, "Formattable", 0)) {
+        ll_value fs = ll_dyn_method(2, (ll_value[]){v, ll_box_str(ll_str_lit("format"))});
+        if (fs.tag == LL_STR) { ll_sb_put(sb, fs.as.s->data, fs.as.s->len); return; }
       }
       const void *p = v.tag == LL_VEC ? (const void *)v.as.v
                     : v.tag == LL_MAP ? (const void *)v.as.m : (const void *)v.as.o;
