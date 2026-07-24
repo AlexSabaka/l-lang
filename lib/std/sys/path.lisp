@@ -11,12 +11,13 @@
 ;;     (`.gitignore`) is HIDDEN, not suffixed, so it has no extension. `stem` is the basename minus it.
 ;;   * `dirname` of a bare relative name is `.` (POSIX); of `/x` is `/`; of `/` is `/`. `basename` of `/`
 ;;     is "". A trailing slash is not a segment (`/a/b/` -> basename `b`, dirname `/a`).
-;;   * The `/` operator joins a String segment; an ABSOLUTE segment (`starts-with "/"`) resets to it.
-;;     Joining another Path is `(/ p (other.to-string))` -- the operator takes a String, not a
-;;     Path|String union, because a union operand hits a C boxing gap (logged in the C gap ledger).
+;;   * The `/` operator joins a `PathLike` (Path | String) segment; an ABSOLUTE segment (`starts-with
+;;     "/"`) resets to it. So `(/ base "a" "b")` and `(/ p1 p2)` both work.
 (
     (import "std/core/string")
     (import "std/core/protocols")
+
+    (deftype PathLike Path | String)
 
     ;; The non-empty segments of a path -- `/a//b/` -> ["a" "b"]. Trailing/leading/doubled slashes drop.
     (fn path-parts [s <- String] -> String[] (
@@ -29,12 +30,19 @@
         ;; `:ctor` initializer -- normalize `\` to `/` once, so every accessor works on `/` alone.
         (fn :ctor normalize-seps [] (this.s := (join (split this.s "\\") "/")))
 
-        ;; join a String segment; an absolute segment resets, else append with one separator.
-        (fn :operator / [seg <- String] -> Path (
+        ;; join a PathLike segment (Path or String); an absolute segment resets, else append with one
+        ;; separator. `join-seg` is the shared String logic both arms funnel through.
+        (fn join-seg [seg <- String] -> Path (
             (if (starts-with seg "/") (return (Path seg)))
             (if (== this.s "") (return (Path seg)))
             (if (ends-with this.s "/") (return (Path (+ this.s seg))))
             (return (Path (+ this.s "/" seg)))))
+
+        (fn :operator / [other <- PathLike] -> Path (
+            (match other {
+                p :of Path => (return (this.join-seg p.s))
+                seg :of String => (return (this.join-seg seg))
+                _ => (return this) })))
 
         (fn is-absolute [] -> Boolean (return (starts-with this.s "/")))
 
@@ -89,5 +97,5 @@
         (fn format [] -> String (return this.s))
         (fn compare-to [o <- Path] -> Int (return (compare this.s o.s))))
 
-    (export Path)
+    (export Path PathLike)
 )

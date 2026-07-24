@@ -5241,9 +5241,9 @@ Rulings (all the "state a rule, don't import the host's opinion" house style, D5
   `/` is `""`. A trailing slash is not a segment (`/a/b/` → basename `b`, dirname `/a`).
 - **`normalize`** collapses `//`, drops `.`, resolves `..` by popping the previous real segment (never
   past a leading `..` or the root); an empty result is `.` (relative) or `/` (absolute).
-- **The `/` operator joins a String segment** (`(/ base "seg" ...)` left-folds); an absolute segment
-  resets. It takes a `String`, NOT a `Path | String` union, because a union operand hits a C
-  operator-overload boxing gap (logged in the C gap ledger) -- joining another Path is `(/ p (q.to-string))`.
+- **The `/` operator joins a `PathLike = Path | String` segment** (`(/ base "seg" ...)` and `(/ p1 p2)`
+  both left-fold); an absolute segment resets. (Originally narrowed to `String` because a union operand
+  hit a C operator-overload boxing gap; that gap is fixed, ledger §20 CLOSED, and `/` restored.)
 
 Pinned by `examples/16-stdlib/10_path.lisp` on both backends. Filesystem *operations* (`cwd`, `dir-list`,
 …) are Tier-2 floor entries, out of scope; this is pure path string math.

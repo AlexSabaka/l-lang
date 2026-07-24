@@ -1,4 +1,5 @@
 join: /usr/local/bin
+path: /usr/local/share
 reset: /etc/hosts
 dirname: /usr/local/lib
 basename: archive.tar.gz

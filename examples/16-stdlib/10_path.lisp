@@ -4,8 +4,9 @@
     (import "std/sys/path")
     (import "std/seq")
 
-    ;; the `/` join operator, chained; an absolute segment resets the path
+    ;; the `/` join operator over a PathLike (Path | String), chained; an absolute segment resets
     (console.log "join:" (/ (Path "/usr") "local" "bin"))
+    (console.log "path:" (/ (Path "/usr/local") (Path "share")))
     (console.log "reset:" (/ (Path "/usr/local") "/etc/hosts"))
 
     ;; component accessors

@@ -1353,7 +1353,17 @@ lookup, so every pre-existing typed extension (Vec2 operators, the String method
 the C ratchet + `-O2` stayed green. Pinned by `examples/18-error-handling/24_error_cause.lisp` (both
 surfaces, both backends; the throw-site chain uses a subclass receiver resolving to the base extension).
 
-## 20. An operator overload with a UNION / Any operand misses a box on C (2026-07-24)
+## 20. CLOSED (2026-07-24) — an operator overload with a UNION / Any operand missed a box on C
+
+**Fixed** (`b1d0278`): `maybeRegisterOperator` now stores the operator's DECLARED operand CType
+(`fn.params[0]` for a method op, `fn.params[1]` for a free op; a union/Any → `C_VALUE`), and `mkBinop`
+declares it at the call site instead of guessing `rhs.ctype`. InsertCoercions already coerces each
+c-call arg to the callee's param type, so it boxes the argument automatically — byte-identical for every
+concrete-operand operator (Vec2/Complex/Rational). `std/sys/path`'s `/` was restored to its intended
+`PathLike = Path | String` (`(/ p1 p2)` now works), and the union operator is guarded by
+`examples/80-adversarial/union_operator.lisp` (both arms). Original write-up below.
+
+
 
 Surfaced modeling `std/sys/path`. Sabaka's scratchpad typed the `/` join operator's operand as a union
 `PathLike = Path | String`, so the same `(/ p x)` could join a Path or a String. On JS it works; on C
