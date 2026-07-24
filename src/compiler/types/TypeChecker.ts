@@ -122,6 +122,19 @@ export class TypeChecker {
    * Returns true if assignment is valid
    */
   static isAssignable(source: InferredType, target: InferredType, symbolTable?: SymbolTable): boolean {
+    // NOMINAL refined newtypes (D46 amend) are distinct by NAME -- decided HERE, before the alias-unwrap
+    // below collapses them to their shared base. `Kelvin` and `Meter` both unwrap to `Real`, so without
+    // this the exact-match rule would call them assignable. Gated on `nominal`, so ordinary transparent
+    // aliases fall straight through unchanged.
+    const sN = this.nominalOf(source, symbolTable);
+    const tN = this.nominalOf(target, symbolTable);
+    if (sN || tN) {
+      if (source.optional && !target.optional) return false;                     // forced-unwrap still holds
+      if (sN && tN) return sN.name === tN.name;                                   // refined <-> refined: same name only (else needs a cast)
+      if (sN) return this.isAssignable(sN.aliasedType!, target, symbolTable);     // refined -> base: a widening
+      return this.isAssignable(source, tN!.aliasedType!, symbolTable);            // base -> refined: a checked coercion (the check pass enforces the range)
+    }
+
     // Unwrap type-aliases and type-refs for comparison
     const sourceUnwrapped = this.unwrapType(source, symbolTable);
     const targetUnwrapped = this.unwrapType(target, symbolTable);
@@ -453,6 +466,23 @@ export class TypeChecker {
   /**
    * Unwrap type-alias and type-ref to get the underlying type
    */
+  /**
+   * If `t` (possibly a type-ref) resolves to a NOMINAL refined newtype -- a `type-alias` carrying the
+   * `nominal` flag (D46 amend) -- return that resolved alias; otherwise null. isAssignable uses this to
+   * keep `Kelvin`/`Meter` distinct before the ordinary alias-unwrap would collapse them to their base.
+   */
+  private static nominalOf(t: InferredType, symbolTable?: SymbolTable): InferredType | null {
+    if (!t) return null;
+    let resolved: InferredType | undefined = t;
+    if (t.kind === "type-ref" && t.refName && symbolTable) {
+      resolved =
+        (t.askingSource
+          ? symbolTable.resolveByImportPrioritySource(t.refName, t.askingSource)?.inferredType
+          : undefined) ?? symbolTable.resolveSymbol(t.refName)?.inferredType ?? t;
+    }
+    return resolved && resolved.kind === "type-alias" && resolved.nominal ? resolved : null;
+  }
+
   static unwrapType(type: InferredType, symbolTable?: SymbolTable): InferredType {
     if (!type) {
       return type;

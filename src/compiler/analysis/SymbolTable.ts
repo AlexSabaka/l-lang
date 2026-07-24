@@ -85,6 +85,12 @@ export interface InferredType {
   aliasedType?: InferredType;  // What this type-alias points to
   isRecursive?: boolean;  // True if type-alias references itself
   typeReferences?: string[];  // Names of types referenced in definition
+  // A REFINED newtype (D46 amend): a `type-alias` marked NOMINAL -- distinct by NAME, so `Kelvin` and
+  // `Meter` (both `<- Real :satisfies (0 ..)`) are DIFFERENT types. It still unwraps to `aliasedType`
+  // for codegen / layout / arithmetic (base layout), but `isAssignable` consults `nominal` BEFORE
+  // unwrapping. Absent/false => an ordinary transparent alias (Number, PathLike, ...), unchanged.
+  nominal?: boolean;
+  refinement?: { lo: number | null; hi: number | null };  // inclusive bounds; null = open (unbounded) that side
   // Type reference support (forward references to types)
   refName?: string;  // Name of the type being referenced
   resolved?: boolean;  // Whether this type-ref has been resolved

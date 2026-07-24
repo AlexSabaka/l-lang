@@ -498,9 +498,10 @@ export const C_PASSING: readonly string[] = [
   // desugared to a `(Range lo hi nil true)` construction. Guards ascending/descending/stepped(.by)/
   // exclusive iteration, permissive `0..2` spacing, and re-iteration (fresh cursor). Int-only v1.
   "16-stdlib/12_range.lisp",
-  // `:satisfies` refinement GRAMMAR (D46 amend, P3c-1a) -- a refined deftype `(deftype uint8 <- Int
-  // :satisfies (0 .. 255))` parses and compiles; resolves as its base for now (boundary-check
-  // enforcement is the next increment). Guards that the new clause doesn't break either backend.
+  // `:satisfies` NOMINAL newtypes (D46 amend, P3c-1b) -- a refined deftype is distinct BY NAME (Kelvin
+  // != Meter, the units pattern), laid out as its base and widening to it for arithmetic; open-ended
+  // bounds `(0 ..)` too. Range CHECKS (rejecting out-of-range values) are the next increment. Guards
+  // that valid refined-type programs run byte-identically on both backends.
   "16-stdlib/13_refinement.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because

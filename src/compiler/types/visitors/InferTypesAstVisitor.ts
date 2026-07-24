@@ -996,6 +996,16 @@ class CollectTypesPass extends BaseAstTreeWalker {
     const typeReferences = this.extractTypeReferences(aliasedType);
     const isRecursive = typeReferences.includes(typeName);
     
+    // A `:satisfies (...)` refinement makes this a NOMINAL newtype (D46 amend): distinct by NAME, so
+    // `Kelvin` and `Meter` (both `<- Real :satisfies (0 ..)`) are DIFFERENT types even with identical
+    // base + bounds. It still aliases the base for codegen/layout/arithmetic; only `isAssignable`
+    // consults `nominal`. A bare deftype (no refinement) stays a transparent alias, untouched.
+    const staticBound = (n: ast.ASTNode | null | undefined): number | null =>
+      n && typeof (n as any).value === "number" ? (n as any).value : null;
+    const refined = node.refinement
+      ? { nominal: true, refinement: { lo: staticBound(node.refinement.lo), hi: staticBound(node.refinement.hi) } }
+      : {};
+
     // Phase 3: Register the complete type
     const typeAliasType: InferredType = {
       kind: "type-alias",
@@ -1003,10 +1013,11 @@ class CollectTypesPass extends BaseAstTreeWalker {
       aliasedType: aliasedType,
       isRecursive: isRecursive,
       typeReferences: typeReferences,
+      ...refined,
     };
-    
+
     this.typeEnv.bindIdentifier(typeName, typeAliasType, node);
-    this.context.log(LogLevel.Debug, `Collected type alias '${typeName}'${isRecursive ? ' (recursive)' : ''}`);
+    this.context.log(LogLevel.Debug, `Collected ${refined.nominal ? 'refined newtype' : 'type alias'} '${typeName}'${isRecursive ? ' (recursive)' : ''}`);
   }
 
   visitStruct(node: ast.StructNode) {

@@ -983,9 +983,9 @@ export class LLangAstBuilder extends BaseCstVisitor {
   }
 
   refinementConstraint(ctx: any): ast.RangeRefinementNode {
-    // v1: a range `( lo .. hi )` -- STATIC descriptive bounds, both inclusive.
-    const lo = this.visit(ctx.expression[0]);
-    const hi = this.visit(ctx.expression[1]);
+    // A range `( lo? .. hi? )` -- STATIC inclusive bounds; a missing side is an OPEN (unbounded) bound.
+    const lo = ctx.lo ? this.visit(ctx.lo[0]) : null;
+    const hi = ctx.hi ? this.visit(ctx.hi[0]) : null;
     return this.makeNode("range-refinement", ctx, { lo, hi });
   }
 

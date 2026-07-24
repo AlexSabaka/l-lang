@@ -414,10 +414,13 @@ export interface TypeDefNode extends ASTNode<"type-def"> {
   refinement?: RangeRefinementNode | null;
 }
 
-/** A `:satisfies ( lo .. hi )` constraint: a STATIC, inclusive descriptive interval (not a Range value). */
+/**
+ * A `:satisfies ( lo? .. hi? )` constraint: a STATIC, inclusive descriptive interval (not a Range value).
+ * A null bound is OPEN (unbounded) that side -- `(0 ..)` = [0, inf), `(..)` = fully unbounded.
+ */
 export interface RangeRefinementNode extends ASTNode<"range-refinement"> {
-  lo: ASTNode;
-  hi: ASTNode;
+  lo: ASTNode | null;
+  hi: ASTNode | null;
 }
 
 export interface ModifierDefNode extends ASTNode<"modifier-def"> {

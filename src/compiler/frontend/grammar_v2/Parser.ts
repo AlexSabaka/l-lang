@@ -1090,10 +1090,12 @@ class LLangParser extends CstParser {
     // range desugar and never references the `Range` type). Enum `(a | b | c)` and length
     // `(length (lo .. hi))` constraints are later alternatives here.
     this.refinementConstraint = this.RULE("refinementConstraint", () => {
+      // Both operands OPTIONAL -- open-ended intervals: `(0 ..)` = [0, inf), `(.. 100)` = (-inf, 100],
+      // `(..)` = unbounded (a distinct newtype with no range). Labels disambiguate which side is present.
       this.CONSUME(t.LParen);
-      this.SUBRULE(this.expression);
+      this.OPTION(() => this.SUBRULE(this.expression, { LABEL: "lo" }));
       this.CONSUME(t.Range);
-      this.SUBRULE2(this.expression);
+      this.OPTION2(() => this.SUBRULE2(this.expression, { LABEL: "hi" }));
       this.CONSUME(t.RParen);
     });
 

@@ -1188,6 +1188,12 @@ ${PRODUCER}
     expect: /LL0213|LL0200|Type mismatch/,
     why: "Ra: Person aliases the record; `p.name` is String, returned where Int -- caught (the alias is unwrapped to the record).",
   },
+  {
+    name: "Rn: a refined newtype is nominally distinct from another with the same base+bounds",
+    source: "(deftype Kelvin <- Real :satisfies (0 ..))\n(deftype Meter <- Real :satisfies (0 ..))\n(fn f [k <- Kelvin] -> Meter k)",
+    expect: /LL0213|LL0200|Type mismatch|cannot assign/,
+    why: "Rn: Kelvin and Meter share base Real + bounds `(0 ..)` but are DIFFERENT types BY NAME (D46 amend). Returning a Kelvin where a Meter is wanted is a nominal mismatch (LL0213) -- the units guarantee. A bare `(deftype X <- Real)` alias would NOT catch this; the `:satisfies` makes it distinct.",
+  },
 
   // --- Rb: INFERRED structural records -- a map LITERAL retains its per-field types (no annotation), so
   // `{:name "x" :age 3}.name` types String. `members` is additive on the map (kind stays "map", so every
