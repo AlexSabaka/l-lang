@@ -1,0 +1,4 @@
+1 bad input true
+2 lookup failed false not found user-42
+3 missing the-key true
+4 out of range 7 div by zero

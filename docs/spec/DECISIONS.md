@@ -5150,3 +5150,26 @@ fully removing it is the remaining symmetric follow-up.
 
 **Still deferred:** `cause` (needs §9.2), removing the C builtin. And gap ledger §9.2 (the C
 field-layout trap) remains open — the ctor-only rule dodges it rather than fixing it.
+
+**AMENDED (2026-07-24): §9.2 fixed, `cause` shipped, the C builtin `Error` retired.**
+
+- **§9.2 was never a layout bug** — C construction (`buildConstruct`) mapped positional args to field
+  slots by RAW INDEX, so a plain field interleaved below a ctor field stole a ctor arg. Fixed by mapping
+  args to ctor fields in slot order (an `isCtor` flag per field). Ruling 2 above ("ctor fields only") is
+  no longer forced; a deep node can carry a plain field on both backends.
+
+- **`cause` is a PLAIN field, not a ctor arg.** The originally-ruled `Error(message, cause)` is not
+  viable: measured, a `cause` ctor-param lands mid-list in every subclass's flattened ctor params
+  (`KeyError` → `[message, cause, key]`), so `(KeyError "m" "k")` mis-binds `"k"` to `cause` (ELL0203).
+  So `Error` gains `(mut cause <- Error? nil)`, set at the throw site by a free helper
+  `caused-by(e, c)` (returns `e` with its cause attached — a class is a reference type, D11 shares).
+  Ruling 3 above is superseded. Pinned by `examples/18-error-handling/24_error_cause.lisp` (both
+  backends), which also guards §9.2 on the real tower (`KeyError` = inherited plain `cause` + own ctor
+  `key`).
+
+- **The C message-only builtin `Error` is retired.** `registerBuiltinClasses` now registers the l-lang
+  `Error`/`TypeError`/`RangeError` (eager, via `ensureClassRegistered`), so C emits this module's
+  descriptor — the only way `cause` reaches C. Observationally a no-op while `Error` was message-only
+  (the runtime is layout-independent: message-by-name, catch-by-name up the `:extends` chain, `ll_trap`
+  builds no object), which the byte-identical corpus confirmed. `SyntaxError`/`ReferenceError` have no
+  l-lang class and stay synthetic host-error stand-ins.

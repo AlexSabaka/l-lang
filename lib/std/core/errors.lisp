@@ -15,20 +15,17 @@
 ;;     `catch :of Error` matches every type below because the runtime type test walks the `:extends`
 ;;     chain to the host `Error` (verified on both backends).
 ;;
-;;   * CTOR FIELDS ONLY -- no plain-default fields. The C field-layout trap (gap ledger 9.2) fires the
-;;     moment an inherited PLAIN-DEFAULT field meets a deeper local ctor field: C then traps with
-;;     `TypeError: expected a String`. A hierarchy built entirely from `(let :ctor ...)` fields never
-;;     has ingredient one, so it dodges 9.2 by construction. Measured: `KeyError(message, key)` works
-;;     on both backends; the same shape with a `(mut retriable <- Boolean false)` traps on C.
+;;   * `cause` IS A PLAIN FIELD, NOT A CTOR ARG. The originally-ruled `Error(message, cause)` is not
+;;     viable: `cause` as a ctor param lands mid-list in every subclass's flattened ctor params
+;;     (`KeyError` -> [message, cause, key]), so `(KeyError "m" "k")` mis-binds `"k"` to `cause` and
+;;     fails ELL0203. So `cause` is `(mut cause <- Error? nil)` on the root, set at the throw site by
+;;     the `caused-by` helper. This is exactly the inherited-plain-field-over-a-deeper-ctor-field shape
+;;     that used to trap on C (gap ledger 9.2) -- now FIXED, so the tower's structured subclasses
+;;     (`KeyError`/`IndexError`/`FileError`/`NotFound`) still construct with their own args unaffected.
 ;;
-;;   * NO `cause` FIELD YET. The ruled `Error(message, cause)` wants `cause` on the root, and the root
-;;     is the one class this module will not touch. Adding `cause` to a mid-level class instead would
-;;     be a plain/optional field on a node that HAS subclasses -- straight back into 9.2. Deferred with
-;;     the rest of the full foundation (root ownership, `cause`, un-externing TypeError).
-;;
-;; `TypeError` and `RangeError` are left as the ambient `:extern`s they already are -- redefining them
-;; collides the same way `Error` would. A program still catches them by name; they are simply not
-;; re-declared here.
+;; `Error`, `TypeError` and `RangeError` are l-lang classes (F1). On C the message-only runtime builtin
+;; that used to shadow `Error` is retired -- C now emits this module's `Error` descriptor (with `cause`);
+;; the layout-independent runtime (message-by-name, catch-by-name up the :extends chain) is unchanged.
 ;;
 ;; The subtype/catch behaviour this module promises is pinned by
 ;; `examples/18-error-handling/22_typed_errors.lisp` on both backends.
@@ -41,7 +38,8 @@
     ;; become ordinary l-lang classes here. This module is a second AMBIENT prelude, so these resolve
     ;; everywhere with no import -- the same way the extern used to.
     (defclass Error
-        (let :ctor message <- String))
+        (let :ctor message <- String)
+        (mut cause <- Error? nil))                  ;; the chained cause, or nil -- set via `caused-by`
     (defclass TypeError :extends Error
         (let :ctor message <- String))
     (defclass RangeError :extends Error
@@ -81,6 +79,18 @@
     (defclass FatalError :extends Error
         (let :ctor message <- String))
 
+    ;; -- error chaining --------------------------------------------------------------------------
+    ;; Attach an underlying `cause` to an error and return it, so a throw site chains in one expression:
+    ;;   (throw (caused-by (ValueError "parse failed") original))
+    ;; `cause` is a PLAIN field (not a ctor arg): a ctor `cause` would land mid-list in every subclass
+    ;; that adds its own field (`KeyError` -> [message, cause, key]) and mis-bind `(KeyError "m" "k")`.
+    ;; A class is a reference type (D11 shares, does not copy), so mutating `e.cause` and returning `e`
+    ;; hands back the same error, now carrying its cause.
+    (fn caused-by [e <- Error c <- Error] -> Error (
+        (e.cause := c)
+        e))
+
     (export Error TypeError RangeError
-            ValueError KeyError IndexError ArithmeticError IOError FileError NotFound FatalError)
+            ValueError KeyError IndexError ArithmeticError IOError FileError NotFound FatalError
+            caused-by)
 )

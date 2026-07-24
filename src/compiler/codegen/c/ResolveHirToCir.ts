@@ -269,9 +269,10 @@ export class ResolveHirToCir {
   resolveModule(root: ast.ASTNode): CModule | null {
     this.rootSource = root._location?.source;
     const body = this.hir.bodyFor(root);
-    // Built-in Error classes (host globals in JS) modeled as classes with a `message` field, so
-    // `(Error "msg")` constructs, `throw` throws them, and `catch :of Error` matches via the chain.
-    this.registerBuiltinClasses();
+    // Error/TypeError/RangeError are l-lang classes now (std/core/errors, F1). Register the REAL class
+    // so C emits its descriptor (message, and `cause` once added); SyntaxError/ReferenceError stay
+    // synthetic host-error stand-ins. `root` scopes the ambient-class lookup.
+    this.registerBuiltinClasses(root);
     // The top-level declarations, flattened out of the HIR body (the whole program is one block, so
     // each declaration arrives as an opaque-stmt whose `src` is the desugared StructNode / ClassNode
     // / FunctionNode). Drive the pre-pass off these, not the raw program (which is still list-wrapped).
@@ -350,14 +351,34 @@ export class ResolveHirToCir {
   }
 
   /** Built-in Error classes: `message`-carrying classes, so error handling has concrete types. */
-  private registerBuiltinClasses(): void {
-    const errors = ["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError"];
-    for (const name of errors) {
+  private registerBuiltinClasses(root: ast.ASTNode): void {
+    // Error/TypeError/RangeError are l-lang classes (std/core/errors, an ambient prelude since F1).
+    // Register the REAL class eagerly -- via ensureClassRegistered against the root scope -- so C emits
+    // the l-lang descriptor (its real fields: `message`, and `cause` once added) rather than a synthetic
+    // message-only stub, and so `Error` is ALWAYS in the class registry as an ancestor for the
+    // ll_is_type chain walk (a synthetic SyntaxError/ReferenceError still names it as `parent`). The
+    // runtime never depends on the layout -- `ll_uncaught` finds "message" by name, catch matches by
+    // name up the :extends chain, `ll_trap` builds no object -- so this is observationally a no-op while
+    // Error is message-only, and the enabler for `cause`. Fall back to synthetic only if the ambient
+    // module is somehow absent.
+    for (const name of ["Error", "TypeError", "RangeError"]) {
       if (this.classes.has(name)) continue;
-      const fields = [{ name: "message", ctype: C_STR }];
-      const fieldSlot = new Map([["message", 0]]);
-      this.classes.set(name, { name, isStruct: false, parent: name === "Error" ? undefined : "Error", fields, fieldSlot, methods: new Map(), ctorMethods: [], interfaces: [] });
+      if (this.ensureClassRegistered(name, root)) continue;
+      this.registerSyntheticError(name);
     }
+    // SyntaxError/ReferenceError have no l-lang class -- they are host-error names `ll_trap` prints and
+    // user code rarely constructs on C. Kept synthetic (message-only), extending `Error`.
+    for (const name of ["SyntaxError", "ReferenceError"]) {
+      if (!this.classes.has(name)) this.registerSyntheticError(name);
+    }
+  }
+
+  /** A synthetic message-only Error-family descriptor: the fallback for a host-error name with no l-lang
+   *  class (SyntaxError/ReferenceError, or Error/TypeError/RangeError if the ambient module is absent). */
+  private registerSyntheticError(name: string): void {
+    const fields = [{ name: "message", ctype: C_STR }];
+    const fieldSlot = new Map([["message", 0]]);
+    this.classes.set(name, { name, isStruct: false, parent: name === "Error" ? undefined : "Error", fields, fieldSlot, methods: new Map(), ctorMethods: [], interfaces: [] });
   }
 
   // -- struct/class collection (spec A4: the whole layer is absent from the HIR) -------------------
@@ -3362,9 +3383,10 @@ export class ResolveHirToCir {
         // the class registry -- the `ll_is_type` chain walk could not find it (a `catch :of ValueError`
         // on a thrown `IndexError` matched nothing), and `collectClassMembers`' field flattening had no
         // parent layout to inherit `message` from. Recurse the chain here; it terminates at the ambient
-        // builtin `Error` (a `let :extern`, not a struct/class, so the guard above returns false for
-        // it) which C already has registered. Idempotent via the `classes.has` guard, so a diamond or a
-        // re-reference does not loop.
+        // `Error` -- itself an l-lang class now (std/core/errors, F1), which `registerBuiltinClasses`
+        // registers up front through this very path, so the `classes.has` guard short-circuits. (Before
+        // F1 `Error` was a `let :extern` and this recursion bottomed out at a synthetic builtin.)
+        // Idempotent via the `classes.has` guard, so a diamond or a re-reference does not loop.
         const parent = this.extendsName(val as ast.StructNode | ast.ClassNode);
         if (parent && !this.classes.has(parent)) this.ensureClassRegistered(parent, node);
         this.ledger.record("A9-extern", "imported-class", node, `imported class '${declared}' registered + methods lowered on demand (class analog of imported-body)`);

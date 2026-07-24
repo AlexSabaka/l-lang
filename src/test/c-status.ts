@@ -116,6 +116,10 @@ export const C_PASSING: readonly string[] = [
   // F1: the typed errors are AMBIENT -- Error is an l-lang class in a second prelude, not a host
   // extern, so this program uses the whole tower with no import.
   "18-error-handling/23_ambient_errors.lisp",
+  // Error carries a `cause` field, set via `caused-by`. On C the message-only runtime builtin Error is
+  // retired, so C emits the l-lang Error (with cause). Also guards §9.2 on the REAL tower: KeyError
+  // inherits the plain `cause` field AND declares its own ctor `key`.
+  "18-error-handling/24_error_cause.lisp",
   // Phase-0 finally-drop fix: `finally` runs on EVERY exit from a try (return / return-in-catch /
   // rethrow-propagation / nested), and a `return`-in-try restores ll_handler_top. Inline-finalizer
   // routing in EmitCirToC (no runtime rework). See examples' headers + DECISIONS D12/D47.
