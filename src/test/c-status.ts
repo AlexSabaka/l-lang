@@ -454,6 +454,10 @@ export const C_PASSING: readonly string[] = [
   // Scheduler in l-lang. Deterministic because a `Clock` owns sleeping, so a ManualClock advances
   // when something waits on it -- the whole example is exact except the three real-clock bounds.
   "16-stdlib/04_timers.lisp",
+  // std/core/protocols -- Comparable/Hashable/Formattable + the generic `compare`/`hash-of` dispatchers.
+  // `compare-to` dispatches on an Any narrowed by `:of`; the djb2 hash uses D61 bit ops, identical on
+  // both backends.
+  "16-stdlib/05_protocols.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.
