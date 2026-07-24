@@ -4,7 +4,7 @@
         (return NaN)
     ))
 
-    (deftype Expr (Int | String | Expr)[])
+    (deftype Expr <- (Int | String | Expr)[])
 
     ;; A tiny Lisp interpreter that handles (+, -, *)
     (fn eval-expr [expr <- Expr] -> Real (return

@@ -28,7 +28,7 @@
     (let HEIGHT 5)
 
     ;; A record. Records are reference-backed; mutate through a bound name.
-    (deftype Cell {:mine <- Boolean :revealed <- Boolean :flagged <- Boolean :count <- Int})
+    (deftype Cell <- {:mine <- Boolean :revealed <- Boolean :flagged <- Boolean :count <- Int})
 
     (mut cells <- Cell[] [])
 

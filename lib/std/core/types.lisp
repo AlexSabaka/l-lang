@@ -25,13 +25,13 @@
 
 ;; Type aliases. `Number` is the one with reach: `(fn f [x <- Number])` takes either arm of the
 ;; numeric tower, and `lib/std/math` annotates nearly everything with it.
-(deftype Number Int | Real)
-(deftype Bool Boolean)
-(deftype Str String)
+(deftype Number <- Int | Real)
+(deftype Bool <- Boolean)
+(deftype Str <- String)
 
 ;; Common data structures
-(deftype List Array)
-(deftype Dict Object)
+(deftype List <- Array)
+(deftype Dict <- Object)
 
 (export Number Bool Str List Dict
         type-name type-kind

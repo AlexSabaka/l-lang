@@ -4,7 +4,7 @@
 ;; unboxed, a `cc` error). JS was always fine. Both arms of the union are exercised: a struct operand
 ;; (already boxed) and an Int operand (boxed at the call site).
 (
-    (deftype Addable Box | Int)
+    (deftype Addable <- Box | Int)
 
     (defstruct Box
         (let :ctor v <- Int)

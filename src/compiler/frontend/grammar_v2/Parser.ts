@@ -1052,18 +1052,20 @@ class LLangParser extends CstParser {
       });
     });
 
-    // deftype name Type
+    // deftype name <- Type
+    // B-0/D46: the `<-` binder is now REQUIRED, and so are the name and the type -- an arrow-less or
+    // empty `deftype` no longer parses (it used to: both were OPTION, so `(deftype)` produced a node
+    // with null name AND null type that later passes dereferenced). `<-` reads "binds to", uniform with
+    // `let x <- T` / `[p <- T]` / `{:f <- T}` -- `deftype` was the last name-to-type form without it.
+    // The optional refinement clause (`:satisfy (range | predicate)`) lands in P3b.
     this.typeDefDecl = this.RULE("typeDefDecl", () => {
       this.CONSUME(t.DefTypeKw);
       this.MANY(() => {
         this.SUBRULE(this.modifier);
       });
-      this.OPTION(() => {
-        this.SUBRULE(this.identifier);
-      });
-      this.OPTION2(() => {
-        this.SUBRULE(this.type);
-      });
+      this.SUBRULE(this.identifier);
+      this.CONSUME(t.LeftArrow);
+      this.SUBRULE(this.type);
     });
 
     // defmodifier name [params] body*

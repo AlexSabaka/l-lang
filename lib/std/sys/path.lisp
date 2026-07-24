@@ -17,7 +17,7 @@
     (import "std/core/string")
     (import "std/core/protocols")
 
-    (deftype PathLike Path | String)
+    (deftype PathLike <- Path | String)
 
     ;; The non-empty segments of a path -- `/a//b/` -> ["a" "b"]. Trailing/leading/doubled slashes drop.
     (fn path-parts [s <- String] -> String[] (

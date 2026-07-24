@@ -610,8 +610,8 @@ ${PRODUCER}
     // The stdlib does this to itself TODAY: `std/types.lisp` deftypes `Number`, and `std/math.lisp`
     // deftypes it AGAIN -- while importing `types.lisp`. Both export it. Completely silent.
     name: "Sa: a type defined TWICE across one import path",
-    deps: { "sa_types.lisp": "(\n(deftype Number Int | Real)\n(export Number)\n)\n" },
-    source: '(import "sa_types.lisp")\n(deftype Number Int | Real)\n(let x <- Number 1)',
+    deps: { "sa_types.lisp": "(\n(deftype Number <- Int | Real)\n(export Number)\n)\n" },
+    source: '(import "sa_types.lisp")\n(deftype Number <- Int | Real)\n(let x <- Number 1)',
     expect: /LL0218|already defined|redefin/,
     pending: true,
     why: "D20 -- Sf",
@@ -1184,7 +1184,7 @@ ${PRODUCER}
   },
   {
     name: "Ra: a `deftype` alias to a record resolves its fields",
-    source: "(deftype Person {:name <- String :age <- Int})\n(fn g [p <- Person] -> Int p.name)",
+    source: "(deftype Person <- {:name <- String :age <- Int})\n(fn g [p <- Person] -> Int p.name)",
     expect: /LL0213|LL0200|Type mismatch/,
     why: "Ra: Person aliases the record; `p.name` is String, returned where Int -- caught (the alias is unwrapped to the record).",
   },

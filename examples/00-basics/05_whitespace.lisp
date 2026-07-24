@@ -1,8 +1,8 @@
 (
     ;; 1. Union Types with various spacing (testing your new fix)
-    (deftype StringOrInt  String|Real)      ;; Tight
-    (deftype BoolOrVoid    Boolean | Void)      ;; Wide
-    (deftype ComplexUnion String | Real | Boolean) ;; Multiple
+    (deftype StringOrInt <- String|Real)      ;; Tight
+    (deftype BoolOrVoid <-  Boolean | Void)      ;; Wide
+    (deftype ComplexUnion <- String | Real | Boolean) ;; Multiple
 
     ;; 2. Function with complex typed params
     (fn messy-signature [
