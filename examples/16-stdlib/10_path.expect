@@ -1,0 +1,11 @@
+join: /usr/local/bin
+reset: /etc/hosts
+dirname: /usr/local/lib
+basename: archive.tar.gz
+extension: gz
+stem: archive.tar
+parent: /usr/local/lib
+segments: ["usr" "local" "lib" "archive.tar.gz"]
+absolute: true false
+normalize: /a/c/d
+sorted: [/a /b /c]

@@ -479,6 +479,10 @@ export const C_PASSING: readonly string[] = [
   // unreachable/todo/unimplemented FatalError panics. The [dbg] output goes to stderr, so the stdout
   // golden checks the return-through + inspect + caught panics.
   "16-stdlib/09_debug.lisp",
+  // std/sys/path -- a Path value type: `/` join operator (String segments, absolute resets), POSIX
+  // accessors (dirname/basename/extension/stem/parent/segments/is-absolute/normalize), and Formattable
+  // display + Comparable sort (D63). Pure split-on-'/' string work.
+  "16-stdlib/10_path.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.

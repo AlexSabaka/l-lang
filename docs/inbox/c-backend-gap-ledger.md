@@ -1352,3 +1352,30 @@ forest) + `conformingExtensionFn`/`receiverConformsTo` (walks the `:extends`/`:i
 lookup, so every pre-existing typed extension (Vec2 operators, the String method surface) is unchanged —
 the C ratchet + `-O2` stayed green. Pinned by `examples/18-error-handling/24_error_cause.lisp` (both
 surfaces, both backends; the throw-site chain uses a subclass receiver resolving to the base extension).
+
+## 20. An operator overload with a UNION / Any operand misses a box on C (2026-07-24)
+
+Surfaced modeling `std/sys/path`. Sabaka's scratchpad typed the `/` join operator's operand as a union
+`PathLike = Path | String`, so the same `(/ p x)` could join a Path or a String. On JS it works; on C
+`cc` rejects the emitted call:
+
+```
+(defstruct Path (fn :operator / [other <- PathLike] -> Path ...))
+(/ (Path "a") "b")
+```
+```c
+static ll_obj* __ll_method_Path_op_2f(ll_obj* __self, ll_value u_other) { ... }   /* union operand -> boxed param */
+... __ll_method_Path_op_2f(<Path>, ll_str_lit("b"))     /* passes ll_str* UNBOXED -> incompatible with ll_value */
+```
+
+A union (or `Any`) operand lowers the operator method's parameter to a boxed `ll_value`, but the operator
+**call site** passes the operand in its concrete C type (`ll_str*` / `ll_obj*`) without the `ll_box_*`
+coercion — so the argument type does not match the parameter type. A CONCRETELY-typed operand
+(`[other <- String]`) boxes correctly (both sides are `ll_str*`), which is why the same operator with a
+String param compiles and runs byte-identically on both backends. Same family as N19 (a boxing coercion
+missed at an overloaded-operator boundary): the P2 coercion pass is not inserting the box on the operator
+call's argument when the callee parameter is boxed-Unknown.
+
+**Worked around, not fixed:** `std/sys/path`'s `/` takes a `String` segment (the common case); joining a
+Path is `(/ p (q.to-string))`. Fixing it — box an operator-call argument whose callee parameter is
+boxed — is a self-contained C-emitter commit (InsertCoercions / the operator-dispatch path), deferred.

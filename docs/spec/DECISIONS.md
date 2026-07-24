@@ -5215,3 +5215,27 @@ interpolation `{x}` routed through the JS-`String()` path (`ll_to_string_sb` —
 comma-joined vectors, `null` for nil) rather than the display path, so C's `{x}` disagreed with JS's for
 containers and nil (gap ledger §5.2 #4, §12.3). Interpolation now renders each hole via `ll_display_str`
 on both backends; `+` string concat keeps `String()` semantics (`ll_concat_vals`), matching JS `"" + x`.
+
+## D64 — std/sys/path: paths are a value type, `/` canonical (2026-07-24)
+
+`std/sys/path` models a filesystem path as an immutable value (`defstruct Path`, D11 copy) with `/` as
+the join operator and the POSIX component accessors -- realizing Dove's roadmap §4 path module as a value
+type (Sabaka's `l-lang-codewars` scratchpad prototype) rather than free functions. It dogfoods the
+protocol family (D63): `Formattable` renders a Path as its string everywhere, `Comparable` orders paths.
+
+Rulings (all the "state a rule, don't import the host's opinion" house style, D52):
+
+- **`/` is the canonical separator on both backends; `\` is normalized to `/` on construction** (a `:ctor`
+  initializer does the one replace). No host separator, no platform `sep`.
+- **`extension` excludes the dot** (`file.txt` → `txt`), `""` when absent; a leading-dot name
+  (`.gitignore`) is HIDDEN, not suffixed, so it has no extension. `stem` is the basename minus it.
+- **`dirname`** of a bare relative name is `.` (POSIX); of `/x` is `/`; of `/` is `/`. **`basename`** of
+  `/` is `""`. A trailing slash is not a segment (`/a/b/` → basename `b`, dirname `/a`).
+- **`normalize`** collapses `//`, drops `.`, resolves `..` by popping the previous real segment (never
+  past a leading `..` or the root); an empty result is `.` (relative) or `/` (absolute).
+- **The `/` operator joins a String segment** (`(/ base "seg" ...)` left-folds); an absolute segment
+  resets. It takes a `String`, NOT a `Path | String` union, because a union operand hits a C
+  operator-overload boxing gap (logged in the C gap ledger) -- joining another Path is `(/ p (q.to-string))`.
+
+Pinned by `examples/16-stdlib/10_path.lisp` on both backends. Filesystem *operations* (`cwd`, `dir-list`,
+…) are Tier-2 floor entries, out of scope; this is pure path string math.
