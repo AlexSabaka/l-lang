@@ -136,8 +136,10 @@ export class ResolveHirToCir {
   /** Struct/class descriptors, by source name (spec A4). */
   private readonly classes = new Map<string, ClassDesc>();
   /** Operator overloads: key `<op>:<leftOperandTypeName>` -> the operator's C function. `isMethod`
-   *  = an in-struct operator whose LEFT operand is the implicit `this`; `unary` = a one-operand op. */
-  private readonly operators = new Map<string, { cName: string; ret: CType; isMethod: boolean; unary: boolean }>();
+   *  = an in-struct operator whose LEFT operand is the implicit `this`; `unary` = a one-operand op.
+   *  `otherCType` is the DECLARED CType of the RIGHT operand's param (a union/`Any` -> boxed `ll_value`):
+   *  the call site must declare it so InsertCoercions boxes the argument to match the real signature. */
+  private readonly operators = new Map<string, { cName: string; ret: CType; isMethod: boolean; unary: boolean; otherCType?: CType }>();
   /** Enum members, keyed by the full `EnumName:Key` string (exactly the JS `enumKeys` key). A member
    *  is a compile-time constant -- the value is an explicit AST node or, by default, the ordinal. The
    *  reference `HttpMethod:GET` is a simple-identifier whose id IS that string (D: enums are not
@@ -674,7 +676,12 @@ export class ResolveHirToCir {
       : mangleC(`op${unary ? "u" : ""}${op}_${opType}`);
     const t: any = (() => { try { return this.context.symbolTable.resolveSymbol(op, fn)?.inferredType; } catch { return undefined; } })();
     const ret = this.typeNodeToCType(fn.returns) ?? mapType(t?.kind === "function" ? t.returns : undefined);
-    this.operators.set(`${unary ? "u" : ""}${op}:${opType}`, { cName, ret, isMethod, unary });
+    // The RIGHT operand's DECLARED CType: `fn.params[0]` for a method op (self is implicit), `fn.params[1]`
+    // for a free op. A union/`Any` param -> `C_VALUE` (boxed), which the call site must declare so the
+    // argument gets boxed to match the emitted signature (gap ledger §20). Binary only.
+    const otherParam = unary ? undefined : (isMethod ? fn.params[0] : fn.params[1]);
+    const otherCType = unary ? undefined : (this.typeNodeToCType(otherParam?.type) ?? C_VALUE);
+    this.operators.set(`${unary ? "u" : ""}${op}:${opType}`, { cName, ret, isMethod, unary, otherCType });
     this.ledger.record("A3", "operator-devirt", fn, "operator overload devirtualized to a direct call by (op, operand type)");
   }
 
@@ -3052,7 +3059,10 @@ export class ResolveHirToCir {
         this.ledger.record("A3", "operator-call", src, "operator overload dispatched statically to a direct call");
         return {
           src, ctype: overload.ret, kind: "c-call",
-          callee: { kind: "free", cName: overload.cName, params: [lhs.ctype, rhs.ctype], ret: overload.ret },
+          // The right param is the operator's DECLARED operand type, NOT the concrete `rhs.ctype`: a
+          // union/`Any` operand is a boxed `ll_value` in the emitted signature, so declaring it lets
+          // InsertCoercions box `rhs` to match (§20). Identical to before for a concrete operand.
+          callee: { kind: "free", cName: overload.cName, params: [lhs.ctype, overload.otherCType ?? rhs.ctype], ret: overload.ret },
           args: [lhs, rhs],
         };
       }

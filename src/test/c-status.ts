@@ -391,6 +391,10 @@ export const C_PASSING: readonly string[] = [
   // ushr -- the LOGICAL right shift (D61's deferred twin, consumer arrived: std/math/random). Zero-fills
   // where shr sign-fills; only visible on a top-bit-set value. `(uint64_t)a >> n` on C, asUintN on JS.
   "80-adversarial/ushr.lisp",
+  // §20: an :operator overload with a UNION operand. The method boxes the union param; the call site
+  // must box the arg to match. C declared the concrete operand ctype and passed it unboxed (cc error);
+  // mkBinop now declares the operator's real (boxed) param, so InsertCoercions boxes the arg.
+  "80-adversarial/union_operator.lisp",
   // What a CURSOR is, and that both backends agree (S2b, ledger 14.3). Two JS-only defects made
   // D30's `Iterator<T> :implements Iterable<T>` untrue: the `[Symbol.iterator]` bridge tested the
   // literally-written `:implements` list, so declaring the MORE PRECISE interface got no bridge at
