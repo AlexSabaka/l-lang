@@ -740,6 +740,9 @@ function __ll_is_type(val, type) {
     "bnot": `const bnot = (a) => BigInt.asIntN(64, ~BigInt(a));`,
     "shl": `const shl = (a, n) => BigInt.asIntN(64, BigInt(a) << (BigInt(n) & 63n));`,
     "shr": `const shr = (a, n) => BigInt.asIntN(64, BigInt(a) >> (BigInt(n) & 63n));`,
+    // LOGICAL right shift: reinterpret as UNSIGNED (asUintN) so the vacated high bits fill with 0,
+    // then back to signed. `shr` propagates the sign; `ushr` never does. Matches C's `(uint64_t)a >> n`.
+    "ushr": `const ushr = (a, n) => BigInt.asIntN(64, BigInt.asUintN(64, BigInt(a)) >> (BigInt(n) & 63n));`,
 
     "codepoint-length": `const codepoint2dlength = (s) => BigInt([...String(s)].length);`,
     "codepoint-at": `const codepoint2dat = (s, i) => {

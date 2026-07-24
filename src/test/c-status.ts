@@ -388,6 +388,9 @@ export const C_PASSING: readonly string[] = [
   // would otherwise change with the target CPU). Graded at -O2 as well, which is where a UB
   // disagreement would actually surface.
   "80-adversarial/bit_operators.lisp",
+  // ushr -- the LOGICAL right shift (D61's deferred twin, consumer arrived: std/math/random). Zero-fills
+  // where shr sign-fills; only visible on a top-bit-set value. `(uint64_t)a >> n` on C, asUintN on JS.
+  "80-adversarial/ushr.lisp",
   // What a CURSOR is, and that both backends agree (S2b, ledger 14.3). Two JS-only defects made
   // D30's `Iterator<T> :implements Iterable<T>` untrue: the `[Symbol.iterator]` bridge tested the
   // literally-written `:implements` list, so declaring the MORE PRECISE interface got no bridge at

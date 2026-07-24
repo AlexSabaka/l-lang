@@ -5091,6 +5091,14 @@ Guarded by `examples/80-adversarial/bit_operators.lisp`, on the C ratchet and gr
 — which is where a UB disagreement would actually surface. Its golden was derived by hand from this
 ruling before either backend ran.
 
+**AMENDED (2026-07-24): `ushr` added — the LOGICAL right shift.** The ruling above deferred a
+zero-filling right shift "until a consumer asks"; xoshiro256** / SplitMix64 (`std/math/random`) ask, for
+their rotates and mixes, and hash functions will too. `ushr` is the seventh bit op: logical (vacated
+high bits fill with 0) rather than `shr`'s arithmetic sign-propagation, same 64-bit wrap and 0–63 mask.
+`(uint64_t)a >> (n & 63)` on C, `BigInt.asUintN(64, …) >> …` on JS. A shift is now arithmetic (`shr`) or
+logical (`ushr`) by NAME, never by guessing the operand's sign. Guarded by
+`examples/80-adversarial/ushr.lisp` (the difference shows only on a top-bit-set value).
+
 ## D62 — std/core/errors: a typed-error tower on the ambient Error (2026-07-23)
 
 The stdlib threw a bare `(Error "message")` in 14 places, so a program could only ever `catch :of Error`.

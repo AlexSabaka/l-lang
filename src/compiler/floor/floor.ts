@@ -183,9 +183,10 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   //     6.5.7p3) and JS BigInt would happily shift by a million and allocate, so an unmasked shift is
   //     the one place these could diverge catastrophically rather than merely differ. Masking is the
   //     cheapest total rule that both can implement exactly, and it is what x86 and ARM already do.
-  //   * `shr` IS ARITHMETIC -- sign-propagating. A logical `ushr` is not defined: no consumer asks for
-  //     one yet, and an unused second shift is a second thing to keep in agreement. Add it when
-  //     something needs it.
+  //   * `shr` IS ARITHMETIC -- sign-propagating. `ushr` is the LOGICAL (zero-filling) twin, added when
+  //     its consumer arrived: xoshiro256**/SplitMix64 (std/math/random) need `(x >>> n)` for their
+  //     rotates and mixes, and hash functions want it too. Both spellings now exist; a shift is
+  //     arithmetic (`shr`) or logical (`ushr`) by name, never by guessing the sign.
   //   * `shl` of a negative value, and shifts that push bits off the top, wrap rather than trap --
   //     the D51 regime again, and the reason `-fwrapv` is already in the C flags.
   ["band", fn("ll_bit_and", [Int, Int], Int)],
@@ -194,6 +195,7 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   ["bnot", fn("ll_bit_not", [Int], Int)],
   ["shl", fn("ll_bit_shl", [Int, Int], Int)],
   ["shr", fn("ll_bit_shr", [Int, Int], Int)],
+  ["ushr", fn("ll_bit_ushr", [Int, Int], Int)],
 
   // -- container/sequence primitives the runtime provides (the SYMBOL_MAP surface).
   ["get", fn("ll_get", [Any, Key], Any)],

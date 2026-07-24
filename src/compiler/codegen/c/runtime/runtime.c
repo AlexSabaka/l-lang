@@ -2348,6 +2348,9 @@ static int64_t ll_bit_shl(int64_t a, int64_t n) {
   return (int64_t)((uint64_t)a << (n & 63));
 }
 static int64_t ll_bit_shr(int64_t a, int64_t n) { return a >> (n & 63); }
+/* LOGICAL right shift: shift through UINT64 so the vacated high bits fill with 0, unlike `ll_bit_shr`
+   which stays signed and propagates the sign. The JS twin reinterprets via BigInt.asUintN(64, ...). */
+static int64_t ll_bit_ushr(int64_t a, int64_t n) { return (int64_t)((uint64_t)a >> (n & 63)); }
 
 /* Look up a class descriptor by name in the module registry (for the :extends chain walk). */
 static const ll_class *ll_class_by_name(const char *name) {
