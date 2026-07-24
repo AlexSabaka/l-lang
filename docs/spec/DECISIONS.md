@@ -5247,3 +5247,17 @@ Rulings (all the "state a rule, don't import the host's opinion" house style, D5
 
 Pinned by `examples/16-stdlib/10_path.lisp` on both backends. Filesystem *operations* (`cwd`, `dir-list`,
 …) are Tier-2 floor entries, out of scope; this is pure path string math.
+
+## D65 — std/math/random: seeded determinism is the API (2026-07-24)
+
+`std/math/random` is xoshiro256** (the generator) seeded by SplitMix64, both public-domain (Blackman &
+Vigna). The design ruling: **seeded determinism IS the API**, the same philosophy as the ManualClock --
+`(Random seed)` is a reproducible stream, so a program that seeds it is a golden of itself, and the
+sequence is byte-identical on both backends (D51 wrapping int64 + D61 bit ops, incl. the logical `ushr`)
+AND identical to the reference implementation (verified against the published `splitmix64(0) =
+0xE220A8397B1DCDAF`). `default-random` seeds from `clock-ns` for the casual caller and is the one
+non-reproducible surface. Surface: `next` (raw), `real` [0,1) (top 53 bits), `int-in [lo hi)` (half-open;
+`lo + (ushr next 1) % range` -- the modulo bias is negligible for index/dice ranges, Lemire a future
+upgrade), `bool`, `shuffle` (Fisher-Yates, returns a NEW array), `choice`. Pure l-lang, no floor entry.
+Pinned by `examples/16-stdlib/11_random.lisp`. The SplitMix64 constants are signed decimals because hex
+literals do not codegen yet (ELL0100 visitHexNumber). Surfaced two JS-emitter gaps (gap ledger §21).

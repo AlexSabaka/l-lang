@@ -1379,3 +1379,29 @@ call's argument when the callee parameter is boxed-Unknown.
 **Worked around, not fixed:** `std/sys/path`'s `/` takes a `String` segment (the common case); joining a
 Path is `(/ p (q.to-string))`. Fixing it — box an operator-call argument whose callee parameter is
 boxed — is a self-contained C-emitter commit (InsertCoercions / the operator-dispatch path), deferred.
+
+## 21. Two JS-backend gaps surfaced by std/math/random (2026-07-24)
+
+The RNG's core (state, `next`, `real`, `int-in` with literal ranges, `bool`) matched byte-for-byte on
+both backends immediately. Two JS-only silent divergences turned up in the array helpers -- the
+stdlib-as-fuzzer pattern, this time pointing at the JS emitter rather than C.
+
+### 21.1 `.length` is a host Number, not lifted to a BigInt Int
+
+`(let n <- Int arr.length)` emits `const n = __ll_copy(arr.length)` -- and `arr.length` is a host
+**Number**, not a BigInt. On its own that survives (comparisons coerce), but the moment it meets a BigInt
+Int in arithmetic it goes wrong SILENTLY: `int-in`'s `(- hi lo)` / `(% next range)` with `hi` = a
+`.length` Number and `next` a BigInt produced a different `int-in` value on JS than on C (int64_t
+throughout), so a Fisher-Yates `shuffle` diverged. The `<- Int` annotation did not coerce it, and neither
+did `(+ 0 arr.length)`. **Worked around** in random by COUNTING the length in a loop (`(mut n 0) … (n :=
+(+ n 1))`), which yields a genuine BigInt. The real fix is the JS emitter lifting a host-Number Int (a
+`.length`, any host-member Int) to BigInt where the type says Int -- the same `__ll_hostint` it already
+wraps `next()` results in. Potentially wide (any Int math over an array length), so worth its own commit.
+
+### 21.2 An array index whose index expression has a side effect evaluates out of order
+
+`arr[(this.int-in 0 n)]` -- where the index expression calls `next` (mutating state) -- gave a different
+element on JS than the identical `(let idx (this.int-in 0 n)) arr[idx]`, which C matched. So the JS
+`__ll_index(arr, sideEffectingExpr)` evaluates its operands in an order that disagrees with binding the
+index first. **Worked around** in `choice` by binding `idx` before indexing. Narrower than 21.1 (needs a
+mutating index expression), but the same class -- an evaluation-order/CSE hazard in the JS emitter.

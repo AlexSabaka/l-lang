@@ -486,6 +486,10 @@ export const C_PASSING: readonly string[] = [
   // accessors (dirname/basename/extension/stem/parent/segments/is-absolute/normalize), and Formattable
   // display + Comparable sort (D63). Pure split-on-'/' string work.
   "16-stdlib/10_path.lisp",
+  // std/math/random -- xoshiro256** over SplitMix64, seeded determinism. The reference stream matches
+  // the published splitmix64(0)=0xE220A8397B1DCDAF and an independent BigInt reference; byte-identical
+  // JS/C via D51 wrap + D61 bit ops (incl. ushr). Guards next/real/int-in/bool/shuffle/choice.
+  "16-stdlib/11_random.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.
