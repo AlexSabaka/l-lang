@@ -469,6 +469,9 @@ export const C_PASSING: readonly string[] = [
   // console.log, interpolation, and nested. The interp arm also aligned C's `{x}` with JS's display
   // (was `[object]` / comma-joined vec / `null`; gap ledger §5.2 #4, §12.3).
   "16-stdlib/06_formattable.lisp",
+  // Comparable drives std/seq sort/min/max/min-by/max-by: a user type sorts by its compare-to;
+  // primitives keep their `<` order (byte-identical).
+  "16-stdlib/07_comparable_sort.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.

@@ -14,6 +14,10 @@
 ;; per-file, so a file picks ONE convention -- import `std/seq` for eager array work OR `std/linq` for
 ;; lazy pipelines, not both in the same file.
 (
+  ;; `compare` gives the order: the Comparable protocol when an element implements it, else the natural
+  ;; order of a primitive. So `sort`/`min`/`max` order a user type by its `compare-to` for free.
+  (import "std/core/protocols")
+
   (fn range [start <- Int end <- Int step <- Int] -> Int[]
     (let result [])
     (for :init (mut i start) :cond (< i end) :step (i := (+ i step)) :then (
@@ -168,14 +172,37 @@
                        less))
   ))
 
-  ;; The default order is the language's own `<`. One rule for every element type l-lang can order --
-  ;; numbers numerically, strings lexicographically -- rather than a numeric comparator that breaks on
-  ;; strings or JS's string comparator that breaks on numbers.
+  ;; The default order is `compare` (D63): the Comparable protocol when the element implements it,
+  ;; otherwise the language's own `<` on an ordered primitive -- numbers numerically, strings
+  ;; lexicographically. Primitive sorts are byte-identical to the old `(< a b)`; a Comparable user type
+  ;; now sorts by its `compare-to` with no comparator passed.
   (fn sort [coll <- Any[]] -> Any[]
-    (seq-sort-with coll (fn [a b] (< a b))))
+    (seq-sort-with coll (fn [a b] (< (compare a b) 0))))
 
   (fn sort-by [key-fn coll <- Any[]] -> Any[]
-    (seq-sort-with coll (fn [a b] (< (key-fn a) (key-fn b)))))
+    (seq-sort-with coll (fn [a b] (< (compare (key-fn a) (key-fn b)) 0))))
+
+  ;; min-by/max-by -- reduce a collection to its extreme by a KEY, ordered with `compare` (so a
+  ;; Comparable key works too). `-> Any?`: nil for an empty collection (D9), else the extreme element
+  ;; (ties keep the earliest). The pairwise numeric `min`/`max` live in std/math -- seq owns the
+  ;; key-based collection reductions, keeping the two shelves un-collided (LL0240).
+  (fn min-by [key-fn coll <- Any[]] -> Any? (
+    (when (== coll.length 0) :then (return nil))
+    (mut m coll[0])
+    (mut mk (key-fn coll[0]))
+    (for :each x :from coll :then (
+      (let k (key-fn x))
+      (when (< (compare k mk) 0) :then ((m := x) (mk := k)))))
+    (return m)))
+
+  (fn max-by [key-fn coll <- Any[]] -> Any? (
+    (when (== coll.length 0) :then (return nil))
+    (mut m coll[0])
+    (mut mk (key-fn coll[0]))
+    (for :each x :from coll :then (
+      (let k (key-fn x))
+      (when (> (compare k mk) 0) :then ((m := x) (mk := k)))))
+    (return m)))
 
   ;; ------------------------------------------------------------------------------------------------
   ;; THE SEARCHES -- structural, and that is a deliberate semantic change (D53, Fg-4).
@@ -257,5 +284,6 @@
     (if (coll :of String) (codepoint-length coll) coll.length))
 
   (export range zip map filter reduce flatten reverse sort sort-by
+          min-by max-by
           index-of includes first last at length)
 )

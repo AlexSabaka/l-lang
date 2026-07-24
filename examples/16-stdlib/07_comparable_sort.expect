@@ -1,0 +1,5 @@
+ints: [1 2 3 4 5]
+strs: ["apple" "banana" "cherry"]
+vers: [1 2 3]
+by: a ccc
+ver-by: Ver{:n 1} Ver{:n 3}
