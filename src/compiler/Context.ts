@@ -772,6 +772,16 @@ export class Context {
     this.performanceMetrics.startTimer("codegen");
     let transformer = undefined;
     if (this.options.language === "js") {
+      // D66: the JS backend is DEPRECATED -- oracle-only, C/LLVM is the sole supported target. A
+      // LogLevel.Warning (not a located LLxxxx diagnostic): the notice is compilation-global, must not
+      // set hasErrors (JS still compiles) and must not churn the diagnostics snapshot. Fires once per
+      // JS codegen; the test runner's no-op logger suppresses it, so the oracle stays clean.
+      this.log(
+        LogLevel.Warning,
+        "The JavaScript backend is DEPRECATED (D66): it is retained as a differential-testing oracle " +
+          "only -- no longer fixed or extended, and it may now degrade or no-op on native-only features. " +
+          "Compile with --language c for the supported target (C today, LLVM next)."
+      );
       // HIR LOWERING STAGE. Typed AST -> HIR side-table (destination-driven lowering), consumed by the
       // emitter's per-body seam. Runs after the type channel is published and only when the program is
       // error-free (we are past the hasErrors gate above). The HIR is the only JS codegen path now.

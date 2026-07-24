@@ -5261,3 +5261,41 @@ non-reproducible surface. Surface: `next` (raw), `real` [0,1) (top 53 bits), `in
 upgrade), `bool`, `shuffle` (Fisher-Yates, returns a NEW array), `choice`. Pure l-lang, no floor entry.
 Pinned by `examples/16-stdlib/11_random.lisp`. The SplitMix64 constants are signed decimals because hex
 literals do not codegen yet (ELL0100 visitHexNumber). Surfaced two JS-emitter gaps (gap ledger §21).
+
+## D66 — the JavaScript backend is deprecated: oracle-only, C/LLVM is the sole target (2026-07-24)
+
+**The North Star is LLVM.** l-lang shipped a JS backend AND a C backend under "One Tree, One Truth"
+(D48/A-0): a decision both backends make is nodified so they cannot diverge, and every dip is a
+machine-checked signal, never argued away. That discipline exists BECAUSE two backends can silently
+disagree — and its tax is real and continuous. `Int` is 64-bit wrapping, so JS pays `BigInt.asIntN(64)`
+on every op (D51); Strings measure in codepoints (O(n), not JS's O(1) UTF-16 length); the seam is a
+permanent two-front war. The last stdlib round paid it twice in one session: `std/math/random` surfaced
+two JS-only emitter gaps (§21), and the SplitMix64 constant typo first showed up AS a JS≠C mismatch. C,
+by the project's own framing, is **not a pivot but a two-ended probe** standing in for a typed native
+target — its dips ARE the LLVM-readiness signal (the `hir-design-round-brief` framing correction).
+Serving both a native endgame (exact widths, deterministic layout, `:async`, D47 conditions/restarts —
+all C-native, JS-refused) and the JS ecosystem (dynamic dispatch, event-loop async, GC) makes the
+language mediocre at both.
+
+**Ruling (Sabaka, 2026-07-24, prompted by an adversarial language-design review): the JS backend is
+DEPRECATED — oracle-only.**
+- **Retained, not deleted.** Two independent implementations is exactly what caught the §21 gaps and the
+  random constant; the C ratchet + hand-derived goldens become the primary guard, and JS stays green as a
+  differential-testing cross-check for as long as it does not hold back the native ground.
+- **No new fixes or features land on the JS path.** The `js-status.ts` ratchet freezes; the JS-only
+  emitter gaps (§21) are **WONTFIX**.
+- **JS may now DEGRADE or no-op on native-only features**, rather than being held in lockstep — the
+  deliberate reversal of the standing note "everything greenlit is JS-safe; native is upside, not a
+  prerequisite." Immediate payoff: D46/B-2 native fixed-width can lower `(deftype uint8 <- Int :where
+  (0 .. 255))` to a real `uint8_t` on C while JS degrades to plain `Int` — a divergence that is now
+  **intended**, not a bug.
+- The compiler emits a **deprecation WARNING on every `--language js` codegen** — a `LogLevel.Warning`
+  logger notice at the codegen dispatch (`Context.ts`), NOT a located `LLxxxx` diagnostic: the notice is
+  compilation-global (no source span), must not set `hasErrors` (JS still compiles), and must not churn
+  the `test:diagnostics` snapshot or pollute negative tests. The test runner's no-op logger suppresses
+  it, so the oracle stays clean.
+
+**What this is NOT: a deletion.** `RuntimeProvider`, `inspectJs`, the JS emitter and the JS test path all
+stay. A mechanical demolition (delete the JS pipeline, collapse the test matrix to one backend) is a
+separate, deliberate session if it is ever taken — not this one. The useful half of every greenlit
+feature stays JS-safe where that costs nothing; native is where the investment goes from here.

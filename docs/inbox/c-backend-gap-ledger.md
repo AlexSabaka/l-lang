@@ -1396,6 +1396,11 @@ The RNG's core (state, `next`, `real`, `int-in` with literal ranges, `bool`) mat
 both backends immediately. Two JS-only silent divergences turned up in the array helpers -- the
 stdlib-as-fuzzer pattern, this time pointing at the JS emitter rather than C.
 
+> **Status: WONTFIX (D66, 2026-07-24).** The JS backend is deprecated -- oracle-only, no new fixes on the
+> JS path. Both 21.1 and 21.2 are JS-only emitter bugs; per D66, JS may degrade and these stay
+> worked-around-in-`random`, not fixed. Kept on record as characterised divergences (the workarounds are
+> the guard), not as open work. Should JS ever be un-deprecated, the fixes are described below.
+
 ### 21.1 `.length` is a host Number, not lifted to a BigInt Int
 
 `(let n <- Int arr.length)` emits `const n = __ll_copy(arr.length)` -- and `arr.length` is a host
