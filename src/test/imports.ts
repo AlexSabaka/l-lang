@@ -1537,6 +1537,47 @@ const CASES: Case[] = [
     },
   },
 
+  // S15.3 / N12 -- `.length` on an IMPORTED module-level vector. The dotted-READ path
+  // (resolveCompositeRead) never hoisted the head, so C emitted `ll_dyn_length(u_GLYPHS)` against a name
+  // no scope declared (cc: undeclared identifier). The simple-read and dotted-CALL paths already hoisted
+  // via ensureImportedValue; this taught the third path the same. Hoisting also carries the head's
+  // DECLARED ctype (a `vec`), so `.length` resolves to `ll_vec_len` rather than the dynamic accessor.
+  {
+    name: "S15.3: `.length` on an imported module-level vector resolves on C",
+    why:
+      "`GLYPHS.length` where GLYPHS is exported from another module. JS was always fine (module scope is " +
+      "closed over); C left `u_GLYPHS` undeclared on the dotted-read path only. The element read " +
+      "`GLYPHS[0]` already worked (a different seam), so the guard checks both to prove the fix is the " +
+      "member-read path, not the whole binding.",
+    run: () => {
+      const files = {
+        "lib.lisp":
+          `(\n` +
+          `  (let GLYPHS <- Int[] [10 20 30 40])\n` +
+          `  (export GLYPHS)\n` +
+          `)\n`,
+        "main.lisp":
+          `(\n` +
+          `  (import "lib.lisp")\n` +
+          `  (console.log GLYPHS.length GLYPHS[0])\n` +
+          `)\n`,
+      };
+      const expected = "4 10";
+
+      const js = build(fixture("imported-vec-length-js", files, "main.lisp"));
+      if (!js.compiled) return { ok: false, detail: `JS did not compile: ${js.diagnostics.join(", ") || "(none)"}` };
+      if (js.runtimeError) return { ok: false, detail: `JS runtime: ${js.runtimeError}` };
+      if (js.stdout !== expected) return { ok: false, detail: `JS expected ${JSON.stringify(expected)}, got ${JSON.stringify(js.stdout)}` };
+
+      const c = buildC(fixture("imported-vec-length-c", files, "main.lisp"));
+      if (!c.compiled) return { ok: false, detail: `C did not build (was: undeclared u_GLYPHS): ${c.runtimeError ?? (c.diagnostics.join(", ") || "(none)")}` };
+      if (c.runtimeError) return { ok: false, detail: `C runtime: ${c.runtimeError}` };
+      if (c.stdout !== expected) return { ok: false, detail: `C expected ${JSON.stringify(expected)}, got ${JSON.stringify(c.stdout)}` };
+
+      return { ok: true, detail: `imported vector .length + [i] resolve on both backends: ${expected}` };
+    },
+  },
+
 ];
 
 function main() {

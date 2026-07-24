@@ -1106,11 +1106,20 @@ operand types and divided as `real`. Porting the JS backend's `carryTypesInto` i
 division is Int, the quotient stays an `int64_t`, and the store into the `Int` field no longer traps.
 Pinned by `test/imports.ts` "S15.2: an imported method's `field := (/ Int Int)` does not trap on C".
 
-### 15.3 OPEN (Lane B) — N12 survives S1a
+### 15.3 CLOSED (2026-07-24) — N12 was a missed HOIST on the dotted-read path
 
-`.length` on an imported module-level vector still emits `ll_dyn_length(u_GLYPHS)` against an
-`ll_vec*`. Re-measured after 15.1 on the hypothesis that it shared the missing-type root; it does not.
-A missed box on the hoisted-global path, and a C-side fix.
+`.length` on an imported module-level vector emitted `ll_dyn_length(u_GLYPHS)` against a name **no C
+scope declared** (cc: `use of undeclared identifier 'u_GLYPHS'`) -- not just a missed box: the head was
+never hoisted at all. `resolveCompositeRead` built a `c-ref{cName: mangleC(headName)}` assuming the name
+was declared, but an imported module-level binding is only declared once `ensureImportedValue` hoists it
+to a C global. The simple-read path (`resolveIdentifier`) and the dotted-CALL path (`resolveDottedCall`)
+already hoisted; the dotted-READ path was the one seam that never did. **Fixed** by trying
+`ensureImportedValue(headName, node)` there and, when it hoists, using the returned C name and the
+global's DECLARED ctype -- which is a `vec` for an `Int[]`, so `.length` now resolves to `ll_vec_len`
+(the ledger's "missed box" facet) rather than the dynamic accessor. Same-module and local heads are
+unaffected (`ensureImportedValue` returns undefined for our own global). Pinned by `test/imports.ts`
+"S15.3: `.length` on an imported module-level vector resolves on C" (checks `.length` AND `[i]`, since
+the element read went through a different seam and always worked).
 
 ### 15.4 N1 + N15 + N2 — one bug, not three **[CLOSED 2026-07-23]**
 

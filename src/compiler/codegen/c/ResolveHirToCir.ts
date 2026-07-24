@@ -2588,20 +2588,28 @@ export class ResolveHirToCir {
     }
     const local = (() => { try { return this.context.symbolTable.resolveSymbol(headName, node); } catch { return undefined; } })();
     const info = this.localInfo(mangleC(headName));
+    // N12 / gap ledger §15.3: an IMPORTED module-level head (`GLYPHS.length`, GLYPHS exported from
+    // another module) must be hoisted to a C global -- exactly as the simple-read path
+    // (resolveIdentifier) and the dotted-CALL path (resolveDottedCall) already do. Without it the dotted
+    // READ emitted `ll_dyn_length(u_GLYPHS)` against a name no C scope declares. The hoisted global's
+    // DECLARED ctype (a `vec` for an `Int[]`) is also what makes `.length` pick `ll_vec_len` instead of
+    // the dynamic accessor. Returns undefined for our own module global, so same-module heads are
+    // unchanged. Skipped when the head is already a C local.
+    const importedCName = info ? undefined : this.ensureImportedValue(headName, node);
     const isLocal = !this.isExtern(local) && (local?.inferredType !== undefined || info !== undefined);
-    if (isLocal) {
+    if (importedCName || isLocal) {
       // A member read off a local binding. A hoisted module global's DECLARED ctype wins over
       // re-inference here, exactly as it does at store sites (resolveLValue) and receiver sites
       // (headObject): re-inferring `FOODS` as untyped picked the DYNAMIC accessor for `.length` and
       // handed it a concrete `ll_vec*`, which is a cc type error -- while `FOODS[i]`, which goes
       // through headObject, got the right type on the same line.
-      let expr: CExpr = {
-        src: node,
-        ctype: info?.ctype ?? this.globalCType(headName, mangleC(headName)) ?? mapType(local?.inferredType),
-        kind: "c-ref",
-        cName: mangleC(headName),
-        cell: info?.cell,
-      };
+      const cName = importedCName ?? mangleC(headName);
+      const ctype = info?.ctype
+        ?? (importedCName
+          ? this.globalDecls.find((d) => d.cName === cName)?.ctype
+          : this.globalCType(headName, cName))
+        ?? mapType(local?.inferredType);
+      let expr: CExpr = { src: node, ctype: ctype ?? C_VALUE, kind: "c-ref", cName, cell: info?.cell };
       if (!modeled) this.ledger.record("A2", "atom-ref", node, "variable read is an opaque leaf; resolved below the HIR");
       for (const field of parts.slice(1)) expr = this.memberRead(node, expr, field);
       return expr;
