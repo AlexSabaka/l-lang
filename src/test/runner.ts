@@ -12,9 +12,10 @@
  */
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import chalk from 'chalk';
-import { spawnSync, SpawnSyncReturns } from 'child_process';
+import { spawnSync, spawn, SpawnSyncReturns } from 'child_process';
 import { Context, CompilerOptions, LogLevel } from '../compiler/Context';
 import { MANIFEST, ExampleStatus } from './manifest';
 import { CHILD_ENV } from './childEnv';
@@ -36,6 +37,29 @@ const COPT = (() => {
 const GAP_LEDGER_ARG = (() => {
   const i = process.argv.indexOf('--gap-ledger');
   return i >= 0 ? process.argv[i + 1] : undefined;
+})();
+
+// Worker-pool parallelism. The C suite got slow as the corpus grew (compile -> cc -> run, per file,
+// serially); `--jobs=N` fans the per-file work across N child PROCESSES. `--jobs=1` keeps the proven
+// serial path (also the fallback for a tiny corpus / for debugging).
+// PROCESSES, not worker_threads: runCTest mutates `process.env.LL_GAP_LEDGER` around each compile,
+// which is process-global and would race under threads -- separate processes each own their env.
+// `--worker <shardFile>` is the child entrypoint: it runs a pre-classified slice and streams JSONL
+// results back, with no banner / summary / COMPILED_DIR wipe (the parent owns all of that).
+//
+// Default = cores - 2, NOT cores. Each worker also spawns a `cc` (and then the binary), so N workers
+// mean up to ~2N CPU-bound processes; at N = coreCount that oversubscribes and thrashes (measured: on
+// a 10-core box, --jobs=10 ran the C suite in 58s while --jobs=8 ran it in 32s -- SLOWER at full
+// width). Leaving two cores as headroom for the cc spillover + the N cold ts-node boots is the sweet
+// spot; the divisor is deliberately conservative, tune with --jobs if a machine wants otherwise.
+const WORKER_SHARD = (() => {
+  const i = process.argv.indexOf('--worker');
+  return i >= 0 ? process.argv[i + 1] : undefined;
+})();
+const JOBS = (() => {
+  const a = process.argv.find((x) => x.startsWith('--jobs='));
+  const n = a ? parseInt(a.slice('--jobs='.length), 10) : Math.max(1, os.cpus().length - 2);
+  return Number.isFinite(n) && n > 0 ? n : 1;
 })();
 
 // Configuration
@@ -550,7 +574,106 @@ function validateRatchets(): number {
   return missing.length;
 }
 
-function main() {
+/** A file the parent has already classified, handed to a worker (or the serial path) to run. */
+type ClassifiedItem = { filePath: string; status: ExampleStatus; reason?: string; codes?: string[] };
+
+/**
+ * Run one already-classified example to a TestResult. The SINGLE source of per-file dispatch, shared
+ * by the serial path and every worker -- so parallel and serial cannot drift on how a file is graded.
+ */
+function runClassified(item: ClassifiedItem): TestResult {
+  const { filePath, status, reason, codes } = item;
+  if (status === 'test') {
+    return BACKEND === 'c' ? runCTest(filePath) : runTest(filePath);
+  }
+  if (status === 'negative') {
+    return BACKEND === 'c'
+      ? { name: path.basename(filePath), status: 'skip', message: 'negative tests are frontend-only (JS suite covers them)' }
+      : runNegativeTest(filePath, codes ?? []);
+  }
+  return { name: path.basename(filePath), status: status as ExampleStatus, message: reason };
+}
+
+/**
+ * `--worker` entrypoint: run a pre-classified shard, streaming one JSON line per file to `<shard>.out`
+ * as each completes, then exit 0. No banner, no summary, no COMPILED_DIR wipe -- the parent owns all
+ * of that. Streaming (not a single final write) means a crash leaves the already-finished lines intact
+ * and only the in-flight / not-yet-run files absent, which the parent turns into errors -- never a silent drop.
+ */
+function runWorker(shardPath: string): void {
+  const items: ClassifiedItem[] = JSON.parse(fs.readFileSync(shardPath, 'utf-8'));
+  const outPath = shardPath + '.out';
+  fs.writeFileSync(outPath, '');
+  for (const it of items) {
+    let result: TestResult;
+    try {
+      result = runClassified(it);
+    } catch (e: any) {
+      result = { name: path.basename(it.filePath), status: 'error', message: `worker threw: ${String(e?.message).split('\n')[0]}` };
+    }
+    fs.appendFileSync(outPath, JSON.stringify({ filePath: it.filePath, result }) + '\n');
+  }
+}
+
+/**
+ * Fan `items` across `jobs` child processes (round-robin, to spread cost), collect their JSONL, and
+ * return results in the SAME order as `items`. A file no worker reported becomes an `error`: the gate
+ * must never silently lose a test to a dead worker -- a missing result is red, not absent.
+ */
+async function runParallel(items: ClassifiedItem[], jobs: number): Promise<TestResult[]> {
+  const shardCount = Math.min(jobs, items.length);
+  const shards: ClassifiedItem[][] = Array.from({ length: shardCount }, () => []);
+  items.forEach((it, i) => shards[i % shardCount].push(it));   // round-robin balances slow files across workers
+
+  const shardDir = path.join(COMPILED_DIR, '.shards');
+  fs.mkdirSync(shardDir, { recursive: true });
+  const workerFlags = ['--backend=' + BACKEND, ...(COPT ? [`--copt=${COPT}`] : [])];
+
+  const runOne = (shard: ClassifiedItem[], k: number) =>
+    new Promise<{ shardPath: string; code: number | null; stderr: string }>((resolve) => {
+      const shardPath = path.join(shardDir, `shard-${k}.json`);
+      fs.writeFileSync(shardPath, JSON.stringify(shard));
+      // node -r ts-node/register runner.ts --worker <shard> : re-exec THIS file in worker mode.
+      // TS_NODE_TRANSPILE_ONLY: workers don't need type-checking (the parent type-checks once) -- a
+      // large startup cut that makes N cold ts-node boots affordable.
+      const child = spawn(process.execPath, ['-r', 'ts-node/register', __filename, '--worker', shardPath, ...workerFlags], {
+        cwd: __dirname,
+        env: { ...process.env, TS_NODE_TRANSPILE_ONLY: '1' },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      let stderr = '';
+      child.stderr.on('data', (d) => { stderr += d.toString(); });
+      child.on('close', (code) => resolve({ shardPath, code, stderr }));
+      child.on('error', (err) => resolve({ shardPath, code: 1, stderr: String(err.message) }));
+    });
+
+  console.log(chalk.gray(`  ${items.length} files across ${shardCount} workers (--jobs=${jobs})...\n`));
+  const workerResults = await Promise.all(shards.map((s, k) => runOne(s, k)));
+
+  const byPath = new Map<string, TestResult>();
+  workerResults.forEach(({ shardPath, code, stderr }, k) => {
+    let lines: string[] = [];
+    try { lines = fs.readFileSync(shardPath + '.out', 'utf-8').split('\n').filter(Boolean); } catch { /* missing = total crash */ }
+    for (const line of lines) {
+      try { const { filePath, result } = JSON.parse(line); byPath.set(filePath, result); } catch { /* partial trailing line */ }
+    }
+    if (code !== 0) {
+      const tail = stderr.trim().split('\n').slice(-1)[0] || `exit ${code}`;
+      for (const it of shards[k]) {
+        if (!byPath.has(it.filePath)) {
+          byPath.set(it.filePath, { name: path.basename(it.filePath), status: 'error', message: `worker ${k} died before this file (${tail})` });
+        }
+      }
+    }
+  });
+
+  // Reassemble in input order; any still-missing file is a hard error (never a silent drop).
+  return items.map((it) => byPath.get(it.filePath) ?? {
+    name: path.basename(it.filePath), status: 'error' as const, message: 'no worker reported this file (lost shard)',
+  });
+}
+
+async function main() {
   const ratchetRot = validateRatchets();
   console.log(chalk.bold('\n================================'));
   console.log(chalk.bold('  L-Lang Compiler Test Suite'));
@@ -559,6 +682,8 @@ function main() {
   // Fresh scratch dir each run so a renamed/deleted example can't leave a stale compiled
   // artifact behind.
   fs.rmSync(COMPILED_DIR, { recursive: true, force: true });
+  // Created up front so the per-file gap ledgers land even before any worker's compile writes one.
+  fs.mkdirSync(LEDGER_DIR, { recursive: true });
 
   const testFiles: string[] = [];
   walkDir(EXAMPLES_DIR, (filePath) => {
@@ -585,24 +710,26 @@ function main() {
     process.exit(1);
   }
 
-  const results: TestResult[] = [];
   const total = testFiles.length;
+  // 'undeclared' already exited above -- everything reaching here is a real ExampleStatus.
+  const items: ClassifiedItem[] = classifications.map((c) => ({
+    filePath: c.filePath, status: c.status as ExampleStatus, reason: c.reason, codes: c.codes,
+  }));
 
-  classifications.forEach(({ filePath, status, reason, codes }, index) => {
-    // 'undeclared' already exited above -- everything reaching here is a real ExampleStatus.
-    let result: TestResult;
-    if (status === 'test') {
-      result = BACKEND === 'c' ? runCTest(filePath) : runTest(filePath);
-    } else if (status === 'negative') {
-      result = BACKEND === 'c'
-        ? { name: path.basename(filePath), status: 'skip', message: 'negative tests are frontend-only (JS suite covers them)' }
-        : runNegativeTest(filePath, codes ?? []);
-    } else {
-      result = { name: path.basename(filePath), status: status as ExampleStatus, message: reason };
-    }
-    results.push(result);
-    printTestResult(result, index + 1, total);
-  });
+  let results: TestResult[];
+  if (JOBS > 1 && items.length > 1) {
+    // Parallel: workers stream results back, printed here in classification order once collected.
+    results = await runParallel(items, JOBS);
+    results.forEach((r, i) => printTestResult(r, i + 1, total));
+  } else {
+    // Serial: the proven path (and --jobs=1 fallback), printing live as each file finishes.
+    results = [];
+    items.forEach((it, index) => {
+      const result = runClassified(it);
+      results.push(result);
+      printTestResult(result, index + 1, total);
+    });
+  }
 
   // Summary
   const passed = results.filter(r => r.status === 'pass').length;
@@ -645,7 +772,12 @@ function main() {
 
 // Run if called directly
 if (require.main === module) {
-  main();
+  if (WORKER_SHARD) {
+    // Child process: run the assigned shard and exit. Checked BEFORE main so a worker never forks.
+    runWorker(WORKER_SHARD);
+  } else {
+    main().catch((e) => { console.error(e); process.exit(1); });
+  }
 }
 
 export { runTest, TestResult };
