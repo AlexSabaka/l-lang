@@ -475,6 +475,10 @@ export const C_PASSING: readonly string[] = [
   // std/test -- assert/assert-eq/assert-ne over `==` (D53), a module-level test registrar + run-tests
   // that prints a summary and makes the exit code the pass/fail bit (std/sys/process).
   "16-stdlib/08_test.lisp",
+  // std/debug -- dbg (print-to-stderr + return), inspect (type-tag via reflect), and the
+  // unreachable/todo/unimplemented FatalError panics. The [dbg] output goes to stderr, so the stdout
+  // golden checks the return-through + inspect + caught panics.
+  "16-stdlib/09_debug.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.

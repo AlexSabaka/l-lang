@@ -1,0 +1,7 @@
+return: 42
+inline: 11
+inspect: Int: 42
+inspect: Array: [1 2 3]
+inspect: String: hi
+caught: unreachable: bad branch
+todo: not yet implemented (todo)
