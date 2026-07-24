@@ -1,0 +1,6 @@
+caught: bad sum: expected 5, got 4
+ok   arithmetic
+ok   concat
+ok   structural
+ok   not-equal
+4 passed, 0 failed
