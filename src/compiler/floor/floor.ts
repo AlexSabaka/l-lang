@@ -197,6 +197,14 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   ["shr", fn("ll_bit_shr", [Int, Int], Int)],
   ["ushr", fn("ll_bit_ushr", [Int, Int], Int)],
 
+  // -- refinement boundary check (D46 amend, P3c-1b-ii). The desugar wraps a value coerced INTO an
+  //    Int-based refined newtype: `__refine_check_int(v, lo, hi, checkLo, checkHi)` returns v if it
+  //    satisfies the (open-ended) interval, else PANICS (a contract violation is a bug, not a catchable
+  //    exception -- the recoverable path is a future D47 RefinementViolation signal). checkLo/checkHi
+  //    are 0/1 gates so an OPEN bound (`(0 ..)`) is checked on one side only. Returning v (not Void)
+  //    lets it wrap the value in place: `(let x <- uint8 (__refine_check_int init 0 255 1 1))`.
+  ["__refine_check_int", fn("ll_refine_check_int", [Int, Int, Int, Int, Int], Int)],
+
   // -- container/sequence primitives the runtime provides (the SYMBOL_MAP surface).
   ["get", fn("ll_get", [Any, Key], Any)],
   ["head", fn("ll_head", [Any], Any)],

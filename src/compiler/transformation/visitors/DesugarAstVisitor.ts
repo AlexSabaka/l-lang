@@ -73,11 +73,78 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     super(context);
   }
 
+  /**
+   * Int-based refined newtypes seen this module: name -> its boundary check (D46 amend, P3c-1b-ii).
+   * Populated from `type-def` nodes before the walk, so `visitVariable` can wrap a value coerced into
+   * one. Empty for every program that declares no `:satisfies` newtype, so this is a strict no-op there.
+   */
+  private refinedInt = new Map<string, { lo: number; hi: number; clo: number; chi: number }>();
+
   visitProgram(node: ast.ProgramNode): ast.ProgramNode {
+    this.collectRefinedInt(node);
     return {
       ...node,
       program: node.program.map((n) => this.visit(n) as ast.ASTNode),
     } as ast.ProgramNode;
+  }
+
+  /** Extract a type node's name (unwrapping the `type` wrapper), for matching a `<- T` annotation. */
+  private typeNameOf(t: any): string | undefined {
+    if (!t || typeof t !== "object") return undefined;
+    if (t._type === "type") return this.typeNameOf(t.type);
+    const nm = typeof t.name === "string" ? t.name : t.name?.name;
+    return typeof nm === "string" ? nm : undefined;
+  }
+
+  /** Scan the whole tree for `deftype … :satisfies (lo? .. hi?)` over an `Int` base, and record its bounds. */
+  private collectRefinedInt(root: ast.ASTNode): void {
+    const walk = (n: any) => {
+      if (!n || typeof n !== "object") return;
+      if (Array.isArray(n)) { n.forEach(walk); return; }
+      if (n._type === "type-def" && n.refinement && this.typeNameOf(n.type) === "Int") {
+        const bound = (b: any): number | null =>
+          b && typeof b.value === "number" ? b.value : null;
+        const lo = bound(n.refinement.lo);
+        const hi = bound(n.refinement.hi);
+        const name = n.name ? ast.symbolName(n.name) : undefined;
+        if (name && (lo !== null || hi !== null)) {
+          this.refinedInt.set(name, { lo: lo ?? 0, hi: hi ?? 0, clo: lo !== null ? 1 : 0, chi: hi !== null ? 1 : 0 });
+        }
+      }
+      for (const k of ast.getNodeIterableKeys(n)) walk((n as any)[k]);
+    };
+    walk(root);
+  }
+
+  /**
+   * `(let x <- uint8 init)` -> `(let x <- uint8 (__refine_check_int init lo hi clo chi))` when the
+   * annotation names an Int refined newtype. The wrapper references only a FLOOR builtin + the existing
+   * init node + literals -- no synthesized user-scope names -- so it sidesteps the `_parent` scope
+   * index. The floor fn returns the value (or panics), so it drops in at the value position.
+   */
+  visitVariable(node: ast.VariableNode): ast.VariableNode {
+    const recursed = { ...node } as any;
+    for (const k of ast.getNodeIterableKeys(node)) {
+      const v = (node as any)[k];
+      recursed[k] = Array.isArray(v)
+        ? v.map((x: any) => (ast.isAstNode(x) ? this.visit(x) : x))
+        : ast.isAstNode(v) ? this.visit(v) : v;
+    }
+    const info = this.refinedInt.get(this.typeNameOf(node.type) ?? "");
+    if (info && recursed.value && ast.isAstNode(recursed.value)) {
+      recursed.value = this.wrapRefineCheck(recursed.value, info);
+    }
+    return recursed as ast.VariableNode;
+  }
+
+  private wrapRefineCheck(value: ast.ASTNode, info: { lo: number; hi: number; clo: number; chi: number }): ast.ASTNode {
+    const loc = (value as any)._location;
+    const mk = (type: string, fields: any): any => ({ ...fields, _type: type, _location: loc, _parent: undefined });
+    const id = (s: string) => mk("simple-identifier", { id: s });
+    const num = (v: number) => mk("integer-number", { match: String(v), value: v });
+    return mk("list", {
+      nodes: [id("__refine_check_int"), value, num(info.lo), num(info.hi), num(info.clo), num(info.chi)],
+    });
   }
 
   visit(node: ast.ASTNode): any {

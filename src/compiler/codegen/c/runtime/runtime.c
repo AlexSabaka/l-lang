@@ -2352,6 +2352,19 @@ static int64_t ll_bit_shr(int64_t a, int64_t n) { return a >> (n & 63); }
    which stays signed and propagates the sign. The JS twin reinterprets via BigInt.asUintN(64, ...). */
 static int64_t ll_bit_ushr(int64_t a, int64_t n) { return (int64_t)((uint64_t)a >> (n & 63)); }
 
+/* Refinement boundary check (D46 amend, P3c-1b-ii): the desugar wraps a value coerced INTO an
+   Int-based refined newtype. Return v if it satisfies the (open-ended) interval, else PANIC -- a
+   contract violation is a bug, not a catchable exception (it does NOT ll_throw, so it never crosses
+   the floor; the recoverable path is a future D47 signal). clo/chi are 0/1 gates so an open bound is
+   checked on one side only. */
+static int64_t ll_refine_check_int(int64_t v, int64_t lo, int64_t hi, int64_t clo, int64_t chi) {
+    if ((clo && v < lo) || (chi && v > hi)) {
+        fprintf(stderr, "refinement violated: %lld is outside the declared range\n", (long long)v);
+        exit(1);
+    }
+    return v;
+}
+
 /* Look up a class descriptor by name in the module registry (for the :extends chain walk). */
 static const ll_class *ll_class_by_name(const char *name) {
   for (size_t i = 0; i < __ll_class_count; i++) {

@@ -743,6 +743,9 @@ function __ll_is_type(val, type) {
     // LOGICAL right shift: reinterpret as UNSIGNED (asUintN) so the vacated high bits fill with 0,
     // then back to signed. `shr` propagates the sign; `ushr` never does. Matches C's `(uint64_t)a >> n`.
     "ushr": `const ushr = (a, n) => BigInt.asIntN(64, BigInt.asUintN(64, BigInt(a)) >> (BigInt(n) & 63n));`,
+    // Refinement boundary check (D46 amend): PANIC if v is outside the (open-ended) interval, else
+    // return v. checkLo/checkHi gate each side (0n => open there). v/lo/hi are BigInt Ints.
+    "__refine_check_int": `const __refine_check_int = (v, lo, hi, clo, chi) => { if ((clo && v < lo) || (chi && v > hi)) { throw new Error("refinement violated: " + v + " is outside the declared range"); } return v; };`,
 
     "codepoint-length": `const codepoint2dlength = (s) => BigInt([...String(s)].length);`,
     "codepoint-at": `const codepoint2dat = (s, i) => {
