@@ -1327,3 +1327,28 @@ subclass path; this is the same gap on the non-inlined (root-module class) path.
 `superBindingName` legacy hook resolves the parent through the inliner (mirrors `JSClassBuilder.
 processExtends`). C: `registerClass` now `ensureClassRegistered`s an imported parent before reading its
 descriptor. Guard also catches `:of Base` (subtype catch by the imported parent), composing with E1.
+
+## 19. `:extension` dispatch on a CLASS receiver was root-module-only + exact-type (2026-07-24)
+
+Surfaced making `std/core/errors`' `caused-by` an `:extension` (so it reads both `(caused-by e c)` and
+`(e.caused-by c)`). The **typed**-receiver dispatch `ResolveHirToCir.tryExtensionCall` looked the
+extension up in `this.extensions` — a map `registerExtension` fills from the **ROOT module's** top-level
+items only, keyed on the **exact** receiver-type name. Two failures fell out at once, both `ELL0106
+resolveObjMethod` (refuse):
+
+- an extension defined in an **imported/ambient** module was never in the map (`caused-by` lives in a
+  prelude, not the root);
+- even for a local extension, a **base-class** extension never dispatched for a **subclass** receiver
+  (`(indexError.caused-by …)` where `caused-by`'s receiver is `Error`).
+
+Neither had ever been exercised: no corpus `:extension` targeted a plain `defclass` — only structs,
+primitives, and interfaces — and none was imported-then-method-called on a typed receiver. The
+`stdlib-as-fuzzer` pattern again.
+
+**Closed** by routing `tryExtensionCall` through the SAME forest-wide resolver the BOXED path
+(`dynExtensionCall`) and the JS backend already use: `buildExtensionTable` (walks the whole symbol-table
+forest) + `conformingExtensionFn`/`receiverConformsTo` (walks the `:extends`/`:implements` chain), with
+`ensureFreeFn` lowering the imported extension body on demand. A strict superset of the old exact-map
+lookup, so every pre-existing typed extension (Vec2 operators, the String method surface) is unchanged —
+the C ratchet + `-O2` stayed green. Pinned by `examples/18-error-handling/24_error_cause.lisp` (both
+surfaces, both backends; the throw-site chain uses a subclass receiver resolving to the base extension).
