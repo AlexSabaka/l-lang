@@ -494,6 +494,10 @@ export const C_PASSING: readonly string[] = [
   // the published splitmix64(0)=0xE220A8397B1DCDAF and an independent BigInt reference; byte-identical
   // JS/C via D51 wrap + D61 bit ops (incl. ushr). Guards next/real/int-in/bool/shuffle/choice.
   "16-stdlib/11_random.lisp",
+  // std/iter Range (D46/B-0, P3b) -- the `..` operator: inclusive integer ranges, a lazy Iterable<Int>
+  // desugared to a `(Range lo hi nil true)` construction. Guards ascending/descending/stepped(.by)/
+  // exclusive iteration, permissive `0..2` spacing, and re-iteration (fresh cursor). Int-only v1.
+  "16-stdlib/12_range.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.

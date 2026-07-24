@@ -4100,6 +4100,27 @@ optimisation. A refinement that can't be discharged **runs its check at runtime,
 moment the checker opportunistically discharges predicates, the SMT project has silently begun. Keep it
 a named-and-later thing.
 
+**Amendment (2026-07-24, Sabaka⇄Cheetah round) — `..` is a first-class range VALUE, and refinements ban
+runtime predicates.** Two changes to the B-bundle as ratified:
+- **`..` is not refinement-sugar only; it is a range operator in expression position too** (Matlab-ish).
+  `(lo .. hi)` builds a lazy `Range` (Iterable), so `(for :each i (0 .. n) …)` works; in *refinement*
+  position the same `(lo .. hi)` is a membership SET (direction-agnostic, lowers to the `(& (>= v lo)
+  (<= v hi))` bounds check). Settled shape: **inclusive-only** `[lo, hi]` (so `(0 .. 255)` = uint8 holds);
+  the half-open form is a **`.exclusive`** method, the step is a **`.by n`** method (magnitude; sign
+  follows direction). **Int**: default step ±1 inferred from lo vs hi, so `(10 .. 1)` counts *down*
+  (descending is first-class). **Real**: no default step — a bare `Range<Real>` is an error, you must
+  `.by`. **Permissive spacing**: `0..100` ≡ `0 .. 100` (a `(?!\.)` lookahead on FloatNumber keeps `0.`
+  from swallowing the first dot). **P3b ships Int only**; Real/Char/generic `Range<T>` are deferred —
+  a generic `T` cannot name its unit step (Int's is the literal `1`), so they need a numeric/steppable
+  protocol, its own round. `..` desugars in the grammar to a `(Range lo hi nil true)` construction
+  (`std/iter`); no dedicated node, so codegen/iteration treat it as an ordinary Iterable.
+- **Refinements are a DECIDABLE fragment — runtime function predicates are BANNED.** The original
+  "evaluate a boolean, throw if false" made refinements undecidable and static-checking hell. The v1
+  fragment is **ranges + finite literal-enums + length-ranges** (`:satisfies (0 .. 255)` / `("N" | "S")`
+  / `(length (1 .. 64))`); string *content* patterns are deferred. This also renames the clause keyword
+  `:where` → **`:satisfies`** (reads with the implicit subject; `:where` dangled). This *narrows* D46/B-1
+  (predicate-only sugar) and *is* the honest on-ramp to the provable-refinements project above.
+
 ---
 
 ## D47 — conditions / restarts: a resumable second exception mechanism (Phase Cr; C-native, JS-refused)

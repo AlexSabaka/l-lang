@@ -458,6 +458,14 @@ class LLangParser extends CstParser {
         this.CONSUME(t.OfModKw);
         this.SUBRULE(this.type);
       });
+      // `(lo .. hi)` -- the RANGE operator (D46/B-0), inclusive. Modelled like the `:of` guard: a
+      // parenthesized infix the builder recognises by the `Range` token (exactly one expr before, one
+      // after). The MANY above stops at `..` (no expression starts with Range), so `ctx.expression`
+      // holds lo then hi. Builder desugars to a `(Range lo hi nil true)` construction (std/iter).
+      this.OPTION2(() => {
+        this.CONSUME(t.Range);
+        this.SUBRULE2(this.expression);
+      });
       this.CONSUME(t.RParen);
     });
 

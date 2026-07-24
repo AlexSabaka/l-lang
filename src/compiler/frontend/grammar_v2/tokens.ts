@@ -197,6 +197,10 @@ export const EqualEq = createToken({ name: "EqualEq", pattern: /==/ });
 export const ColonEq = createToken({ name: "ColonEq", pattern: /:=/ });
 // Other multi-char operators
 export const Spread = createToken({ name: "Spread", pattern: /\.\.\./ });
+// The `..` RANGE operator (D46/B-0): EXACTLY two dots -- `(?!\.)` keeps it distinct from `...` (Spread).
+// `Dot` below (single `.`, `(?!\.)`) and this are mutually exclusive by lookahead, so array order between
+// the dot family does not matter; but see FloatNumber -- `0.` used to swallow the first dot of `0..100`.
+export const Range = createToken({ name: "Range", pattern: /\.\.(?!\.)/ });
 // Single-char operators with negative lookahead to prevent consuming multi-char
 export const Dot = createToken({ name: "Dot", pattern: /\.(?!\.)/ });
 export const Pipe = createToken({ name: "Pipe", pattern: /\|(?![=|>])/ });
@@ -300,7 +304,10 @@ export const OctalNumber = createToken({
 });
 export const FloatNumber = createToken({
   name: "FloatNumber",
-  pattern: /[+-]?[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?|[+-]?[0-9]+[eE][+-]?[0-9]+/,
+  // `(?!\.)` after the dot: `0.5` and trailing-dot `1.` still lex as floats, but `0..100` no longer has
+  // its first dot swallowed into a `0.` float (which would leave a stray `.100`). Lets the `..` RANGE
+  // operator sit flush against an integer -- `0..100` tokenizes as `0 .. 100`, same as `0 .. 100`.
+  pattern: /[+-]?[0-9]+\.(?!\.)[0-9]*([eE][+-]?[0-9]+)?|[+-]?[0-9]+[eE][+-]?[0-9]+/,
 });
 export const IntegerNumber = createToken({
   name: "IntegerNumber",
@@ -366,7 +373,7 @@ export const defaultModeTokens: TokenType[] = [
   PlusEq, MinusEq, StarEq, SlashEq, PercentEq,
   AmpersandEq, PipeEq, CaretEq, TildeEq,
   ExclamationEq, EqualEq, ColonEq,
-  Spread,
+  Spread, Range,
   // Brackets
   LParen, RParen, LBracket, RBracket, LBrace, RBrace,
   LAngle, RAngle,
@@ -412,7 +419,7 @@ export const formatExprModeTokens: TokenType[] = [
   PlusEq, MinusEq, StarEq, SlashEq, PercentEq,
   AmpersandEq, PipeEq, CaretEq, TildeEq,
   ExclamationEq, EqualEq, ColonEq,
-  Spread,
+  Spread, Range,
   // Brackets - FormatExprStart pushes another format_expr_mode for nesting
   LParen, RParen, LBracket, RBracket,
   FormatExprStart, FormatExprEnd, // {} with mode push/pop for nesting

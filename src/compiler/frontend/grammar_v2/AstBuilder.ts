@@ -536,6 +536,19 @@ export class LLangAstBuilder extends BaseCstVisitor {
       });
     }
 
+    // `(lo .. hi)` -- the RANGE operator (D46/B-0). DESUGARED here to a `(Range lo hi nil true)`
+    // construction (std/iter): inclusive by default, step nil (Range fills in +1/-1 by direction).
+    // `.by`/`.exclusive` are plain methods on the result. Kept as pure desugar -- no dedicated node,
+    // no new lowering -- so type inference, codegen and iteration all treat a range as an ordinary
+    // Iterable construction. Exactly one expr each side (the `..` binds two operands); anything else
+    // keeps the list shape and the type stage reports it, mirroring the `:of` fall-through above.
+    if (ctx.Range && nodes.length === 2) {
+      const head = this.makeNode("simple-identifier", ctx, { id: "Range" });
+      const stepNil = this.makeNode("null", ctx, { keyword: "nil" });
+      const inclusive = this.makeNode("boolean", ctx, { value: true });
+      return this.makeNode("list", ctx, { nodes: [head, nodes[0], nodes[1], stepNil, inclusive] });
+    }
+
     return this.makeNode("list", ctx, { nodes });
   }
 
