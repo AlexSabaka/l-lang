@@ -107,7 +107,7 @@ spreadExpr             ::= <Spread> expression ;
 <Ampersand>             ::= /&(?![=&])/
 <AsModKw>               ::= /:as(?![a-zA-Z0-9_-])/
 <BareKeyword>           ::= (category / programmatic token) -- a token CATEGORY (Lexer.NA)
-<BinaryNumber>          ::= /0b[01]+/
+<BinaryNumber>          ::= /0b[01]+(?:_[01]+)*/
 <Caret>                 ::= /\^(?!=)/
 <Colon>                 ::= /:(?!=)/
 <Comment>               ::= /;[^\n\r]*/
@@ -119,25 +119,25 @@ spreadExpr             ::= <Spread> expression ;
 <Equal>                 ::= /=(?![=>])/
 <Exclamation>           ::= /!(?!=)/
 <ExtendsModKw>          ::= /:extends(?![a-zA-Z0-9_-])/
-<FloatNumber>           ::= /[+-]?[0-9]+\.(?!\.)[0-9]*([eE][+-]?[0-9]+)?|[+-]?[0-9]+[eE][+-]?[0-9]+/
+<FloatNumber>           ::= /[+-]?[0-9]+(?:_[0-9]+)*\.(?!\.)(?:[0-9]+(?:_[0-9]+)*)?(?:[eE][+-]?[0-9]+)?|[+-]?[0-9]+(?:_[0-9]+)*[eE][+-]?[0-9]+/
 <FormatExprEnd>         ::= /\}/
 <FormatExprStart>       ::= /\{/
 <FormattedStringEnd>    ::= /"/
 <FormattedStringStart>  ::= /'"/
 <FractionNumber>        ::= /[+-]?[0-9]+\/[0-9]+/
 <FromModKw>             ::= /:from(?![a-zA-Z0-9_-])/
-<HexNumber>             ::= /0x[0-9a-fA-F]+/
+<HexNumber>             ::= /0x[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*/
 <Identifier>            ::= /[a-zA-Z_\u0080-\uFFFF][a-zA-Z0-9_\-\u0080-\uFFFF]*/
 <ImplementsModKw>       ::= /:implements(?![a-zA-Z0-9_-])/
 <InitModKw>             ::= /:init(?![a-zA-Z0-9_-])/
-<IntegerNumber>         ::= /[+-]?[0-9]+/
+<IntegerNumber>         ::= /[+-]?[0-9]+(?:_[0-9]+)*/
 <LAngle>                ::= /<(?![-=])/
 <LBrace>                ::= /\{/
 <LBracket>              ::= /\[/
 <LParen>                ::= /\(/
 <Minus>                 ::= /-(?![=>])/
 <ModKeyword>            ::= (category / programmatic token) -- a token CATEGORY (Lexer.NA)
-<OctalNumber>           ::= /0[0-7]+/
+<OctalNumber>           ::= /0o[0-7]+(?:_[0-7]+)*/
 <OfModKw>               ::= /:of(?![a-zA-Z0-9_-])/
 <OnModKw>               ::= /:on(?![a-zA-Z0-9_-])/
 <OperatorIdent>         ::= /[*+\-\\/^&%$#@!~=|<>?]+/

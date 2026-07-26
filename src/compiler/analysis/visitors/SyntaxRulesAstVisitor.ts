@@ -33,6 +33,38 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
    * a parse as a CALL to an undefined function named `defmacro` (PEG). Both frontends now parse the
    * form, purely so that it can be refused here, by name, with a location.
    */
+  /**
+   * D71 -- a leading zero names no radix, so it is refused rather than guessed at.
+   *
+   * Both number kinds that can carry one are checked, against the digits BEFORE any `.` or exponent:
+   * `007`, `0_1` and `00.5` all fire; `0`, `0.5`, `0e3` and `0.0` do not. `match` has already had its
+   * digit separators stripped by the builder, which is what makes `0_1` fire -- it arrives as `01`,
+   * and the leading zero the author wrote is still the leading zero the rule sees.
+   *
+   * The prefixed radices never reach here: `0x`, `0b` and `0o` lex as their own token kinds, so their
+   * leading zero is part of a prefix rather than a digit.
+   */
+  private checkLeadingZero(node: ast.ASTNode, text: string | undefined) {
+    if (!text) return;
+    const digits = text.replace(/^[+-]/, "").split(/[.eE]/)[0];
+    if (digits.length < 2 || digits[0] !== "0") return;
+    const trimmed = digits.replace(/^0+/, "") || "0";
+    this.report(SD.LeadingZeroNumber, node, {
+      literal: text,
+      suggestion: text.replace(digits, trimmed),
+    });
+  }
+
+  visitIntegerNumber(node: ast.IntegerNumberNode) {
+    this.checkLeadingZero(node, (node as any).match);
+    return node;
+  }
+
+  visitFloatNumber(node: ast.FloatNumberNode) {
+    this.checkLeadingZero(node, (node as any).match);
+    return node;
+  }
+
   visitMacroDef(node: ast.MacroDefNode) {
     const name = (node.name as any)?.id;
     this.report(SD.MacroNotImplemented, node, {

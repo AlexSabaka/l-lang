@@ -151,8 +151,12 @@ const CASES: SmokeCase[] = [
     },
   },
   {
+    // Octal is `0o17` as of D71. It was `017` here, which pinned the bare leading-zero form the spec
+    // rejects by name -- and which meant 15. That spelling now lexes as an ordinary integer so the
+    // leading zero can be refused with a location (LL0030, pinned in 90-diagnostics); this case
+    // pins the replacement.
     name: "all 7 numeric literal forms",
-    source: "(let nums (list 42 3.14 0xFF 0b1010 017 1/3 3.0+4.0i))",
+    source: "(let nums (list 42 3.14 0xFF 0b1010 0o17 1/3 3.0+4.0i))",
     check: ({ ast }) => {
       const variable = unwrapList(ast.program[0]);
       const listCall = variable.value; // (list ...) -- a real multi-child call, not unwrapped
@@ -164,6 +168,24 @@ const CASES: SmokeCase[] = [
             "octal-number", "fraction-number", "complex-number",
           ].join(","),
         `got ${elementTypes.join(",")}`
+      );
+    },
+  },
+  {
+    // D71 digit separators, across every radix that admits them, plus the value each carries.
+    name: "digit separators lex per radix and strip to the value",
+    source: "(let nums (list 1_000_000 1_250.75 0xDEAD_BEEF 0b1010_1010 0o1_7))",
+    check: ({ ast }) => {
+      const variable = unwrapList(ast.program[0]);
+      const nodes = variable.value.nodes.slice(1);
+      const got = nodes.map((n: any) => `${n._type}=${n.value}`).join(",");
+      assert(
+        got ===
+          [
+            "integer-number=1000000", "float-number=1250.75", "hex-number=3735928559",
+            "binary-number=170", "octal-number=15",
+          ].join(","),
+        `got ${got}`
       );
     },
   },

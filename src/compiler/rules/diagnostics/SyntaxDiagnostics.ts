@@ -56,6 +56,25 @@ export const SyntaxDiagnostics = {
       `level silently swallows the form that follows it.`
   ),
 
+  // LL0030 (D71) -- a numeric literal with a leading zero.
+  //
+  // The radix is named by a PREFIX or it is decimal: `0x` hex, `0b` binary, `0o` octal, a `.` for a
+  // Real, and otherwise a decimal integer starting with a significant digit. A leading zero names
+  // nothing, and in C-family languages it silently names octal -- which is precisely the trap this
+  // refuses. `0` itself is fine, and so is `0.5`; the rule only bites when digits FOLLOW the zero.
+  //
+  // Refusing is not optional here. Dropping the old bare-octal token without this would have left
+  // `017` matching as a decimal integer, so a literal that means 15 today would quietly start meaning
+  // 17 -- one silent wrong answer swapped for another, which is worse than either alone.
+  LeadingZeroNumber: def<{ literal: string; suggestion: string }>(
+    "LL0030",
+    Error,
+    (p) =>
+      `'${p.literal}' has a leading zero, which names no radix. Write '${p.suggestion}' for the ` +
+      `decimal value, or '0o…' for octal, '0x…' for hex, '0b…' for binary. A leading zero is octal ` +
+      `in the C family and decimal here, so it is refused rather than quietly read as one of them.`
+  ),
+
   // LL0023 -- D3: `defmacro`/`defsyntax` are reserved but not implemented in 0.x
   // LL0241 (D46/B-3) -- a `defcast` must say WHEN it fires.
   //

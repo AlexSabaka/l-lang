@@ -393,6 +393,14 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "at runtime (D51: a literal is a BigInt only where the checker typed it). So it is a checker " +
       "question, and this pins the diagnostic. `(get v (Math.trunc 1.7))` is the supported spelling.",
   },
+  "90-diagnostics/ll0030_leading_zero.lisp": {
+    status: "negative", codes: ["LL0030"],
+    reason:
+      "D71: a leading zero names no radix -> LL0030. This pins what makes retiring bare-octal safe: " +
+      "`OctalNumber` was `/0[0-7]+/`, so `017` meant 15, while the required `0o17` did not lex at " +
+      "all. Dropping the old token alone would leave `017` matching as DECIMAL 17 -- the same source " +
+      "silently changing meaning -- so the leading zero is refused rather than re-read.",
+  },
   "90-diagnostics/ll0100_hex_number.lisp": {
     status: "negative", codes: ["LL0100"],
     reason:

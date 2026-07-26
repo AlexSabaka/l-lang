@@ -300,28 +300,44 @@ export const FractionNumber = createToken({
   name: "FractionNumber",
   pattern: /[+-]?[0-9]+\/[0-9]+/,
 });
+// D71 -- `_` is a digit-group SEPARATOR: `1_000_000`, `0xDEAD_BEEF`, `0b1010_1010`.
+//
+// Python's strict rule, not C#'s: a single `_` BETWEEN digit groups, so `_1`, `1_` and `1__0` are all
+// rejected. C# tolerates `1__000` and gains nothing for it. Every radix gets the same treatment, and
+// the shape is always `<digits>(_<digits>)*` -- which cannot end in `_` by construction.
+//
+// The ordering matters and is a trap rather than a preference: `_` is an IDENTIFIER character and
+// `Identifier` is greedy, so these patterns must stay ahead of it in the token array. If `1_000` ever
+// fell through to `1` followed by the identifier `_000`, that is two perfectly valid tokens -- a
+// silent wrong answer rather than a lex error.
 export const HexNumber = createToken({
   name: "HexNumber",
-  pattern: /0x[0-9a-fA-F]+/,
+  pattern: /0x[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*/,
 });
 export const BinaryNumber = createToken({
   name: "BinaryNumber",
-  pattern: /0b[01]+/,
+  pattern: /0b[01]+(?:_[01]+)*/,
 });
+// `0o17`, and ONLY `0o17` (D71). This was `/0[0-7]+/` -- bare leading-zero octal, the form the spec
+// rejects by name, while the `0o` form it requires did not exist at all. `017` therefore meant 15,
+// silently. It now falls through to `IntegerNumber`, which matches it whole so that the leading zero
+// can be REFUSED with a location (LL0030) rather than quietly re-read as decimal 17: without that
+// refusal this change would trade one silent wrong answer for a different one.
 export const OctalNumber = createToken({
   name: "OctalNumber",
-  pattern: /0[0-7]+/,
+  pattern: /0o[0-7]+(?:_[0-7]+)*/,
 });
 export const FloatNumber = createToken({
   name: "FloatNumber",
   // `(?!\.)` after the dot: `0.5` and trailing-dot `1.` still lex as floats, but `0..100` no longer has
   // its first dot swallowed into a `0.` float (which would leave a stray `.100`). Lets the `..` RANGE
   // operator sit flush against an integer -- `0..100` tokenizes as `0 .. 100`, same as `0 .. 100`.
-  pattern: /[+-]?[0-9]+\.(?!\.)[0-9]*([eE][+-]?[0-9]+)?|[+-]?[0-9]+[eE][+-]?[0-9]+/,
+  pattern:
+    /[+-]?[0-9]+(?:_[0-9]+)*\.(?!\.)(?:[0-9]+(?:_[0-9]+)*)?(?:[eE][+-]?[0-9]+)?|[+-]?[0-9]+(?:_[0-9]+)*[eE][+-]?[0-9]+/,
 });
 export const IntegerNumber = createToken({
   name: "IntegerNumber",
-  pattern: /[+-]?[0-9]+/,
+  pattern: /[+-]?[0-9]+(?:_[0-9]+)*/,
 });
 // Formatted String Tokens (lexer mode switching)
 export const FormattedStringStart = createToken({

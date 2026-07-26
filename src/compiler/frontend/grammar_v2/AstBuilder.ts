@@ -264,36 +264,49 @@ export class LLangAstBuilder extends BaseCstVisitor {
         denominator: parseInt(denom, 10),
       });
     }
+    // D71 -- digit separators are stripped HERE, at the single point where a token becomes a node, so
+    // that no consumer downstream has to know they exist.
+    //
+    // This is a correctness requirement, not tidiness. `ResolveHirToCir` reads `node.match` as "the
+    // only lossless copy on the node" and guards it with `/^[+-]?\d+$/` before trusting it -- an
+    // underscore fails that guard, the site falls back to `String(node.value)`, and a JS number has
+    // already rounded anything past 2^53. Leaving separators in `match` would therefore have
+    // reintroduced, for exactly the literals big enough to need grouping, the precision bug those two
+    // sites exist to fix. `value` needs it too: `parseInt("1_000", 10)` is 1.
+    const bare = (s: string) => s.replace(/_/g, "");
     if (ctx.HexNumber) {
-      const match = ctx.HexNumber[0].image;
+      const match = bare(ctx.HexNumber[0].image);
       return this.makeNode("hex-number", ctx, {
         match: match.slice(2), // Remove 0x
         value: parseInt(match, 16),
       });
     }
     if (ctx.BinaryNumber) {
-      const match = ctx.BinaryNumber[0].image;
+      const match = bare(ctx.BinaryNumber[0].image);
       return this.makeNode("binary-number", ctx, {
         match: match.slice(2), // Remove 0b
         value: parseInt(match.slice(2), 2),
       });
     }
     if (ctx.OctalNumber) {
-      const match = ctx.OctalNumber[0].image;
+      const match = bare(ctx.OctalNumber[0].image);
       return this.makeNode("octal-number", ctx, {
-        match,
-        value: parseInt(match, 8),
+        match: match.slice(2), // Remove 0o
+        // `.slice(2)` is load-bearing now that the prefix is `0o` rather than a bare leading zero:
+        // `parseInt("0o17", 8)` is 0, because parseInt stops at the first character outside the radix.
+        // The old form was `parseInt("017", 8)` -- which worked, and meant 15.
+        value: parseInt(match.slice(2), 8),
       });
     }
     if (ctx.FloatNumber) {
-      const match = ctx.FloatNumber[0].image;
+      const match = bare(ctx.FloatNumber[0].image);
       return this.makeNode("float-number", ctx, {
         match,
         value: parseFloat(match),
       });
     }
     if (ctx.IntegerNumber) {
-      const match = ctx.IntegerNumber[0].image;
+      const match = bare(ctx.IntegerNumber[0].image);
       return this.makeNode("integer-number", ctx, {
         match,
         value: parseInt(match, 10),
