@@ -124,6 +124,37 @@ interface TestResult {
 
 type Classification = { status: ExampleStatus | 'undeclared'; reason?: string; codes?: string[] };
 
+/**
+ * A sibling `<name>.panic` declares that the example is EXPECTED to die at run time -- the corpus
+ * form for a contract violation that is deliberately not catchable (a D46 refinement breach today;
+ * whatever else panics later). Its content is a SUBSTRING that must appear in the child's stderr.
+ *
+ * Substring, not byte-equality, because the two backends cannot agree on the envelope and should not
+ * have to: an uncaught JS `throw` prints a V8 stack trace, C prints one `fprintf` line and `exit(1)`.
+ * The shared truth is the message. `.expect` keeps its usual job -- the stdout produced BEFORE the
+ * panic -- so a panic test still grades everything the program managed to print.
+ */
+function panicExpectationFor(lispPath: string): string | undefined {
+  const panicPath = lispPath.replace(/\.lisp$/, '.panic');
+  if (!fs.existsSync(panicPath)) return undefined;
+  return fs.readFileSync(panicPath, 'utf-8').trim();
+}
+
+/**
+ * Grade a finished child against a `.panic` expectation. Returns a failure message, or undefined
+ * when the panic happened exactly as declared. `status === 0` is a failure of its own: an example
+ * that stopped panicking is a REGRESSION in the check being guarded, not a quiet pass.
+ */
+function gradePanic(expected: string, status: number | null, stderr: string): string | undefined {
+  if (status === 0) return `expected a panic (${JSON.stringify(expected)}), but it exited 0`;
+  if (!stderr.includes(expected)) {
+    return `expected a panic containing ${JSON.stringify(expected)}, but stderr was: ${
+      stderr.split('\n').find((l) => l.trim()) ?? '(empty)'
+    }`;
+  }
+  return undefined;
+}
+
 // Every .lisp is either declared in the manifest, or has a matching .expect (implicitly
 // 'test'), or it's undeclared -- a hard error, not a silent skip.
 function classify(lispPath: string): Classification {
@@ -301,11 +332,18 @@ function runCTest(lispPath: string): TestResult {
 
   // Step 3: run the binary against the same golden the JS suite uses.
   const run = spawnWithRetry(binPath, [], { encoding: 'utf-8', timeout: RUN_TIMEOUT_MS, env: CHILD_ENV });
-  if (run.error || run.status !== 0) {
-    const why = run.error
-      ? (run.error as any).code === 'ETIMEDOUT' ? `timeout after ${RUN_TIMEOUT_MS}ms, twice (retried)` : run.error.message
-      : `exit code ${run.status}`;
+  const panic = panicExpectationFor(lispPath);
+  // A timeout is never a panic -- it is a hang, and `run.error` still has to be fatal.
+  if (run.error) {
+    const why = (run.error as any).code === 'ETIMEDOUT'
+      ? `timeout after ${RUN_TIMEOUT_MS}ms, twice (retried)` : run.error.message;
     return { name: fileName, status: softStatus ?? 'error', message: `runtime: ${why}`, actual: run.stdout, stderr: run.stderr };
+  }
+  if (panic !== undefined) {
+    const why = gradePanic(panic, run.status, run.stderr || '');
+    if (why) return { name: fileName, status: softStatus ?? 'fail', message: why, actual: run.stdout, stderr: run.stderr };
+  } else if (run.status !== 0) {
+    return { name: fileName, status: softStatus ?? 'error', message: `runtime: exit code ${run.status}`, actual: run.stdout, stderr: run.stderr };
   }
 
   const expected = normalizeOutput(fs.readFileSync(expectPath, 'utf-8'));
@@ -412,7 +450,13 @@ function runTest(lispPath: string): TestResult {
       };
     }
 
-    if (run.status !== 0) {
+    const panic = panicExpectationFor(lispPath);
+    if (panic !== undefined) {
+      const why = gradePanic(panic, run.status, run.stderr || '');
+      if (why) {
+        return { name: fileName, status: softStatus ?? 'fail', message: why, actual: run.stdout, stderr: run.stderr };
+      }
+    } else if (run.status !== 0) {
       return {
         name: fileName,
         status: softStatus ?? 'error',

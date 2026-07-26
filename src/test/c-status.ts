@@ -503,6 +503,10 @@ export const C_PASSING: readonly string[] = [
   // bounds `(0 ..)` too. Range CHECKS (rejecting out-of-range values) are the next increment. Guards
   // that valid refined-type programs run byte-identically on both backends.
   "16-stdlib/13_refinement.lisp",
+  // The SAD path of the same feature, and the corpus's first `.panic` example: an out-of-range value
+  // kills the process on both backends with the same message (JS throws, C fprintf + exit 1). Until
+  // this landed, the panic was only ever verified by hand -- the happy path was the only thing graded.
+  "80-adversarial/refinement_panic.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.
