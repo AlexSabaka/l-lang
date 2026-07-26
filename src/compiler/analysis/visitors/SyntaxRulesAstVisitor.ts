@@ -6,9 +6,11 @@ import {
   builtinModifiersFor,
   collectDefinedModifiers,
   collectAnnotationDeclarations,
+  collectDeclaredAnnotations,
   suggestModifier,
   RESERVED_NATIVE_MODIFIERS,
 } from "../../helpers/modifiers";
+import { literalValueOf } from "../../helpers/literals";
 
 export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
   /**
@@ -18,8 +20,13 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
    */
   private definedModifiers: Set<string> = new Set();
 
+  /** D72: this module's `defmodifier` / `defattribute` names, with role and declared arity. */
+  private declaredAnnotations: Map<string, { kind: "decorator" | "attribute"; arity: number }> =
+    new Map();
+
   visitProgram(node: ast.ProgramNode) {
     this.definedModifiers = collectDefinedModifiers(node);
+    this.declaredAnnotations = collectDeclaredAnnotations(node);
     this.refinedTypeNames = collectRefinedTypeNames(node);
     this.checkAnnotationCollisions(node);
     return node;
@@ -34,6 +41,40 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
    * into an attribute that wraps nothing. Reported at the SECOND declaration, where the conflict is
    * introduced.
    */
+  /**
+   * The two ways a USE of a declared `:name` can be wrong (D72). Builtins are neither -- they take no
+   * arguments, and the compiler decides for itself where each is legal.
+   *
+   * A DECORATOR ON A CLASS is deliberately NOT among these, having been tried and withdrawn. The
+   * refusal looked obviously right -- a `defmodifier` returning `(fn [original] (fn [...args] …))`
+   * hands back a plain arrow, so `new` on the result throws -- but the corpus disproves the
+   * generalisation: `Qf/AF-019` pins a PASS-THROUGH decorator, `(fn [original] (console.log …)
+   * original)`, which returns the class untouched and works. So a class decorator is wrong only for
+   * SOME shapes, and which one a `defmodifier` returns is not decidable in general; a hard error
+   * built on a heuristic would break code that runs today. The runtime `TypeError` stands for the
+   * wrapping shape, and `defattribute` is the portable answer for annotating a declaration.
+   */
+  private checkAnnotationUse(node: ast.ModifierNode, name: string, construct: string | undefined) {
+    const declared = this.declaredAnnotations.get(name);
+    if (!declared) return;
+    const args = node.args ?? [];
+
+    // LL0033 -- declared arguments, none supplied. Overwhelmingly a SPACED bracket, which D68-a's
+    // adjacency gate stopped silently absorbing; without this the author gets a parse error pointing
+    // at whatever the spaced vector collided with instead.
+    if (declared.arity > 0 && args.length === 0) {
+      this.report(SD.ModifierArgsNotAdjacent, node, { name, arity: declared.arity });
+      return;
+    }
+
+    // LL0032 -- an attribute argument that has to be evaluated. An attribute is data; the metadata
+    // table is emitted as data and never runs. A decorator's arguments are deliberately NOT checked:
+    // they may be any expression, as they always could, and only the literal ones are reflected.
+    if (declared.kind === "attribute" && args.some((a) => literalValueOf(a) === undefined)) {
+      this.report(SD.AttributeArgNotLiteral, node, { name });
+    }
+  }
+
   private checkAnnotationCollisions(node: ast.ProgramNode) {
     const describe = (k: "decorator" | "attribute") =>
       k === "attribute" ? "an attribute (defattribute)" : "a decorator (defmodifier)";
@@ -131,6 +172,7 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
 
     const builtins = builtinModifiersFor(construct);
     if (builtins.includes(name) || this.definedModifiers.has(name)) {
+      this.checkAnnotationUse(node, name, construct);
       return node;
     }
 

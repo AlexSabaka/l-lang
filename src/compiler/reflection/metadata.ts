@@ -1,5 +1,6 @@
 import type { Context } from "../Context";
 import { TypeChecker } from "../types/TypeChecker";
+import { literalValueOf } from "../helpers/literals";
 
 /**
  * The reflection metadata graph -- ONE builder, both backends (D54).
@@ -33,31 +34,10 @@ export function enumMemberValue(keyNode: any, ordinal: number): number | string 
   return typeof lit === "boolean" ? undefined : lit;
 }
 
-/**
- * An AST node's value, if it is a LITERAL the metadata graph can carry; otherwise undefined.
- *
- * The metadata table is data emitted at startup, not code, so only a literal can reach it. Every
- * caller answers "I do not know" for anything else rather than guessing -- that posture is why a
- * non-literal enum value reports nil instead of falling back to an ordinal that would disagree with
- * what the program computes.
- *
- * A `string` node's `value` is already unquoted and unescaped by the builder, so it needs no further
- * treatment here.
- */
-export function literalValueOf(node: any): string | number | boolean | undefined {
-  if (!node || typeof node !== "object") return undefined;
-  switch (node._type) {
-    case "integer-number":
-    case "float-number":
-      return typeof node.value === "number" ? node.value : undefined;
-    case "string":
-      return typeof node.value === "string" ? node.value : undefined;
-    case "boolean":
-      return typeof node.value === "boolean" ? node.value : undefined;
-    default:
-      return undefined;
-  }
-}
+// `literalValueOf` moved to `helpers/literals.ts` once the SYNTAX rules needed it too (D72/LL0033):
+// they run before the symbol table exists, and importing it from here would have pulled `TypeChecker`
+// into that pass. Re-exported so existing readers of this module keep their import.
+export { literalValueOf } from "../helpers/literals";
 
 export function renderMetadataType(t: any): string {
   if (!t) return 'Any';

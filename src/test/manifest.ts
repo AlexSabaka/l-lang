@@ -393,6 +393,22 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "at runtime (D51: a literal is a BigInt only where the checker typed it). So it is a checker " +
       "question, and this pins the diagnostic. `(get v (Math.trunc 1.7))` is the supported spelling.",
   },
+  "90-diagnostics/ll0032_attribute_arg_not_literal.lisp": {
+    status: "negative", codes: ["LL0032"],
+    reason:
+      "D72: an attribute is DATA, carried in a metadata table both backends emit as data and never " +
+      "evaluate -- which is why annotations need no evaluator and work on C. A non-literal argument " +
+      "was previously accepted and then silently dropped from the graph, leaving the annotation " +
+      "present with its arguments missing. A DECORATOR's arguments stay unrestricted.",
+  },
+  "90-diagnostics/ll0033_modifier_args_not_adjacent.lisp": {
+    status: "negative", codes: ["LL0033"],
+    reason:
+      "D68-a's logged debt, paid by D72's registry. Adjacency-gating the argument bracket made three " +
+      "unreachable forms parse and turned `:retry [4]` from working-by-accident into a parse error " +
+      "some distance from the mistake. The DECLARED ARITY is what makes it legible: one argument " +
+      "declared, none supplied.",
+  },
   "90-diagnostics/ll0031_duplicate_annotation.lisp": {
     status: "negative", codes: ["LL0031"],
     reason:

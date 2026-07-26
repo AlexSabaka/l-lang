@@ -90,6 +90,38 @@ export const SyntaxDiagnostics = {
       `once: they share one namespace so that reading ':${p.name}' tells you what it does. Rename one.`
   ),
 
+  // LL0032 (D72) -- an attribute argument that is not a literal.
+  //
+  // An attribute is DATA, carried in a metadata table that is emitted as data -- which is exactly why
+  // it needs no evaluator and works on C. An argument that has to be run to be read is not data, and
+  // silently dropping it would leave the annotation present with its arguments missing.
+  AttributeArgNotLiteral: def<{ name: string }>(
+    "LL0032",
+    Error,
+    (p) =>
+      `an argument of ':${p.name}' is not a literal. An attribute is DATA -- it is carried in the ` +
+      `reflection metadata, which is emitted as data and never evaluated -- so its arguments must be ` +
+      `strings, numbers or booleans. A value that has to be computed belongs to a decorator ` +
+      `(defmodifier), which runs.`
+  ),
+
+  // LL0033 (D68-a's debt) -- arguments that were almost certainly written SPACED.
+  //
+  // D68-a gated a modifier's argument bracket on adjacency, which fixed three constructs and turned
+  // one working-by-accident spelling into an unhelpful error further along the line: `:retry [4]`
+  // parses as a bare `:retry` followed by a vector, and the vector is then read as whatever the
+  // construct expects next. The declared arity is what makes this legible -- `:retry` takes one
+  // argument and was given none, and there is exactly one likely reason.
+  ModifierArgsNotAdjacent: def<{ name: string; arity: number }>(
+    "LL0033",
+    Error,
+    (p) =>
+      `':${p.name}' declares ${p.arity} argument${p.arity === 1 ? "" : "s"} but was applied with ` +
+      `none. Arguments must be ADJACENT to the modifier name -- write ':${p.name}[…]', not ` +
+      `':${p.name} […]', because a spaced bracket belongs to the declaration (its parameter list, or ` +
+      `its destructuring pattern) rather than to the modifier.`
+  ),
+
   // LL0023 -- D3: `defmacro`/`defsyntax` are reserved but not implemented in 0.x
   // LL0241 (D46/B-3) -- a `defcast` must say WHEN it fires.
   //

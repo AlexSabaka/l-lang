@@ -5669,3 +5669,31 @@ break working code. So a non-literal argument is ABSENT from the graph rather th
 The whole `args` key is dropped unless every argument survived, rather than a partial list: positional
 arguments read by index, so a list missing its middle element does not say "incomplete", it says
 something false.
+
+### Refusals (D72-c), and one WITHDRAWN
+
+**LL0032 — an attribute argument that is not a literal.** Previously accepted and then silently dropped
+from the graph, leaving the annotation present with its arguments missing, which reads to any caller as
+"this attribute takes none". A decorator's arguments stay unrestricted.
+
+**LL0033 — D68-a's logged debt, paid.** Adjacency-gating the argument bracket turned `:retry [4]` from
+working-by-accident into a parse error some distance from the mistake. The DECLARED ARITY is what makes
+it legible, which is why the diagnostic had to wait for this round's registry: one argument declared,
+none supplied, and in practice exactly one reason for that.
+
+**A decorator on a class is NOT refused — tried, and withdrawn on evidence.** D68 and this decision both
+asserted there is no way to write a class-shaped decorator, so applying one should be an error. That
+generalisation is wrong, and the corpus already contained the counterexample: `Qf/AF-019` pins a
+PASS-THROUGH decorator, `(fn [original] (console.log …) original)`, which returns the class untouched
+and works. The measurement behind the claim had covered only the WRAPPING shape,
+`(fn [original] (fn [...args] …))`, which returns a plain arrow and does throw.
+
+So a class decorator is wrong for some shapes and right for others, and which one a `defmodifier`
+returns is not decidable in general — a hard error resting on a heuristic would break code that runs
+today. Three things make leaving it alone the right call rather than a shrug: a class decorator is
+JS-only regardless, since C refuses every decorator; JS is oracle-only under D66; and `defattribute`
+now serves the actual use case — annotating a declaration — portably and on every construct. The
+runtime `TypeError` stands for the wrapping shape.
+
+The lesson is the reusable part: "there is no way to write X" is a claim about a search, and the corpus
+is where to run it.
