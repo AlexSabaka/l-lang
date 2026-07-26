@@ -31,7 +31,9 @@ import { formatLogMessage, getCaller } from "./utils";
 import chalk from "chalk";
 import { PerformanceMetrics } from "./PerformanceMetrics";
 
-export const VERSION = "0.0.1";
+import packageJson from "../package.json";
+
+export const VERSION = packageJson.version;
 
 export enum LogLevel {
   Verbose,

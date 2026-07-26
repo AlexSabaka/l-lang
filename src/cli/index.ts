@@ -6,20 +6,22 @@ import { transform } from "./commands/command.transform";
 import { run } from "./commands/command.run";
 import { repl } from "./commands/command.repl";
 import { clean } from "./commands/command.clean";
-import { parseV2 } from "./commands/command.parseV2";
 
 const program = new Command();
 
 program
   .name("l-lang compiler")
-  .description("A l-lang (Lisp dialect) JavaScript compiler")
+  .description("A l-lang compiler")
   .option("-o, --output <file>", "output file")
   .option("-L, --log-level <level>", "log level")
   .option("-l, --log-file <file>", "log file")
+  // TODO: watch mode is not working
   .option("-w, --watch", "watch for changes and recompile")
+  // TODO: CollectTypesPass and InferTypesAstVisitor dominate the debug log. No other contributors.
   .option("-d, --debug", "debug mode")
   .option("-s, --silent", "silent mode")
-  .option("--language <lang>", "target backend: js (default), llang, c")
+  .option("--backend <lang>", "target backend: js (default), llang, c")
+  .option("--language <lang>", "alias for --backend")
   .option(
     "-I, --lib <dir>",
     "add a library search root for `(import \"std/...\")` (repeatable). The shipped lib/ is always searched.",
@@ -63,12 +65,6 @@ program
   .description("run a l-lang file")
   .argument("[file]", "the l-lang file to run")
   .action((file) => run(file, program));
-
-program
-  .command("parse-v2")
-  .description("parse a l-lang file with the grammar_v2 (Chevrotain) frontend -- not the default parser, for inspection only")
-  .argument("<file>", "l-lang file to parse")
-  .action((file) => parseV2(file));
 
 program
   .command("repl")

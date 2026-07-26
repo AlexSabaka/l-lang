@@ -62,10 +62,13 @@ export function getCompilerOptions(
     logLevel = LogLevel.Error;
   }
 
-  const language: CompilationLanguage = opts.language || "js";
+  // `--backend` is the preferred spelling; `--language` is kept as the historical alias. Commander
+  // stores them under separate keys, so both must be read or the newer flag silently does nothing.
+  const requested = opts.backend || opts.language;
+  const language: CompilationLanguage = requested || "js";
   if (!VALID_LANGUAGES.includes(language)) {
     throw new Error(
-      `Invalid --language '${opts.language}'. Valid values are: ${VALID_LANGUAGES.join(", ")}`
+      `Invalid --backend '${requested}'. Valid values are: ${VALID_LANGUAGES.join(", ")}`
     );
   }
 

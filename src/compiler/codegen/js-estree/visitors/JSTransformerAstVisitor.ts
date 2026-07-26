@@ -4,7 +4,7 @@ import { generate } from "astring";
 import * as ast from "../../../frontend/ast";
 import { classifyList, isDottedMemberIndexer } from "../../../analysis/listForm";
 import { BaseAstVisitor } from "../../../BaseAstVisitor";
-import { Context, LogLevel, VERSION } from "../../../Context";
+import { Context, LogLevel } from "../../../Context";
 import { ScopeType, SymbolEntry, InferredType } from "../../../analysis/SymbolTable";
 import { RuntimeProvider } from "../../../runtime";
 import {
@@ -14,7 +14,6 @@ import {
   asMemberKey,
 } from "../../../utils";
 import { CodegenDiagnostics as CD } from "../../../rules/diagnostics";
-import { TypeChecker } from "../../../types/TypeChecker";
 import { shouldCopyOnStore, shouldCopyParam } from "../../../hir/valueCopy";
 import { isBuiltinModifier, hasModifier } from "../../../helpers/modifiers";
 import * as acorn from "acorn";
@@ -30,7 +29,6 @@ import {
 import type { HBlock } from "../../../hir";
 import { SourceMapGenerator } from "source-map";
 import path from "path";
-import { formatWithOptions } from "util";
 import { DesugarAstVisitor } from "../../../transformation/visitors/DesugarAstVisitor";
 import { buildTypesMetadata } from "../../../reflection/metadata";
 

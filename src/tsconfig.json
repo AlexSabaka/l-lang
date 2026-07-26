@@ -4,6 +4,7 @@
     "declaration": false,
     "declarationMap": false,
     "esModuleInterop": true,
+    "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true,
     "module": "CommonJS",
     "moduleResolution": "Node",
