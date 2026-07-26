@@ -1,0 +1,13 @@
+kind: enum
+is-enum: true
+class is not: false
+names: ["up" "down" "left" "right"]
+ordinal: 2
+explicit: 404
+after explicit: 2
+agrees with the fold: true
+and for an explicit one: true
+name of 404: missing
+name of 999 is empty: true
+unknown: nil
+folded: 404 3

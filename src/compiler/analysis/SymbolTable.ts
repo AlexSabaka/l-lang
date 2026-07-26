@@ -281,6 +281,19 @@ export interface SymbolEntry {
   visibility: SymbolVisibility;
   // Type information integrated into symbol entry
   inferredType?: InferredType;  // The inferred or declared type of this symbol
+  /**
+   * A DESCRIPTION with no inferred type behind it (D70).
+   *
+   * Every other declaration carries its `CodegenMetadata` on `inferredType`, which is the right home
+   * when there IS one. An enum has none: `InferredType.kind` is a closed union with no `enum` arm,
+   * and `defineSymbol` leaves an enum's `inferredType` undefined. Inventing one purely to carry a
+   * description would put a new arm through `isAssignable` and the checker -- changing what programs
+   * type-check, as a side effect of a reflection feature.
+   *
+   * So the description hangs here instead, and `getAllTypeMetadata` reads both. It says exactly what
+   * is true: describable, not typed.
+   */
+  codegenMetadata?: CodegenMetadata;
   // Generic modifier storage
   modifiers: Set<string>;       // All modifier names (normalized, without colon prefix)
   
@@ -376,7 +389,10 @@ export class SymbolTable {
     const metadata = new Map<string, CodegenMetadata>();
 
     for (const [name, entry] of this.getAllSymbols().entries()) {
-      const md = entry.inferredType?.codegenMetadata;
+      // `entry.codegenMetadata` is the second home, for a declaration that is describable without
+      // being typed -- an enum (D70). See the field's own comment for why it does not ride
+      // `inferredType` like everything else.
+      const md = entry.inferredType?.codegenMetadata ?? entry.codegenMetadata;
       if (!md) continue;
       if ((entry.value as any)?.extern) continue;
       metadata.set(name, md);

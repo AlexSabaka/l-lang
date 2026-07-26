@@ -5486,7 +5486,7 @@ spellings (`e_scrachpad.lisp:33` adjacent, `:21` spaced), which is a fair sign t
 correctly before anyone is told it exists. Resolves all three ambiguity sites mechanically, and lets
 `castDefDecl` drop its special case.
 
-**ALL THREE are discoverable in RTTI.** Not attributes alone: a decorator is part of a declaration's
+**ALL THREE are discoverable in RTTI — BUILT (D68-b, `cc4b0bd`).** Not attributes alone: a decorator is part of a declaration's
 description, and reflection that omits it is lying by omission. One `modifiers` field per `__ll_meta`
 entry, carrying each name, its arguments, and a kind tag so a caller can tell a fact from a transformer
 from an annotation. Surfaced through `std/llang/reflect` alongside the existing accessors, total in the
@@ -5560,6 +5560,28 @@ hot path changes, which is the property that makes this cheap enough to be uncon
 **Surfaced in `std/llang/reflect`** alongside the existing accessors and total in the same way they are:
 `is-enum`, member names, member values, and value→name. The last of those is the one that cannot be
 written today at any price, because the information does not survive compilation.
+
+### BUILT (D70-a) — and two things the build corrected
+
+The description hangs on the SYMBOL ENTRY, not on an inferred type. Every other declaration carries its
+`CodegenMetadata` on `inferredType`, but `InferredType.kind` is a closed union with no `enum` arm and
+`defineSymbol` leaves an enum's undefined. Inventing one purely to carry a description would have put a
+new arm through `isAssignable` and the checker — changing which programs type-check, as a side effect
+of a reflection feature. `SymbolEntry.codegenMetadata` says what is actually true: describable, not
+typed.
+
+The cause was not what this entry assumed. `CollectTypesPass.visitProgram` hand-lists the declaration
+kinds it descends into, in THREE copies of the same condition, and `enum` was missing from all three —
+so a `visitEnum` in the types pass was never reached. That is the SECOND pass to have made this exact
+omission; `BuildSymbolTableAstVisitor.visitEnum` already carries a comment about the first ("ScanPass
+defines classes, structs, interfaces and type aliases. Enums were simply left off the list"). The list
+is named once now, which is the actual fix.
+
+The member-value rule now has THREE readers — both emitters produce a node, the metadata builder
+produces a value — so they cannot share an implementation, only a policy. Pinned by a corpus case that
+gives explicit values to some members and not others: `(defenum Status :ok => 200 :missing => 404
+:teapot)` gives `:teapot` its ORDINAL, 2, not C#'s previous-plus-one 405, and the example asserts the
+metadata agrees with the fold rather than trusting that it does.
 
 ---
 

@@ -160,6 +160,42 @@
         ))
         (return out))
 
+    ;; -- enums (D70) -----------------------------------------------------------------------------
+    ;;
+    ;; An enum member is a compile-time constant and stays one: `Dir:up` compiles to its value, with no
+    ;; lookup and no allocation. What the graph adds is a DESCRIPTION, which is the part that did not
+    ;; survive compilation -- before this, `(type-by-name "Dir")` answered nil, and an enum was the one
+    ;; declaration kind reflection could not see at all.
+
+    (fn is-enum [t <- Any] -> Boolean (return (== t.kind "enum")))
+
+    ;; The members, in declaration order, each `{name, value}`.
+    (fn enum-members [t <- Any] -> Any[]
+        (let ms t.members)
+        (if (== ms nil) (return []))
+        (return ms))
+
+    (fn enum-member-names [t <- Any] -> String[]
+        (mut out <- String[] [])
+        (for :each m :from (enum-members t) :then ((out.push m.name)))
+        (return out))
+
+    ;; A member's value by name, or nil when the enum has no such member.
+    (fn enum-value [t <- Any name <- String] -> Any
+        (for :each m :from (enum-members t) :then (
+            (if (== m.name name) (return m.value))
+        ))
+        (return nil))
+
+    ;; The reverse: a value back to the member name carrying it, or "" if none does. This is the one
+    ;; that could not be written at any price before the entry existed -- at run time the value is just
+    ;; an Int, and nothing anywhere recorded what it had been called.
+    (fn enum-name-of [t <- Any value <- Any] -> String
+        (for :each m :from (enum-members t) :then (
+            (if (== m.value value) (return m.name))
+        ))
+        (return ""))
+
     ;; -- names, for callers that want strings rather than descriptors ----------------------------
 
     (fn property-names [t <- Any] -> String[]
@@ -316,8 +352,9 @@
     (export
         name-of kind-of
         type-name type-kind
-        is-class is-struct is-interface is-function is-primitive is-container
+        is-class is-struct is-interface is-function is-primitive is-container is-enum
         modifiers modifier-names has-modifier custom-modifiers
+        enum-members enum-member-names enum-value enum-name-of
         properties methods params returns ctor-params required-count generics interfaces arity
         property-names method-names param-names
         parent-name parent ancestors is-subtype-of

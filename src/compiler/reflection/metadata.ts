@@ -12,6 +12,28 @@ import { TypeChecker } from "../types/TypeChecker";
  * symbol table.
  */
 
+/**
+ * An enum member's VALUE, by the same rule both emitters fold it with (D70).
+ *
+ * The policy is "the explicit `=> v`, else the ordinal", and it is written in three places now:
+ * `JSTransformerAstVisitor.visitEnum` and `ResolveHirToCir.registerEnum` each apply it to produce a
+ * NODE (one emits an expression, the other defers resolution), and this applies it to produce a
+ * VALUE. They cannot share an implementation because the outputs differ in kind -- but they must not
+ * disagree, so the rule is stated once here and pinned by a corpus case that gives explicit values to
+ * some members and not others, which is exactly where an ordinal-vs-explicit mismatch surfaces.
+ *
+ * A member whose value is not a literal answers `undefined`, and the entry omits `value` rather than
+ * guessing. Falling back to the ordinal would be actively WRONG -- it would disagree with what the
+ * program computes -- and reflection saying "I do not know" beats reflection lying.
+ */
+export function enumMemberValue(keyNode: any, ordinal: number): number | string | undefined {
+  const v = keyNode?.value;
+  if (v === null || v === undefined) return ordinal;
+  if (v._type === "integer-number" || v._type === "float-number") return v.value;
+  if (v._type === "string") return typeof v.value === "string" ? v.value : undefined;
+  return undefined;
+}
+
 export function renderMetadataType(t: any): string {
   if (!t) return 'Any';
   if ((t.kind === 'struct' || t.kind === 'class' || t.kind === 'interface') && t.name) {
@@ -87,6 +109,14 @@ function convertCodegenMetadataToRuntimeFormat(metadata: any): Record<string, an
     }
   }
   
+  // D70 -- an enum's members, in declaration order. This is the whole entry: an enum member is a
+  // compile-time constant folded below the HIR, so there is nothing at run time to describe BUT this.
+  if (metadata.kind === 'enum') {
+    result.members = (metadata.enumMembers ?? []).map((m: any) =>
+      m.value === undefined ? { name: m.name } : { name: m.name, value: m.value }
+    );
+  }
+
   if (metadata.kind === 'function') {
     const methodSig = Array.from(metadata.methodSignatures?.values() || [])[0] as any;
     if (methodSig && methodSig.parameters && methodSig.returnType) {

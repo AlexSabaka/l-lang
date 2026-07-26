@@ -19,6 +19,7 @@ import { RuntimeProvider } from "../../runtime";
 import { SymbolTable, SymbolEntry, PackageRegistry } from "../../analysis";
 import { nativeMethodReturn, nativeMemberKind } from "../nativeMembers";
 import { describeModifiers } from "../../helpers/modifiers";
+import { enumMemberValue } from "../../reflection/metadata";
 import * as path from "node:path";
 
 /**
@@ -462,27 +463,33 @@ class CollectTypesPass extends BaseAstTreeWalker {
     // 1. Direct declarations (variable, function, class, interface, type-def, struct)
     // 2. Lists containing declarations (e.g., (var x 10))
     // 3. Nested lists of expressions containing declarations
+    // ONE list, consulted three times. It was three copies of the same condition, and `enum` was
+    // missing from all three -- which is why `visitEnum` below was never reached and enums were the
+    // one declaration kind with no metadata (D70). That is the SECOND pass to have made this exact
+    // omission: `BuildSymbolTableAstVisitor.visitEnum` carries a comment about the same thing
+    // ("ScanPass defines classes, structs, interfaces and type aliases. Enums were simply left off
+    // the list"). Duplicating the list is how a declaration kind goes missing twice, so it is named
+    // once now.
+    const isDeclaration = (n: ast.ASTNode | undefined): boolean =>
+      !!n &&
+      (n._type === "variable" || n._type === "function" || n._type === "class" ||
+        n._type === "interface" || n._type === "type-def" || n._type === "struct" ||
+        n._type === "enum");
+
     for (const item of node.program) {
       if (ast.isListNode(item) && item.nodes.length > 0) {
         // Scan through all items in the list
         for (const subItem of item.nodes) {
-          if (subItem._type === "variable" || subItem._type === "function" ||
-              subItem._type === "class" || subItem._type === "interface" ||
-              subItem._type === "type-def" || subItem._type === "struct") {
+          if (isDeclaration(subItem)) {
             this.visit(subItem);
           } else if (ast.isListNode(subItem) && subItem.nodes.length > 0) {
             // Check nested lists for declarations
-            const nestedFirst = subItem.nodes[0];
-            if (nestedFirst._type === "variable" || nestedFirst._type === "function" ||
-                nestedFirst._type === "class" || nestedFirst._type === "interface" ||
-                nestedFirst._type === "type-def" || nestedFirst._type === "struct") {
-              this.visit(nestedFirst);
+            if (isDeclaration(subItem.nodes[0])) {
+              this.visit(subItem.nodes[0]);
             }
           }
         }
-      } else if (item._type === "function" || item._type === "class" || 
-                 item._type === "interface" || item._type === "variable" ||
-                 item._type === "type-def" || item._type === "struct") {
+      } else if (isDeclaration(item)) {
         this.visit(item);
       }
     }
@@ -839,6 +846,45 @@ class CollectTypesPass extends BaseAstTreeWalker {
 
     this.typeEnv.bindIdentifier(className, classType, node);
     this.context.log(LogLevel.Debug, `Collected class type '${className}' with ${members.length} members, ${methodSignatures.size} methods, ${operatorOverloads.length} operator overloads`);
+  }
+
+  /**
+   * D70 -- an enum becomes DESCRIBABLE. It does not become typed, and it does not become reified.
+   *
+   * Enums were the one declaration kind reflection could not see at all: `BuildSymbolTableAstVisitor`
+   * defines the symbol, but nothing in this pass ever visited an enum, so no `codegenMetadata` was
+   * ever attached and `(type-by-name "Dir")` answered nil while every other kind answered a
+   * descriptor.
+   *
+   * Members stay folded. `ResolveHirToCir` resolves `Dir:up` to a constant below the HIR and emits
+   * nothing at run time, and that is unchanged here -- this adds an entry to the metadata table, not
+   * a runtime value. Which is also why the entry is the only description there can be: at run time an
+   * enum member is an Int, and nothing anywhere recorded what it had been called.
+   *
+   * The description hangs on the symbol ENTRY rather than on an inferred type, because an enum has
+   * none and giving it one would change type checking. See `SymbolEntry.codegenMetadata`.
+   */
+  visitEnum(node: ast.EnumNode) {
+    const enumName = node.name?.name;
+    if (!enumName) return node;
+
+    const entry = this.context.symbolTable.resolveSymbol(enumName);
+    // `resolveSymbol` throwing or missing is not a reason to fail the compile: the enum still
+    // compiles, it is simply not describable. Reflection degrades; codegen does not.
+    if (!entry) return node;
+
+    entry.codegenMetadata = {
+      typeName: enumName,
+      kind: "enum",
+      modifiers: describeModifiers(node.modifiers),
+      enumMembers: (node.body ?? []).map((k, i) => ({
+        name: ast.keyName((k as ast.EnumKeyNode).key),
+        value: enumMemberValue(k, i) as number | string,
+      })),
+      requiresRuntimeMetadata: false,
+    };
+
+    return node;
   }
 
   visitInterface(node: ast.InterfaceNode) {
