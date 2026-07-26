@@ -189,6 +189,28 @@ export function getModifierNames(modifiers: ast.ModifierNode[]): string[] {
 }
 
 /**
+ * A declaration's modifiers as REFLECTION sees them (D68) -- name plus which of D68's roles it is.
+ *
+ * The kind is `isBuiltinModifier`, not a fresh classification, and that is the point: it is the same
+ * predicate `applyModifiersToClass` and `applyModifiersToDeclaration` filter on to decide what gets a
+ * `__ll_modifier_<name>` wrapper. A second notion of "custom" here could describe a modifier as a
+ * transformer that codegen treats as a compiler fact, or the reverse -- exactly the kind of two-sources
+ * drift D54 forced the metadata graph into one builder to prevent.
+ *
+ * Returns undefined rather than `[]` when there are none, so callers can omit the key entirely and a
+ * declaration with no modifiers reflects the same as it did before D68.
+ */
+export function describeModifiers(
+  modifiers: ast.ModifierNode[] | undefined
+): { name: string; kind: "builtin" | "custom" }[] | undefined {
+  if (!modifiers || modifiers.length === 0) return undefined;
+  return modifiers.map((m) => {
+    const name = m.modifier.replace(/^:/, "");
+    return { name, kind: isBuiltinModifier(name) ? ("builtin" as const) : ("custom" as const) };
+  });
+}
+
+/**
  * Get the visibility modifier from a list of modifiers
  * Returns 'internal' as default if no visibility modifier is found
  */

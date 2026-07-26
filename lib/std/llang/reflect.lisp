@@ -126,6 +126,40 @@
         (let ps (params t))
         (return ps.length))
 
+    ;; -- modifiers (D68) -------------------------------------------------------------------------
+    ;;
+    ;; A declaration's own modifiers, each `{name, kind}`. `kind` is D68's role split: "builtin" for a
+    ;; compiler fact the language defines (`:public`, `:ctor`, `:gen`), "custom" for a transformer a
+    ;; program declares with `defmodifier`. The compiler computes that from the same predicate its
+    ;; emitters filter on, so a modifier cannot be described here as one thing and lowered as another.
+    ;;
+    ;; Total like everything else in this module: a declaration carrying no modifiers has no key at
+    ;; all, and answers the empty vector rather than raising.
+
+    (fn modifiers [t <- Any] -> Any[]
+        (let ms t.modifiers)
+        (if (== ms nil) (return []))
+        (return ms))
+
+    (fn modifier-names [t <- Any] -> String[]
+        (mut out <- String[] [])
+        (for :each m :from (modifiers t) :then ((out.push m.name)))
+        (return out))
+
+    (fn has-modifier [t <- Any name <- String] -> Boolean
+        (for :each m :from (modifiers t) :then (
+            (if (== m.name name) (return #t))
+        ))
+        (return #f))
+
+    ;; Just the `defmodifier`-declared ones -- the decorators, as opposed to the compiler's own facts.
+    (fn custom-modifiers [t <- Any] -> String[]
+        (mut out <- String[] [])
+        (for :each m :from (modifiers t) :then (
+            (if (== m.kind "custom") (out.push m.name))
+        ))
+        (return out))
+
     ;; -- names, for callers that want strings rather than descriptors ----------------------------
 
     (fn property-names [t <- Any] -> String[]
@@ -283,6 +317,7 @@
         name-of kind-of
         type-name type-kind
         is-class is-struct is-interface is-function is-primitive is-container
+        modifiers modifier-names has-modifier custom-modifiers
         properties methods params returns ctor-params required-count generics interfaces arity
         property-names method-names param-names
         parent-name parent ancestors is-subtype-of

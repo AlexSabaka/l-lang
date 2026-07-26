@@ -232,6 +232,10 @@ export const C_PASSING: readonly string[] = [
   // rather than a cosmetic one -- C is where the raw-text path is read.
   "00-basics/09_digit_separators.lisp",
   "80-adversarial/digit_separator_precision.lisp",
+  // D68 modifier reflection. One shared metadata entry, so C answers identically. The CUSTOM arm is
+  // in 06 and is NOT pinned: applying a `defmodifier` on C is ELL0106, so a decorator cannot be
+  // attached there at all, never mind reflected on.
+  "07-types/05_modifier_reflection.lisp",
   // An imported module-level CONSTANT, read plainly (`PI`) and as a dotted head
   // (`(DIGITS.indexOf c)` inside a lowered imported body -- the shape that was broken).
   "80-adversarial/imported_module_constant.lisp",

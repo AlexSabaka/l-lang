@@ -212,6 +212,25 @@ export interface TypeParameter {
 }
 
 /**
+ * A modifier attached to a DECLARATION, as reflection sees it (D68).
+ *
+ * `kind` distinguishes the roles D68 separates: a `builtin` is a fact the compiler acts on
+ * (`:public`, `:ctor`, `:gen`), a `custom` one is a user transformer declared by `defmodifier`. The
+ * split is computed from `isBuiltinModifier`, which is the SAME predicate both JS decorator paths
+ * filter on -- so the graph cannot describe a modifier as custom that codegen then treats as builtin.
+ */
+export interface ModifierInfo {
+  name: string;
+  kind: "builtin" | "custom";
+}
+
+/** One member of an enum, as reflection sees it (D70). */
+export interface EnumMemberInfo {
+  name: string;
+  value: number | string;
+}
+
+/**
  * Complete codegen metadata for a type
  */
 export interface CodegenMetadata {
@@ -223,6 +242,10 @@ export interface CodegenMetadata {
   implementedInterfaces?: InterfaceImplementation[];
   typeParameters?: TypeParameter[];
   parentClass?: string;
+  /** D68: the declaration's own modifiers. Absent or empty on a declaration carrying none. */
+  modifiers?: ModifierInfo[];
+  /** D70: an enum's members, in declaration order. Only ever set when `kind` is "enum". */
+  enumMembers?: EnumMemberInfo[];
   requiresRuntimeMetadata: boolean;
   constructorSignature?: {
     parameters: ParameterInfo[];

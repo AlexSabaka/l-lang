@@ -18,6 +18,7 @@ import { TypeDiagnostics as TD } from "../../rules/diagnostics";
 import { RuntimeProvider } from "../../runtime";
 import { SymbolTable, SymbolEntry, PackageRegistry } from "../../analysis";
 import { nativeMethodReturn, nativeMemberKind } from "../nativeMembers";
+import { describeModifiers } from "../../helpers/modifiers";
 import * as path from "node:path";
 
 /**
@@ -557,6 +558,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     const codegenMetadata: CodegenMetadata = {
       typeName: funcName,
       kind: 'function',
+      modifiers: describeModifiers(node.modifiers),
       methodSignatures: new Map([[funcName, methodSignature]]),
       operatorOverloads: methodSignature.isOperatorOverload && methodSignature.operatorSymbol && methodSignature.arity !== undefined ? 
         [{
@@ -785,6 +787,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     const codegenMetadata: CodegenMetadata = {
       typeName: className,
       kind: 'class',
+      modifiers: describeModifiers(node.modifiers),
       detailedMembers,
       methodSignatures,
       operatorOverloads,
@@ -948,6 +951,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     const codegenMetadata: CodegenMetadata = {
       typeName: interfaceName,
       kind: "interface",
+      modifiers: describeModifiers(node.modifiers),
       detailedMembers,
       methodSignatures,
       operatorOverloads: [],
@@ -1138,6 +1142,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     const codegenMetadata: CodegenMetadata = {
       typeName: structName,
       kind: "struct",
+      modifiers: describeModifiers(node.modifiers),
       detailedMembers,
       methodSignatures,
       operatorOverloads: [],

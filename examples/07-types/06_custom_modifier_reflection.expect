@@ -1,0 +1,5 @@
+all: ["public" "traced"]
+custom: ["traced"]
+custom only: ["traced"]
+has traced: true
+result: 7

@@ -1,0 +1,7 @@
+fn: ["public"]
+plain: []
+class: ["public"]
+struct: ["public"]
+has public: true
+has static: false
+custom: []

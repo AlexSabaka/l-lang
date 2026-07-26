@@ -27,7 +27,18 @@ function convertCodegenMetadataToRuntimeFormat(metadata: any): Record<string, an
     name: metadata.typeName,
     kind: metadata.kind,
   };
-  
+
+  // D68 -- the declaration's own modifiers, name and role. Conditional, exactly as `generics`,
+  // `implements` and `extends` are below: a declaration carrying none gains no key, so every
+  // descriptor a program already printed is byte-identical unless a modifier was actually written.
+  //
+  // Emitted for EVERY kind rather than only classes, because a top-level `(fn :public …)` has no
+  // other exposure -- visibility reaches reflection on MEMBERS (`isPublic`/`isPrivate`) and nowhere
+  // else. Member-level custom modifiers are a separate question and deliberately not answered here.
+  if (metadata.modifiers?.length > 0) {
+    result.modifiers = metadata.modifiers.map((m: any) => ({ name: m.name, kind: m.kind }));
+  }
+
   // An interface takes the same path (Zja): it has `detailedMembers` and `methodSignatures` and
   // nothing else, and the arms it lacks -- `constructor`, `extends` -- are each already gated on the
   // field being there. Erased at run time (D24), so there is nothing else to say about it.
