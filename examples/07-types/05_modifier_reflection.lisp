@@ -1,10 +1,10 @@
 ;; Reflecting on a declaration's MODIFIERS (D68).
 ;;
 ;; Every declaration kind that reaches the metadata graph now carries the modifiers written on it, as
-;; `{name, kind}`. `kind` is D68's role split: "builtin" for a fact the compiler acts on (`:public`,
-;; `:ctor`, `:gen`), "custom" for a transformer a program declares with `defmodifier`. The compiler
-;; derives that from the same predicate its emitters filter on, so a modifier cannot be described here
-;; as one thing and lowered as another.
+;; `{name, kind}`. `kind` is D68's three roles by their own names: "builtin" for a fact the compiler
+;; acts on (`:public`, `:ctor`, `:gen`), "decorator" for a `defmodifier` transformer, "attribute" for
+;; `defattribute` annotation data. The compiler derives that from the same sources its emitters
+;; consult, so a modifier cannot be described here as one thing and lowered as another.
 ;;
 ;; Before this, `std/llang/reflect` could report a type's members, methods, parameters, generics,
 ;; interfaces and ancestors -- and had no way to answer what was written directly in front of the
@@ -44,5 +44,5 @@
     (console.log "has static:" (has-modifier (type-by-name "Widget") "static"))
 
     ;; And the decorator subset, which is empty here because every modifier above is a builtin.
-    (console.log "custom:" (custom-modifiers (type-by-name "Widget")))
+    (console.log "decorators:" (decorators (type-by-name "Widget")))
 )

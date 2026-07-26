@@ -240,6 +240,10 @@ export const C_PASSING: readonly string[] = [
   // and this is where it is checked -- including on a CLASS, which a decorator cannot do on either
   // backend.
   "07-types/08_attributes.lisp",
+  // D72 attribute reflection -- the half that makes attaching them worth it. C-pinned because
+  // "readable on both backends" is the claim; the DECORATOR twin (06) cannot be, since C has no
+  // decorator lowering to reflect on.
+  "07-types/09_attribute_reflection.lisp",
   // D70 enum RTTI. Also pins that the metadata's member-value rule agrees with the fold both
   // emitters apply -- including an implicit member after an explicit one, which takes its ORDINAL
   // here rather than C#'s previous-plus-one.

@@ -128,10 +128,15 @@
 
     ;; -- modifiers (D68) -------------------------------------------------------------------------
     ;;
-    ;; A declaration's own modifiers, each `{name, kind}`. `kind` is D68's role split: "builtin" for a
-    ;; compiler fact the language defines (`:public`, `:ctor`, `:gen`), "custom" for a transformer a
-    ;; program declares with `defmodifier`. The compiler computes that from the same predicate its
-    ;; emitters filter on, so a modifier cannot be described here as one thing and lowered as another.
+    ;; A declaration's own modifiers, each `{name, kind}` and, where the use site wrote literal ones,
+    ;; `args`. `kind` is D68's three roles by their own names:
+    ;;
+    ;;   "builtin"    a fact the compiler acts on -- `:public`, `:ctor`, `:gen`
+    ;;   "decorator"  a transformer declared with `defmodifier`; wraps the declaration at run time
+    ;;   "attribute"  annotation data declared with `defattribute` (D72); wraps nothing
+    ;;
+    ;; The compiler derives that from the same two sources its emitters consult to decide whether to
+    ;; wrap, so a modifier cannot be described here as one thing and lowered as another.
     ;;
     ;; Total like everything else in this module: a declaration carrying no modifiers has no key at
     ;; all, and answers the empty vector rather than raising.
@@ -152,13 +157,49 @@
         ))
         (return #f))
 
-    ;; Just the `defmodifier`-declared ones -- the decorators, as opposed to the compiler's own facts.
-    (fn custom-modifiers [t <- Any] -> String[]
+    ;; -- the two user-declared roles, apart ------------------------------------------------------
+
+    ;; The `defmodifier`-declared ones: what TRANSFORMS this declaration.
+    (fn decorators [t <- Any] -> String[]
         (mut out <- String[] [])
         (for :each m :from (modifiers t) :then (
-            (if (== m.kind "custom") (out.push m.name))
+            (if (== m.kind "decorator") (out.push m.name))
         ))
         (return out))
+
+    ;; The `defattribute`-declared ones: what DESCRIBES it. Whole entries rather than names, because an
+    ;; attribute's arguments are the point of it -- `attribute-names` is there for callers who only
+    ;; want the names.
+    (fn attributes [t <- Any] -> Any[]
+        (mut out <- Any[] [])
+        (for :each m :from (modifiers t) :then (
+            (if (== m.kind "attribute") (out.push m))
+        ))
+        (return out))
+
+    (fn attribute-names [t <- Any] -> String[]
+        (mut out <- String[] [])
+        (for :each m :from (attributes t) :then ((out.push m.name)))
+        (return out))
+
+    (fn has-attribute [t <- Any name <- String] -> Boolean
+        (for :each m :from (attributes t) :then (
+            (if (== m.name name) (return #t))
+        ))
+        (return #f))
+
+    ;; A named attribute's literal arguments, or the empty vector. Empty also covers an attribute that
+    ;; is not there at all -- ask `has-attribute` to tell the two apart, which matters for a marker
+    ;; attribute like `:deprecated` that carries no arguments by design.
+    (fn attribute-args [t <- Any name <- String] -> Any[]
+        (for :each m :from (attributes t) :then (
+            (if (== m.name name) (
+                (let a m.args)
+                (if (== a nil) (return []))
+                (return a)
+            ))
+        ))
+        (return []))
 
     ;; -- enums (D70) -----------------------------------------------------------------------------
     ;;
@@ -353,7 +394,8 @@
         name-of kind-of
         type-name type-kind
         is-class is-struct is-interface is-function is-primitive is-container is-enum
-        modifiers modifier-names has-modifier custom-modifiers
+        modifiers modifier-names has-modifier
+        decorators attributes attribute-names has-attribute attribute-args
         enum-members enum-member-names enum-value enum-name-of
         properties methods params returns ctor-params required-count generics interfaces arity
         property-names method-names param-names

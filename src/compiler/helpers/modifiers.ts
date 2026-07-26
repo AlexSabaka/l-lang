@@ -244,12 +244,30 @@ export function getModifierNames(modifiers: ast.ModifierNode[]): string[] {
  * declaration with no modifiers reflects the same as it did before D68.
  */
 export function describeModifiers(
-  modifiers: ast.ModifierNode[] | undefined
-): { name: string; kind: "builtin" | "custom" }[] | undefined {
+  modifiers: ast.ModifierNode[] | undefined,
+  declared?: Map<string, { kind: "decorator" | "attribute"; arity: number }>,
+  literalOf?: (n: ast.ASTNode) => string | number | boolean | undefined
+): { name: string; kind: "builtin" | "decorator" | "attribute"; args?: (string | number | boolean)[] }[] | undefined {
   if (!modifiers || modifiers.length === 0) return undefined;
   return modifiers.map((m) => {
     const name = m.modifier.replace(/^:/, "");
-    return { name, kind: isBuiltinModifier(name) ? ("builtin" as const) : ("custom" as const) };
+    const kind = isBuiltinModifier(name)
+      ? ("builtin" as const)
+      : (declared?.get(name.toLowerCase())?.kind ?? ("decorator" as const));
+
+    // ARGUMENTS, and only the literal ones (D72).
+    //
+    // An ATTRIBUTE's arguments are required to be literals -- it is data, and data that has to be
+    // evaluated is not data. A DECORATOR's may be any expression, as they always could; restricting
+    // them would break working code. So a decorator argument that is not a literal is simply ABSENT
+    // here rather than guessed at, the same answer D70 gives for a non-literal enum value.
+    //
+    // The whole `args` key is dropped unless every argument survived, because a partial list would be
+    // read positionally and quietly mean the wrong thing.
+    if (!m.args?.length || !literalOf) return { name, kind };
+    const values = m.args.map((a) => literalOf(a));
+    if (values.some((v) => v === undefined)) return { name, kind };
+    return { name, kind, args: values as (string | number | boolean)[] };
   });
 }
 

@@ -1,0 +1,6 @@
+all: ["public" "traced"]
+decorators: ["traced"]
+decorator only: ["traced"]
+entry: retry decorator [4]
+not an attribute: false
+result: 7

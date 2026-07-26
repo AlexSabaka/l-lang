@@ -1,0 +1,13 @@
+all: ["public" "docstring" "since" "stable" "deprecated"]
+attributes: ["docstring" "since" "stable" "deprecated"]
+decorators: []
+string: ["adds two numbers"]
+two ints: [1 4]
+boolean: [true]
+marker args: []
+marker present: true
+absent: false
+absent args: []
+class: ["a widget with a size"]
+none: []
+run: 5

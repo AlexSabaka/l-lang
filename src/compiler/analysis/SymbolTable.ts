@@ -216,14 +216,26 @@ export interface TypeParameter {
 /**
  * A modifier attached to a DECLARATION, as reflection sees it (D68).
  *
- * `kind` distinguishes the roles D68 separates: a `builtin` is a fact the compiler acts on
- * (`:public`, `:ctor`, `:gen`), a `custom` one is a user transformer declared by `defmodifier`. The
- * split is computed from `isBuiltinModifier`, which is the SAME predicate both JS decorator paths
- * filter on -- so the graph cannot describe a modifier as custom that codegen then treats as builtin.
+ * `kind` is D68's three roles, by their own names: a `builtin` is a fact the compiler acts on
+ * (`:public`, `:ctor`, `:gen`), a `decorator` is a transformer declared by `defmodifier`, and an
+ * `attribute` is annotation data declared by `defattribute` (D72).
+ *
+ * Computed from `isBuiltinModifier` plus the declared-annotation registry -- the same two sources
+ * both backends consult to decide whether to emit a `__ll_modifier_` wrapper. Deriving it any other
+ * way would let the graph describe a modifier as one thing while codegen treats it as another.
  */
 export interface ModifierInfo {
   name: string;
-  kind: "builtin" | "custom";
+  kind: "builtin" | "decorator" | "attribute";
+  /**
+   * The literal arguments written at the use site, or absent.
+   *
+   * Absent covers two different things on purpose, because reflection cannot usefully tell them
+   * apart: no arguments were written, or an argument was not a literal and therefore cannot be
+   * carried by a metadata table that is emitted as data. An attribute is required to use literals
+   * (D72), so in practice absence means "none written" for the kind where it matters.
+   */
+  args?: (string | number | boolean)[];
 }
 
 /** One member of an enum, as reflection sees it (D70). */

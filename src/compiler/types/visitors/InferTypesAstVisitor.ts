@@ -18,8 +18,8 @@ import { TypeDiagnostics as TD } from "../../rules/diagnostics";
 import { RuntimeProvider } from "../../runtime";
 import { SymbolTable, SymbolEntry, PackageRegistry } from "../../analysis";
 import { nativeMethodReturn, nativeMemberKind } from "../nativeMembers";
-import { describeModifiers } from "../../helpers/modifiers";
-import { enumMemberValue } from "../../reflection/metadata";
+import { describeModifiers, collectDeclaredAnnotations } from "../../helpers/modifiers";
+import { enumMemberValue, literalValueOf } from "../../reflection/metadata";
 import * as path from "node:path";
 
 /**
@@ -432,6 +432,17 @@ function bindPatternToType(
 class CollectTypesPass extends BaseAstTreeWalker {
   private typeEnv: TypeEnvironment;
   private symbolTable: SymbolTable;
+  /**
+   * D72 -- what this module declares with `defmodifier` / `defattribute`, so a `:name` on a
+   * declaration can be described by its ROLE rather than merely as "not builtin". Populated in
+   * `visitProgram`, which runs before any of the metadata sites below.
+   */
+  private declaredAnnotations = new Map<string, { kind: "decorator" | "attribute"; arity: number }>();
+
+  /** Modifiers as reflection sees them, with this module's registry and the literal reader bound. */
+  private describeOwnModifiers(modifiers: ast.ModifierNode[] | undefined) {
+    return describeModifiers(modifiers, this.declaredAnnotations, literalValueOf);
+  }
 
   constructor(context: Context, symbolTable: SymbolTable) {
     super(context);
@@ -463,6 +474,9 @@ class CollectTypesPass extends BaseAstTreeWalker {
     // 1. Direct declarations (variable, function, class, interface, type-def, struct)
     // 2. Lists containing declarations (e.g., (var x 10))
     // 3. Nested lists of expressions containing declarations
+    // D72 -- the module's own `defmodifier` / `defattribute` names, before any metadata is built.
+    this.declaredAnnotations = collectDeclaredAnnotations(node);
+
     // ONE list, consulted three times. It was three copies of the same condition, and `enum` was
     // missing from all three -- which is why `visitEnum` below was never reached and enums were the
     // one declaration kind with no metadata (D70). That is the SECOND pass to have made this exact
@@ -565,7 +579,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     const codegenMetadata: CodegenMetadata = {
       typeName: funcName,
       kind: 'function',
-      modifiers: describeModifiers(node.modifiers),
+      modifiers: this.describeOwnModifiers(node.modifiers),
       methodSignatures: new Map([[funcName, methodSignature]]),
       operatorOverloads: methodSignature.isOperatorOverload && methodSignature.operatorSymbol && methodSignature.arity !== undefined ? 
         [{
@@ -794,7 +808,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     const codegenMetadata: CodegenMetadata = {
       typeName: className,
       kind: 'class',
-      modifiers: describeModifiers(node.modifiers),
+      modifiers: this.describeOwnModifiers(node.modifiers),
       detailedMembers,
       methodSignatures,
       operatorOverloads,
@@ -876,7 +890,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     entry.codegenMetadata = {
       typeName: enumName,
       kind: "enum",
-      modifiers: describeModifiers(node.modifiers),
+      modifiers: this.describeOwnModifiers(node.modifiers),
       enumMembers: (node.body ?? []).map((k, i) => ({
         name: ast.keyName((k as ast.EnumKeyNode).key),
         value: enumMemberValue(k, i) as number | string,
@@ -997,7 +1011,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     const codegenMetadata: CodegenMetadata = {
       typeName: interfaceName,
       kind: "interface",
-      modifiers: describeModifiers(node.modifiers),
+      modifiers: this.describeOwnModifiers(node.modifiers),
       detailedMembers,
       methodSignatures,
       operatorOverloads: [],
@@ -1188,7 +1202,7 @@ class CollectTypesPass extends BaseAstTreeWalker {
     const codegenMetadata: CodegenMetadata = {
       typeName: structName,
       kind: "struct",
-      modifiers: describeModifiers(node.modifiers),
+      modifiers: this.describeOwnModifiers(node.modifiers),
       detailedMembers,
       methodSignatures,
       operatorOverloads: [],

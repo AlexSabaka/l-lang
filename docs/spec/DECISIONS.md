@@ -5648,3 +5648,24 @@ scan at the wrong depth fails SILENTLY by finding nothing and treating every att
 
 **Module-local, inherited rather than chosen.** `defmodifier` is not exported across module boundaries
 today, and `defattribute` gets the same limit for the same unsolved reason.
+
+### Reflection (D72-b) — the roles by name, and literal arguments
+
+`kind` is now `builtin | decorator | attribute` rather than `builtin | custom`, and `reflect`'s
+`custom-modifiers` is `decorators`. "Custom" quietly meant "decorator" while attributes are equally
+user-defined, so it described one role by a name that fits two — renamed at one commit's distance
+rather than after something depended on it.
+
+A modifier carries the LITERAL arguments written at its use site. Both user roles get them: `:retry[4]`
+reflects its `4` for the same reason its name is reported, because a decorator is part of what a
+declaration is.
+
+**Literal only, and the two roles differ in why.** An attribute's arguments MUST be literals — an
+attribute is data, and data that has to be evaluated to be read is not data. That restriction is
+precisely what lets an annotation be a row in a table the C backend already emits, with no evaluator
+anywhere. A decorator's arguments may be any expression, as they always could; restricting them would
+break working code. So a non-literal argument is ABSENT from the graph rather than guessed at.
+
+The whole `args` key is dropped unless every argument survived, rather than a partial list: positional
+arguments read by index, so a list missing its middle element does not say "incomplete", it says
+something false.

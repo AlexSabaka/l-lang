@@ -29,9 +29,34 @@ import { TypeChecker } from "../types/TypeChecker";
 export function enumMemberValue(keyNode: any, ordinal: number): number | string | undefined {
   const v = keyNode?.value;
   if (v === null || v === undefined) return ordinal;
-  if (v._type === "integer-number" || v._type === "float-number") return v.value;
-  if (v._type === "string") return typeof v.value === "string" ? v.value : undefined;
-  return undefined;
+  const lit = literalValueOf(v);
+  return typeof lit === "boolean" ? undefined : lit;
+}
+
+/**
+ * An AST node's value, if it is a LITERAL the metadata graph can carry; otherwise undefined.
+ *
+ * The metadata table is data emitted at startup, not code, so only a literal can reach it. Every
+ * caller answers "I do not know" for anything else rather than guessing -- that posture is why a
+ * non-literal enum value reports nil instead of falling back to an ordinal that would disagree with
+ * what the program computes.
+ *
+ * A `string` node's `value` is already unquoted and unescaped by the builder, so it needs no further
+ * treatment here.
+ */
+export function literalValueOf(node: any): string | number | boolean | undefined {
+  if (!node || typeof node !== "object") return undefined;
+  switch (node._type) {
+    case "integer-number":
+    case "float-number":
+      return typeof node.value === "number" ? node.value : undefined;
+    case "string":
+      return typeof node.value === "string" ? node.value : undefined;
+    case "boolean":
+      return typeof node.value === "boolean" ? node.value : undefined;
+    default:
+      return undefined;
+  }
 }
 
 export function renderMetadataType(t: any): string {
@@ -58,7 +83,11 @@ function convertCodegenMetadataToRuntimeFormat(metadata: any): Record<string, an
   // other exposure -- visibility reaches reflection on MEMBERS (`isPublic`/`isPrivate`) and nowhere
   // else. Member-level custom modifiers are a separate question and deliberately not answered here.
   if (metadata.modifiers?.length > 0) {
-    result.modifiers = metadata.modifiers.map((m: any) => ({ name: m.name, kind: m.kind }));
+    result.modifiers = metadata.modifiers.map((m: any) =>
+      m.args === undefined
+        ? { name: m.name, kind: m.kind }
+        : { name: m.name, kind: m.kind, args: m.args }
+    );
   }
 
   // An interface takes the same path (Zja): it has `detailedMembers` and `methodSignatures` and
