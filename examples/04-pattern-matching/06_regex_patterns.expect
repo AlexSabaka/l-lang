@@ -1,0 +1,12 @@
+cat: a cat, however long
+caaaat: a cat, however long
+42: all digits
+hello: a lowercase word
+!!: something else
+a caaaat naps: something else
+search: true
+c.t: matched the LITERAL three characters
+cut: matched the regex
+7: a short number
+12345: a long number
+abc: not a number

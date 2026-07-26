@@ -245,6 +245,9 @@ export const C_PASSING: readonly string[] = [
   // D67 prefixed literals. Purely lexical, so C is byte-identical -- which is the point: `r"…"`
   // costs nothing in the type system and needs no runtime support on either backend.
   "00-basics/10_string_prefixes.lisp",
+  // D67 regex match arms. Lowered at parse time to the `:when` guard that already worked, so the
+  // sugar reaches both backends without either knowing it exists.
+  "04-pattern-matching/06_regex_patterns.lisp",
   // D68 modifier reflection. One shared metadata entry, so C answers identically. The CUSTOM arm is
   // in 06 and is NOT pinned: applying a `defmodifier` on C is ELL0106, so a decorator cannot be
   // attached there at all, never mind reflected on.

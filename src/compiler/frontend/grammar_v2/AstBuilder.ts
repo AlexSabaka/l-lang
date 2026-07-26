@@ -1389,6 +1389,42 @@ export class LLangAstBuilder extends BaseCstVisitor {
     // `:when <expr>` (D26). Labelled `guard`/`body` in the rule so the two expressions never collide.
     const guard = ctx.guard ? this.visit(ctx.guard[0]) : undefined;
     const body = this.visit(ctx.body[0]);
+
+    // D67 -- `r"ca+t" => …` is SUGAR for the `:when` guard that already worked:
+    //
+    //     s :when (is-full-match r"ca+t" s) => …
+    //
+    // so it is lowered to exactly that, HERE, at parse time. The desugar pass cannot do it: a
+    // synthesized node carries no `_parent`, and the symbol table resolves scope by climbing `_parent`
+    // through the PRE-desugar tree -- the wall that forced P3c-1b-ii through a floor builtin. At
+    // AstBuilder time the nodes are in the tree before the symbol table is built, so `is-full-match`
+    // resolves like any other name and a missing `(import "std/text/regex")` is a plain LL0210 rather
+    // than anything special.
+    //
+    // ANCHORED, not a search: a pattern asserts "x IS this shape", so `r"ca+t"` does not fire against
+    // "a caaaat naps". Ruby's searching `when /re/` is the rejected alternative -- a pattern that
+    // silently matches a substring is a bug factory. Spell a search `r".*ca+t.*"`.
+    if ((pattern as any)?.regexSugar) {
+      const subject = this.makeNode("simple-identifier", ctx, { id: "__re" });
+      const call = this.makeNode("list", ctx, {
+        nodes: [
+          this.makeNode("simple-identifier", ctx, { id: "is-full-match" }),
+          (pattern as any).constant,
+          subject,
+        ],
+      });
+      return this.makeNode("match-case", ctx, {
+        pattern: this.makeNode("identifier-pattern", ctx, { id: subject }),
+        // An explicit `:when` on a regex arm still applies, and both must hold.
+        guard: guard
+          ? this.makeNode("list", ctx, {
+              nodes: [this.makeNode("simple-identifier", ctx, { id: "&&" }), call, guard],
+            })
+          : call,
+        body,
+      });
+    }
+
     return this.makeNode("match-case", ctx, { pattern, guard, body });
   }
 
@@ -1475,6 +1511,16 @@ export class LLangAstBuilder extends BaseCstVisitor {
       // regex engine hits first, since `\` is the one character it must be able to match on.
       constant = this.makeNode("string", ctx, {
         value: this.unescapeString(ctx.StringLiteral[0].image.slice(1, -1)),
+      });
+    } else if (ctx.RawString) {
+      // D67 -- a REGEX pattern. `regexSugar` is a parse-time signal for `matchCase`, which replaces
+      // this node entirely; it never reaches a later stage from a match ARM. A raw-string pattern
+      // NESTED inside a vector or map pattern has no such rewrite, so the marker survives there and
+      // `SyntaxRulesAstVisitor` refuses it -- leaving it would silently mean equality against the
+      // pattern's own text, which is the one outcome nobody writing `r"…"` intends.
+      return this.makeNode("constant-pattern", ctx, {
+        constant: this.makeNode("string", ctx, { value: ctx.RawString[0].image.slice(2, -1) }),
+        regexSugar: true,
       });
     } else if (ctx.NilKw) {
       constant = this.makeNode("null", ctx, { keyword: "nil" });

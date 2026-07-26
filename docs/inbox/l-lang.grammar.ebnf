@@ -99,7 +99,7 @@ mapPattern             ::= <LBrace> ( mapPatternPair ","? )* <RBrace> ;
 mapPatternPair         ::= <Colon> key pattern? ;
 restPattern            ::= <Spread> identifier ;
 identifierPattern      ::= identifier ;
-constantPattern        ::= ( <StringLiteral> | ( "nil" | "null" ) | number ) ;
+constantPattern        ::= ( <StringLiteral> | <RawString> | ( "nil" | "null" ) | number ) ;
 awaitExpr              ::= "await" expression ;
 spreadExpr             ::= <Spread> expression ;
 

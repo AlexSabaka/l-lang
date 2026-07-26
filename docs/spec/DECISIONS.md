@@ -5444,6 +5444,18 @@ The proof it is a pure spelling change is that `16-stdlib/20_regex` was rewritte
 `r"\d+"` throughout and its golden did not move a byte, on either backend. `00-basics/10_string_prefixes`
 pins the mechanism itself.
 
+**The MATCH-PATTERN SUGAR is LANDED (2026-07-26), completing D67.** `match s { r"ca+t" => … }`
+lowers in the AstBuilder to the `:when` guard that already worked, so it is shorter rather than newly
+possible. An explicit `:when` on a regex arm still applies and both must hold.
+
+Two things the build added to the ruling. A regex pattern NESTED inside a vector or map pattern is
+refused (LL0035): the rewrite needs a subject to bind and guard on, and a nested element is being
+destructured rather than tested — left alone the node stays an ordinary constant and matches by
+EQUALITY against the pattern's own text, which never matches and says nothing. And `isConstantPattern`
+is a HAND-WRITTEN lookahead gate listing its tokens explicitly, so adding an alternative to
+`constantPattern`'s own `OR` is invisible until it is added there too; the failure names every token
+except the one written.
+
 **Original phasing.** Fix the two PoC bugs → land `std/text/regex` + a corpus example → the `r"` /
 `f"` prefix-literal mechanism → the match-pattern sugar. Missing vs JS RegExp and explicitly out of
 scope for v1: captures (needed before `replace`/`split` are real), lookaround, backreferences, lazy

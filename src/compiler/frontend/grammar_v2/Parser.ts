@@ -1667,6 +1667,10 @@ class LLangParser extends CstParser {
     this.constantPattern = this.RULE("constantPattern", () => {
       this.OR([
         { ALT: () => this.CONSUME(t.StringLiteral) },
+        // D67 -- `match x { r"ca+t" => … }`. Parsed here beside the plain string it deliberately does
+        // NOT mean the same as: `"cat"` in pattern position is equality, `r"cat"` is a regex. The
+        // AstBuilder tells them apart and lowers this one to a `:when` guard.
+        { ALT: () => this.CONSUME(t.RawString) },
         // `nil` is a CONSTANT to match against, not a name to bind (D9). It reached
         // `identifierPattern` before, which wants an Identifier and gets a NilKw -- "Expecting
         // RBracket but found 'nil'". The PEG had the opposite bug and it was the dangerous one: `nil`
@@ -1849,6 +1853,11 @@ class LLangParser extends CstParser {
     const first = this.LA(1);
     return (
       first?.tokenType === t.StringLiteral ||
+      // D67 -- `r"…"`. This gate is hand-written rather than derived, so a token added to
+      // `constantPattern`'s own OR is invisible here until it is added here too; without this the
+      // alternation falls through to `identifierPattern` and reports "Expecting one of: Underscore,
+      // Spread, …", which names everything except the thing actually written.
+      first?.tokenType === t.RawString ||
       first?.tokenType === t.NilKw ||
       first?.tokenType === t.IntegerNumber ||
       first?.tokenType === t.FloatNumber ||

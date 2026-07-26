@@ -122,6 +122,26 @@ export const SyntaxDiagnostics = {
       `its destructuring pattern) rather than to the modifier.`
   ),
 
+  // LL0035 (D67) -- a regex pattern nested inside another pattern.
+  //
+  // `r"…"` in pattern position is sugar for a `:when` guard, and the rewrite happens at the match
+  // ARM, where there is a subject to bind and guard on. Nested inside a vector or map pattern there
+  // is no such place: the element is being destructured, not tested.
+  //
+  // Refused rather than left alone, because leaving it means the node stays an ordinary constant and
+  // matches by EQUALITY against the pattern's own text -- so `[r"\d+" x]` would quietly test whether
+  // the first element is the four characters `\d+`. That is the one outcome nobody writing `r"…"`
+  // intends, and it would not error.
+  RegexPatternNested: def<{}>(
+    "LL0035",
+    Error,
+    () =>
+      `a regex pattern is only allowed as a whole match arm, not nested inside another pattern. ` +
+      `'r"…"' in a match arm lowers to a guard over the value being matched, and a nested pattern is ` +
+      `destructuring rather than testing -- there is nothing there to guard. Bind the part you want ` +
+      `and test it with ':when', e.g. '[first rest] :when (is-full-match r"…" first) => …'.`
+  ),
+
   // LL0023 -- D3: `defmacro`/`defsyntax` are reserved but not implemented in 0.x
   // LL0241 (D46/B-3) -- a `defcast` must say WHEN it fires.
   //

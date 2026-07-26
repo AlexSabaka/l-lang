@@ -881,6 +881,14 @@ export interface IdentifierPatternNode extends ASTNode<"identifier-pattern"> {
 
 export interface ConstantPatternNode extends ASTNode<"constant-pattern"> {
   constant: StringNode | NumberNode;
+  /**
+   * D67 -- this constant came from `r"…"` and means a REGEX, not equality.
+   *
+   * A parse-time signal only. `matchCase` replaces the whole node with an identifier pattern plus an
+   * `is-full-match` guard, so it never survives from a match arm. It survives from a NESTED pattern,
+   * where no such rewrite exists, and is refused there rather than quietly meaning equality.
+   */
+  regexSugar?: boolean;
 }
 
 export interface StringNode extends ASTNode<"string"> {

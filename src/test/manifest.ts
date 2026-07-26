@@ -409,6 +409,15 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "and depth budgets make it a failed compile, located at the recursive CALL rather than the " +
       "expression that triggered the fold.",
   },
+  "90-diagnostics/ll0035_regex_pattern_nested.lisp": {
+    status: "negative", codes: ["LL0035"],
+    reason:
+      "D67: `r\"…\"` in pattern position lowers to a `:when` guard at the match ARM, where there is a " +
+      "subject to guard on. Nested in a vector/map pattern there is none -- the element is being " +
+      "destructured, not tested. Left alone it would stay an ordinary constant and match by EQUALITY " +
+      "against the pattern's own text: silent, never matching, and nothing to suggest the regex " +
+      "never ran.",
+  },
   "90-diagnostics/ll0032_attribute_arg_not_literal.lisp": {
     status: "negative", codes: ["LL0032"],
     reason:

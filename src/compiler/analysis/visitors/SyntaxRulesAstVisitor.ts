@@ -126,6 +126,18 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
     });
   }
 
+  /**
+   * D67/LL0035 -- a `r"…"` pattern that survived to here is a NESTED one.
+   *
+   * `matchCase` rewrites a regex pattern at the match arm, so a top-level one is gone by now. Only a
+   * pattern nested inside a vector or map pattern still carries the marker, and there is no subject
+   * there to guard on -- the element is being destructured, not tested.
+   */
+  visitConstantPattern(node: ast.ConstantPatternNode) {
+    if ((node as any).regexSugar) this.report(SD.RegexPatternNested, node, {});
+    return node;
+  }
+
   visitIntegerNumber(node: ast.IntegerNumberNode) {
     this.checkLeadingZero(node, (node as any).match);
     return node;
