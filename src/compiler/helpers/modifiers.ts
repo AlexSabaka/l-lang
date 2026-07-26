@@ -22,6 +22,12 @@ export const CLASS_MODIFIERS = ["static", "override", "extern"] as const;
 export const TYPE_MODIFIERS = ["explicit-cast", "implicit-cast", "readonly"] as const;
 export const FUNCTION_MODIFIERS = ["extension", "operator", "comptime", "async", "gen"] as const;
 export const MEMBER_MODIFIERS = ["ctor"] as const;
+// D46/B-3: the two forms a `defcast` conversion can take. `:implicit` fires at coercion sites, chosen
+// by the compiler; `:explicit` only ever fires at a written `(cast<T> x)`. Distinct from the older
+// `implicit-cast`/`explicit-cast` names in TYPE_MODIFIERS, which sit on the VARIABLE construct and
+// have never had a consumer -- these are the ratified spelling and they ride the function a defcast
+// rewrites into.
+export const CAST_MODIFIERS = ["implicit", "explicit"] as const;
 
 export const BUILTIN_MODIFIERS = [
   ...VISIBILITY_MODIFIERS,
@@ -30,6 +36,7 @@ export const BUILTIN_MODIFIERS = [
   ...TYPE_MODIFIERS,
   ...FUNCTION_MODIFIERS,
   ...MEMBER_MODIFIERS,
+  ...CAST_MODIFIERS,
 ] as const;
 
 /**
@@ -53,6 +60,7 @@ export type BuiltinModifier = typeof BUILTIN_MODIFIERS[number];
  * (`(let :comptime x ...)`, `(let :ctor x <- Real 0)`), which is why they are in both sets.
  */
 const FUNCTION_CONSTRUCT = [
+  ...CAST_MODIFIERS,
   ...FUNCTION_MODIFIERS,
   ...VISIBILITY_MODIFIERS,
   ...CLASS_MODIFIERS,

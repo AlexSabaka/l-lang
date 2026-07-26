@@ -319,6 +319,21 @@ export const TypeDiagnostics = {
       `iterator implementing 'Disposable'.`
   ),
 
+  // LL0242 (D46/B-3) -- an explicit cast with no conversion behind it.
+  //
+  // `(cast<T> x)` does not COERCE by fiat; it runs a `defcast` the program declared. With none
+  // declared for the pair there is nothing to run, and inventing one -- a bit-reinterpretation, a
+  // stringification -- is how a cast becomes a lie. RFC-0001 §5.6 refuses narrowing casts for the
+  // same reason: the runtime carries no evidence for them.
+  NoSuchCast: def<{ source: string; target: string }>(
+    "LL0242",
+    Error,
+    (p) =>
+      `no conversion from '${p.source}' to '${p.target}'. '(cast<${p.target}> x)' runs a user-defined ` +
+      `conversion; declare one with '(defcast :explicit [v <- ${p.source}] -> ${p.target} …)'. To TEST ` +
+      `a type rather than convert, use ':of' -- a narrowing cast is refused on purpose.`
+  ),
+
   // LL0240 (S1c) -- two DIRECTLY imported packages offer the same name.
   //
   // The gate Dove's stdlib roadmap asks for "before the module count doubles", and the warning shot

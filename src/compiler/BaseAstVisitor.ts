@@ -86,6 +86,7 @@ export class BaseAstVisitor {
         "enum-key": this.visitEnumKey.bind(this),
         "struct": this.visitStruct.bind(this),
         "type-def": this.visitTypeDef.bind(this),
+        "cast": this.visitCast.bind(this),
         "range-refinement": this.visitRangeRefinement?.bind(this),
         "interface": this.visitInterface.bind(this),
         "implements": this.visitImplements.bind(this),
@@ -338,6 +339,10 @@ export class BaseAstVisitor {
 
   visitStruct(node: ast.StructNode): any {
     return this.onUnhandled(node, "visitStruct");
+  }
+
+  visitCast(node: ast.CastNode): any {
+    return this.onUnhandled(node, "visitCast");
   }
 
   visitTypeDef(node: ast.TypeDefNode): any {

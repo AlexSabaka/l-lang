@@ -501,6 +501,9 @@ export class LowerAstToHirVisitor {
         );
       case "formatted-string":
         return this.lowerFormattedString(node as ast.FormattedStringNode, dest);
+      case "cast":
+        return this.lowerCast(node as ast.CastNode, dest);
+
       case "variable":
         return this.lowerVariable(node as ast.VariableNode, dest);
       case "simple-assignment":
@@ -1685,6 +1688,42 @@ export class LowerAstToHirVisitor {
   }
 
   // -- variable / assignment (a value-position conditional hides in the RHS) -------------------------
+
+  /**
+   * `(cast<T> x)` (D46/B-3) -- a COERCION SITE, and the only one the author writes by hand.
+   *
+   * It rewrites to a plain call to the `defcast`'s function, because that is what a defcast already
+   * is: the AstBuilder derives the name from the (source, target) pair, so resolving the conversion
+   * is a name lookup rather than a registry walk, and an imported conversion needs no special case.
+   * The checker has already refused the pair if no such name exists (LL0242), so an unresolved one
+   * here means a source type we could not pin down -- identity is the honest lowering for that, not
+   * a fabricated conversion.
+   *
+   * Casting INTO a refined newtype runs its range check too, through the same helper every other
+   * coercion site uses -- so `(cast<uint8> n)` is checked exactly like `(let x <- uint8 n)`.
+   */
+  private lowerCast(node: ast.CastNode, dest: Dest): Lowered {
+    const nameOf = (t: any): string | undefined => {
+      const n = t?.name ?? t?.refName;
+      return typeof n === "string" ? n : undefined;
+    };
+    const source = nameOf(this.context.nodeTypes.get(node.value));
+    const target = typeNameOf(node.target);
+
+    let inner: ast.ASTNode = node.value;
+    if (source && target && source !== target) {
+      const fnName = `__cast_${source}_to_${target}`;
+      // `_parent` is the cast node, which IS in the indexed tree -- so the synthesized callee
+      // resolves the way a hand-written call to the same name would.
+      const mk = (type: string, fields: any): any =>
+        ({ ...fields, _type: type, _location: (node as any)._location, _parent: node });
+      if (this.context.symbolTable?.resolveSymbol(fnName, node)) {
+        inner = mk("list", { nodes: [mk("simple-identifier", { id: fnName }), node.value] });
+      }
+    }
+    const info = refinementOfTypeName(target, this.context.symbolTable);
+    return this.lowerNode(info ? buildRefineCall(inner, info) : inner, dest);
+  }
 
   private lowerVariable(node: ast.VariableNode, dest: Dest): Lowered {
     // A bodyless declaration -- an `:extern` `let` (an ambient global, Sd) -- has no initializer;

@@ -3619,6 +3619,19 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         break;
       }
 
+      // `(cast<T> x)` (D46/B-3) IS its target type -- that is the whole point of a conversion. The
+      // check that one EXISTS happens here too, while there is still a node to point at: a defcast
+      // was rewritten into a function named `__cast_<source>_to_<target>`, so "is there a conversion"
+      // is the same question as "does that name resolve", imports included.
+      case "cast": {
+        const cast = node as ast.CastNode;
+        const target = this.convertAstTypeToInferred(cast.target);
+        const source = this.inferExpressionType(cast.value);
+        this.checkCastExists(cast, source, target);
+        inferredType = target;
+        break;
+      }
+
       // Literals
       case "integer-number":
         inferredType = TypeEnvironment.primitive("Int");
@@ -4298,6 +4311,28 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    * identifier NODE instead flags map keys (`{:name "x"}`), enum keys (`:GET`), a function's own
    * name, and generic type parameters -- none of which are references to anything.
    */
+  /**
+   * LL0242 -- `(cast<T> x)` with no `defcast` from x's type to T.
+   *
+   * Asked by NAME rather than through a registry: the AstBuilder derives a defcast's function name
+   * from its (source, target) pair, so an ordinary symbol lookup answers the question and gets
+   * cross-module conversions for free. An Unknown source is let through -- gradual typing means we
+   * genuinely may not know, and refusing there would reject working programs.
+   */
+  private checkCastExists(node: ast.CastNode, source: InferredType, target: InferredType): void {
+    const nameOf = (t: InferredType | undefined): string | undefined => {
+      const n = (t as any)?.name ?? (t as any)?.refName;
+      return typeof n === "string" ? n : undefined;
+    };
+    const s = nameOf(source);
+    const tgt = nameOf(target);
+    if (!s || !tgt || source?.kind === "unknown") return;
+    if (s === tgt) return; // a cast to the type it already is: identity, nothing to look up
+    const symbols = this.context.symbolTable ?? this.symbolTable;
+    if (symbols.resolveSymbol(`__cast_${s}_to_${tgt}`, node)) return;
+    this.report(TD.NoSuchCast, node, { source: s, target: tgt });
+  }
+
   private checkIdentifierResolves(node: ast.IdentifierNode, id: string): void {
     // A map or enum KEY is a literal, not a reference. `{ :name "Alice" :age 30 }` names nothing;
     // it is the identifier `name` only in the sense that `"name"` is a string. Inference walks into

@@ -527,6 +527,12 @@ export const C_PASSING: readonly string[] = [
   "16-stdlib/16_refinement_assignment.lisp",
   "80-adversarial/refinement_panic_assign.lisp",
   "80-adversarial/refinement_panic_assign_field.lisp",
+  // D46/B-3 `defcast` (P3d-a): a user-defined CONVERSION, keyed by (source, target) rather than by a
+  // name, invoked at `(cast<T> x)`. Rewritten into an ordinary named function at parse time, so both
+  // backends emit it as the plain call it is. Converting INTO a refined newtype runs that type's
+  // range check through the same coercion point every other site uses -- guarded by the panic file.
+  "16-stdlib/17_defcast.lisp",
+  "80-adversarial/defcast_refined_panic.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.

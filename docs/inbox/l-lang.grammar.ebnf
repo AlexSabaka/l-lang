@@ -7,7 +7,7 @@
 (* ===== productions ===== *)
 
 program                ::= expression* ;
-expression             ::= ( comment | importExpr | exportExpr | variable | functionExpr | classDecl | structDecl | enumDecl | interfaceDecl | typeDefDecl | modifierDefDecl | macroDecl | whenExpr | ifExpr | condExpr | forExpr | whileExpr | tryCatchExpr | restartCaseExpr | handleExpr | signalExpr | invokeRestartExpr | matchExpr | awaitExpr | spreadExpr | assignmentOrExpr | quoteExpr | nil | boolean | number | string ) ;
+expression             ::= ( comment | importExpr | exportExpr | variable | functionExpr | classDecl | structDecl | enumDecl | interfaceDecl | typeDefDecl | castDefDecl | castExpr | modifierDefDecl | macroDecl | whenExpr | ifExpr | condExpr | forExpr | whileExpr | tryCatchExpr | restartCaseExpr | handleExpr | signalExpr | invokeRestartExpr | matchExpr | awaitExpr | spreadExpr | assignmentOrExpr | quoteExpr | nil | boolean | number | string ) ;
 assignmentOrExpr       ::= primaryExpr assignmentOp? ;
 primaryExpr            ::= ( list | matrix | vector | map | identifier ( ( indexerSuffix | memberSuffix ) )* ) ;
 assignmentOp           ::= ( ":=" expression | <PlusEq> expression | "-=" expression | <StarEq> expression | <SlashEq> expression | "%=" expression ) ;
@@ -56,6 +56,8 @@ enumDecl               ::= "defenum" modifier* typeName? ( ( enumKey | comment )
 enumKey                ::= <Colon> ( <Identifier> | <StringLiteral> ) ( "=>" expression )? ;
 interfaceDecl          ::= "definterface" modifier* classOrInterfaceName? ( <ImplementsModKw> typeRef+ )? expression* ;
 typeDefDecl            ::= "deftype" modifier* identifier "<-" type ( <SatisfiesModKw> refinementConstraint )? ;
+castExpr               ::= "cast" <LAngle> type <RAngle> expression ;
+castDefDecl            ::= "defcast" ( <Colon> <Identifier> )* <LBracket> parameter <RBracket> "->" type expression* ;
 refinementConstraint   ::= <LParen> expression? <Range> expression? <RParen> ;
 macroDecl              ::= "defmacro" <Identifier>? expression* ;
 modifierDefDecl        ::= "defmodifier" <Identifier> ( <LBracket> ( parameter ","? )* <RBracket> )? expression* ;

@@ -64,6 +64,8 @@ class LLangParser extends CstParser {
   enumKey: ParserMethod<[], CstNode>;
   interfaceDecl: ParserMethod<[], CstNode>;
   typeDefDecl: ParserMethod<[], CstNode>;
+  castDefDecl: ParserMethod<[], CstNode>;
+  castExpr: ParserMethod<[], CstNode>;
   refinementConstraint: ParserMethod<[], CstNode>;
   modifierDefDecl: ParserMethod<[], CstNode>;
   macroDecl: ParserMethod<[], CstNode>;
@@ -164,6 +166,8 @@ class LLangParser extends CstParser {
         { ALT: () => this.SUBRULE(this.enumDecl) },
         { ALT: () => this.SUBRULE(this.interfaceDecl) },
         { ALT: () => this.SUBRULE(this.typeDefDecl) },
+        { ALT: () => this.SUBRULE(this.castDefDecl) },
+        { ALT: () => this.SUBRULE(this.castExpr) },
         { ALT: () => this.SUBRULE(this.modifierDefDecl) },
         { ALT: () => this.SUBRULE(this.macroDecl) },
         // Control flow (keywords: when, if, cond, for, while, try, match)
@@ -1082,6 +1086,47 @@ class LLangParser extends CstParser {
       this.OPTION(() => {
         this.CONSUME(t.SatisfiesModKw);
         this.SUBRULE(this.refinementConstraint);
+      });
+    });
+
+    // D46/B-3 -- a user-defined CONVERSION. Keyed by TYPES, not by a name: no identifier, exactly one
+    // parameter (the source type), a return type (the target) and a body. Exactly one of
+    // `:implicit`/`:explicit` rides the ordinary modifier machinery rather than a dedicated keyword.
+    //
+    //     (defcast :implicit [c <- Celsius] -> Real c.degrees)
+    //
+    // A NARROWING cast is a different thing and stays refused (RFC-0001 §5.6); `:of` narrows soundly.
+    // `(cast<T> x)` -- D46/B-3's explicit conversion site. `cast` is its own keyword, so the ALT is
+    // unambiguous on the first token; without it `cast<Int>` would shred into four list elements,
+    // because `<` and `>` are both `simpleIdentifier` alternatives.
+    this.castExpr = this.RULE("castExpr", () => {
+      this.CONSUME(t.CastKw);
+      this.CONSUME(t.LAngle);
+      this.SUBRULE(this.type);
+      this.CONSUME(t.RAngle);
+      this.SUBRULE(this.expression);
+    });
+
+    this.castDefDecl = this.RULE("castDefDecl", () => {
+      this.CONSUME(t.DefCastKw);
+      // The modifier name is consumed DIRECTLY rather than through the shared `modifier` subrule,
+      // because that rule ends in an OPTIONAL `[ … ]` argument list -- and a defcast's very next
+      // token is its `[param]`. Routed through it, `:implicit [c <- Celsius]` parses as the modifier
+      // `:implicit` TAKING `c <- Celsius` as arguments, and the rule then demands another `[`.
+      // (`fn` has the same shape and escapes it only because a name usually sits in between;
+      // `(fn :public [x] …)` is the same latent ambiguity, simply not exercised by the corpus.)
+      // A conversion's modifiers never take arguments, so consuming the two tokens is exact.
+      this.MANY(() => {
+        this.CONSUME(t.Colon);
+        this.CONSUME(t.Identifier, { LABEL: "modName" });
+      });
+      this.CONSUME(t.LBracket);
+      this.SUBRULE(this.parameter);
+      this.CONSUME(t.RBracket);
+      this.CONSUME(t.RightArrow);
+      this.SUBRULE(this.type);
+      this.MANY2(() => {
+        this.SUBRULE(this.expression);
       });
     });
 

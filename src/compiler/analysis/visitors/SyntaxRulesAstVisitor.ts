@@ -103,6 +103,20 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
   }
 
   visitFunction(node: ast.FunctionNode) {
+    // A defcast reaches here as the function the AstBuilder rewrote it into, marked by `castOf`.
+    // `requireParens` is skipped for it: the form the author wrote is `(defcast …)`, and reporting
+    // "fn must be parenthesized" at it would name a keyword that is not in their source.
+    if (node.castOf) {
+      const kinds = (node.modifiers ?? [])
+        .map((m) => m.modifier)
+        .filter((m) => m === "implicit" || m === "explicit");
+      if (kinds.length !== 1) {
+        this.report(SD.CastNeedsOneKind, node, {
+          found: kinds.length === 0 ? "it carries neither" : `it carries both`,
+        });
+      }
+      return;
+    }
     this.requireParens(node, "fn");
     checkRules(node, [r.ExternFunctionCannotHaveBody], this.context);
   }

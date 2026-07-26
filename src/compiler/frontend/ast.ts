@@ -89,6 +89,7 @@ export type NodeType =
   | "enum-key"
   | "struct"
   | "type-def"
+  | "cast"
   | "range-refinement"
   | "interface"
   | "implements"
@@ -336,6 +337,17 @@ export interface FunctionNode extends ASTNode<"function"> {
   returns: TypeNode;
   body: ASTNode[];
   /**
+   * D46/B-3 -- set when this function came from a `defcast`, naming the conversion it defines.
+   *
+   * A `defcast` is keyed by (source, target) rather than by a name, so the AstBuilder rewrites it
+   * into an ordinarily-named function (`__cast_<source>_to_<target>`) at PARSE time -- the same
+   * parse-time desugar `(lo .. hi)` -> `(Range …)` uses. Everything downstream then treats it as the
+   * plain function it is: the symbol table registers it, the checker types it, both emitters emit it,
+   * and two casts over the same pair collide as an ordinary duplicate declaration. This field is what
+   * lets the cast REGISTRY find them again without matching on a name prefix.
+   */
+  castOf?: { source: string; target: string };
+  /**
    * Optional, and NEVER populated by either frontend: a generic function declaration
    * (`(fn identity<T> [x <- T] -> T ...)`) is not parseable -- only classes and interfaces have a
    * generics slot. InferTypesAstVisitor.visitFunction binds these, so the code exists and is
@@ -343,6 +355,19 @@ export interface FunctionNode extends ASTNode<"function"> {
    * grammar grows generic functions.
    */
   generics?: TypeNameNode[];
+}
+
+/**
+ * `(cast<Real> c)` -- the USE site of a `defcast` (D46/B-3).
+ *
+ * A CONVERSION, never a type test: it runs a user-defined `defcast` from the operand's type to
+ * `target`. RFC-0001 §5.6 refuses `(cast<T> x)` as a narrowing form on the grounds that the runtime
+ * carries no evidence for it and `:of` narrows soundly -- conversion is the different question this
+ * form answers.
+ */
+export interface CastNode extends ASTNode<"cast"> {
+  target: TypeNode;
+  value: ASTNode;
 }
 
 export interface ParameterNode extends ASTNode<"parameter"> {

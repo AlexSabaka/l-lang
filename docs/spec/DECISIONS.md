@@ -4081,6 +4081,20 @@ silently. **Explicit** fires only at an explicit cast site — `(cast<T> x)` (di
 which is `(T x)`). Resolution rides the operator path: a registry keyed by (source, target),
 devirtualised to a direct call — on C both are direct calls after devirt.
 
+**B-3 STATUS — BUILT (2026-07-26, P3d-a), explicit half.** `defcast` parses and both backends run it.
+Shape as ratified: no name, one parameter, a return type, a body, and exactly one of
+`:implicit`/`:explicit` (LL0241 refuses neither-or-both). Two implementation notes worth keeping:
+the AstBuilder rewrites a `defcast` into an ORDINARILY NAMED function, `__cast_<source>_to_<target>`,
+at parse time -- so the symbol table registers it, the checker types it, both emitters emit it, two
+conversions over the same pair collide as a duplicate declaration, and "is there a conversion?" is a
+name lookup that gets imported conversions for free (LL0242 when it misses). And the modifiers are
+consumed as raw `Colon Identifier` rather than through the shared `modifier` subrule, because that
+rule ends in an optional `[ … ]` argument list and a defcast's next token is its `[param]` -- routed
+through it, `:implicit [c <- Celsius]` parses as a modifier TAKING arguments. `(cast<T> x)` lowers to
+a plain call at the HIR coercion point, and converting INTO a refined newtype runs that type's range
+check from the same helper every other coercion site uses. The `:implicit` half -- firing at
+assignment/argument/return without being written -- is NOT built yet.
+
 **Grammar deltas (B-0 / B-1c), clean against the current EBNF:**
 ```
 typeDefDecl        ::= "deftype" modifier* identifier "<-" type refinement? ;   (* name+type now REQUIRED *)

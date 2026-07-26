@@ -57,6 +57,21 @@ export const SyntaxDiagnostics = {
   ),
 
   // LL0023 -- D3: `defmacro`/`defsyntax` are reserved but not implemented in 0.x
+  // LL0241 (D46/B-3) -- a `defcast` must say WHEN it fires.
+  //
+  // `:implicit` is chosen by the compiler at coercion sites; `:explicit` only ever fires at a written
+  // `(cast<T> x)`. They are not defaults for one another and the difference is the whole safety
+  // story, so neither is assumed: a conversion that fires silently when the author meant it to be
+  // asked for is exactly the C++ mistake D46 cites. Both at once is equally meaningless.
+  CastNeedsOneKind: def<{ found: string }>(
+    "LL0241",
+    Error,
+    (p) =>
+      `a 'defcast' must carry exactly one of ':implicit' or ':explicit' (D46/B-3), but ${p.found}. ` +
+      `':implicit' fires by itself at assignment, argument and return positions; ':explicit' fires ` +
+      `only where '(cast<T> x)' is written. Neither is the default for the other.`
+  ),
+
   MacroNotImplemented: def<{ keyword: string; name?: string }>(
     "LL0023",
     Error,

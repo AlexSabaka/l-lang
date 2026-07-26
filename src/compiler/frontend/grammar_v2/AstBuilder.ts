@@ -120,7 +120,7 @@ export class LLangAstBuilder extends BaseCstVisitor {
     // Find which alternative matched
     const alternatives = [
       "comment", "importExpr", "exportExpr", "variable", "functionExpr",
-      "classDecl", "structDecl", "enumDecl", "interfaceDecl", "typeDefDecl",
+      "classDecl", "structDecl", "enumDecl", "interfaceDecl", "typeDefDecl", "castDefDecl", "castExpr",
       "modifierDefDecl", "macroDecl", "whenExpr", "ifExpr", "condExpr", "forExpr",
       "whileExpr", "tryCatchExpr",
       "restartCaseExpr", "handleExpr", "signalExpr", "invokeRestartExpr",
@@ -969,6 +969,51 @@ export class LLangAstBuilder extends BaseCstVisitor {
       modifiers,
       implements: implementsType,
       body,
+    });
+  }
+
+  /**
+   * `(defcast :implicit [c <- Celsius] -> Real …)` -> an ordinary named function (D46/B-3).
+   *
+   * A conversion is keyed by (source, target), not by a name, so the name is DERIVED here rather than
+   * written: `__cast_<source>_to_<target>`. Rewriting at parse time -- the same move `(lo .. hi)` ->
+   * `(Range …)` makes below -- means the symbol table, the checker and both emitters treat it as the
+   * plain function it is, and two conversions over the same pair collide as an ordinary duplicate
+   * declaration instead of needing a bespoke check. `castOf` is how the registry finds them again.
+   */
+  castExpr(ctx: any): ast.CastNode {
+    return this.makeNode("cast", ctx, {
+      target: this.visit(ctx.type[0]),
+      value: this.visit(ctx.expression[0]),
+    });
+  }
+
+  castDefDecl(ctx: any): ast.FunctionNode {
+    const modifiers = (ctx.modName ?? []).map((tok: any) =>
+      this.makeNode("modifier", ctx, { modifier: tok.image })
+    );
+    const param = this.visit(ctx.parameter[0]);
+    const returns = this.visit(ctx.type[0]);
+    const body = (ctx.expression ?? []).map((e: any) => this.visit(e));
+    const nameOf = (t: any): string => {
+      if (!t || typeof t !== "object") return "unknown";
+      if (t._type === "type") return nameOf(t.type);
+      const n = typeof t.name === "string" ? t.name : t.name?.name;
+      return typeof n === "string" ? n : "unknown";
+    };
+    const source = nameOf(param?.type);
+    const target = nameOf(returns);
+    const name = this.makeNode("simple-identifier", ctx, { id: `__cast_${source}_to_${target}` });
+    return this.makeNode("function", ctx, {
+      name,
+      async: false,
+      generator: false,
+      extern: false,
+      modifiers,
+      params: [param],
+      returns,
+      body,
+      castOf: { source, target },
     });
   }
 
