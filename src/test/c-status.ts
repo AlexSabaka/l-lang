@@ -514,6 +514,12 @@ export const C_PASSING: readonly string[] = [
   "16-stdlib/14_refinement_boundaries.lisp",
   "80-adversarial/refinement_panic_param.lisp",
   "80-adversarial/refinement_panic_return.lisp",
+  // P3c-1c-iii, the last boundary: a `:ctor` field takes its value from a constructor argument, so
+  // there is no annotated initializer to wrap. The check rides a synthesized `:ctor` METHOD, which
+  // both backends already invoke after the field stores -- so an INHERITED refined field is checked
+  // by the class that declared it, via super, with no positional reasoning anywhere.
+  "16-stdlib/15_refinement_fields.lisp",
+  "80-adversarial/refinement_panic_field.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.

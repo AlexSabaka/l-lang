@@ -208,6 +208,79 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     return out;
   }
 
+  /**
+   * The FIELD-INIT boundary (P3c-1c-iii), for a `:ctor` field: `(defclass Box (let :ctor v <- uint8))`
+   * takes its value from a constructor argument, so there is no annotated initializer to wrap and
+   * nothing here was checking it.
+   *
+   * A `:ctor` field's value arrives inside a constructor that does not EXIST at this stage -- HIR
+   * synthesizes it, flattening the `:extends` chain to build the real parameter list. Rather than
+   * replicate that flattening (and get inheritance order subtly wrong), this appends a synthesized
+   * `:ctor` METHOD, which HIR already collects into `ctorMethods` and both backends already invoke
+   * after the field stores. Inheritance then falls out for free: every class checks its OWN fields,
+   * and a parent's are checked by the parent's own method, reached through `super`.
+   *
+   * A field with a written initializer -- `(mut v <- uint8 300)` -- needs none of this; it is an
+   * ordinary `variable` node with a value, so `visitVariable` has always covered it.
+   */
+  private refineCtorFieldCheck(cls: ast.ClassNode | ast.StructNode): ast.ASTNode | undefined {
+    // A class member may be WRAPPED IN A LIST -- `(let :ctor v <- uint8)` parses as a list whose
+    // first node is the variable -- so flatten the way HIR's `classBodyNodes` does. Reading
+    // `cls.body` directly finds a single `list` and no fields at all.
+    const members = ((cls.body ?? []) as any[]).map((x: any) => (x?.nodes ? x.nodes : [x])).flat(2);
+    const checks: ast.ASTNode[] = [];
+    for (const m of members) {
+      const v = m && m._type === "variable" ? m : undefined;
+      if (!v || !(v.modifiers ?? []).some((mod: any) => mod.modifier === "ctor")) continue;
+      const info = this.refinedInt.get(this.typeNameOf(v.type) ?? "");
+      if (!info || !v.name || !ast.isAstNode(v.name)) continue;
+      if (v.name._type !== "simple-identifier" && v.name._type !== "composite-identifier") continue;
+      const field = ast.symbolName(v.name as ast.IdentifierNode);
+      const loc = v._location;
+      // `this.<field>` -- a member read, so only its HEAD (`this`) is a reference, and `_parent` on
+      // the field's own declaration node puts that head in the class's scope.
+      const target = {
+        _type: "composite-identifier",
+        id: `this.${field}`,
+        headless: false,
+        parts: ["this", field],
+        _location: loc,
+        _parent: v,
+      } as any;
+      checks.push(this.refineCall(target, info, loc, v));
+    }
+    if (checks.length === 0) return undefined;
+
+    const loc = (cls as any)._location;
+    const mk = (type: string, fields: any): any => ({ ...fields, _type: type, _location: loc, _parent: cls });
+    return mk("function", {
+      name: mk("simple-identifier", { id: "__refine_ctor_check" }),
+      async: false,
+      generator: false,
+      extern: false,
+      modifiers: [mk("modifier", { modifier: "ctor" })],
+      params: [],
+      // `-> Void` BINDS (D49a): it suppresses the implicit return, so the last check's value is not
+      // handed back as a construction result.
+      returns: mk("type", { type: mk("type-name", { name: "Void" }), array: false }),
+      body: checks,
+    });
+  }
+
+  visitClass(node: ast.ClassNode): ast.ClassNode {
+    const recursed = this.rebuild(node) as any;
+    const check = this.refineCtorFieldCheck(node);
+    if (check) recursed.body = [...(recursed.body ?? []), check];
+    return recursed as ast.ClassNode;
+  }
+
+  visitStruct(node: ast.StructNode): ast.StructNode {
+    const recursed = this.rebuild(node) as any;
+    const check = this.refineCtorFieldCheck(node);
+    if (check) recursed.body = [...(recursed.body ?? []), check];
+    return recursed as ast.StructNode;
+  }
+
   /** Is this list node an explicit `(return …)`, and what does it return? */
   private returnValueOf(n: any): { value: ast.ASTNode | undefined } | undefined {
     if (!n || n._type !== "list" || !Array.isArray(n.nodes) || n.nodes.length === 0) return undefined;

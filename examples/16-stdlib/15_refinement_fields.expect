@@ -1,0 +1,4 @@
+class: 200
+struct: 12
+inherited: 5 hi
+initializer: 42
