@@ -4983,6 +4983,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
   ): void {
     if (!funcType.params) return;
 
+    // A SPREAD argument makes the count unknowable here. `(f a ...xs)` writes two arguments and may
+    // pass any number, so counting the written ones and comparing is not a weak check -- it is a
+    // wrong one, and it rejected every correct call: `(add3 ...xs)` reported "expects 3 arguments,
+    // got 1". The count is checked at run time by the callee's own arity handling instead.
+    if (args.some((a) => a?._type === "spread")) return;
+
     const declared = funcType.params.length;
     const required = requiredOverride ?? (funcType.isVariadic ? declared - 1 : declared);
     const tooFew = args.length < required;

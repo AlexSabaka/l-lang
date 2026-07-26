@@ -829,6 +829,11 @@ export class EmitCirToC {
             // The uniform boxed convention: unbox the value to a closure, pass boxed args. P2 has
             // coerced `fn` to a boxed value and every arg to `value`.
             const fn = this.expr(e.callee.fn);
+            // With a SPREAD the argument list is built first, because its length is not known here.
+            if (e.spread?.some(Boolean)) {
+              const mask = e.spread.map((s) => (s ? "1" : "0")).join(", ");
+              return `ll_call_spread(${fn}, ${args.length}, (int[]){${mask}}, (ll_value[]){${args.join(", ")}})`;
+            }
             return args.length
               ? `ll_call(${fn}, ${args.length}, (ll_value[]){${args.join(", ")}})`
               : `ll_call(${fn}, 0, (ll_value*)0)`;
@@ -873,6 +878,13 @@ export class EmitCirToC {
         return `(${e.exprs.map((x) => this.expr(x)).join(", ")})`;
       case "c-vector": {
         const els = e.elements.map((el) => this.expr(el));
+        // A vector carrying a SPREAD is built rather than laid out: the final length is not known
+        // until the spread parts have been walked. Everything else keeps `ll_vec_of`, which is one
+        // allocation and a copy.
+        if (e.spread?.some(Boolean)) {
+          const mask = e.spread.map((s) => (s ? "1" : "0")).join(", ");
+          return `ll_vec_build(${els.length}, (int[]){${mask}}, (ll_value[]){${els.join(", ")}})`;
+        }
         return els.length
           ? `ll_vec_of(${els.length}, (ll_value[]){${els.join(", ")}})`
           : "ll_vec_of(0, (ll_value*)0)";

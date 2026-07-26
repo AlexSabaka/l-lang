@@ -175,6 +175,15 @@ export interface CCall {
   kind: "c-call";
   callee: CCallee;
   args: CExpr[];
+  /**
+   * Per-argument: is this one SPREAD into the call rather than passed as one argument?
+   *
+   * Only ever set on a `closure` callee, and that is forced rather than stylistic: with a spread the
+   * argument count is not known until run time, so the direct C convention cannot express the call
+   * at all. `resolveFreeCall` converts even an ordinary top-level callee to a function VALUE when it
+   * sees one.
+   */
+  spread?: boolean[];
 }
 
 /**
@@ -220,6 +229,15 @@ export interface CSeq {
 export interface CVector {
   kind: "c-vector";
   elements: CExpr[];
+  /**
+   * Per-element: is this part SPREAD into the vector rather than placed in it?
+   *
+   * Absent on the overwhelmingly common literal, which keeps its `ll_vec_of` emission unchanged --
+   * a mask of all-false would cost every vector in the corpus an extra array and a loop for nothing.
+   * Present only when the source actually wrote `...x`, and then the whole thing routes through
+   * `ll_vec_build`.
+   */
+  spread?: boolean[];
 }
 
 export interface CMapEntry {

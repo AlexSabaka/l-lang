@@ -233,6 +233,9 @@ export const C_PASSING: readonly string[] = [
   // The three ways a destructuring `let` could diverge quietly: single evaluation of the
   // initializer, a short vector giving nil rather than trapping, and the two map spellings.
   "80-adversarial/destructuring_decl_c.lisp",
+  // Spread on C: a vector carrying one cannot be laid out (its length is not static) and a call
+  // carrying one cannot use the direct convention at all. Prerequisite for decorators.
+  "80-adversarial/spread_on_c.lisp",
   // D71 digit separators, and the 2^53 case that makes stripping them a precision requirement
   // rather than a cosmetic one -- C is where the raw-text path is read.
   "00-basics/09_digit_separators.lisp",

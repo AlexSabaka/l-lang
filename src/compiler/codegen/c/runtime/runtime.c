@@ -1933,6 +1933,44 @@ static ll_vec *ll_vec_concat(ll_vec *a, ll_vec *b) {
   return out;
 }
 
+/* `[a ...xs b]` and `(f a ...xs)` -- build a vector from `n` parts, splicing the spread ones.
+ *
+ * `spread[i]` non-zero means part i is a vector whose ELEMENTS go in; zero means the part is one
+ * element. One helper serves both the literal and the argument list, because they are the same
+ * operation -- which is also why a call carrying a spread has to go through the boxed convention:
+ * the argument COUNT is not known until this has run.
+ *
+ * Spreading a non-vector TRAPS rather than passing the value through. JS throws a TypeError for
+ * `[...5]`, and `ll_vec_flat` above deliberately passes non-vectors through because `flat` is
+ * defined to -- borrowing that behaviour here would make `[...5]` mean something on C and throw on
+ * JS, which is the silent divergence the backend split exists to prevent.
+ *
+ * Placed here rather than beside `ll_vec_of`: `ll_vec_push` is defined further down the file, the
+ * same ordering that `ll_vec_grow`'s comment above already records.
+ */
+static ll_vec *ll_vec_build(size_t n, const int *spread, ll_value *parts) {
+  ll_vec *out = ll_vec_new(n ? n : 4);
+  for (size_t i = 0; i < n; i++) {
+    if (!spread[i]) { ll_vec_push(out, parts[i]); continue; }
+    ll_value p = parts[i];
+    if (p.tag != LL_VEC) ll_trap("TypeError", "spread of a non-vector value");
+    ll_vec *v = p.as.v;
+    for (size_t j = 0; j < v->len; j++) ll_vec_push(out, v->items[j]);
+  }
+  return out;
+}
+
+/* `(f a ...xs)` -- build the argument list, then call through the boxed convention.
+ *
+ * A call carrying a spread cannot use the direct C convention at all: the argument COUNT is not
+ * known until the spread has been walked, so the callee is reached as a value. That is why a spread
+ * call is boxed even when the callee is an ordinary top-level function.
+ */
+static ll_value ll_call_spread(ll_value fn, size_t n, const int *spread, ll_value *parts) {
+  ll_vec *v = ll_vec_build(n, spread, parts);
+  return ll_call(fn, (int)v->len, v->items);
+}
+
 static ll_str *ll_vec_join(ll_vec *v, ll_str *sep) {
   ll_sb sb;
   ll_sb_init(&sb);

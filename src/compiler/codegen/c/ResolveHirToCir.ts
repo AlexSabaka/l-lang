@@ -1642,8 +1642,20 @@ export class ResolveHirToCir {
       }
 
       case "vector": {
-        // A collection slot is a store site: a struct element is copied (D11).
-        const elements = h.elements.map((e) => this.copyStore(this.resolveExpr(e), h.src, "collection-elem"));
+        // A SPREAD element (`[a ...xs]`) arrives as an opaque expr wrapping the SpreadNode, because
+        // the HIR lowers it through the legacy path -- so it is recognised by its source node and
+        // resolved as its INNER expression. Not copied: `...xs` contributes xs's ELEMENTS, and each
+        // one was already stored when xs was built.
+        const spread = h.elements.map((e) => this.spreadInner(e) !== undefined);
+        const elements = h.elements.map((e, i) => {
+          const inner = this.spreadInner(e);
+          if (inner !== undefined) return this.resolveAstExpr(inner);
+          return this.copyStore(this.resolveExpr(e), h.src, "collection-elem");
+        });
+        if (spread.some(Boolean)) {
+          this.ledger.record("A2", "vector-spread", h.src, "spread element read from the raw SpreadNode (the HIR lowers it opaquely)");
+          return { src: h.src, ctype: { k: "vec", elem: C_VALUE }, kind: "c-vector", elements, spread };
+        }
         const ct = this.ctypeOf(h, "vector");
         // Prefer the channel's element type; else infer a common concrete element type (so a vector of
         // structs stays `vec<obj>` and its for-each binding / index reads stay typed).
@@ -1735,6 +1747,18 @@ export class ResolveHirToCir {
       }
     }
     return expr;
+  }
+
+  /**
+   * If this HIR expression is a SPREAD, the expression being spread; otherwise undefined.
+   *
+   * `...xs` has no HIR node of its own -- `lowerVector` and the call lowering send it through the
+   * legacy path, so it arrives as an opaque expr whose `src` is the SpreadNode. Recognising it by
+   * source is therefore the only handle there is, and it is the same handle the JS emitter uses.
+   */
+  private spreadInner(h: HExpr): ast.ASTNode | undefined {
+    const src: any = (h as any).src;
+    return src?._type === "spread" ? (src as ast.SpreadNode).expression : undefined;
   }
 
   private memberRead(src: ast.ASTNode, object: CExpr, fieldName: string): CExpr {
@@ -3889,6 +3913,24 @@ export class ResolveHirToCir {
     if (h.callee.kind !== "ref") return this.resolveAstExpr(node); // not a modeled name -> legacy path
     const name = h.callee.name;
     const cName = mangleC(name);
+
+    // (0) A SPREAD argument forces the BOXED convention, whatever the callee is. `(f a ...xs)` does
+    // not have a statically known argument count, so a direct C call cannot express it -- even a
+    // plain top-level function is reached as a value here. This is checked before every other case
+    // precisely because it overrides all of them.
+    const spread = h.args.map((a) => this.spreadInner(a) !== undefined);
+    if (spread.some(Boolean)) {
+      const parts = h.args.map((a) => {
+        const inner = this.spreadInner(a);
+        return inner !== undefined ? this.resolveAstExpr(inner) : this.resolveExpr(a);
+      });
+      const fnv = this.localInfo(cName)
+        ? this.resolveIdentifier(h.callee.src as ast.IdentifierNode, true)
+        : this.functionValue(node, name);
+      this.ledger.record("A3", "spread-call", node, "call with a spread argument goes through the boxed convention (the argument count is not static)");
+      return { src: node, ctype: C_VALUE, kind: "c-call", callee: { kind: "closure", fn: fnv }, args: parts, spread };
+    }
+
     const cArgs = h.args.map((a) => this.resolveExpr(a));
 
     // (1) A local binding used as a callee -> a call through a closure value (spec A3).
