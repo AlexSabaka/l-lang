@@ -5551,6 +5551,11 @@ Three tiers, distinguished by what the handler RECEIVES:
 | `defmacro` | a cons list of tokens | structural rewriting below the grammar |
 | `defsyntax` | a full AST | grammar-native forms |
 
+**`defmodifier` joins this table as of D75**, and that is the clearest argument for the flat contract:
+it receives a FUNCTION and returns one, so it is the tier that transforms a declaration rather than a
+form. Its arguments obey `:comptime`'s rule — literals only — because it does compile-time work for the
+same reason `:comptime` does.
+
 **This resolves the parked cons-vs-AST question.** It sat unanswered because it was posed as either/or —
 "is a quote a cons-list or an AST datum?" — and in that shape it has no answer worth defending. It is
 both, and the tier you are in tells you which. A `defmacro` works in tokens because tokens are the level
@@ -5812,3 +5817,86 @@ That is the second time this month a decision asserted a property of code that a
 refuted (D72-c withdrew "there is no way to write a class-shaped decorator" the same way). The rule
 earned: a claim about code is a claim about a measurement, and the measurement is usually cheaper than
 the argument.
+
+---
+
+## D75 — `defmodifier`'s contract: flat, with a setup slot (2026-07-26)
+
+A decorator's shape was `(fn [original] (fn [...args] BODY))` — curried. That is a JavaScript idiom,
+`original => (...args) => …`, adopted because the JS backend made it free, and it was **never written
+down**: it lived implicitly in what `applyModifiersToDeclaration` happened to call. Trying to unfold it
+statically for the native backend is what exposed that — an analyser has to reverse-engineer a nesting
+nobody specified, and the first attempt got the nesting wrong precisely because there was nothing to
+check it against.
+
+Sabaka's replacement, and the reason it is better than a simplification:
+
+```lisp
+(defmodifier NAME [modifier-params…]
+    SETUP…                              ;; optional; runs ONCE per decoration site
+    (fn [original ...args] BODY))       ;; the wrapper; runs per call
+```
+
+**One lambda, not two.** Substitution becomes a single beta-reduction rather than two, the analysable
+shape becomes *statable* rather than inferred, and `defmodifier` becomes a real metaprogramming tier
+alongside `:comptime` (D69) instead of a codegen trick. `(original ...args)` needs no `apply`
+primitive — spread landed on both backends first.
+
+**The SETUP SLOT is what the flat form would otherwise lose**, and it is not a convenience. Currying is
+what gave per-DECORATION state a home:
+
+    (fn [original] (let cache {}) (fn [...args] …))     ;; cache: once per decorated function
+
+Flattened, `cache` would be per-CALL, which is not memoization. Statements before the wrapper keep it,
+one instance per decoration SITE — `:memoized` on two functions gets two caches, and sharing one would
+still print plausibly, which is what makes it worth stating. The same slot holds a decoration-time side
+effect: the pass-through decorator that logs when APPLIED (`Qf/AF-019`) is exactly this.
+
+### Arguments must be compile-time constants
+
+    (fn :retry[4] task [] …)                       ;; folds
+    (fn make [n m] (fn :retry[(+ n m)] [x] …))     ;; DIAGNOSTIC — use hand-wrapping
+
+Not a new kind of rule. `:comptime` already requires literal arguments (LL0099), enforced before the
+evaluator runs, for the identical reason: **if you ask for compile-time work, the inputs must be
+compile-time known.** The second form is not unimplemented but undecidable by construction — the branch
+taken depends on a runtime value, so every branch must survive, and each call of `make` is a *new*
+decoration needing new state. That is the definition of dynamic.
+
+**The dynamic form is not lost; it is spelled differently.** Hand-wrapping — `(let f (wrap g))` — works
+on both backends today. So `:name` is static sugar and an explicit wrapper is the dynamic form, which
+is a cleaner split than JS's, where they are one mechanism and you cannot have either without the
+other.
+
+### Conditional bodies FOLD, they do not unroll
+
+With the argument constant at each site, a modifier body that branches on it selects ONE branch at
+compile time; the others, and their setup state, are not in the emitted function. It does not become a
+runtime dispatch carrying the argument as a parameter — that would keep statically dead branches and
+drag along state for a branch that can never run there.
+
+The folding this needs is SPECIALIZATION — pick a branch from a known constant — which neighbours
+D73's comptime evaluator without reusing it: that evaluates to values, and a lambda is not a value it
+can produce. Worth recording so nobody plans on it being free.
+
+### A decorator on a CLASS is refused
+
+The flat contract has no coherent reading for one: `original` would be a constructor and `...args` its
+arguments, which is a different operation from wrapping a call. `defattribute` (D72) is the form for
+annotating a class, works on every construct, and needs no runtime support.
+
+This is the PRINCIPLED version of a refusal that was built and withdrawn in D72-c. That withdrawal was
+correct **against the old contract** — a pass-through decorator returning `original` unchanged provably
+worked there, and the corpus contained one. Under this contract the shape does not typecheck as a
+decorator at all, so the refusal follows from the rule instead of from a heuristic about what the body
+returns. `Qf/AF-019` pins the old behaviour and is updated with this ruling rather than quietly.
+
+### Migration
+
+Breaking, deliberately. Seven corpus files carry a real decorator body; seven more declare an EMPTY one
+and are unaffected. Two more live in the games repo (`sokoban/core.lisp`, `sokoban/interactive.lisp`)
+and several are embedded in `src/test/codegen.ts` — both are places a grep of `examples/` alone would
+miss, which is the trap D67 recorded from the P3a `<-` migration.
+
+The check on the migration is that **no golden moves**: for these programs the change is a spelling,
+so identical output on both backends is the evidence it was one.
