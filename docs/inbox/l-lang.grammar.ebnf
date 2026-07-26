@@ -7,7 +7,7 @@
 (* ===== productions ===== *)
 
 program                ::= expression* ;
-expression             ::= ( comment | importExpr | exportExpr | variable | functionExpr | classDecl | structDecl | enumDecl | interfaceDecl | typeDefDecl | modifierDefDecl | macroDecl | whenExpr | ifExpr | condExpr | forExpr | whileExpr | tryCatchExpr | matchExpr | awaitExpr | spreadExpr | assignmentOrExpr | quoteExpr | nil | boolean | number | string ) ;
+expression             ::= ( comment | importExpr | exportExpr | variable | functionExpr | classDecl | structDecl | enumDecl | interfaceDecl | typeDefDecl | modifierDefDecl | macroDecl | whenExpr | ifExpr | condExpr | forExpr | whileExpr | tryCatchExpr | restartCaseExpr | handleExpr | signalExpr | invokeRestartExpr | matchExpr | awaitExpr | spreadExpr | assignmentOrExpr | quoteExpr | nil | boolean | number | string ) ;
 assignmentOrExpr       ::= primaryExpr assignmentOp? ;
 primaryExpr            ::= ( list | matrix | vector | map | identifier ( ( indexerSuffix | memberSuffix ) )* ) ;
 assignmentOp           ::= ( ":=" expression | <PlusEq> expression | "-=" expression | <StarEq> expression | <SlashEq> expression | "%=" expression ) ;
@@ -23,7 +23,7 @@ formatExpr             ::= <FormatExprStart> expression? <FormatExprEnd> ;
 identifier             ::= ( compositeIdentifier | simpleIdentifier ) ;
 simpleIdentifier       ::= ( <Identifier> ( <Colon> <Identifier> )? | <Plus> | <Minus> | <Star> | <Slash> | <Percent> | <Caret> | <Equal> | <Question> | <Exclamation> | <Tilde> | <Pipe> | <Ampersand> | <LAngle> | <RAngle> | "<-" | "->" | "=>" | "==" | "!=" | <OperatorIdent> ) ;
 compositeIdentifier    ::= <Identifier>? ( <Dot> ( <Identifier> | <BareKeyword> ) )+ ;
-list                   ::= <LParen> expression* ( <OfModKw> type )? <RParen> ;
+list                   ::= <LParen> expression* ( <OfModKw> type )? ( <Range> expression )? <RParen> ;
 vector                 ::= <LBracket> ( expression ","? )* <RBracket> ;
 matrix                 ::= <LBracket> matrixRow ( <Pipe> matrixRow )+ <RBracket> ;
 matrixRow              ::= ( expression ","? )+ ;
@@ -47,15 +47,16 @@ modifier               ::= <Colon> ( <Identifier> | "async" ) ( <LBracket> ( exp
 variable               ::= ( "let" | "mut" ) modifier* ( ( vectorPattern | mapPattern | identifier ) )? ( "<-" type )? expression? ;
 functionExpr           ::= "async"? "fn" modifier* identifier? ( <LAngle> ( genericParam ","? )+ <RAngle> )? <LBracket> ( parameter ","? )* <RBracket> ( "->" type )? expression* ;
 parameter              ::= <Spread>? ( vectorPattern | mapPattern | identifier ) modifier* ( "<-" type )? ;
-classDecl              ::= "defclass" modifier* classOrInterfaceName? ( ( <ExtendsModKw> typeRef | <ImplementsModKw> typeRef ) )* expression* ;
+classDecl              ::= "defclass" modifier* classOrInterfaceName? ( ( <ExtendsModKw> typeRef+ | <ImplementsModKw> typeRef+ ) )* expression* ;
 classOrInterfaceName   ::= typeName ( <LAngle> ( genericParam ","? )+ <RAngle> )? ;
 genericParam           ::= modifier? typeName ;
 typeRef                ::= typeName ( <LAngle> ( type ","? )+ <RAngle> )? ;
-structDecl             ::= "defstruct" modifier* typeName? ( ( <ExtendsModKw> typeRef | <ImplementsModKw> typeRef ) )* expression* ;
+structDecl             ::= "defstruct" modifier* typeName? ( ( <ExtendsModKw> typeRef+ | <ImplementsModKw> typeRef+ ) )* expression* ;
 enumDecl               ::= "defenum" modifier* typeName? ( ( enumKey | comment ) )* ;
 enumKey                ::= <Colon> ( <Identifier> | <StringLiteral> ) ( "=>" expression )? ;
-interfaceDecl          ::= "definterface" modifier* classOrInterfaceName? ( <ImplementsModKw> typeRef )? expression* ;
-typeDefDecl            ::= "deftype" modifier* identifier? type? ;
+interfaceDecl          ::= "definterface" modifier* classOrInterfaceName? ( <ImplementsModKw> typeRef+ )? expression* ;
+typeDefDecl            ::= "deftype" modifier* identifier "<-" type ( <SatisfiesModKw> refinementConstraint )? ;
+refinementConstraint   ::= <LParen> expression? <Range> expression? <RParen> ;
 macroDecl              ::= "defmacro" <Identifier>? expression* ;
 modifierDefDecl        ::= "defmodifier" <Identifier> ( <LBracket> ( parameter ","? )* <RBracket> )? expression* ;
 importExpr             ::= "import" ( importDefinition ","? )+ ;
@@ -77,6 +78,12 @@ tryCatchExpr           ::= "try" expression? catchClause* finallyClause? ;
 catchClause            ::= "catch" catchFilter? expression? ;
 catchFilter            ::= <Identifier> ( <OfModKw> typeName )? ;
 finallyClause          ::= "finally" expression ;
+restartCaseExpr        ::= "restart-case" expression restartArm* ;
+restartArm             ::= <LParen> <Colon> <Identifier> vector expression* <RParen> ;
+handleExpr             ::= "handle" expression handleClause* ;
+handleClause           ::= <LParen> <OnModKw> typeName vector expression* <RParen> ;
+signalExpr             ::= "signal" expression ;
+invokeRestartExpr      ::= "invoke-restart" <Colon> <Identifier> expression* ;
 matchExpr              ::= "match" expression <LBrace> ( comment* matchCase )+ <RBrace> ;
 matchCase              ::= pattern ( <WhenModKw> expression )? "=>" expression ;
 pattern                ::= ( anyPattern | restPattern | functionalPattern | listPattern | vectorPattern | mapPattern | typePattern | constantPattern | identifierPattern ) ;
@@ -110,7 +117,7 @@ spreadExpr             ::= <Spread> expression ;
 <Equal>                 ::= /=(?![=>])/
 <Exclamation>           ::= /!(?!=)/
 <ExtendsModKw>          ::= /:extends(?![a-zA-Z0-9_-])/
-<FloatNumber>           ::= /[+-]?[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?|[+-]?[0-9]+[eE][+-]?[0-9]+/
+<FloatNumber>           ::= /[+-]?[0-9]+\.(?!\.)[0-9]*([eE][+-]?[0-9]+)?|[+-]?[0-9]+[eE][+-]?[0-9]+/
 <FormatExprEnd>         ::= /\}/
 <FormatExprStart>       ::= /\{/
 <FormattedStringEnd>    ::= /"/
@@ -130,6 +137,7 @@ spreadExpr             ::= <Spread> expression ;
 <ModKeyword>            ::= (category / programmatic token) -- a token CATEGORY (Lexer.NA)
 <OctalNumber>           ::= /0[0-7]+/
 <OfModKw>               ::= /:of(?![a-zA-Z0-9_-])/
+<OnModKw>               ::= /:on(?![a-zA-Z0-9_-])/
 <OperatorIdent>         ::= /[*+\-\\/^&%$#@!~=|<>?]+/
 <Percent>               ::= /%(?!=)/
 <Pipe>                  ::= /\|(?![=|>])/
@@ -141,6 +149,8 @@ spreadExpr             ::= <Spread> expression ;
 <RBrace>                ::= /\}/
 <RBracket>              ::= /\]/
 <RParen>                ::= /\)/
+<Range>                 ::= /\.\.(?!\.)/
+<SatisfiesModKw>        ::= /:satisfies(?![a-zA-Z0-9_-])/
 <Slash>                 ::= /\/(?!=)/
 <SlashEq>               ::= /\/=/
 <Spread>                ::= /\.\.\./
