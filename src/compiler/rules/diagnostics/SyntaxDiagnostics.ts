@@ -142,6 +142,27 @@ export const SyntaxDiagnostics = {
       `and test it with ':when', e.g. '[first rest] :when (is-full-match r"…" first) => …'.`
   ),
 
+  // LL0036 (D75) -- a decorator applied with a non-constant argument, or inside a function body.
+  //
+  // `:name[args]` is STATIC sugar: it is unfolded at compile time, so its arguments must be known
+  // then. This is not a new kind of rule -- `:comptime` requires literal arguments (LL0099) for the
+  // identical reason, and this is that reason applied to the other compile-time form.
+  //
+  // Nor is it merely unimplemented. A decoration whose argument is a runtime value is undecidable by
+  // construction: a body that branches on the argument needs every branch to survive, and a
+  // decoration inside a function body is a NEW decoration on every call, each needing its own setup
+  // state. That is the definition of dynamic, and the dynamic form is spelled differently -- an
+  // explicit wrapper, which works on both backends.
+  DecoratorArgNotConstant: def<{ name: string; why: string }>(
+    "LL0036",
+    Error,
+    (p) =>
+      `':${p.name}' is a decorator, so it is applied at COMPILE TIME -- but ${p.why}. A decorator's ` +
+      `arguments must be literals and the decoration must be at module level, the same rule ` +
+      `':comptime' has and for the same reason. For a decoration that depends on runtime values, ` +
+      `wrap explicitly instead: '(let f (${p.name} g))'.`
+  ),
+
   // LL0023 -- D3: `defmacro`/`defsyntax` are reserved but not implemented in 0.x
   // LL0241 (D46/B-3) -- a `defcast` must say WHEN it fires.
   //

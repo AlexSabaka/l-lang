@@ -67,12 +67,50 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
       return;
     }
 
+    // LL0036 -- a DECORATOR is unfolded at compile time (D75), so what it is given must be known
+    // then. Two ways that fails, and they are the same failure: the argument is computed, or the
+    // decoration itself is inside a function body and so happens afresh on every call.
+    if (declared.kind === "decorator") {
+      const computed = args.find((a) => literalValueOf(a) === undefined);
+      if (computed) {
+        this.report(SD.DecoratorArgNotConstant, computed, {
+          name,
+          why: `an argument is computed rather than a literal`,
+        });
+        return;
+      }
+      if (this.insideFunctionBody(node)) {
+        this.report(SD.DecoratorArgNotConstant, node, {
+          name,
+          why: `the decoration is inside a function body, so it happens again on every call`,
+        });
+        return;
+      }
+    }
+
     // LL0032 -- an attribute argument that has to be evaluated. An attribute is data; the metadata
     // table is emitted as data and never runs. A decorator's arguments are deliberately NOT checked:
     // they may be any expression, as they always could, and only the literal ones are reflected.
     if (declared.kind === "attribute" && args.some((a) => literalValueOf(a) === undefined)) {
       this.report(SD.AttributeArgNotLiteral, node, { name });
     }
+  }
+
+  /**
+   * Is the declaration carrying this modifier nested inside a FUNCTION?
+   *
+   * A module-level decoration happens once; one inside a function body happens per call, each time
+   * needing its own setup state, which is exactly what a compile-time unfold cannot give it.
+   */
+  private insideFunctionBody(node: ast.ModifierNode): boolean {
+    let cur: any = (node as any)._parent;         // the decorated declaration
+    cur = cur?._parent;                            // start the walk above it
+    for (let i = 0; i < 64 && cur; i++) {
+      if (cur._type === "function") return true;
+      if (cur._type === "program") return false;
+      cur = cur._parent;
+    }
+    return false;
   }
 
   private checkAnnotationCollisions(node: ast.ProgramNode) {

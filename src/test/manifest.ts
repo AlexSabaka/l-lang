@@ -409,6 +409,15 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "and depth budgets make it a failed compile, located at the recursive CALL rather than the " +
       "expression that triggered the fold.",
   },
+  "90-diagnostics/ll0036_decorator_arg_not_constant.lisp": {
+    status: "negative", codes: ["LL0036"],
+    reason:
+      "D75: `:name[args]` is static sugar, unfolded at compile time, so its arguments must be known " +
+      "then -- the same rule `:comptime` has (LL0099) for the same reason. A runtime argument is " +
+      "undecidable by construction, not unimplemented: every branch would have to survive, and a " +
+      "decoration inside a function body is a new decoration per call. Hand-wrapping is the dynamic " +
+      "form and the diagnostic names it.",
+  },
   "90-diagnostics/ll0035_regex_pattern_nested.lisp": {
     status: "negative", codes: ["LL0035"],
     reason:
