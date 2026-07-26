@@ -9,7 +9,7 @@
 ;; retry that no longer retried, which is the exact failure mode the C backend's own
 ;; `refuseCustomModifier` was written to prevent.
 (
-  (defmodifier tag [] (fn [original] (fn [...args] (original ...args))))
+  (defmodifier tag [] (fn [original ...args] (original ...args)))
   (defattribute tag [text <- String])
 
   (fn :tag["x"] f [] -> Int (return 1))

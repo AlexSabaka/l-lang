@@ -8,12 +8,11 @@
 (
     ;; Logging modifier that logs function calls and results
     (defmodifier logged []
-        (fn [original]
-            (fn [...args]
-                (console.log "[log] call:" args)
-                (let result (original ...args))
-                (console.log "[log] result:" result)
-                result)))
+        (fn [original ...args]
+            (console.log "[log] call:" args)
+            (let result (original ...args))
+            (console.log "[log] result:" result)
+            result))
 
     ;; Simple math function with logging
     (fn :logged add [a <- Int, b <- Int] -> Int

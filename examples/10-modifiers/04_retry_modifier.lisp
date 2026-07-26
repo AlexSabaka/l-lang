@@ -10,16 +10,15 @@
 (
     ;; Retry up to `times`, until the task returns something other than nil.
     (defmodifier retry [times <- Int]
-        (fn [original]
-            (fn [...args]
-                (mut result nil)
-                (mut n 0)
-                (while (&& (== result nil) (< n times))
-                    (n := (+ n 1))
-                    (result := (original ...args))
-                    (if (== result nil)
-                        (console.log "[retry] attempt" n "failed")))
-                result)))
+        (fn [original ...args]
+            (mut result nil)
+            (mut n 0)
+            (while (&& (== result nil) (< n times))
+                (n := (+ n 1))
+                (result := (original ...args))
+                (if (== result nil)
+                    (console.log "[retry] attempt" n "failed")))
+            result))
 
     ;; A flaky task: it fails the first two times it is called, then succeeds.
     ;;

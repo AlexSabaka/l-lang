@@ -44,10 +44,9 @@
     ;; Both arms `return` explicitly: `try` is a statement, so a bare tail expression
     ;; inside it is NOT the lambda's value.
     (defmodifier safe []
-        (fn [original]
-            (fn [...args]
-                (try (return (original ...args))
-                 catch e :of Error (return -1)))))
+        (fn [original ...args]
+            (try (return (original ...args))
+             catch e :of Error (return -1))))
 
     (fn :safe lookup-square [i <- Int] -> Int
         (return squares[i]))

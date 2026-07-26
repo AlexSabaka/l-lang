@@ -11,8 +11,7 @@
 ;; reason that happens.
 (
   (defmodifier retry [times <- Int]
-      (fn [original]
-          (fn [...args] (original ...args))))
+      (fn [original ...args] (original ...args)))
 
   (fn :retry task [] -> Int (return 1))
 

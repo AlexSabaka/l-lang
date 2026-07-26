@@ -120,12 +120,11 @@
     ;; It snapshots before delegating, and drops its own snapshot when the
     ;; wrapped move reports it was illegal (returned false).
     (defmodifier undoable []
-        (fn [original]
-            (fn [...args]
-                (undo-stack.push (snapshot))
-                (let ok (original ...args))
-                (if (! ok) (undo-stack.pop) nil)
-                (return ok))))
+        (fn [original ...args]
+            (undo-stack.push (snapshot))
+            (let ok (original ...args))
+            (if (! ok) (undo-stack.pop) nil)
+            (return ok)))
 
     (fn undo [] -> Boolean
         (if (== undo-stack.length 0) (return false))

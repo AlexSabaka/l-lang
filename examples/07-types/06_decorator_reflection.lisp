@@ -15,12 +15,10 @@
     (import "std/llang/reflect")
 
     (defmodifier traced []
-        (fn [original]
-            (fn [...args] (original ...args))))
+        (fn [original ...args] (original ...args)))
 
     (defmodifier retry [times <- Int]
-        (fn [original]
-            (fn [...args] (original ...args))))
+        (fn [original ...args] (original ...args)))
 
     (fn :traced work [] -> Int (return 7))
     (fn :public :traced both [] -> Int (return 9))

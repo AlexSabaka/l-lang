@@ -2,7 +2,7 @@
 ;;
 ;; It had no CIR lowering at all: `[0 ...xs]` and `(f ...xs)` were both `ELL0106 spread`, so spread
 ;; was one of the forms that existed only on the deprecated backend. It is also the prerequisite for
-;; `defmodifier` decorators, whose body is `(fn [original] (fn [...args] (original ...args)))`.
+;; `defmodifier` decorators, whose body is `(fn [original ...args] (original ...args))` (D75).
 ;;
 ;; Two things make the lowering more than a formality. A vector carrying a spread cannot be laid out
 ;; with `ll_vec_of`, because its final LENGTH is not known until the spread parts are walked; and a

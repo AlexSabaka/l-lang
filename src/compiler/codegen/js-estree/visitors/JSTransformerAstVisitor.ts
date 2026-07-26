@@ -1412,6 +1412,68 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     });
   }
 
+  /**
+   * D75 -- apply one decorator to a function VALUE, under the flat contract.
+   *
+   * The contract is now `(fn [original ...args] BODY)`: ONE lambda taking the original plus the
+   * forwarded arguments, where it used to be curried (`original => (...args) => …`). So application
+   * is no longer `__ll_modifier_X(a)(original)` -- that would pass the original and no arguments and
+   * hand back whatever the body returned. It is a forwarder:
+   *
+   *     (...__a) => __ll_modifier_X(a)(original, ...__a)
+   *
+   * The curried shape was a JavaScript idiom this backend made free, and D75 retired it because it
+   * was never specified anywhere -- it lived in exactly this call.
+   */
+  private applyDecorator(
+    modifierName: string,
+    modifierArgs: ESTree.Expression[],
+    original: ESTree.Expression
+  ): ESTree.Expression {
+    const rest = { type: "Identifier", name: "__a" } as ESTree.Identifier;
+    const wrapper = {
+      type: "ArrowFunctionExpression",
+      id: null,
+      params: [{ type: "RestElement", argument: rest } as any],
+      expression: true,
+      async: false,
+      generator: false,
+      body: {
+        type: "CallExpression",
+        callee: { type: "Identifier", name: "__m" },
+        arguments: [original, { type: "SpreadElement", argument: rest } as any],
+        optional: false,
+      },
+    } as unknown as ESTree.Expression;
+
+    // The modifier itself is invoked ONCE, here, and its result closed over -- not on every call.
+    //
+    // That distinction is the SETUP SLOT (D75). `(defmodifier memoized [] (let cache {}) (fn …))`
+    // runs its setup when the decorator is applied, so one cache serves the decorated function. A
+    // forwarder that called `__ll_modifier_memoized()` per invocation would re-run the setup every
+    // time and hand back a fresh cache -- measured: `05_multiple_modifiers` lost a cache hit and
+    // recomputed a value it had already computed, which is memoization that does not memoize.
+    return {
+      type: "CallExpression",
+      callee: {
+        type: "ArrowFunctionExpression",
+        id: null,
+        params: [{ type: "Identifier", name: "__m" }],
+        expression: true,
+        async: false,
+        generator: false,
+        body: wrapper,
+      },
+      arguments: [{
+        type: "CallExpression",
+        callee: { type: "Identifier", name: `__ll_modifier_${modifierName}` },
+        arguments: modifierArgs,
+        optional: false,
+      }],
+      optional: false,
+    } as unknown as ESTree.Expression;
+  }
+
   private applyModifiersToDeclaration(
     node: ast.FunctionNode, 
     declaration: ESTree.FunctionDeclaration | ESTree.VariableDeclaration, 
@@ -1459,29 +1521,14 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
             {
               type: "VariableDeclarator",
               id: funcDecl.id!,
-              init: {
-                type: "CallExpression",
-                callee: {
-                  type: "CallExpression",
-                  callee: {
-                    type: "Identifier",
-                    name: `__ll_modifier_${modifierName}`
-                  },
-                  arguments: modifierArgs,
-                  optional: false
-                },
-                arguments: [
-                  {
-                    type: "FunctionExpression",
-                    id: null,
-                    params: funcDecl.params,
-                    body: funcDecl.body,
-                    generator: false,
-                    async: funcDecl.async
-                  }
-                ],
-                optional: false
-              }
+              init: this.applyDecorator(modifierName, modifierArgs, {
+                type: "FunctionExpression",
+                id: null,
+                params: funcDecl.params,
+                body: funcDecl.body,
+                generator: false,
+                async: funcDecl.async,
+              } as unknown as ESTree.Expression)
             }
           ],
           loc: declaration.loc
@@ -1491,20 +1538,9 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
         const varDecl = declaration as ESTree.VariableDeclaration;
         const declarator = varDecl.declarations[0] as ESTree.VariableDeclarator;
         
-        declarator.init = {
-          type: "CallExpression",
-          callee: {
-            type: "CallExpression", 
-            callee: {
-              type: "Identifier",
-              name: `__ll_modifier_${modifierName}`
-            },
-            arguments: modifierArgs,
-            optional: false
-          },
-          arguments: [declarator.init as ESTree.Expression],
-          optional: false
-        };
+        declarator.init = this.applyDecorator(
+          modifierName, modifierArgs, declarator.init as ESTree.Expression
+        );
       }
     }
 
@@ -1681,15 +1717,30 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
       let body: ESTree.Statement[];
       if (node.body.length === 0) {
-        // An empty body is a PASS-THROUGH -- `original => original` -- not a memoizer.
+        // An empty body is a PASS-THROUGH -- and under D75's FLAT contract that is
+        // `(original, ...args) => original(...args)`, not `original => original`.
+        //
+        // The curried identity handed the caller the function itself rather than its result, so an
+        // empty-body modifier stopped calling what it decorated: `(fn :identity greet …)` returned
+        // the greeter instead of the greeting. Caught by `01_basic_modifier` and
+        // `20-algorithms/05_memoization`, the two empty-body decorators in the corpus.
+        const rest = ESTreeBuilder.identifier(node, "__a");
         body = [
           ESTreeBuilder.returnStatement(node, {
             type: "ArrowFunctionExpression",
-            params: [ESTreeBuilder.identifier(node, "original")],
-            body: ESTreeBuilder.identifier(node, "original"),
+            params: [
+              ESTreeBuilder.identifier(node, "original"),
+              { type: "RestElement", argument: rest } as any,
+            ],
+            body: {
+              type: "CallExpression",
+              callee: ESTreeBuilder.identifier(node, "original"),
+              arguments: [{ type: "SpreadElement", argument: rest } as any],
+              optional: false,
+            },
             expression: true,
             async: false,
-          } as ESTree.ArrowFunctionExpression),
+          } as unknown as ESTree.ArrowFunctionExpression),
         ];
       } else {
         // The body's VALUE is the decorator, so its last expression is returned -- the same implicit

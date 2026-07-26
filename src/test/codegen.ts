@@ -250,10 +250,9 @@ const CASES: Case[] = [
   {
     name: "defmodifier: a body with SIDE EFFECTS actually runs",
     source: `(defmodifier logged []
-  (fn [original]
-    (fn [...args]
-      (console.log "calling with" args)
-      (original ...args))))
+  (fn [original ...args]
+    (console.log "calling with" args)
+    (original ...args)))
 (fn :logged add [a <- Int b <- Int] -> Int (+ a b))
 (console.log (add 2 3))`,
     expect: ["calling with [2 3]", "5"],
@@ -266,12 +265,11 @@ const CASES: Case[] = [
     // after D9f and an absent key THROWS. The WRITE stays a plain `cache[n] :=` (a write creates),
     // and so does the final read, which happens only once the key is known to be there.
     source: `(defmodifier memoized []
-  (fn [original]
-    (let cache {})
-    (fn [n]
-      (if (== (get cache n) nil)
-          (cache[n] := (original n)))
-      cache[n])))
+  (let cache {})
+  (fn [original n]
+    (if (== (get cache n) nil)
+        (cache[n] := (original n)))
+    cache[n]))
 (fn :memoized slow [n <- Int] -> Int (console.log "computing" n) (* n 2))
 (console.log (slow 4))
 (console.log (slow 4))`,
@@ -287,10 +285,9 @@ const CASES: Case[] = [
   {
     name: "defmodifier: arguments reach the modifier",
     source: `(defmodifier tagged [tag <- String]
-  (fn [original]
-    (fn [...args]
-      (console.log "tag:" tag)
-      (original ...args))))
+  (fn [original ...args]
+    (console.log "tag:" tag)
+    (original ...args)))
 (fn :tagged["A"] ping [] -> Void (console.log "ping"))
 (ping)`,
     expect: ["tag: A", "ping"],
