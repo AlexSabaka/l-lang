@@ -5697,3 +5697,51 @@ runtime `TypeError` stands for the wrapping shape.
 
 The lesson is the reusable part: "there is no way to write X" is a claim about a search, and the corpus
 is where to run it.
+
+---
+
+## D73 — `:comptime` is evaluated by an in-house interpreter (2026-07-26)
+
+D69 named `:comptime` as what blocks deleting the JavaScript backend: `ComptimeEvaluationAstVisitor`
+lowered the expression to JS, prepended the runtime shim, and ran the result in `node:vm`. That made
+the JS backend the compiler's own EVALUATOR rather than merely a target.
+`compiler/comptime/Interpreter.ts` walks the AST instead, and that file now imports no JavaScript.
+
+**It was also a live wrong answer.** The fold's result came back through a JS `number`, so
+`(inc 9007199254740992)` folded to 9007199254740992 — the `+ 1` silently gone — while the same call at
+run time and the same literal written directly were both exact. Identically wrong on BOTH backends,
+which means the differential oracle could not structurally have caught it, and with zero diagnostics.
+An Int is a bigint end to end now, and a folded literal keeps its exact decimal text in `match`, the
+same lossless channel D71 established for big literals.
+
+**Why an interpreter is tractable here**, since "write an interpreter" sounds unbounded: a comptime
+call's arguments are already required to be LITERALS (LL0099), enforced before the evaluator sees
+anything. There is no runtime state to model, no closure capture, no mutation across a suspension —
+every evaluation begins at constants and ends at one. The subset is small because the language had
+already made it small.
+
+**The interpreter implements the FLOOR, and that is not host interop.** `Math.cos` is a floor entry —
+declared `[Real] -> Real` in `floor.ts`, implemented by `ll_math_cos` on C — so this is a third
+implementation of a spec'd contract rather than a fourth opinion, which is what lets a fold and a
+runtime call agree. Worth recording that the obvious alternative is a mirage: migrating the corpus
+from `Math.cos` to `std/math` would NOT have removed the coupling, because that module's own `cos` is
+`(Math.cos x)`.
+
+**Nondeterministic floor operations are REFUSED at compile time**, not merely unimplemented — a
+separate message, because the two read identically to a compiler and completely differently to an
+author. A fold bakes one compilation's answer into the artefact, so folding `Math.random` makes the
+same source stop producing the same program. The vm could never have enforced this: its sandbox simply
+had the host's `Math` in scope, so a folded random constant shipped silently. `Math.random`, `Date.now`
+and the file and clock entries are on the list; all remain fine at RUN time, since the refusal is about
+when they run.
+
+**A non-terminating fold is a failed compile, not a hung one.** `vm.runInContext` was called with no
+timeout, so a runaway `:comptime` recursion hung the build with no diagnostic and nothing to interrupt
+but the process. Step and depth budgets end that, and the diagnostic points at the recursive CALL
+rather than the expression that triggered the fold — a precision the vm could not have offered, since a
+JS exception carries a JS stack.
+
+**What still blocks deleting the JS backend, honestly.** Comptime is no longer one of the three.
+Remaining: `cli/repl/ReplSession.ts` has its own `node:vm` and executes ARBITRARY user code rather than
+the comptime subset — a different problem wearing the same word — and the differential-testing oracle
+still wants the fuzzer named in the status appendix before losing a second backend is safe.

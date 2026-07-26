@@ -46,6 +46,27 @@ export class ComptimeError extends Error {
 const MAX_STEPS = 2_000_000;
 const MAX_DEPTH = 512;
 
+/**
+ * Floor operations that are REFUSED at compile time rather than unimplemented.
+ *
+ * A fold replaces an expression with the answer one particular compilation produced. For anything
+ * nondeterministic that turns the same source into a different program each build -- `Math.random`
+ * would be a constant chosen once, at the compiler's whim, and then shipped. Reproducible builds are
+ * the property being defended, and refusing is the only way to keep it.
+ *
+ * The vm path could not have enforced this: the sandbox simply had the host's `Math` in scope, so
+ * `(let :comptime r (Math.random))` folded to a number and nothing anywhere noticed.
+ */
+const NONDETERMINISTIC_FLOOR: ReadonlySet<string> = new Set([
+  "Math.random",
+  "Date.now",
+  "read-file",
+  "try-read-file",
+  "write-file",
+  "clock-ms",
+  "clock-ns",
+]);
+
 type Env = Map<string, CTValue>;
 
 export class ComptimeInterpreter {
@@ -181,11 +202,21 @@ export class ComptimeInterpreter {
       const floorFn = FLOOR_BUILTINS[name];
       if (floorFn) return floorFn(args.map((a) => this.evalNode(a, env)), node);
 
-      // A floor entry the interpreter has NOT implemented is named as such, rather than falling
-      // through to "not defined" -- the two are different problems and only one is the author's.
+      // A floor entry that is deliberately REFUSED, as opposed to one merely not implemented. The
+      // two read the same to a compiler and completely differently to an author, so they are
+      // separate messages: one is a policy, the other is a gap.
+      if (NONDETERMINISTIC_FLOOR.has(name)) {
+        throw new ComptimeError(
+          `'${name}' is nondeterministic and cannot run at compile time -- folding it would bake ` +
+            `one run's answer into the artefact, so the same source would stop producing the same ` +
+            `program. Call it at run time instead`,
+          node
+        );
+      }
+
       if (FLOOR.has(name)) {
         throw new ComptimeError(
-          `'${name}' is a floor operation that is not available at compile time`,
+          `'${name}' is a floor operation the compile-time evaluator does not implement`,
           node
         );
       }

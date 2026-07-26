@@ -393,6 +393,22 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "at runtime (D51: a literal is a BigInt only where the checker typed it). So it is a checker " +
       "question, and this pins the diagnostic. `(get v (Math.trunc 1.7))` is the supported spelling.",
   },
+  "90-diagnostics/ll0099_comptime_nondeterministic.lisp": {
+    status: "negative", codes: ["LL0099"],
+    reason:
+      "D73: a fold bakes ONE compilation's answer into the artefact, so folding `Math.random` makes " +
+      "the same source stop producing the same program. The old node:vm evaluator could not have " +
+      "refused it -- the sandbox had the host's `Math` in scope, so it folded to a number silently. " +
+      "Still fine at run time; the refusal is about WHEN it runs.",
+  },
+  "90-diagnostics/ll0099_comptime_nonterminating.lisp": {
+    status: "negative", codes: ["LL0099"],
+    reason:
+      "D73: this used to HANG THE COMPILER -- `vm.runInContext` had no timeout, so the build never " +
+      "returned, with no diagnostic and nothing to interrupt but the process. The interpreter's step " +
+      "and depth budgets make it a failed compile, located at the recursive CALL rather than the " +
+      "expression that triggered the fold.",
+  },
   "90-diagnostics/ll0032_attribute_arg_not_literal.lisp": {
     status: "negative", codes: ["LL0032"],
     reason:

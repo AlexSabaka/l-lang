@@ -3,7 +3,7 @@ import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { Context, LogLevel } from "../../Context";
 import { ComptimeDiagnostics as CO } from "../../rules/diagnostics";
 import { hasModifier } from "../../helpers/modifiers";
-import { ComptimeInterpreter } from "../../comptime/Interpreter";
+import { ComptimeInterpreter, ComptimeError } from "../../comptime/Interpreter";
 
 /**
  * NO JAVASCRIPT REACHES THIS FILE ANY MORE (D73).
@@ -99,7 +99,7 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
 
       // The diagnostic now says WHY. It used to be "Failed to evaluate comptime variable: x", full
       // stop -- the sandbox's actual complaint went to a logger the test harness discards.
-      this.report(CO.ComptimeVariable, node, {
+      this.report(CO.ComptimeVariable, result.at ?? node, {
         name: varName,
         error: result.error,
       });
@@ -166,7 +166,7 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
 
           const result = this.evaluateExpression(newNode);
           if (!result.ok) {
-            this.report(CO.ComptimeEval, newNode, {
+            this.report(CO.ComptimeEval, result.at ?? newNode, {
               name: symbolName,
               error: result.error,
             });
@@ -206,7 +206,7 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
    */
   private evaluateExpression(
     expr: ast.ASTNode
-  ): { ok: true; value: any } | { ok: false; error: string } {
+  ): { ok: true; value: any } | { ok: false; error: string; at?: ast.ASTNode } {
     try {
       const value = new ComptimeInterpreter(this.context.symbolTable).evaluate(expr);
       this.context.log(LogLevel.Info, "[comptime] Evaluated -> " + String(value));
@@ -214,7 +214,11 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
     } catch (e: any) {
       const message = String(e?.message ?? e);
       this.context.log(LogLevel.Error, `Comptime evaluation error: ${message}`);
-      return { ok: false, error: message };
+      // `at` is the node that actually stopped the evaluation, which is usually INSIDE the
+      // declaration being folded and often inside a `:comptime` function several calls down. The vm
+      // could only ever point at the outermost expression, because a JS exception carries a JS stack
+      // -- so a refusal deep in a fold was reported against the `let` that triggered it.
+      return { ok: false, error: message, at: e instanceof ComptimeError ? e.node : undefined };
     }
   }
 
