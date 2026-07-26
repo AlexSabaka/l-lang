@@ -28,6 +28,7 @@ import type { InferredType } from "../analysis/SymbolTable";
 import { classifyList } from "../analysis/listForm";
 import { classifyCall } from "./classifyCall";
 import { shouldCopyOnStore, shouldCopyParam } from "./valueCopy";
+import { refinementOfType, refinementOfTypeName, typeNameOf, buildRefineCall } from "./coerceInto";
 import { HirModule } from "./HirModule";
 import { TempAllocator } from "./TempAllocator";
 import { RuntimeProvider } from "../runtime";
@@ -89,9 +90,22 @@ export class LowerAstToHirVisitor {
     this.temps = new TempAllocator(tempPrefix);
   }
 
+  /**
+   * The function whose body is being lowered, innermost last. Only a RETURN reads it, to find the
+   * declared return type it is coercing into (D46 refinements; D46/B-3 implicit casts later). A
+   * nested closure pushes its own, so an inner `return` never sees the outer function's annotation.
+   */
+  private fnStack: ast.FunctionNode[] = [];
+
+  private withFn<T>(fn: ast.FunctionNode | undefined, run: () => T): T {
+    if (!fn) return run();
+    this.fnStack.push(fn);
+    try { return run(); } finally { this.fnStack.pop(); }
+  }
+
   /** Lower one function/program body (a statement sequence, effect dest) -- the on-demand entry point. */
-  lowerBody(body: ast.ASTNode[]): HBlock {
-    return { stmts: this.lowerSeq(body ?? [], EFFECT).stmts };
+  lowerBody(body: ast.ASTNode[], fn?: ast.FunctionNode): HBlock {
+    return this.withFn(fn, () => ({ stmts: this.lowerSeq(body ?? [], EFFECT).stmts }));
   }
 
   /**
@@ -107,7 +121,7 @@ export class LowerAstToHirVisitor {
       module.set(root, { stmts: this.lowerSeq((root as ast.ProgramNode).program ?? [], EFFECT).stmts });
     }
     this.walkFunctions(root, (fn) => {
-      module.set(fn, { stmts: this.lowerSeq(fn.body ?? [], EFFECT).stmts });
+      module.set(fn, this.withFn(fn, () => ({ stmts: this.lowerSeq(fn.body ?? [], EFFECT).stmts })));
       // The per-param D11 copy-on-entry decision, resolved ONCE (A5) so both backends consume it.
       module.setParamCopies(fn, (fn.params ?? []).map((p) => shouldCopyParam(p.type, this.context)));
     });
@@ -761,8 +775,17 @@ export class LowerAstToHirVisitor {
   private lowerReturn(node: ast.ListNode, args: ast.ASTNode[]): Lowered {
     if (args.length === 0) return { stmts: [this.hReturn(null, false, node)], value: null };
     if (args.length > 1) return this.leaf(node, { kind: "return" }); // malformed; keep legacy shape
+    // A COERCION SITE (see hir/coerceInto.ts): the value is entering the declared return type. Every
+    // return reaches here, implicit tail included -- the desugar runs with `injectImplicitReturns`, so
+    // a tail expression is already an explicit `(return e)` by now (and a tail `if` already has one
+    // per branch). Wrapping the AST before lowering reuses the proven floor-call path.
+    const info = refinementOfTypeName(
+      typeNameOf(this.fnStack[this.fnStack.length - 1]?.returns),
+      this.context.symbolTable
+    );
+    const value = info ? buildRefineCall(args[0], info) : args[0];
     // `return` ignores the incoming dest -- it always returns from the function (diverges).
-    return this.lowerNode(args[0], { kind: "return" });
+    return this.lowerNode(value, { kind: "return" });
   }
 
   // -- operand hoisting (S4): unnest + lazy logical --------------------------------------------------
@@ -1667,7 +1690,12 @@ export class LowerAstToHirVisitor {
     // A bodyless declaration -- an `:extern` `let` (an ambient global, Sd) -- has no initializer;
     // legacy emitVarDecl turns it into an EmptyStatement.
     if (!node.value) return this.leaf(node, dest);
-    const init = this.lowerNode(node.value, VALUE);
+    // A COERCION SITE: the initializer is entering the ANNOTATED type. Driven by the annotation, not
+    // by `declaredTypeOf`'s channel -- a `let`'s channel holds the initializer's own narrowing (Int),
+    // which is what the value is coming FROM, not what it is going INTO.
+    const declInfo = refinementOfTypeName(typeNameOf(node.type), this.context.symbolTable);
+    const initAst = declInfo ? buildRefineCall(node.value, declInfo) : node.value;
+    const init = this.lowerNode(initAst, VALUE);
     if (init.value === null) return { stmts: init.stmts, value: null }; // RHS diverged -> the binding is dead
     // The init is emitted INLINE by the HIR (a ternary / temp / array), so no value-position init ever
     // reaches legacy asExpression. The JS declaration structure (const-vs-let, destructuring, D11) stays a

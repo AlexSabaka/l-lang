@@ -3,6 +3,7 @@ import { valueIsTail } from "../../analysis/listForm";
 import { Context, LogLevel } from "../../Context";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { formatWithOptions } from "util";
+import { RefineInfo, buildRefineCall } from "../../hir/coerceInto";
 
 /**
  * DesugarAstVisitor — one tree, for the type checker and codegen alike.
@@ -51,13 +52,6 @@ function isVoidReturn(node: ast.FunctionNode): boolean {
   return nameOf(node.returns) === "Void";
 }
 
-/** An Int refined newtype's boundary check: inclusive bounds, plus a flag per side (0 = open). */
-type RefineInfo = { lo: number; hi: number; clo: number; chi: number };
-
-/** What to put around a function's tail VALUE. `(return e)` for the implicit return, a refinement
- *  check for P3c-1c-ii -- same placement, different wrapper. */
-type TailWrap = (value: ast.ASTNode) => ast.ASTNode;
-
 export class DesugarAstVisitor extends BaseAstTreeWalker {
   /** `and`/`or`/`not` -> the operators they alias (D39). See `transformLogicalAlias`. */
   private static readonly LOGICAL_ALIASES: ReadonlyMap<string, string> = new Map([
@@ -82,8 +76,10 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
 
   /**
    * Int-based refined newtypes seen this module: name -> its boundary check (D46 amend, P3c-1b-ii).
-   * Populated from `type-def` nodes before the walk, so `visitVariable` can wrap a value coerced into
-   * one. Empty for every program that declares no `:satisfies` newtype, so this is a strict no-op there.
+   * This pass now owns only the two BINDING GUARDS -- a function PARAMETER and a `:ctor` FIELD, where
+   * the value arrives already bound and there is no expression slot to wrap. Every COERCION site
+   * (let-init, return, assignment, cast) lives at the one HIR coercion point instead; `hir/coerceInto.ts`
+   * says why the two are not the same thing. Empty for a program with no `:satisfies` newtype.
    */
   private refinedInt = new Map<string, RefineInfo>();
 
@@ -123,25 +119,6 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     walk(root);
   }
 
-  /**
-   * `(let x <- uint8 init)` -> `(let x <- uint8 (__refine_check_int init lo hi clo chi))` when the
-   * annotation names an Int refined newtype. The wrapper references only a FLOOR builtin + the existing
-   * init node + literals -- no synthesized user-scope names -- so it sidesteps the `_parent` scope
-   * index. The floor fn returns the value (or panics), so it drops in at the value position.
-   */
-  visitVariable(node: ast.VariableNode): ast.VariableNode {
-    const recursed = this.rebuild(node) as any;
-    const info = this.refinedInt.get(this.typeNameOf(node.type) ?? "");
-    if (info && recursed.value && ast.isAstNode(recursed.value)) {
-      recursed.value = this.wrapRefineCheck(recursed.value, info);
-    }
-    return recursed as ast.VariableNode;
-  }
-
-  private wrapRefineCheck(value: ast.ASTNode, info: RefineInfo): ast.ASTNode {
-    return this.refineCall(value, info, (value as any)._location, undefined);
-  }
-
   /** Copy a node, recursing into its children -- the generic rebuild the overriding visitors share. */
   private rebuild(node: ast.ASTNode): ast.ASTNode {
     const out = { ...node } as any;
@@ -168,12 +145,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     loc: any,
     parent: ast.ASTNode | undefined
   ): ast.ASTNode {
-    const mk = (type: string, fields: any): any => ({ ...fields, _type: type, _location: loc, _parent: parent });
-    const id = (s: string) => mk("simple-identifier", { id: s });
-    const num = (v: number) => mk("integer-number", { match: String(v), value: v });
-    return mk("list", {
-      nodes: [id("__refine_check_int"), subject, num(info.lo), num(info.hi), num(info.clo), num(info.chi)],
-    });
+    return buildRefineCall(subject, info, parent);
   }
 
   /**
@@ -279,48 +251,6 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     const check = this.refineCtorFieldCheck(node);
     if (check) recursed.body = [...(recursed.body ?? []), check];
     return recursed as ast.StructNode;
-  }
-
-  /** Is this list node an explicit `(return …)`, and what does it return? */
-  private returnValueOf(n: any): { value: ast.ASTNode | undefined } | undefined {
-    if (!n || n._type !== "list" || !Array.isArray(n.nodes) || n.nodes.length === 0) return undefined;
-    const head = n.nodes[0];
-    if (head?._type !== "simple-identifier" || head.id !== "return") return undefined;
-    return { value: n.nodes.length > 1 ? n.nodes[1] : undefined };
-  }
-
-  /**
-   * The RETURN boundary (P3c-1c-ii). Two forms have to be covered because they are materialized in
-   * different places: an EXPLICIT `(return e)` is a list form right here, while an IMPLICIT tail
-   * return does not become one until HIR lowering.
-   *
-   * The explicit ones are rewritten by a walk that does NOT descend into a nested function -- its
-   * returns are its own. The implicit one reuses `wrapTail`, so the check lands wherever codegen
-   * would have put the return (each `if` branch, each `cond` clause, a `when` body, inside a
-   * parenthesized block), instead of this pass inventing a second, divergent placement rule.
-   * `isValueTail` already refuses a node that IS a `(return e)`, so the two never double-wrap.
-   */
-  private refineReturnChecks(node: ast.FunctionNode, body: ast.ASTNode[]): ast.ASTNode[] {
-    const info = this.refinedInt.get(this.typeNameOf(node.returns) ?? "");
-    // A `:gen` yields an Iterator, and a `-> Void` returns nothing -- neither returns the refined type.
-    if (!info || node.generator || isVoidReturn(node)) return body;
-
-    const rewriteExplicit = (n: any): any => {
-      if (!n || typeof n !== "object") return n;
-      if (Array.isArray(n)) return n.map(rewriteExplicit);
-      if (n._type === "function") return n;
-      const ret = this.returnValueOf(n);
-      if (ret?.value) {
-        const nodes = [...n.nodes];
-        nodes[1] = this.wrapRefineCheck(rewriteExplicit(ret.value), info);
-        return { ...n, nodes };
-      }
-      const out: any = { ...n };
-      for (const k of ast.getNodeIterableKeys(n)) out[k] = rewriteExplicit((n as any)[k]);
-      return out;
-    };
-
-    return this.wrapTail(body.map(rewriteExplicit), (v) => this.wrapRefineCheck(v, info));
   }
 
   visit(node: ast.ASTNode): any {
@@ -661,10 +591,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       // explicit form it now is, and the tail is not wrapped twice.
       body: [
         ...prologue,
-        ...this.refineReturnChecks(
-          node,
-          this.injectImplicitReturns && !isVoidReturn(node) && !node.generator ? this.wrapTail(body) : body
-        ),
+        ...(this.injectImplicitReturns && !isVoidReturn(node) && !node.generator ? this.wrapTail(body) : body),
       ],
     } as ast.FunctionNode;
   }
@@ -681,23 +608,18 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
    *     (fn f [] -> Int (return "str"))   ->  LL0213
    *     (fn f [] -> Int "str")            ->  CLEAN
    *
-   * `wrap` is WHAT to put around the tail value, defaulting to `(return e)`. It is a parameter
-   * because the refinement checks (P3c-1c-ii) need the identical PLACEMENT -- each `if` branch, each
-   * `cond` clause, a `when` body, inside a parenthesized block -- while wrapping in
-   * `(__refine_check_int e …)` instead. Re-deriving that placement in a second pass is how the two
-   * would drift apart; this way there is one rule with two wrappers.
    */
-  private wrapTail(items: ast.ASTNode[], wrap: TailWrap = (n) => this.wrapInReturn(n)): ast.ASTNode[] {
+  private wrapTail(items: ast.ASTNode[]): ast.ASTNode[] {
     if (items.length === 0) return items;
 
     const last = items[items.length - 1];
-    const wrapped = this.wrapIfValue(last, wrap);
+    const wrapped = this.wrapIfValue(last);
     if (wrapped === last) return items;
 
     return [...items.slice(0, -1), wrapped];
   }
 
-  private wrapIfValue(node: ast.ASTNode, wrap: TailWrap = (n) => this.wrapInReturn(n)): ast.ASTNode {
+  private wrapIfValue(node: ast.ASTNode): ast.ASTNode {
     // A BODY WRITTEN AS ONE PARENTHESIZED BLOCK. Its value is its own tail:
     //
     //     (fn f [n] ((console.log "side") (* n 2)))
@@ -706,7 +628,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     // INSIDE it, on its last statement. Wrapping the block itself would emit `return { ... }`.
     if (valueIsTail(node)) {
       const block = node as ast.ListNode;
-      return { ...block, nodes: this.wrapTail(block.nodes, wrap) } as ast.ListNode;
+      return { ...block, nodes: this.wrapTail(block.nodes) } as ast.ListNode;
     }
 
     // A trailing `if`: the return goes on each BRANCH, not around the `if`.
@@ -714,8 +636,8 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       const ifNode = node as ast.IfNode;
       return {
         ...ifNode,
-        then: this.wrapIfValue(ifNode.then, wrap),
-        else: ifNode.else ? this.wrapIfValue(ifNode.else, wrap) : undefined,
+        then: this.wrapIfValue(ifNode.then),
+        else: ifNode.else ? this.wrapIfValue(ifNode.else) : undefined,
       } as ast.IfNode;
     }
 
@@ -735,7 +657,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
         ...condNode,
         cases: condNode.cases.map((c) => ({
           ...c,
-          body: this.wrapIfValue(c.body, wrap),
+          body: this.wrapIfValue(c.body),
         })),
       } as ast.CondNode;
     }
@@ -749,11 +671,11 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       const whenNode = node as ast.WhenNode;
       return {
         ...whenNode,
-        then: this.wrapTail(whenNode.then, wrap),
+        then: this.wrapTail(whenNode.then),
       } as ast.WhenNode;
     }
 
-    return this.isValueTail(node) ? wrap(node) : node;
+    return this.isValueTail(node) ? this.wrapInReturn(node) : node;
   }
 
 
