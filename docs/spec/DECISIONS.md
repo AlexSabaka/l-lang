@@ -5431,6 +5431,19 @@ global was never a property of the pattern. `first-match` answers an OPTIONAL, s
 case impossible to forget. Pinned byte-identical on both backends by `16-stdlib/20_regex`. Remaining
 phases below.
 
+**The `r"` / `f"` PREFIX MECHANISM is LANDED (2026-07-26).** `r"…"` is a raw string — Python's rule,
+including that `\"` still does not terminate and both characters survive, since otherwise a pattern
+could never contain a quote. `f"…"` joins `'"…"` as a formatted-string opener, and the alias is
+retained rather than deprecated for the reason above. Purely lexical: the AstBuilder produces an
+ordinary `string` node either way, so nothing downstream — the checker, either backend, any library —
+can tell a prefix was used, which is what makes the feature free. `RawString` sits ahead of
+`Identifier`, and that ordering is the whole disambiguation: `robot` and `fname` still lex as
+identifiers, and the one-character string `"r"` is still a string.
+
+The proof it is a pure spelling change is that `16-stdlib/20_regex` was rewritten from `"\\d+"` to
+`r"\d+"` throughout and its golden did not move a byte, on either backend. `00-basics/10_string_prefixes`
+pins the mechanism itself.
+
 **Original phasing.** Fix the two PoC bugs → land `std/text/regex` + a corpus example → the `r"` /
 `f"` prefix-literal mechanism → the match-pattern sugar. Missing vs JS RegExp and explicitly out of
 scope for v1: captures (needed before `replace`/`split` are real), lookaround, backreferences, lazy

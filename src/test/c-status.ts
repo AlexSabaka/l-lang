@@ -242,6 +242,9 @@ export const C_PASSING: readonly string[] = [
   // D67: the regex engine is l-lang, so both backends run the SAME program -- which is the entire
   // argument for not binding POSIX <regex.h> on one side and JS RegExp on the other.
   "16-stdlib/20_regex.lisp",
+  // D67 prefixed literals. Purely lexical, so C is byte-identical -- which is the point: `r"…"`
+  // costs nothing in the type system and needs no runtime support on either backend.
+  "00-basics/10_string_prefixes.lisp",
   // D68 modifier reflection. One shared metadata entry, so C answers identically. The CUSTOM arm is
   // in 06 and is NOT pinned: applying a `defmodifier` on C is ELL0106, so a decorator cannot be
   // attached there at all, never mind reflected on.

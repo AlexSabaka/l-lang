@@ -17,7 +17,7 @@ comment                ::= <Comment> ;
 nil                    ::= ( "nil" | "null" ) ;
 boolean                ::= ( ( "true" | "#t" ) | ( "false" | "#f" ) ) ;
 number                 ::= ( <ComplexNumber> | <FractionNumber> | <HexNumber> | <BinaryNumber> | <OctalNumber> | <FloatNumber> | <IntegerNumber> ) ;
-string                 ::= ( formattedString | <StringLiteral> ) ;
+string                 ::= ( formattedString | <RawString> | <StringLiteral> ) ;
 formattedString        ::= <FormattedStringStart> ( ( <StringContent> | formatExpr ) )* <FormattedStringEnd> ;
 formatExpr             ::= <FormatExprStart> expression? <FormatExprEnd> ;
 identifier             ::= ( compositeIdentifier | simpleIdentifier ) ;
@@ -124,7 +124,7 @@ spreadExpr             ::= <Spread> expression ;
 <FormatExprEnd>         ::= /\}/
 <FormatExprStart>       ::= /\{/
 <FormattedStringEnd>    ::= /"/
-<FormattedStringStart>  ::= /'"/
+<FormattedStringStart>  ::= /(?:'|f)"/
 <FractionNumber>        ::= /[+-]?[0-9]+\/[0-9]+/
 <FromModKw>             ::= /:from(?![a-zA-Z0-9_-])/
 <HexNumber>             ::= /0x[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*/
@@ -153,6 +153,7 @@ spreadExpr             ::= <Spread> expression ;
 <RBracket>              ::= /\]/
 <RParen>                ::= /\)/
 <Range>                 ::= /\.\.(?!\.)/
+<RawString>             ::= /r"(?:[^"\\]|\\.)*"/
 <SatisfiesModKw>        ::= /:satisfies(?![a-zA-Z0-9_-])/
 <Slash>                 ::= /\/(?!=)/
 <SlashEq>               ::= /\/=/

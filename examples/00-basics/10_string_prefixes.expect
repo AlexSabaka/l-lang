@@ -1,0 +1,14 @@
+raw: \d+
+cooked: \d+
+identical: true
+length: 3
+not a tab: 2
+a tab: 1
+escaped quote: 4
+hello Sabaka
+3 of them
+hello Sabaka
+aliases agree: true
+robot: still an identifier
+fname: so is this
+the string r: 1

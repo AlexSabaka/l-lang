@@ -343,10 +343,39 @@ export const IntegerNumber = createToken({
   name: "IntegerNumber",
   pattern: /[+-]?[0-9]+(?:_[0-9]+)*/,
 });
+/**
+ * `r"…"` -- a RAW string (D67). Python's semantics exactly: no escape processing, so `r"\d+"` is the
+ * four characters `\d+` where `"\\d+"` would be needed otherwise. That ergonomic difference IS the
+ * motivation -- a regex is the program that suffers most from doubling every backslash.
+ *
+ * A raw string is a String and nothing more. It is NOT a Regex value: it costs nothing in the type
+ * system and nothing in either backend, and `std/text/regex` keeps taking `String` patterns exactly as
+ * it does today. A `Regex` type with comptime-compiled literals stays available as a later, purely
+ * additive round.
+ *
+ * `\"` still does not terminate the string, and BOTH characters are kept -- Python's rule again. That
+ * is the one place "raw" cannot mean "the lexer stops thinking", because otherwise a pattern could
+ * never contain a quote at all.
+ *
+ * Ordering: anywhere ahead of `Identifier` (which is last) is enough. `r"x"` matches here first;
+ * `robot` does not match at all and falls to `Identifier`; and `buf"x"` lexes as `buf` followed by a
+ * plain string, because this needs `r` and `"` adjacent from the very first character.
+ */
+export const RawString = createToken({
+  name: "RawString",
+  pattern: /r"(?:[^"\\]|\\.)*"/,
+});
 // Formatted String Tokens (lexer mode switching)
+//
+// `f"…"` is the canonical formatted string as of D67, and `'"…"` is RETAINED as an alias rather than
+// deprecated: Sabaka's objection is ergonomic and correct -- `'` and `"` are the same key under shift
+// while `f` and `"` are not -- and `'` is already the quote reader-macro, so `'"` reads as a Lisp
+// shorthand rather than as debt. Keeping both also avoids a 384-site sweep across lib, examples, the
+// games repo and the scratchpads, two of which are embedded in TypeScript test sources (the trap that
+// bit the P3a `<-` migration). Retiring `'"` later is one sed, so this is the reversible order.
 export const FormattedStringStart = createToken({
   name: "FormattedStringStart",
-  pattern: /'"/,
+  pattern: /(?:'|f)"/,
   push_mode: "formatted_string_mode",
 });
 export const FormattedStringEnd = createToken({
@@ -411,7 +440,7 @@ export const defaultModeTokens: TokenType[] = [
   ComplexNumber, FractionNumber,
   HexNumber, BinaryNumber, OctalNumber,
   FloatNumber, IntegerNumber,
-  FormattedStringStart, Quote, StringLiteral,
+  RawString, FormattedStringStart, Quote, StringLiteral,
   // Single-char operators after numbers (so +/- in numbers match first)
   Dot, Pipe, Ampersand, Equal, Plus, Minus, Star, Slash,
   Percent, Caret, Question, Exclamation, Tilde, Comma, Colon, Underscore,
@@ -458,7 +487,7 @@ export const formatExprModeTokens: TokenType[] = [
   ComplexNumber, FractionNumber,
   HexNumber, BinaryNumber, OctalNumber,
   FloatNumber, IntegerNumber,
-  Quote, StringLiteral,
+  RawString, Quote, StringLiteral,
   // Operators
   Dot, Pipe, Ampersand, Equal, Plus, Minus, Star, Slash,
   Percent, Caret, Question, Exclamation, Tilde, Comma, Colon, Underscore,

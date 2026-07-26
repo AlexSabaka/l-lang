@@ -319,6 +319,15 @@ export class LLangAstBuilder extends BaseCstVisitor {
     if (ctx.formattedString) {
       return this.visit(ctx.formattedString[0]);
     }
+    // D67 -- `r"…"` is RAW: strip `r"` and the closing quote, and decode NOTHING. That is the entire
+    // difference, and it is why `r"\d+"` is the four characters a regex wants where `"\\d+"` needs the
+    // backslash doubled. The result is an ordinary `string` node, so nothing downstream -- the
+    // checker, either backend, `std/text/regex` -- has any idea a prefix was involved.
+    if (ctx.RawString) {
+      return this.makeNode("string", ctx, {
+        value: ctx.RawString[0].image.slice(2, -1),
+      });
+    }
     // Strip the quotes, then DECODE. The decode is what was missing: `formattedString` below has always
     // called `unescapeString`, and this path did not -- so `'"a\nb"` printed a newline and `"a\nb"`
     // printed a backslash and an `n`. Same escape, two answers, in one language.

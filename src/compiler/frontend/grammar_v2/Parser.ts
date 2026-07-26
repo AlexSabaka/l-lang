@@ -346,6 +346,9 @@ class LLangParser extends CstParser {
     this.string = this.RULE("string", () => {
       this.OR([
         { ALT: () => this.SUBRULE(this.formattedString) },
+        // D67 -- `r"…"`, a raw string. A String like any other from here on; the prefix decides only
+        // whether the escapes were processed, which is a LEXICAL question and is over by now.
+        { ALT: () => this.CONSUME(t.RawString) },
         { ALT: () => this.CONSUME(t.StringLiteral) },
       ]);
     });
