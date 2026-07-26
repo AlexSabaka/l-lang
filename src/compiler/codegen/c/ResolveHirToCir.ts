@@ -3697,7 +3697,7 @@ export class ResolveHirToCir {
     // A param captured mutably by a nested closure must be a cell (the mut-capture channel again).
     const cell = this.cellVars.has(cName);
     this.declareLocal(cName, cell ? C_VALUE : ctype, false, cell);
-    return { cName, ctype };
+    return p.spread ? { cName, ctype, rest: true } : { cName, ctype };
   }
 
   /** Map a parameter's AST type annotation to a CType -- a known struct/class -> obj, else primitive. */

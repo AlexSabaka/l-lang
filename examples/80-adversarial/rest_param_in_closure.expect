@@ -1,0 +1,7 @@
+collects: 3
+none: 0
+after one fixed: [10 2]
+short call: [10 0]
+  [log] call: [5 3]
+  [log] result: 8
+wrapped: 8

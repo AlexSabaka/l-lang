@@ -270,6 +270,22 @@ export class EmitCirToC {
     if (l.envStruct) this.line(`${l.envStruct}* __e = (${l.envStruct}*)__env; (void)__e;`);
     else this.line("(void)__env;");
     l.params.forEach((p, i) => {
+      // `[...args]` COLLECTS the remaining arguments rather than taking one. A top-level function's
+      // rest parameter is packed by the call site, which knows the arity; a closure is reached
+      // through `ll_call` with a flat argv, so there is no such site and the callee packs. Without
+      // this the parameter got `__argv[i]` -- one value where the body expected a vector, which
+      // surfaced as `TypeError: expected a Vector` the moment anything asked for `args.length`.
+      //
+      // `__argc` may be SHORTER than the fixed parameters (a closure can legally be called with
+      // fewer), so the count is clamped rather than trusted: `(fn [a ...rest])` called with one
+      // argument must give an empty rest, not a negative length.
+      if (p.rest) {
+        this.line(
+          `${this.declType(p.ctype, p.cName)} ${p.cName} = ll_vec_of(` +
+            `(size_t)(__argc > ${i} ? __argc - ${i} : 0), __argv + ${i});`
+        );
+        return;
+      }
       if (p.ctype.k === "value") this.line(`${this.declType(p.ctype, p.cName)} ${p.cName} = __argv[${i}];`);
       else this.line(`${this.declType(p.ctype, p.cName)} ${p.cName} = ${UNBOX_FN[p.ctype.k]}(__argv[${i}]);`);
     });

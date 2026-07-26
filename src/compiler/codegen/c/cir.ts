@@ -483,6 +483,16 @@ export interface CBlock {
 export interface CParam {
   cName: string;
   ctype: CType;
+  /**
+   * `[...args]` -- this parameter collects the remaining arguments.
+   *
+   * Read only by the LIFTED-closure emitter, and that asymmetry is the whole point. A top-level
+   * function's rest parameter is packed by the CALL SITE (`packRestArgs`), because the call site
+   * knows the arity. A closure is reached through `ll_call` with a flat `argv`, so there is no such
+   * site -- nothing packs it, and the parameter used to receive `argv[i]`, a single value, where the
+   * body expected a vector.
+   */
+  rest?: boolean;
 }
 
 export interface CFunction {

@@ -236,6 +236,9 @@ export const C_PASSING: readonly string[] = [
   // Spread on C: a vector carrying one cannot be laid out (its length is not static) and a call
   // carrying one cannot use the direct convention at all. Prerequisite for decorators.
   "80-adversarial/spread_on_c.lisp",
+  // A rest parameter inside a LIFTED closure: the call site packs a top-level function's rest, and
+  // a closure has no such site, so the callee packs. This is the shape a decorator body has.
+  "80-adversarial/rest_param_in_closure.lisp",
   // D71 digit separators, and the 2^53 case that makes stripping them a precision requirement
   // rather than a cosmetic one -- C is where the raw-text path is read.
   "00-basics/09_digit_separators.lisp",
