@@ -5426,3 +5426,160 @@ the backslash was already eaten — so `v1\.2` takes `2` as the escaped literal.
 scope for v1: captures (needed before `replace`/`split` are real), lookaround, backreferences, lazy
 quantifiers, Unicode. Counted `{n,m}` is nearly free — `RegexNode` already carries `min`/`max`, only the
 parser arm is absent.
+
+### D67 amended (2026-07-26) — a prefix IS a `defsyntax` handler, so the set is OPEN
+
+D67 called prefixed literals "a MECHANISM, not two special cases" and left `b"…"`, `p"…"`, `c"…"` open
+for later. D69 supplies what the mechanism IS: a prefix resolves to a `defsyntax` handler, so the set is
+user-extensible rather than a closed compiler-owned list. `f` and `r` become pre-registered handlers
+with no grammar privilege over anyone else's.
+
+- **The lexer's job shrinks to producing ONE token** — prefix + raw text + delimiters. No escape
+  processing, no interpolation, no per-prefix knowledge anywhere in the grammar.
+- **The handler receives the RAW text and asks for a split.** Scala's interpolators hand over
+  parts-plus-expressions, which de-privileges `f` handsomely but forces the lexer to split on `{…}` for
+  every prefix — and that breaks raw regex on contact, because `r"\d{2}"` contains braces. So raw stays
+  honestly raw, and `f` parses its own interpolation at comptime like any other handler.
+- **Comptime, not runtime.** A prefix handler runs at compile time. That is what lets `re"…"` compile
+  its pattern once and `usd"245.54"` reject a malformed literal before the program runs, rather than
+  turning every literal into a call.
+- **Units compose with refinement newtypes.** `(deftype Volt <- Real :satisfies (0.0 ..))` plus a `volt`
+  handler yields a compile-time-checked `volt"12"`: the refinement carries the range, the handler
+  carries the syntax, and neither needed to know about the other.
+
+Prior art: Scala's `StringContext` interpolators (`id"…"` → `StringContext(parts).id(args)`) are this
+design almost exactly; C++ `operator""_km` and Rust's `macro!("…")` are the same idea differently spelled.
+Python is the only one of the four with a closed built-in set, which is the thing being improved on.
+
+Blocked on D69's evaluator, like everything else in the tier.
+
+---
+
+## D68 — `:foo` is THREE roles, not one: modifier, decorator, attribute (2026-07-26)
+
+The `:name` syntax carries three unrelated concepts, and that conflation is the single root of four
+separately-reported symptoms. All measured this session, none inferred:
+
+- `(fn :public [x <- Int] -> Int …)` **does not parse**: `Expecting token of type --> LBracket <-- but
+  found --> 'Int' <--`. The modifier rule's optional argument bracket ate the parameter list.
+- `(let :private [a b] pt)` **misparses silently** and reports `ELL0006 Constant variable must have an
+  initializer` — a confident diagnostic about entirely the wrong thing.
+- `(defcast :implicit [c <- Celsius] -> Real …)` was the third site. P3d-a worked around it by consuming
+  raw `Colon`+`Identifier` rather than the shared `modifier` subrule.
+- `(defclass :traced Widget …)` compiles clean and throws `TypeError: Widget is not a constructor`.
+- `std/llang/reflect` cannot report what modifiers a declaration carries, because
+  `compiler/reflection/metadata.ts` never writes them — zero occurrences of the word.
+- C has no `defmodifier` lowering at all (`ResolveHirToCir.ts:3150` is a comment saying exactly that),
+  against twelve corpus programs that use one.
+
+| Role | Example | Arguments | Runtime effect |
+|---|---|---|---|
+| **MODIFIER** — a compiler fact | `:public` `:ctor` `:static` `:implicit` | never | none |
+| **DECORATOR** — a transformer | `defmodifier retry` | yes | wraps the declaration |
+| **ATTRIBUTE** — compile-time metadata | `:with [(docstring "…")]` | yes | none |
+
+**Modifier arguments are ADJACENCY-GATED.** `:with[(docstring "…")]` binds the bracket to the modifier;
+`:public [x]` with a space is a modifier followed by a parameter list. Adjacency is already this lexer's
+disambiguator — it is how `HttpMethod:GET` is told from `(let :ctor x)` — so this is an existing
+mechanism applied to a second case, not a new rule. Sabaka's own scratchpad already writes both
+spellings (`e_scrachpad.lisp:33` adjacent, `:21` spaced), which is a fair sign the convention reads
+correctly before anyone is told it exists. Resolves all three ambiguity sites mechanically, and lets
+`castDefDecl` drop its special case.
+
+**ALL THREE are discoverable in RTTI.** Not attributes alone: a decorator is part of a declaration's
+description, and reflection that omits it is lying by omission. One `modifiers` field per `__ll_meta`
+entry, carrying each name, its arguments, and a kind tag so a caller can tell a fact from a transformer
+from an annotation. Surfaced through `std/llang/reflect` alongside the existing accessors, total in the
+same way they are.
+
+**The split is what makes C tractable.** An attribute is a row in a metadata table, and the C backend
+already emits that table — `__ll_meta` is built at `EmitCirToC.ts:222` and read by `ll_meta_lookup`. A
+decorator needs closures over declarations, which is the genuinely hard part. Today C has none of the
+feature; after the split it has most of it, and what remains missing is one honestly-named piece rather
+than the whole idea.
+
+**A decorator's contract is PER-TARGET.** `defmodifier` has exactly one shape today,
+`(fn [original] (fn [...args] …))`, and applying that to a class returns a plain arrow — which is
+precisely why `new Widget()` throws. A class decorator must return something constructible. Until there
+is a way to write one, applying an argument-taking decorator to a class is a DIAGNOSTIC, not a runtime
+crash: the compiler can see the mismatch and currently says nothing.
+
+---
+
+## D69 — the metaprogramming tiers: `:comptime`, `defmacro`, `defsyntax` (2026-07-26)
+
+Three tiers, distinguished by what the handler RECEIVES:
+
+| Tier | Receives | Job |
+|---|---|---|
+| `:comptime` | nothing | evaluate ordinary l-lang, fold the result into the tree |
+| `defmacro` | a cons list of tokens | structural rewriting below the grammar |
+| `defsyntax` | a full AST | grammar-native forms |
+
+**This resolves the parked cons-vs-AST question.** It sat unanswered because it was posed as either/or —
+"is a quote a cons-list or an AST datum?" — and in that shape it has no answer worth defending. It is
+both, and the tier you are in tells you which. A `defmacro` works in tokens because tokens are the level
+at which textual rewriting is honest about what it is doing; a `defsyntax` works in AST because a
+grammar-native form has to survive typechecking.
+
+**Grammar-native forms migrate onto `defsyntax` over time.** Forms hard-coded in the parser today become
+candidates once the tier exists. The direction of travel is fewer built-in special cases, not more —
+which is the same argument D67's prefix mechanism makes at the lexical level.
+
+**`:comptime` is what blocks DELETING the JavaScript backend.** Measured: only three things outside
+`codegen/js-estree/` import the JS transformer — `codegen/index.ts` (the backend selector),
+`cli/repl/ReplSession.ts`, and `transformation/visitors/ComptimeEvaluationAstVisitor.ts`, which lowers to
+JS and evaluates it in `node:vm`. So the JS backend is not merely a target; it is the compiler's own
+evaluator, and D66's deprecation cannot become deletion while that stays true. The replacement is an
+in-house l-lang interpreter covering the subset `:comptime` can evaluate — a real task, but a bounded
+one, and the same evaluator this tier needs regardless. Deletion is staged BEHIND it.
+
+**The oracle is deletion's other cost.** Every corpus golden is verified on two backends today, and the
+live JS-vs-C divergences on record exist as FINDINGS only because two backends disagreed. Deleting JS
+does not fix those bugs; it makes that entire class invisible. The differential fuzzer already named as
+the remedy is the replacement, and it lands before deletion rather than after.
+
+---
+
+## D70 — enums get an RTTI representation (2026-07-26)
+
+An enum member is folded to a compile-time constant below the HIR — `ResolveHirToCir.ts:441`, "the HIR
+keeps no enum node, and enums were never even given symbols" — and nothing is emitted at run time.
+`compiler/reflection/metadata.ts` mentions `enum` zero times. So `Dir` has no runtime existence at all,
+`(type-by-name "Dir")` answers nil, and enums are the one declaration kind invisible to reflection while
+every other kind is described.
+
+**One `__ll_meta` entry per enum**, keyed by the enum's name, carrying `kind: "enum"` and its members as
+name→value pairs. That is the same map `EmitCirToC.ts:222` already builds and `ll_meta_lookup` already
+reads: this is an entry, not machinery.
+
+**Member references stay FOLDED.** `Dir:up` compiles exactly as it does now — a constant, no lookup, no
+boxing, no allocation. The entry makes an enum DESCRIBABLE; it does not make it reified. Nothing on the
+hot path changes, which is the property that makes this cheap enough to be uncontroversial.
+
+**Surfaced in `std/llang/reflect`** alongside the existing accessors and total in the same way they are:
+`is-enum`, member names, member values, and value→name. The last of those is the one that cannot be
+written today at any price, because the information does not survive compilation.
+
+---
+
+## D71 — numeric literal lexis: `_` separators, and the octal contradiction (2026-07-26)
+
+**`_` as a digit-group separator**, C#/Rust/Java/Python's feature: `1_000_000`. Permitted in
+`IntegerNumber`, `FloatNumber`, `HexNumber` and `BinaryNumber`; a single `_` BETWEEN digits, never
+leading, never trailing, never doubled. Python's stricter rule over C#'s, which tolerates `1__000` and
+gains nothing for it.
+
+Lexer care, because this is a trap rather than a typo: `_` is an identifier character and `Identifier` is
+greedy, so the numeric patterns must be ordered ahead of it and must not admit a trailing `_` — otherwise
+`1_000` risks lexing as `1` followed by the identifier `_000`, which is two valid tokens and therefore a
+silent wrong answer rather than an error.
+
+**The octal contradiction, fixed in the same pass.** `tokens.ts` defines `OctalNumber = /0[0-7]+/` — bare
+leading zero — and has no `0o` form at all. The spec rejects bare `017` by name ("a well-known error
+source that buys nothing; `0o17` is required"). So the lexer implements exactly the form the spec rejects
+and lacks the one it requires, and `017` silently means 15.
+
+`0o` becomes the only octal spelling. Bare leading-zero octal is removed — and removing it is not enough
+on its own, because `[+-]?[0-9]+` would then match `017` as decimal 17, turning one silent wrong answer
+into a different silent wrong answer. A leading zero on a multi-digit integer is therefore a DIAGNOSTIC.
