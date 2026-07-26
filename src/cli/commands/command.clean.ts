@@ -41,6 +41,7 @@ export function clean(folder: string, command: Command) {
     // For each .lisp file, delete associated compiled files
     const basePath = filePath.replace(".lisp", "");
     const filesToDelete = [
+      `${basePath}.c`,
       `${basePath}.js`,
       `${basePath}.js.map`,
       `${basePath}.parsed.json`,
