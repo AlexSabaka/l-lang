@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import chalk from "chalk";
 import highlight from "cli-highlight";
 
@@ -233,6 +234,21 @@ export function transform(file: string, command: Command) {
     console.log(context.getPerformanceReport());
   }
 
+  const inputDir = path.dirname(file);
+  if (!options.output) {
+    options.output = inputDir;
+  } else {
+    // Normalize output path to absolute path
+    options.output = path.isAbsolute(options.output) ? options.output : path.resolve(inputDir, options.output);
+
+    // Ensure output directory exists
+    if (!fs.existsSync(options.output)) {
+      fs.mkdirSync(options.output, { recursive: true });
+    }
+  }
+  const baseName = path.basename(file, ".lisp");
+  const makeOutputPath = (ext: string) => path.join(options.output!, `${baseName}${ext}`);
+
   // Output based on stage
   if (options.stage === "codegen") {
     // Final stage: output the target language. The C backend emits a single self-contained
@@ -245,12 +261,12 @@ export function transform(file: string, command: Command) {
     }
     if (isC) {
       // The C backend emits a single self-contained translation unit and no source map.
-      fs.writeFileSync(file.replace(".lisp", ".c"), code);
+      fs.writeFileSync(makeOutputPath(".c"), code);
     } else {
-      fs.writeFileSync(file.replace(".lisp", ".js"), code);
+      fs.writeFileSync(makeOutputPath(".js"), code);
       // Write source map if available and not disabled
       if (!options.noMap && map) {
-        fs.writeFileSync(file.replace(".lisp", ".js.map"), map.toString());
+        fs.writeFileSync(makeOutputPath(".js.map"), map.toString());
       }
     }
   } else {
@@ -293,7 +309,7 @@ export function transform(file: string, command: Command) {
     // Determine output filename based on stage
     const stageExtension = options.stage === "parse" ? ".parsed.json" : `.${options.stage}.json`;
     fs.writeFileSync(
-      file.replace(".lisp", stageExtension),
+      makeOutputPath(stageExtension),
       output
     );
   }

@@ -12,7 +12,8 @@ const program = new Command();
 program
   .name("l-lang compiler")
   .description("A l-lang compiler")
-  .option("-o, --output <file>", "output file")
+  // Honoured by `transform` only; `run` builds its C artifacts beside the process cwd.
+  .option("-o, --output <dir>", "output directory (default: the input file's directory)")
   .option("-L, --log-level <level>", "log level")
   .option("-l, --log-file <file>", "log file")
   // TODO: watch mode is not working
@@ -35,6 +36,7 @@ program
   .option("--stage <stage>", "compilation stage to stop at (parse, syntax, symbols, desugar, types, codegen)")
   .option("--perf", "enable performance metrics and reporting")
   .option("--strict-phases", "enforce strict separation between compilation phases")
+  .option("--short-errors", "shorten error messages to a single line")
   .option("--validate-metadata", "validate completeness of type metadata before codegen")
   .version(COMPILER_VERSION);
 

@@ -59,9 +59,12 @@ export interface CompilerOptions {
   noIIFE?: boolean; // For REPL and other use cases
   /** Extra roots for `(import "std/…")`, after the importer's own directory. `-I`. Defaults to the shipped `lib/`. */
   libPaths?: string[];
+  /** Directory every emitted artifact is written to. Defaults to the input file's own directory. */
+  output?: string;
   perf?: boolean; // Performance tracking flag
   strictPhases?: boolean; // Enforce strict separation between compilation phases
   validateMetadata?: boolean; // Validate completeness of type metadata before codegen
+  shortErrors?: boolean; // Collapse a diagnostic onto a single line
 }
 
 export function logCompilationMessages(context: Context) {

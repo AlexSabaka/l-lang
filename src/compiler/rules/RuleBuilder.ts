@@ -90,6 +90,12 @@ function formatMessage(node: ast.ASTNode, rule: Rule<ast.ASTNode>, context: Cont
     paddingLength > 0 ? paddingLength : minimumPaddingLength
   );
 
+  if (context.options.shortErrors) {
+    return (
+      `${chalk.inverse(`${rule.severity[0].toUpperCase()}${rule.code} ${atSource}`)} ${rule.message}`
+    );
+  }
+
   return (
     `\n\t${chalk.inverse(`${rule.severity[0].toUpperCase()}${rule.code}`)} ${
       rule.message

@@ -84,11 +84,13 @@ export function getCompilerOptions(
     logger: opts.logFile ? createFileLogger(opts.logFile) : console.log,
     language,
     libPaths,
+    output: opts.output || undefined,
     stage: opts.stage || "codegen",
     includeRuntimeShim: opts.runtimeShim !== undefined ? !!opts.runtimeShim : true, // default to true
     stdout: !!opts.stdout,
     stdin: !!opts.stdin,
     perf: !!opts.perf,
+    shortErrors: !!opts.shortErrors,
     // commander stores `--no-map` as `opts.map === false` (the negated `map` key), not `opts.noMap`.
     noMap: opts.map === false,
     strictPhases: !!opts.strictPhases,
