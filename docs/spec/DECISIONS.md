@@ -5422,7 +5422,16 @@ exactly once. Nine of eleven assertions passed on the first run and the tenth na
 string, so `"\\"` as a pattern could never match a backslash. With that one line fixed, all thirteen
 assertions pass against an unmodified PoC.
 
-**Phasing (not started).** Fix the two PoC bugs → land `std/text/regex` + a corpus example → the `r"` /
+**Phasing — the module is LANDED (2026-07-26).** `lib/std/text/regex.lisp` ships the engine, near
+verbatim from the PoC since it needed no fixes (D74 was the compiler's bug, not its). `assert` became a
+real `throw`, because a library must not depend on `std/test` and a malformed pattern is an error
+rather than a failed expectation. The surface is `first-match` / `is-match` / `is-full-match` /
+`find-all` / `count-matches` and the `RegexMatch` class; `find-all` is where JS's `g` flag went, since
+global was never a property of the pattern. `first-match` answers an OPTIONAL, so D9 makes the no-match
+case impossible to forget. Pinned byte-identical on both backends by `16-stdlib/20_regex`. Remaining
+phases below.
+
+**Original phasing.** Fix the two PoC bugs → land `std/text/regex` + a corpus example → the `r"` /
 `f"` prefix-literal mechanism → the match-pattern sugar. Missing vs JS RegExp and explicitly out of
 scope for v1: captures (needed before `replace`/`split` are real), lookaround, backreferences, lazy
 quantifiers, Unicode. Counted `{n,m}` is nearly free — `RegexNode` already carries `min`/`max`, only the

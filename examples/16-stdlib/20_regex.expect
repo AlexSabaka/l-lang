@@ -1,0 +1,23 @@
+search: true
+absent: false
+anchored: true
+not whole: false
+wildcard: true
+class range: true
+negated class: true
+group + alternation: true
+one or more: true
+optional: true
+anchors: true
+shorthand: true
+escaped dot: true
+escape is literal: false
+backtracks: true
+found: 42 at 3 .. 5
+count: 3
+  match: 1
+  match: 22
+  match: 333
+email: true
+not an email: false
+phone: true

@@ -239,6 +239,9 @@ export const C_PASSING: readonly string[] = [
   // so a `match` over escaped characters fell to its catch-all -- which is what a regex engine
   // hits first, since `\` is the character it must be able to match on.
   "80-adversarial/match_escaped_pattern.lisp",
+  // D67: the regex engine is l-lang, so both backends run the SAME program -- which is the entire
+  // argument for not binding POSIX <regex.h> on one side and JS RegExp on the other.
+  "16-stdlib/20_regex.lisp",
   // D68 modifier reflection. One shared metadata entry, so C answers identically. The CUSTOM arm is
   // in 06 and is NOT pinned: applying a `defmodifier` on C is ELL0106, so a decorator cannot be
   // attached there at all, never mind reflected on.
