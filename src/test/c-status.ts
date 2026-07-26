@@ -225,9 +225,14 @@ export const C_PASSING: readonly string[] = [
   "80-adversarial/print_positional_format.lisp",
   "16-stdlib/01_main.lisp",
   "10-modifiers/06_extension_methods.lisp",
-  // D68's adjacency gate. Pure grammar, so C is byte-identical to JS. The destructuring half of the
-  // fix is in 08 and is NOT pinned: a destructuring declaration has no CIR lowering (ELL0106).
+  // D68's adjacency gate. Pure grammar, so C is byte-identical to JS.
   "10-modifiers/07_modifier_adjacency.lisp",
+  // 08 was unpinned until a destructuring declaration got a CIR lowering (it was ELL0106). It now
+  // matches the golden that was written against the OTHER backend, which is the check that matters.
+  "10-modifiers/08_modifier_adjacency_destructuring.lisp",
+  // The three ways a destructuring `let` could diverge quietly: single evaluation of the
+  // initializer, a short vector giving nil rather than trapping, and the two map spellings.
+  "80-adversarial/destructuring_decl_c.lisp",
   // D71 digit separators, and the 2^53 case that makes stripping them a precision requirement
   // rather than a cosmetic one -- C is where the raw-text path is read.
   "00-basics/09_digit_separators.lisp",

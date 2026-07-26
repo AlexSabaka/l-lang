@@ -999,14 +999,17 @@ export class ResolveHirToCir {
     let mutable: boolean;
     let t: InferredType | undefined;
     if (modeled) {
-      if (modeled.name === null) throw this.refuse(node, "destructuring-declaration", "resolveVarDecl");
+      // A DESTRUCTURING target. `HVarDecl.name` is null for one, because the binding STRUCTURE is not
+      // modeled on the HIR -- the JS emitter reads it off the raw VariableNode too, for the same
+      // reason. So this reads the pattern from the AST, exactly as that path does.
+      if (modeled.name === null) return this.resolveDestructuringDecl(node, init);
       srcName = modeled.name;
       mutable = modeled.mutable;
       t = modeled.declaredType;
     } else {
       const name = this.dipAst("A2", "decl-structure", node, "binding name/mutability read from raw VariableNode", () => node.name);
       if (name._type !== "simple-identifier" && name._type !== "composite-identifier") {
-        throw this.refuse(node, "destructuring-declaration", "resolveVarDecl");
+        return this.resolveDestructuringDecl(node, init);
       }
       srcName = ast.symbolName(name);
       mutable = node.mutable;
@@ -1072,6 +1075,75 @@ export class ResolveHirToCir {
     }
     this.declareLocal(cName, declCType, mutable, cell);
     return [{ src: node, ctype: C_VOID, kind: "c-decl", cName, declCType, init: storedInit, cell }];
+  }
+
+  /**
+   * `(let [a b] pt)` and `(let {:name :city} person)` -- a destructuring declaration on C.
+   *
+   * The whole lowering is one temporary plus N ordinary bindings that read out of it, which is what
+   * the JS backend's native `ArrayPattern`/`ObjectPattern` means anyway. The temporary matters: the
+   * initializer is evaluated ONCE, where N separate reads of the initializer expression would
+   * re-evaluate it -- and `(let [a b] (next-pair))` must not call `next-pair` twice.
+   *
+   * The element read is BOUNDS-GUARDED, and that is the subtlety `foreachDestructure` above already
+   * paid for: `ll_index_vec` TRAPS out of range, while JS's `let [a, b, c] = [1, 2]` leaves `c`
+   * undefined, which D9 makes nil. An unguarded index would turn a short vector from a silent nil on
+   * one backend into a process exit on the other -- in a construct whose whole point is that it reads
+   * like a pattern match. A map key needs no guard: the dotted read is already total (D9).
+   *
+   * Nested patterns and `...rest` refuse, matching `foreachDestructure`'s limits rather than
+   * inventing different ones for the same shape.
+   */
+  private resolveDestructuringDecl(node: ast.VariableNode, init: CExpr | null): CStmt[] {
+    const target = this.dipAst("A2", "decl-structure", node, "destructuring pattern read from raw VariableNode", () => node.name);
+    if (!init) throw this.refuse(node, "destructuring-declaration-without-initializer", "resolveVarDecl");
+    this.ledger.record("A2", "destructure-decl", node, "binding structure of a destructuring declaration is not in the HIR");
+
+    const tmp = `__ll_de_${this.tempCounter++}`;
+    this.declareLocal(tmp, C_VALUE);
+    const out: CStmt[] = [
+      { src: node, ctype: C_VOID, kind: "c-decl", cName: tmp, declCType: C_VALUE, init, cell: false },
+    ];
+    const base: CExpr = { src: node, ctype: C_VALUE, kind: "c-ref", cName: tmp };
+
+    const bind = (cName: string, value: CExpr) => {
+      this.declareLocal(cName, C_VALUE);
+      out.push({ src: node, ctype: C_VOID, kind: "c-decl", cName, declCType: C_VALUE, init: value, cell: false });
+    };
+
+    if (target._type === "vector-pattern") {
+      (target as ast.VectorPatternNode).elements.forEach((el, i) => {
+        if (el._type !== "identifier-pattern") {
+          throw this.refuse(node, `destructuring-element:${el._type}`, "resolveDestructuringDecl");
+        }
+        const idx: CExpr = { src: node, ctype: C_INT, kind: "c-lit", lit: "int", value: String(i) };
+        const len: CExpr = { src: node, ctype: C_INT, kind: "c-member", object: base, fieldName: "length", runtimeFn: "ll_dyn_length" };
+        const inRange: CExpr = { src: node, ctype: C_BOOL, kind: "c-binop", op: "<", mode: "int", lhs: idx, rhs: len };
+        const read: CExpr = { src: node, ctype: C_VALUE, kind: "c-index", base, index: idx, mode: "boxed", checked: false };
+        bind(mangleC(ast.symbolName((el as ast.IdentifierPatternNode).id)), {
+          src: node, ctype: C_VALUE, kind: "c-ternary",
+          test: inRange, then: read, else: { src: node, ctype: C_VALUE, kind: "c-nil" },
+        });
+      });
+      return out;
+    }
+
+    if (target._type === "map-pattern") {
+      for (const pair of (target as ast.MapPatternNode).pairs) {
+        if (pair.pattern._type !== "identifier-pattern") {
+          throw this.refuse(node, `destructuring-element:${pair.pattern._type}`, "resolveDestructuringDecl");
+        }
+        // `{:name :age}` binds `name` from key "name"; `{:firstName first}` binds `first` from key
+        // "firstName". The KEY is the map lookup, the PATTERN is the binding -- they differ only in
+        // the renaming form, and the builder already made the shorthand explicit by filling the
+        // pattern in from the key.
+        bind(mangleC(ast.symbolName((pair.pattern as ast.IdentifierPatternNode).id)),
+             this.memberRead(node, base, ast.keyName(pair.key)));
+      }
+      return out;
+    }
+
+    throw this.refuse(node, `destructuring-declaration:${target._type}`, "resolveVarDecl");
   }
 
   private resolveUserAssign(node: ast.SimpleAssignmentNode | ast.CompoundAssignmentNode, rhs: CExpr): CStmt[] {
