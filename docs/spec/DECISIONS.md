@@ -5320,3 +5320,84 @@ DEPRECATED — oracle-only.**
 stay. A mechanical demolition (delete the JS pipeline, collapse the test matrix to one backend) is a
 separate, deliberate session if it is ever taken — not this one. The useful half of every greenlit
 feature stays JS-safe where that costs nothing; native is where the investment goes from here.
+
+## D67 — regex: an l-lang engine in `std/text/regex`, `r"…"` is a RAW STRING (2026-07-26)
+
+Regex was on Dove's Tier-1 list as a module and was separately started as a `/pattern/flags` LITERAL in
+the frontend. The literal stub never worked (its tokens reached no token array, so the rule was
+unreachable) and `docs/inbox/regex-literals-recon.md` measured why: `/…/` is unfixably ambiguous with
+division in a homoiconic reader — the literal's own pattern spans two `(/ a b)` forms — and no token
+ordering rescues it. That note left three forks open. All three are ruled here.
+
+**The engine is written in l-lang, not in C.** Sabaka's `regex_poc.lisp` is a working parser + matcher
+(literals, `.`, classes with ranges and negation, groups, alternation, `*`/`+`/`?`, `^`/`$`,
+`\d\w\s` and their negations) in ~300 lines of l-lang. That answers the expensive fork — there is no
+"which C engine" question, because one source compiles to every backend. POSIX `<regex.h>` was the
+alternative and it is a DIFFERENT language from JS RegExp (no lazy quantifiers, no lookaround, no named
+groups, `[[:digit:]]` for `\d`), which under D66 would have been exactly the silent divergence the JS
+deprecation exists to stop. An l-lang engine also carries no libc dependency into the LLVM endgame.
+The matcher is already the right shape: it carries a SET of reachable positions rather than
+backtracking, so `(a|ab)b` resolves without exponential blowup.
+
+**Placement: `std/text/regex`.** The stdlib families are one-word domains (`math/`, `io/`, `iter/`,
+`seq/`, `sys/`), and `text/` slots in with obvious future neighbours (`text/unicode`, `text/csv`,
+`text/template`). Flat `std/regex` (Dove's sketch) is overridden. `std/core/string` stays where it is —
+`core/` is the foundational, prelude-adjacent tier, and regex is not that.
+
+**NOT ambient.** Preludes are host-free leaves that import nothing (`std/js`, `std/core/errors`); the
+engine imports `std/core/string`, and making a whole matcher ambient in every program is the wrong
+trade. `(import "std/text/regex")` is required, exactly like `Range` needs `std/iter` (D46/P3b).
+
+**Syntax: prefixed string literals — a MECHANISM, not two special cases.** A prefix letter fused to `"`
+with no whitespace. `r"…"` and `f"…"` now; `b"…"` (bytes), `p"…"` (Path), `c"…"` remain open later. This
+sidesteps `/…/` entirely — `/` is never touched, stays division. Measured: ZERO sites in lib, examples,
+the games repo or the codewars scratchpads have a bare `f` or `r` identifier fused to a quote, so the
+new tokens collide with nothing. Ordering them ahead of `Identifier` is enough (the 2-char match wins,
+and `Identifier` is greedy so `buf"x"` still lexes as `buf` + string).
+
+- **`r"…"` is a RAW STRING, not a Regex value.** Python's `r` semantics exactly: no escape processing,
+  so `r"\d+"` replaces `"\\d+"` — which IS the ergonomic motivation. It costs nothing in the type system
+  and nothing in either backend, and `std/text/regex` keeps taking `String` patterns the way the PoC
+  already does. A `Regex` value type with comptime-compiled literals stays available as a later,
+  purely ADDITIVE round if profiling ever asks for it.
+- **`f"…"` becomes the canonical formatted string; `'"…"` is RETAINED as an alias.** Sabaka's objection
+  is ergonomic and legitimate: `'` and `"` are the same key under shift, `f` and `"` are not. `'` is
+  already the quote reader-macro, so `'"` reads as a Lisp reader shorthand rather than debt. This also
+  avoids a 384-site / 100-file corpus sweep (lib 29, examples 313, games 14, codewars 28, plus 2 sites
+  embedded in TS test sources — the trap that bit the P3a `<-` migration). Deprecating `'"` later is one
+  `sed`, so this is the reversible order.
+
+**Flags.** `/ca+t/ig` fuses two unrelated things and that wart is NOT imported. `i`/`m`/`s` are
+properties OF THE PATTERN → inline `(?i)`, the way Python/Java/.NET spell it, at zero syntax cost;
+optionally a token-suffix `r"ca+t"i` (lexically safe — it is part of the single r-token) that lowers to
+the String `"(?i)ca+t"`, keeping "an `r"…"` is literally just a String" true. `g` is NOT a pattern
+property at all: it is which call you make, `find-all` vs `first-match`.
+
+**Regex in `match` patterns.** `match x { r"ca+t" => … }` is SUGAR, and it is cheap because of the
+`(lo .. hi)` precedent: lower it in the **AstBuilder at parse time**, not in `DesugarAstVisitor`. The
+desugar pass cannot do it — synthesized nodes carry no `_parent` and the symbol table resolves scope by
+climbing `_parent` through the PRE-desugar tree (the wall that forced P3c-1b-ii through a floor
+builtin). At AstBuilder time the nodes are in the tree before the symbol table is built, so name
+resolution is ordinary and a missing `(import "std/text/regex")` surfaces as a plain LL0210, exactly as
+a missing `std/iter` does for `Range`. The lowering target already exists: `:when` guards (D26) mean
+`s :when (is-full-match r"ca+t" s) => …` works TODAY with no language change; the sugar is shorter, not
+newly possible.
+
+- **In pattern position a regex is an ANCHORED FULL MATCH**, not a search. A pattern asserts "x IS this
+  shape", so `(match "a caaaat naps" { r"ca+t" => … })` does NOT fire; search is spelled `r".*ca+t.*"`
+  or an explicit guard. Ruby's searching `when /re/` is the rejected alternative.
+- Deliberate, visible price: `r"cat"` and `"cat"` mean DIFFERENT things in pattern position (regex vs
+  equality). The prefix is right there in the source.
+
+**Two bugs in the PoC, found statically (it hangs — do not run it).** `parse-atom`'s catch-all literal
+arm never advances the cursor: every sibling arm calls `(parser-take parser)`, that one peeks and builds,
+so `parse-sequence`'s `while` re-peeks forever and `terms.push` grows unbounded (an OOM, not a stack
+overflow). Every test starts with a literal, so it hangs immediately. Second, latent: the escape
+fallthrough `_ => ((parser-take parser) (RegexNode "literal" (parser-take parser) …))` consumes TWICE —
+the backslash was already eaten — so `v1\.2` takes `2` as the escaped literal.
+
+**Phasing (not started).** Fix the two PoC bugs → land `std/text/regex` + a corpus example → the `r"` /
+`f"` prefix-literal mechanism → the match-pattern sugar. Missing vs JS RegExp and explicitly out of
+scope for v1: captures (needed before `replace`/`split` are real), lookaround, backreferences, lazy
+quantifiers, Unicode. Counted `{n,m}` is nearly free — `RegexNode` already carries `min`/`max`, only the
+parser arm is absent.

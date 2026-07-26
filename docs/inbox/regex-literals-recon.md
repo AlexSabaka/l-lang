@@ -1,5 +1,13 @@
 # Regex literals — recon on the parked frontend stub (2026-07-26)
 
+> **SUPERSEDED by D67 (2026-07-26).** All three forks below are ruled: the engine is written in
+> **l-lang** (Sabaka's `regex_poc.lisp`), not in C, which dissolves Fork 2 entirely; it lives in
+> **`std/text/regex`** and is NOT ambient (Fork 3); and the literal is **`r"…"`, a prefixed RAW
+> STRING** — not `/…/`, not a sigil — which sidesteps Fork 1's division ambiguity without touching `/`
+> (Fork 1). `f"…"` joins it as the canonical formatted string with `'"…"` retained as an alias. This
+> note is kept for the measurements it carries (the ambiguity demo, the stub's defects, the parked
+> `stash@{0}`); read D67 for what was decided.
+
 Sabaka started a `/pattern/flags` regex literal in the worktree. It is **parked**, not landed:
 
 ```
