@@ -1195,6 +1195,39 @@ ${PRODUCER}
     why: "Rn: Kelvin and Meter share base Real + bounds `(0 ..)` but are DIFFERENT types BY NAME (D46 amend). Returning a Kelvin where a Meter is wanted is a nominal mismatch (LL0213) -- the units guarantee. A bare `(deftype X <- Real)` alias would NOT catch this; the `:satisfies` makes it distinct.",
   },
 
+  // --- Cx: D46/B-3 `defcast`. Every rule of the implicit form is a REFUSAL, so the refusals are the
+  // feature and each one is gated here. ---
+  {
+    name: "Cx1: an ':explicit' defcast does NOT fire implicitly",
+    source: "(defclass Celsius (let :ctor degrees <- Real))\n(defcast :explicit [c <- Celsius] -> Real c.degrees)\n(let t (Celsius 1.5))\n(let r <- Real t)",
+    expect: /LL0200|Type mismatch|cannot assign/,
+    why: "Cx1: `:explicit` fires ONLY at a written `(cast<T> x)`. If it also fired at a coercion site the two kinds would mean the same thing, and a conversion the author wanted to be asked for would happen silently -- the C++ mistake D46 cites.",
+  },
+  {
+    name: "Cx2: implicit conversions do NOT chain (one hop only)",
+    source: "(defclass A (let :ctor v <- Real))\n(defclass B (let :ctor v <- Real))\n(defcast :implicit [a <- A] -> B (B a.v))\n(defcast :implicit [b <- B] -> Real b.v)\n(let a (A 1.5))\n(let r <- Real a)",
+    expect: /LL0200|Type mismatch|cannot assign/,
+    why: "Cx2: A->B and B->Real exist, A->Real does not. B-3 says ONE HOP: exactly the declared pair is looked up. Chaining would mean no amount of reading a module tells you which conversions it admits.",
+  },
+  {
+    name: "Cx3: an ':implicit' defcast may not target a refined newtype",
+    source: "(deftype uint8 <- Int :satisfies (0 .. 255))\n(defclass Volume (let :ctor raw <- Int))\n(defcast :implicit [v <- Volume] -> uint8 v.raw)",
+    expect: /LL0243/,
+    why: "Cx3: entering a refined newtype runs a range check that PANICS out of range. B-3 allows implicit conversion for lossless widening only, and this is the one case the compiler can check for itself: a conversion that can abort the program must be asked for. `:explicit` is the form for it.",
+  },
+  {
+    name: "Cx4: a defcast must carry exactly one of :implicit / :explicit",
+    source: "(defclass C (let :ctor d <- Real))\n(defcast [c <- C] -> Real c.d)",
+    expect: /LL0241/,
+    why: "Cx4: neither is the default for the other -- when a conversion fires is the whole safety story, so it is stated rather than assumed.",
+  },
+  {
+    name: "Cx5: `(cast<T> x)` with no conversion behind the pair is refused",
+    source: "(defclass Celsius (let :ctor degrees <- Real))\n(let c (Celsius 1.5))\n(console.log (cast<Real> c))",
+    expect: /LL0242/,
+    why: "Cx5: `(cast<T> x)` runs a user-defined conversion; it does not coerce by fiat. With none declared there is nothing to run, and inventing one is how a cast becomes a lie (RFC-0001 5.6 refuses narrowing casts for the same reason).",
+  },
+
   // --- Rb: INFERRED structural records -- a map LITERAL retains its per-field types (no annotation), so
   // `{:name "x" :age 3}.name` types String. `members` is additive on the map (kind stays "map", so every
   // map consumer keeps working; `m["k"]` still gives the common value type). ---

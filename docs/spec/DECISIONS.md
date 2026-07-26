@@ -4092,8 +4092,19 @@ consumed as raw `Colon Identifier` rather than through the shared `modifier` sub
 rule ends in an optional `[ … ]` argument list and a defcast's next token is its `[param]` -- routed
 through it, `:implicit [c <- Celsius]` parses as a modifier TAKING arguments. `(cast<T> x)` lowers to
 a plain call at the HIR coercion point, and converting INTO a refined newtype runs that type's range
-check from the same helper every other coercion site uses. The `:implicit` half -- firing at
-assignment/argument/return without being written -- is NOT built yet.
+check from the same helper every other coercion site uses.
+
+**B-3 `:implicit` STATUS — BUILT (2026-07-26, P3d-b), at three of the four sites.** It fires at
+LET-INIT, RETURN and ASSIGNMENT with nothing written. Two halves make that work and both are needed:
+`TypeChecker.isAssignable` consults an implicit conversion LAST, after every nominal and structural
+answer (which is what "a subtype relation preferred" means operationally -- it can add assignability
+but never redirect an existing one through a user function), and the HIR coercion point inserts the
+call at the site. Every rule is a refusal and each is gated by a negative test: `:explicit` never
+fires implicitly; conversions never CHAIN (one hop -- `A->B` plus `B->Real` does not yield `A->Real`);
+and `:implicit` may not TARGET a refined newtype (LL0243), the one losslessness rule the compiler can
+check for itself, since entering one runs a range check that panics. **The ARGUMENT site is not
+wired** -- an argument's destination is the callee's parameter type, which needs the resolved callee
+at the HIR call site rather than the local type channel the other three read.
 
 **Grammar deltas (B-0 / B-1c), clean against the current EBNF:**
 ```

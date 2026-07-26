@@ -294,7 +294,44 @@ export class TypeChecker {
       return true;
     }
 
+    // D46/B-3: an `:implicit` defcast makes the pair assignable, and the HIR coercion point inserts
+    // the conversion call at the site. LAST, after every structural and nominal answer, which is what
+    // B-3 means by "a subtype relation preferred (no cast)" -- a conversion is only consulted once
+    // nothing else has made the pair fit, so it can add assignability but never redirect an existing
+    // one through a user function.
+    if (this.hasImplicitCast(source, target, symbolTable)) {
+      return true;
+    }
+
     return false;
+  }
+
+  /**
+   * Is there an `:implicit` `defcast` from `source` to `target`?
+   *
+   * By NAME, because that is how a defcast is stored: the AstBuilder derives
+   * `__cast_<source>_to_<target>` from the pair, so this asks the symbol table the same question the
+   * HIR coercion point asks when it inserts the call -- the two cannot disagree about whether a
+   * conversion exists. ONE HOP: exactly this pair, never a chain.
+   */
+  private static hasImplicitCast(
+    source: InferredType,
+    target: InferredType,
+    symbolTable?: SymbolTable
+  ): boolean {
+    if (!symbolTable) return false;
+    const nameOf = (t: any): string | undefined => {
+      const n = t?.name ?? t?.refName;
+      return typeof n === "string" ? n : undefined;
+    };
+    const s = nameOf(source);
+    const t = nameOf(target);
+    if (!s || !t || s === t) return false;
+    try {
+      return !!symbolTable.resolveSymbol(`__cast_${s}_to_${t}`)?.modifiers?.has("implicit");
+    } catch {
+      return false;
+    }
   }
 
   /**

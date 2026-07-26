@@ -108,3 +108,49 @@ export function buildRefineCall(
     nodes: [id("__refine_check_int"), value, num(info.lo), num(info.hi), num(info.clo), num(info.chi)],
   });
 }
+
+/**
+ * D46/B-3 -- an IMPLICIT `defcast`, inserted at a coercion site without the author writing anything.
+ *
+ * Returns the conversion call to use in place of `value`, or undefined when nothing should fire. The
+ * rules are the ratified ones, and each is a refusal rather than a permission:
+ *
+ *   - A SUBTYPE RELATION IS PREFERRED. If the value is already assignable to the destination, no
+ *     conversion happens -- a cast that duplicates a subtype relation is noise at best and a
+ *     different value at worst.
+ *   - ONE HOP ONLY. Exactly the (source, target) pair is looked up; conversions never chain, so no
+ *     amount of declaring can make A reach C through B by accident.
+ *   - `:explicit` NEVER fires here. That is the whole distinction between the two kinds.
+ *
+ * Losslessness is the author's assertion, with one mechanical exception the compiler CAN see and
+ * refuses at the declaration instead: an implicit conversion may not TARGET a refined newtype,
+ * because its range check can panic, and a conversion that can abort the program is not something to
+ * fire silently (LL0243).
+ */
+export function implicitCastCall(
+  value: ast.ASTNode,
+  sourceType: InferredType | undefined,
+  targetName: string | undefined,
+  symbolTable: SymbolTable | undefined,
+  parent: ast.ASTNode
+): ast.ASTNode | undefined {
+  if (!symbolTable || !targetName) return undefined;
+  const sourceName = (sourceType as any)?.name ?? (sourceType as any)?.refName;
+  if (typeof sourceName !== "string" || sourceName === targetName) return undefined;
+  // Unknown is gradual typing's answer, not a source type -- converting from it would be a guess.
+  if (sourceType?.kind === "unknown") return undefined;
+
+  let entry;
+  try {
+    entry = symbolTable.resolveSymbol(`__cast_${sourceName}_to_${targetName}`, parent);
+  } catch {
+    return undefined;
+  }
+  if (!entry || !entry.modifiers?.has("implicit")) return undefined;
+
+  const loc = (value as any)._location;
+  const mk = (type: string, fields: any): any => ({ ...fields, _type: type, _location: loc, _parent: parent });
+  return mk("list", {
+    nodes: [mk("simple-identifier", { id: `__cast_${sourceName}_to_${targetName}` }), value],
+  });
+}

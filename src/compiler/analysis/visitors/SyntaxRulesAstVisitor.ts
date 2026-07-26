@@ -19,6 +19,7 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
 
   visitProgram(node: ast.ProgramNode) {
     this.definedModifiers = collectDefinedModifiers(node);
+    this.refinedTypeNames = collectRefinedTypeNames(node);
     return node;
   }
 
@@ -102,6 +103,9 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
     }
   }
 
+  /** Refined newtype names declared in this module -- see the LL0243 check in `visitFunction`. */
+  private refinedTypeNames: Set<string> = new Set();
+
   visitFunction(node: ast.FunctionNode) {
     // A defcast reaches here as the function the AstBuilder rewrote it into, marked by `castOf`.
     // `requireParens` is skipped for it: the form the author wrote is `(defcast …)`, and reporting
@@ -114,6 +118,9 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
         this.report(SD.CastNeedsOneKind, node, {
           found: kinds.length === 0 ? "it carries neither" : `it carries both`,
         });
+      } else if (kinds[0] === "implicit" && this.refinedTypeNames.has(node.castOf.target)) {
+        // The one losslessness rule the compiler can check for itself -- see LL0243.
+        this.report(SD.ImplicitCastToRefined, node, { target: node.castOf.target });
       }
       return;
     }
@@ -267,4 +274,17 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
   visitComment(node: ast.CommentNode) {
     // Optionally, we could check for TODOs or FIXMEs
   }
+}
+
+/** `(deftype X <- T :satisfies …)` names declared anywhere in the tree. */
+function collectRefinedTypeNames(root: ast.ASTNode): Set<string> {
+  const out = new Set<string>();
+  const walk = (n: any): void => {
+    if (!n || typeof n !== "object") return;
+    if (Array.isArray(n)) return n.forEach(walk);
+    if (n._type === "type-def" && n.refinement && n.name) out.add(ast.symbolName(n.name));
+    for (const k of ast.getNodeIterableKeys(n)) walk((n as any)[k]);
+  };
+  walk(root);
+  return out;
 }

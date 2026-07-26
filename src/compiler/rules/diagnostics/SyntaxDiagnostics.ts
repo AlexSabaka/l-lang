@@ -72,6 +72,23 @@ export const SyntaxDiagnostics = {
       `only where '(cast<T> x)' is written. Neither is the default for the other.`
   ),
 
+  // LL0243 (D46/B-3) -- an `:implicit` conversion whose TARGET is a refined newtype.
+  //
+  // B-3 permits implicit conversion for "lossless widening only", and in general only the author can
+  // assert that. This is the one case the compiler can see for itself: entering a refined newtype
+  // runs its range check, which PANICS on a value outside the range. A conversion that can abort the
+  // program is exactly what must not fire without being written. `:explicit` is the form for it --
+  // the range is still enforced, the author just has to ask.
+  ImplicitCastToRefined: def<{ target: string }>(
+    "LL0243",
+    Error,
+    (p) =>
+      `an ':implicit' defcast cannot target '${p.target}', which is a refined newtype: entering it ` +
+      `runs a range check that panics out of range, and a conversion that can abort the program must ` +
+      `not fire silently. Declare it ':explicit' and write '(cast<${p.target}> x)' at the sites you ` +
+      `mean it.`
+  ),
+
   MacroNotImplemented: def<{ keyword: string; name?: string }>(
     "LL0023",
     Error,

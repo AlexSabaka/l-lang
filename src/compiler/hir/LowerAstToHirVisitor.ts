@@ -28,7 +28,7 @@ import type { InferredType } from "../analysis/SymbolTable";
 import { classifyList } from "../analysis/listForm";
 import { classifyCall } from "./classifyCall";
 import { shouldCopyOnStore, shouldCopyParam } from "./valueCopy";
-import { refinementOfType, refinementOfTypeName, typeNameOf, buildRefineCall } from "./coerceInto";
+import { refinementOfType, refinementOfTypeName, typeNameOf, buildRefineCall, implicitCastCall } from "./coerceInto";
 import { HirModule } from "./HirModule";
 import { TempAllocator } from "./TempAllocator";
 import { RuntimeProvider } from "../runtime";
@@ -782,11 +782,12 @@ export class LowerAstToHirVisitor {
     // return reaches here, implicit tail included -- the desugar runs with `injectImplicitReturns`, so
     // a tail expression is already an explicit `(return e)` by now (and a tail `if` already has one
     // per branch). Wrapping the AST before lowering reuses the proven floor-call path.
-    const info = refinementOfTypeName(
-      typeNameOf(this.fnStack[this.fnStack.length - 1]?.returns),
-      this.context.symbolTable
-    );
-    const value = info ? buildRefineCall(args[0], info) : args[0];
+    const retName = typeNameOf(this.fnStack[this.fnStack.length - 1]?.returns);
+    const returned =
+      implicitCastCall(args[0], this.context.nodeTypes.get(args[0]), retName, this.context.symbolTable, node) ??
+      args[0];
+    const info = refinementOfTypeName(retName, this.context.symbolTable);
+    const value = info ? buildRefineCall(returned, info) : returned;
     // `return` ignores the incoming dest -- it always returns from the function (diverges).
     return this.lowerNode(value, { kind: "return" });
   }
@@ -1732,8 +1733,14 @@ export class LowerAstToHirVisitor {
     // A COERCION SITE: the initializer is entering the ANNOTATED type. Driven by the annotation, not
     // by `declaredTypeOf`'s channel -- a `let`'s channel holds the initializer's own narrowing (Int),
     // which is what the value is coming FROM, not what it is going INTO.
-    const declInfo = refinementOfTypeName(typeNameOf(node.type), this.context.symbolTable);
-    const initAst = declInfo ? buildRefineCall(node.value, declInfo) : node.value;
+    const declName = typeNameOf(node.type);
+    // D46/B-3: an `:implicit` conversion fires here, before the refinement check -- the conversion
+    // produces the destination type, and it is THAT value the range then applies to.
+    const converted =
+      implicitCastCall(node.value, this.context.nodeTypes.get(node.value), declName, this.context.symbolTable, node) ??
+      node.value;
+    const declInfo = refinementOfTypeName(declName, this.context.symbolTable);
+    const initAst = declInfo ? buildRefineCall(converted, declInfo) : converted;
     const init = this.lowerNode(initAst, VALUE);
     if (init.value === null) return { stmts: init.stmts, value: null }; // RHS diverged -> the binding is dead
     // The init is emitted INLINE by the HIR (a ternary / temp / array), so no value-position init ever
@@ -1777,10 +1784,19 @@ export class LowerAstToHirVisitor {
     // emitter rather than this one. D2 makes `:=` the only assignment operator eventually.
     const isSimple =
       node._type === "simple-assignment" || (node as ast.CompoundAssignmentNode).operator === ":=";
-    const targetInfo = isSimple
-      ? refinementOfType(this.context.nodeTypes.get(node.assignable), this.context.symbolTable)
-      : undefined;
-    const rhsAst = targetInfo ? buildRefineCall(node.value, targetInfo) : node.value;
+    const targetType = isSimple ? this.context.nodeTypes.get(node.assignable) : undefined;
+    const assigned =
+      (isSimple
+        ? implicitCastCall(
+            node.value,
+            this.context.nodeTypes.get(node.value),
+            (targetType as any)?.name ?? (targetType as any)?.refName,
+            this.context.symbolTable,
+            node
+          )
+        : undefined) ?? node.value;
+    const targetInfo = isSimple ? refinementOfType(targetType, this.context.symbolTable) : undefined;
+    const rhsAst = targetInfo ? buildRefineCall(assigned, targetInfo) : assigned;
     const rhs = this.lowerNode(rhsAst, VALUE);
     if (rhs.value === null) return { stmts: rhs.stmts, value: null }; // RHS diverged -> the assignment is dead
     if (isSimple) {

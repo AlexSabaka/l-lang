@@ -533,6 +533,11 @@ export const C_PASSING: readonly string[] = [
   // range check through the same coercion point every other site uses -- guarded by the panic file.
   "16-stdlib/17_defcast.lisp",
   "80-adversarial/defcast_refined_panic.lisp",
+  // P3d-b: the `:implicit` half -- a conversion the compiler applies at let-init, return and
+  // assignment with nothing written at the site. Its rules are all refusals (`:explicit` never fires,
+  // one hop only, subtype preferred, no refined target), and those are gated in test/type-errors.ts
+  // rather than here, because a refusal has no output to compare.
+  "16-stdlib/18_defcast_implicit.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.
