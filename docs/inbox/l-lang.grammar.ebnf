@@ -57,7 +57,7 @@ enumKey                ::= <Colon> ( <Identifier> | <StringLiteral> ) ( "=>" exp
 interfaceDecl          ::= "definterface" modifier* classOrInterfaceName? ( <ImplementsModKw> typeRef+ )? expression* ;
 typeDefDecl            ::= "deftype" modifier* identifier "<-" type ( <SatisfiesModKw> refinementConstraint )? ;
 castExpr               ::= "cast" <LAngle> type <RAngle> expression ;
-castDefDecl            ::= "defcast" ( <Colon> <Identifier> )* <LBracket> parameter <RBracket> "->" type expression* ;
+castDefDecl            ::= "defcast" modifier* <LBracket> parameter <RBracket> "->" type expression* ;
 refinementConstraint   ::= <LParen> expression? <Range> expression? <RParen> ;
 macroDecl              ::= "defmacro" <Identifier>? expression* ;
 modifierDefDecl        ::= "defmodifier" <Identifier> ( <LBracket> ( parameter ","? )* <RBracket> )? expression* ;

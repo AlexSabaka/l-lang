@@ -225,6 +225,9 @@ export const C_PASSING: readonly string[] = [
   "80-adversarial/print_positional_format.lisp",
   "16-stdlib/01_main.lisp",
   "10-modifiers/06_extension_methods.lisp",
+  // D68's adjacency gate. Pure grammar, so C is byte-identical to JS. The destructuring half of the
+  // fix is in 08 and is NOT pinned: a destructuring declaration has no CIR lowering (ELL0106).
+  "10-modifiers/07_modifier_adjacency.lisp",
   // An imported module-level CONSTANT, read plainly (`PI`) and as a dotted head
   // (`(DIGITS.indexOf c)` inside a lowered imported body -- the shape that was broken).
   "80-adversarial/imported_module_constant.lisp",

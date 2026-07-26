@@ -989,9 +989,7 @@ export class LLangAstBuilder extends BaseCstVisitor {
   }
 
   castDefDecl(ctx: any): ast.FunctionNode {
-    const modifiers = (ctx.modName ?? []).map((tok: any) =>
-      this.makeNode("modifier", ctx, { modifier: tok.image })
-    );
+    const modifiers = (ctx.modifier ?? []).map((m: any) => this.visit(m));
     const param = this.visit(ctx.parameter[0]);
     const returns = this.visit(ctx.type[0]);
     const body = (ctx.expression ?? []).map((e: any) => this.visit(e));

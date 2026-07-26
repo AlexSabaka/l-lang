@@ -780,13 +780,39 @@ class LLangParser extends CstParser {
         { ALT: () => this.CONSUME(t.Identifier) },
         { ALT: () => this.CONSUME(t.AsyncKw) },
       ]);
-      this.OPTION(() => {
-        this.CONSUME(t.LBracket);
-        this.MANY(() => {
-          this.SUBRULE(this.expression);
-          this.OPTION2(() => this.CONSUME(t.Comma));
-        });
-        this.CONSUME(t.RBracket);
+      // ADJACENCY-GATED (D68). The argument bracket must butt directly against the modifier name:
+      // `:with[(docstring "…")]` takes arguments, `:public [x]` is a modifier followed by a separate
+      // vector. Ungated, this OPTION is greedy and eats whatever `[ … ]` comes next -- and in three
+      // constructs the very next token IS a legitimate bracket, so all three were broken:
+      //
+      //   (fn :public [x <- Int] -> Int …)  -- did not parse AT ALL: the option ate the parameter
+      //                                        list, then the rule demanded another `[` and found `Int`
+      //   (let :private [a b] pt)           -- misparsed SILENTLY: the option ate the destructuring
+      //                                        pattern, leaving `pt` as the name with no initializer,
+      //                                        reported as `ELL0006 Constant variable must have an
+      //                                        initializer` -- a confident diagnostic about the wrong
+      //                                        thing, which is the worse of the two failures
+      //   (defcast :implicit [c <- Celsius] …) -- worked around in P3d-a by consuming the two tokens
+      //                                        raw; that workaround is deleted below, now unnecessary
+      //
+      // Adjacency is this grammar's established discriminator for exactly this shape -- `arr[i]` vs
+      // `arr [i]`, `HttpMethod:GET` vs `(let :ctor x)` -- so `isAdjacentLBracket` is reused unchanged.
+      //
+      // `restartArm` (`(:go [v] …)`) and `keyValue` (`{:a [1 2]}`) LOOK like counterexamples and are
+      // not: both have their own rules and neither routes through here, so their spaced brackets are
+      // untouched. Measured across lib, examples, games and the codewars scratchpads, the corpus's
+      // only argument-taking modifier site is `10-modifiers/04_retry_modifier.lisp:41`, already
+      // written `:retry[4]`. Migration surface: zero.
+      this.OPTION({
+        GATE: () => this.isAdjacentLBracket(),
+        DEF: () => {
+          this.CONSUME(t.LBracket);
+          this.MANY(() => {
+            this.SUBRULE(this.expression);
+            this.OPTION2(() => this.CONSUME(t.Comma));
+          });
+          this.CONSUME(t.RBracket);
+        },
       });
     });
 
@@ -1109,16 +1135,11 @@ class LLangParser extends CstParser {
 
     this.castDefDecl = this.RULE("castDefDecl", () => {
       this.CONSUME(t.DefCastKw);
-      // The modifier name is consumed DIRECTLY rather than through the shared `modifier` subrule,
-      // because that rule ends in an OPTIONAL `[ … ]` argument list -- and a defcast's very next
-      // token is its `[param]`. Routed through it, `:implicit [c <- Celsius]` parses as the modifier
-      // `:implicit` TAKING `c <- Celsius` as arguments, and the rule then demands another `[`.
-      // (`fn` has the same shape and escapes it only because a name usually sits in between;
-      // `(fn :public [x] …)` is the same latent ambiguity, simply not exercised by the corpus.)
-      // A conversion's modifiers never take arguments, so consuming the two tokens is exact.
+      // Back on the shared subrule as of D68. P3d-a consumed `Colon`+`Identifier` raw here, because
+      // the ungated argument-bracket option swallowed the `[param]` that follows; the adjacency gate
+      // fixes that at the source, for every construct rather than this one.
       this.MANY(() => {
-        this.CONSUME(t.Colon);
-        this.CONSUME(t.Identifier, { LABEL: "modName" });
+        this.SUBRULE(this.modifier);
       });
       this.CONSUME(t.LBracket);
       this.SUBRULE(this.parameter);

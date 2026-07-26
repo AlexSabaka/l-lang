@@ -1,0 +1,3 @@
+anonymous fn with a modifier: 42
+two modifiers then params: 42
+named fn, unchanged: 40
