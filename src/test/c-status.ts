@@ -239,6 +239,12 @@ export const C_PASSING: readonly string[] = [
   // A rest parameter inside a LIFTED closure: the call site packs a top-level function's rest, and
   // a closure has no such site, so the callee packs. This is the shape a decorator body has.
   "80-adversarial/rest_param_in_closure.lisp",
+  // D75-d: decorators UNFOLD statically on C -- two ordinary functions per decoration, not a
+  // composed function value. These match the goldens written against the other backend.
+  "10-modifiers/02_logging_modifier.lisp",
+  "10-modifiers/04_retry_modifier.lisp",
+  "07-types/06_decorator_reflection.lisp",
+  "30-applications/03_undoable_modifier.lisp",
   // D71 digit separators, and the 2^53 case that makes stripping them a precision requirement
   // rather than a cosmetic one -- C is where the raw-text path is read.
   "00-basics/09_digit_separators.lisp",

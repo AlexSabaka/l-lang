@@ -165,6 +165,8 @@ export class ResolveHirToCir {
   private readonly emptyModifiers = new Set<string>();
   /** D72: names declared by `defattribute` in this module -- annotation data, nothing to apply. */
   private readonly attributeNames = new Set<string>();
+  /** Every `defmodifier` in this module, by name -- the decorator bodies the static unfold reads. */
+  private readonly modifierDefs = new Map<string, ast.ModifierDefNode>();
   /** Imported module-level bindings already hoisted to C globals (dedup for ensureImportedValue). */
   private readonly importedValues = new Set<string>();
   /** Their initializers, spliced in FRONT of `main` -- an import is evaluated before the importer. */
@@ -298,6 +300,7 @@ export class ResolveHirToCir {
       if (n?._type === "modifier-def" && ((n as ast.ModifierDefNode).body ?? []).length === 0) {
         this.emptyModifiers.add((n as ast.ModifierDefNode).name);
       }
+      if (n?._type === "modifier-def") this.modifierDefs.set((n as ast.ModifierDefNode).name, n as ast.ModifierDefNode);
     }
     this.registerModuleFunctions(items);
     // A module-level binding referenced by any top-level function must be a C global.
@@ -3292,6 +3295,132 @@ export class ResolveHirToCir {
   /** Register a top-level (module-scope) function's signature so calls and value-uses resolve. The
    *  param/return CTypes must match the DEFINITION site (declareParam), so the AST annotation wins
    *  over a boxed symbol-table type (a struct param the checker erased to Unknown). */
+  /** A lone `(fn …)` expression arrives wrapped in list(s); peel until it is not a 1-element list. */
+  private unwrapExpr(n: ast.ASTNode | undefined): ast.ASTNode | undefined {
+    let cur = n;
+    for (let i = 0; i < 8; i++) {
+      if (cur?._type !== "list") return cur;
+      const nodes = (cur as ast.ListNode).nodes ?? [];
+      if (nodes.length !== 1) return cur;
+      cur = nodes[0];
+    }
+    return cur;
+  }
+
+  /**
+   * D75's shape: `SETUP… (fn [original ...args] BODY)`.
+   *
+   * Flat, so this is one check rather than a walk through a nesting nobody specified -- which is the
+   * whole reason D75 was ratified before this code was written. The previous, curried contract had to
+   * be reverse-engineered, and the first attempt got it wrong.
+   */
+  private decoratorShape(
+    modName: string
+  ): { setup: ast.ASTNode[]; wrapper: ast.FunctionNode } | undefined {
+    const def = this.modifierDefs.get(modName);
+    if (!def?.body?.length) return undefined;
+    const last = this.unwrapExpr(def.body[def.body.length - 1]);
+    if (last?._type !== "function") return undefined;
+    const w = last as ast.FunctionNode;
+    if (!(w.params ?? []).length) return undefined;   // must take `original` at least
+    return { setup: def.body.slice(0, -1), wrapper: w };
+  }
+
+  /**
+   * A DECORATED function, unfolded STATICALLY (D75).
+   *
+   *     (defmodifier logged [] (fn [original ...args] BODY))
+   *     (fn :logged add [a b] ORIG)
+   *
+   * becomes two ordinary C functions: `add__w0` holding ORIG, and `add` holding BODY with `original`
+   * bound to `add__w0`. Dynamic composition would instead make the decorated NAME a value, needing a
+   * trampoline, boxed dispatch at every call, and a change to call classification in the shared HIR.
+   * Unfolded, a decorated function never stops being a direct, typed C function.
+   *
+   * The renaming is free here because the backend already owns the source-name -> cName map, which is
+   * why this lives in the backend rather than in a source rewrite: no synthesized node ever needs a
+   * `_parent`.
+   *
+   * Modifiers apply in SOURCE ORDER, innermost first, matching what the JS path composes.
+   */
+  private collectDecorated(fn: ast.FunctionNode, name: string): boolean {
+    const decorators = (fn.modifiers ?? []).filter(
+      (m) => !isBuiltinModifier(m.modifier) && !this.attributeNames.has(m.modifier) && !this.emptyModifiers.has(m.modifier)
+    );
+    if (decorators.length === 0) return false;
+
+    const shapes = decorators.map((m) => ({ mod: m, shape: this.decoratorShape(m.modifier) }));
+    const bad = shapes.find((s) => !s.shape);
+    if (bad) {
+      this.refuse(fn, `decorator-shape:${bad.mod.modifier} on '${name}'`, "collectDecorated");
+      return true;
+    }
+    // Decoration-time SETUP hoisting is the next step; refused by name meanwhile rather than dropped,
+    // because dropping it silently would give every call a fresh cache.
+    const stateful = shapes.find((s) => s.shape!.setup.length > 0);
+    if (stateful) {
+      this.refuse(fn, `decorator-setup:${stateful.mod.modifier} on '${name}'`, "collectDecorated");
+      return true;
+    }
+
+    this.emitLayer(fn, `${name}__w0`, fn, undefined);
+    let prev = `${name}__w0`;
+    shapes.forEach((s, i) => {
+      const layer = i === shapes.length - 1 ? name : `${name}__w${i + 1}`;
+      this.emitLayer(fn, layer, s.shape!.wrapper, {
+        prev,
+        mod: s.mod,
+        modParams: this.modifierDefs.get(s.mod.modifier)!.params ?? [],
+      });
+      prev = layer;
+    });
+    return true;
+  }
+
+  /** One unfolded layer. `bind` is absent for the undecorated body and present for each wrapper. */
+  private emitLayer(
+    src: ast.FunctionNode,
+    cname: string,
+    shapeFn: ast.FunctionNode,
+    bind: { prev: string; mod: ast.ModifierNode; modParams: ast.ParameterNode[] } | undefined
+  ): void {
+    // A wrapper's own parameters are `...args` -- everything after `original`, which is bound below
+    // rather than passed.
+    const params = bind ? (shapeFn.params ?? []).slice(1) : shapeFn.params ?? [];
+    const synth = { ...shapeFn, params, name: { ...(src.name as any), id: cname }, modifiers: [] } as ast.FunctionNode;
+    this.ownFns.add(cname);
+    // The pre-scan already registered the PUBLIC name with the undecorated function's signature, and
+    // `registerTopLevel` early-returns on a name it knows. A wrapper's signature is its own
+    // (`...args` packs to one vec), so the stale entry has to go or call sites are typed against a
+    // function that is no longer there -- measured as "too few arguments to function call".
+    this.topLevelFns.delete(cname);
+    this.registerTopLevel(synth, cname);
+    const sig = this.topLevelFns.get(cname)!;
+    this.isolated(synth, () => {
+      const cParams: CParam[] = synth.params.map((p, i) => this.declareParam(p, sig.params[i]));
+      const prologue: CStmt[] = [];
+      if (bind) {
+        // `original` is the previous layer AS A VALUE, so `(original ...args)` resolves through
+        // `resolveFreeCall`'s local-callee branch -- the closure path, which is right because the
+        // wrapper does not know the original's arity.
+        const oc = mangleC(ast.symbolName((shapeFn.params ?? [])[0].name as ast.IdentifierNode));
+        this.declareLocal(oc, C_VALUE);
+        prologue.push({ src, ctype: C_VOID, kind: "c-decl", cName: oc, declCType: C_VALUE, init: this.functionValue(src, bind.prev), cell: false });
+        // `:retry[4]` makes the modifier's own `times` the constant 4 -- the point of unfolding.
+        bind.modParams.forEach((p, i) => {
+          const argNode = bind.mod.args?.[i];
+          if (!argNode) return;
+          const pc = mangleC(ast.symbolName(p.name as ast.IdentifierNode));
+          const val = this.resolveAstExpr(argNode);
+          this.declareLocal(pc, val.ctype);
+          prologue.push({ src, ctype: C_VOID, kind: "c-decl", cName: pc, declCType: val.ctype, init: val, cell: false });
+        });
+      }
+      const body = this.resolveFunctionBody(synth);
+      this.functions.push({ src, cName: mangleC(cname), params: cParams, ret: sig.ret, body: { stmts: [...prologue, ...body.stmts] } });
+    });
+  }
+
   private registerTopLevel(fn: ast.FunctionNode, name: string): void {
     if (this.topLevelFns.has(name)) return;
     const symT = this.dipSymbols("A3", "function-signature", fn, "signature resolved through the symbol table (not on the HIR)", name)?.inferredType;
@@ -3366,6 +3495,7 @@ export class ResolveHirToCir {
     if (!fn.name) { this.refuse(fn, "lambda", "collectFunction"); return; }
     // A top-level `:operator` function compiles under its operator symbol, not its `+` name.
     if (fn.modifiers?.some((m) => m.modifier === "operator")) { this.collectOperatorFn(fn); return; }
+    if (this.collectDecorated(fn, name)) return;
     if (this.refuseCustomModifier(fn, name)) return;
     this.registerTopLevel(fn, name);
     const sig = this.topLevelFns.get(name)!;
