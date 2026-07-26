@@ -232,6 +232,9 @@ export const C_PASSING: readonly string[] = [
   // rather than a cosmetic one -- C is where the raw-text path is read.
   "00-basics/09_digit_separators.lisp",
   "80-adversarial/digit_separator_precision.lisp",
+  // D73: a comptime fold past 2^53 agrees with the runtime and the literal. Pinned on C too --
+  // the old vm path was identically wrong on both, so one backend could not have caught it.
+  "80-adversarial/comptime_int_precision.lisp",
   // D68 modifier reflection. One shared metadata entry, so C answers identically. The CUSTOM arm is
   // in 06 and is NOT pinned: applying a `defmodifier` on C is ELL0106, so a decorator cannot be
   // attached there at all, never mind reflected on.

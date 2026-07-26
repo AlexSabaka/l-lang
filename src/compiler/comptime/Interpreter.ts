@@ -1,0 +1,390 @@
+import * as ast from "../frontend/ast";
+import { SymbolTable } from "../analysis/SymbolTable";
+import { FLOOR } from "../floor/floor";
+
+/**
+ * THE COMPTIME INTERPRETER -- l-lang evaluated by l-lang's own compiler, with no host in the path.
+ *
+ * `:comptime` used to be evaluated by lowering the expression to JavaScript and running it in
+ * `node:vm`. That made the JS backend the compiler's own EVALUATOR rather than merely a target (D69),
+ * which is why deleting it was impossible, and it cost correctness in a way nobody had measured: the
+ * fold's result came back as a JS `number`, so `(inc 9007199254740992)` folded to 9007199254740992 --
+ * the `+1` silently gone -- while the same call at run time, and the same literal written directly,
+ * were both exact. This evaluates the AST instead, and carries an Int as a BIGINT throughout.
+ *
+ * WHAT MAKES THIS TRACTABLE, and it is worth stating because "write an interpreter" sounds unbounded:
+ * a comptime call's arguments are already required to be LITERALS (LL0099, enforced before anything
+ * gets here). So there is no runtime state to model, no closure capture, no mutation across a
+ * suspension -- every evaluation starts from constants and ends in one. The subset is small because
+ * the language already made it small.
+ *
+ * WHAT IT IS NOT: a general l-lang VM. The REPL executes arbitrary user code and is a different
+ * problem wearing the same word. Anything outside the subset below is refused BY NAME rather than
+ * quietly declining to fold -- a silent failure ships a call to a `:comptime` function whose
+ * declaration was already deleted, which is a `ReferenceError` at run time with no diagnostic.
+ */
+
+/** A comptime value. `bigint` is an Int and `number` is a Real -- D51's split, kept end to end. */
+const ZERO = BigInt(0);
+
+export type CTValue = bigint | number | string | boolean | null | CTValue[];
+
+/** Raised for anything the interpreter declines to evaluate. Carries the node so the caller can locate it. */
+export class ComptimeError extends Error {
+  constructor(message: string, readonly node?: ast.ASTNode) {
+    super(message);
+  }
+}
+
+/**
+ * The evaluation budget.
+ *
+ * `vm.runInContext` was called with no timeout, so a `:comptime` function that does not terminate
+ * hung the COMPILER -- no diagnostic, no location, no output. A step counter is the first thing here
+ * that can see that, and a compile that fails loudly beats one that never returns.
+ */
+const MAX_STEPS = 2_000_000;
+const MAX_DEPTH = 512;
+
+type Env = Map<string, CTValue>;
+
+export class ComptimeInterpreter {
+  private steps = 0;
+  private depth = 0;
+
+  constructor(private readonly symbolTable: SymbolTable | undefined) {}
+
+  /** Evaluate an expression to a value, or throw ComptimeError naming what stopped it. */
+  evaluate(node: ast.ASTNode): CTValue {
+    this.steps = 0;
+    this.depth = 0;
+    return this.evalNode(node, new Map());
+  }
+
+  private tick(node: ast.ASTNode) {
+    if (++this.steps > MAX_STEPS) {
+      throw new ComptimeError(
+        `evaluation did not finish within ${MAX_STEPS} steps -- a ':comptime' computation must terminate`,
+        node
+      );
+    }
+  }
+
+  private evalNode(node: ast.ASTNode, env: Env): CTValue {
+    this.tick(node);
+    const n = node as any;
+
+    switch (node._type) {
+      case "integer-number":
+        // Through the raw matched TEXT, not `value`. `value` is a JS number and has already rounded
+        // anything past 2^53; `match` is the lossless copy, which is exactly the property D71 relies
+        // on for the C backend's big-literal path.
+        return typeof n.match === "string" && /^[+-]?\d+$/.test(n.match.trim())
+          ? BigInt(n.match.trim())
+          : BigInt(Math.trunc(n.value));
+      case "float-number":
+        return Number(n.value);
+      case "string":
+        return String(n.value);
+      case "boolean":
+        return Boolean(n.value);
+      case "null":
+        return null;
+      case "vector":
+        return (n.values ?? []).map((v: ast.ASTNode) => this.evalNode(v, env));
+      case "simple-identifier":
+        return this.lookup(n.id, node, env);
+      case "if":
+        return truthy(this.evalNode(n.condition, env))
+          ? this.evalNode(n.then, env)
+          : n.else
+          ? this.evalNode(n.else, env)
+          : null;
+      case "match":
+        return this.evalMatch(node as ast.MatchNode, env);
+      case "list":
+        return this.evalList(node as ast.ListNode, env);
+    }
+
+    throw new ComptimeError(`'${node._type}' cannot be evaluated at compile time`, node);
+  }
+
+  private lookup(name: string, node: ast.ASTNode, env: Env): CTValue {
+    if (env.has(name)) return env.get(name)!;
+
+    // Not a local binding, so it must be a module-level one -- INCLUDING an imported one. The JS path
+    // reached these by draining `getInlinedDefinitions()` after a rename; here it is an ordinary
+    // symbol lookup followed by evaluating whatever the binding was declared with (AF-046).
+    const sym = this.tryResolve(name);
+    const value = (sym?.value as any)?.value;
+    if (sym && sym.nodeType === "variable" && value) return this.evalNode(value, new Map());
+
+    throw new ComptimeError(`'${name}' is not available at compile time`, node);
+  }
+
+  private tryResolve(name: string) {
+    try {
+      return this.symbolTable?.resolveSymbol(name);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private evalMatch(node: ast.MatchNode, env: Env): CTValue {
+    const subject = this.evalNode(node.expression, env);
+    for (const arm of node.cases ?? []) {
+      const bound = this.matchPattern(arm.pattern, subject, env);
+      if (!bound) continue;
+      if (arm.guard && !truthy(this.evalNode(arm.guard, bound))) continue;
+      return this.evalNode(arm.body, bound);
+    }
+    throw new ComptimeError("no match arm applied at compile time", node);
+  }
+
+  /** The pattern kinds a constant subject can meet. Anything else is refused rather than half-matched. */
+  private matchPattern(pattern: ast.PatternNode, subject: CTValue, env: Env): Env | undefined {
+    switch (pattern._type) {
+      case "any-pattern":
+        return env;
+      case "constant-pattern": {
+        const want = this.evalNode((pattern as any).constant, env);
+        return equal(want, subject) ? env : undefined;
+      }
+      case "identifier-pattern": {
+        const next = new Map(env);
+        next.set(ast.symbolName((pattern as any).id), subject);
+        return next;
+      }
+    }
+    throw new ComptimeError(`a '${pattern._type}' cannot be matched at compile time`, pattern);
+  }
+
+  private evalList(node: ast.ListNode, env: Env): CTValue {
+    const nodes = (node.nodes ?? []).filter(Boolean);
+    if (nodes.length === 0) return null;
+
+    const head: any = nodes[0];
+
+    // `(return e)` -- a special form, and the only one the subset needs. The desugarer injects these
+    // as implicit returns, so a `:comptime` body's tail arrives here as one.
+    if (head._type === "simple-identifier" && head.id === "return") {
+      return nodes.length > 1 ? this.evalNode(nodes[1], env) : null;
+    }
+
+    if (head._type === "simple-identifier" || head._type === "composite-identifier") {
+      const name = ast.symbolName(head);
+      const args = nodes.slice(1);
+
+      const op = OPERATORS[name];
+      if (op) return op(args.map((a) => this.evalNode(a, env)), node);
+
+      const floorFn = FLOOR_BUILTINS[name];
+      if (floorFn) return floorFn(args.map((a) => this.evalNode(a, env)), node);
+
+      // A floor entry the interpreter has NOT implemented is named as such, rather than falling
+      // through to "not defined" -- the two are different problems and only one is the author's.
+      if (FLOOR.has(name)) {
+        throw new ComptimeError(
+          `'${name}' is a floor operation that is not available at compile time`,
+          node
+        );
+      }
+
+      return this.callFunction(name, args.map((a) => this.evalNode(a, env)), node);
+    }
+
+    // A BLOCK: evaluate in order, the last value wins. This is what a multi-expression function body
+    // is once the head is not a name.
+    let last: CTValue = null;
+    for (const item of nodes) last = this.evalNode(item, env);
+    return last;
+  }
+
+  private callFunction(name: string, args: CTValue[], node: ast.ASTNode): CTValue {
+    const sym = this.tryResolve(name);
+    const fn = sym?.value as ast.FunctionNode | undefined;
+    if (!sym || sym.nodeType !== "function" || !fn) {
+      throw new ComptimeError(`'${name}' is not available at compile time`, node);
+    }
+
+    if (++this.depth > MAX_DEPTH) {
+      this.depth--;
+      throw new ComptimeError(
+        `':comptime' recursion went deeper than ${MAX_DEPTH} calls in '${name}'`,
+        node
+      );
+    }
+
+    try {
+      const env: Env = new Map();
+      (fn.params ?? []).forEach((p, i) => {
+        env.set(ast.symbolName(p.name as any), i < args.length ? args[i] : null);
+      });
+
+      let last: CTValue = null;
+      for (const stmt of fn.body ?? []) last = this.evalNode(stmt, env);
+      return last;
+    } finally {
+      this.depth--;
+    }
+  }
+}
+
+function truthy(v: CTValue): boolean {
+  if (typeof v === "bigint") return v !== ZERO;
+  return !(v === false || v === null || v === 0 || v === "");
+}
+
+function equal(a: CTValue, b: CTValue): boolean {
+  if (typeof a === "bigint" || typeof b === "bigint") {
+    // An Int and a Real compare by VALUE across the representation split, so a `0` pattern still
+    // matches a subject that arrived as a Real.
+    if (typeof a === "bigint" && typeof b === "bigint") return a === b;
+    if (typeof a === "number" || typeof b === "number") return Number(a) === Number(b);
+    return false;
+  }
+  return a === b;
+}
+
+/** Both operands as Reals -- the promotion rule for a mixed Int/Real operation. */
+function asReal(v: CTValue): number {
+  if (typeof v === "bigint") return Number(v);
+  if (typeof v === "number") return v;
+  throw new ComptimeError(`a ${typeof v} is not a number`);
+}
+
+const bothInt = (a: CTValue, b: CTValue) => typeof a === "bigint" && typeof b === "bigint";
+
+/**
+ * Arithmetic that STAYS in Int when both operands are Int, and promotes to Real otherwise.
+ *
+ * The Int path is the whole point: `+` on two bigints is exact at any magnitude, which is what the
+ * `node:vm` path lost on its way back through a JS number.
+ */
+function arith(
+  name: string,
+  int: (a: bigint, b: bigint) => bigint,
+  real: (a: number, b: number) => number
+) {
+  return (args: CTValue[], node: ast.ASTNode): CTValue => {
+    if (args.length === 0) throw new ComptimeError(`'${name}' needs at least one operand`, node);
+    // VARIADIC, deliberately: `(+ 1 2 3)` is one call with three arguments, and the vm shim once
+    // dropped everything after the second -- folded to 3 where the runtime answered 6.
+    return args.reduce((a, b) =>
+      bothInt(a, b) ? int(a as bigint, b as bigint) : real(asReal(a), asReal(b))
+    );
+  };
+}
+
+function compare(name: string, cmp: (a: number, b: number) => boolean) {
+  return (args: CTValue[], node: ast.ASTNode): CTValue => {
+    if (args.length < 2) throw new ComptimeError(`'${name}' needs two operands`, node);
+    for (let i = 0; i < args.length - 1; i++) {
+      const a = args[i];
+      const b = args[i + 1];
+      const ok = bothInt(a, b)
+        ? cmp(Number(a as bigint), Number(b as bigint))
+        : cmp(asReal(a), asReal(b));
+      if (!ok) return false;
+    }
+    return true;
+  };
+}
+
+type Builtin = (args: CTValue[], node: ast.ASTNode) => CTValue;
+
+const OPERATORS: Record<string, Builtin> = {
+  "+": (args, node) => {
+    // String concatenation shares the spelling, and the corpus uses it: `(+ "squares: " s)`.
+    if (args.some((a) => typeof a === "string")) return args.map(display).join("");
+    return arith("+", (a, b) => a + b, (a, b) => a + b)(args, node);
+  },
+  "-": (args, node) =>
+    args.length === 1
+      ? typeof args[0] === "bigint"
+        ? -(args[0] as bigint)
+        : -asReal(args[0])
+      : arith("-", (a, b) => a - b, (a, b) => a - b)(args, node),
+  "*": arith("*", (a, b) => a * b, (a, b) => a * b),
+  "/": (args, node) => {
+    // Int / Int is INTEGER division (D51), which is why this cannot just promote to Real: the corpus
+    // rounds with `(/ (round (* x 100)) 100)` and expects the Real answer, while `(/ 7 2)` on two
+    // Ints is 3. Both backends agree on that split and so does this.
+    if (args.length < 2) throw new ComptimeError("'/' needs two operands", node);
+    return args.reduce((a, b) => {
+      if (bothInt(a, b)) {
+        if ((b as bigint) === ZERO) throw new ComptimeError("division by zero at compile time", node);
+        return (a as bigint) / (b as bigint);
+      }
+      return asReal(a) / asReal(b);
+    });
+  },
+  "%": (args, node) => {
+    if (args.length < 2) throw new ComptimeError("'%' needs two operands", node);
+    const [a, b] = args;
+    if (bothInt(a, b)) {
+      if ((b as bigint) === ZERO) throw new ComptimeError("modulo by zero at compile time", node);
+      return (a as bigint) % (b as bigint);
+    }
+    return asReal(a) % asReal(b);
+  },
+  "==": (args) => equal(args[0], args[1]),
+  "!=": (args) => !equal(args[0], args[1]),
+  "<": compare("<", (a, b) => a < b),
+  "<=": compare("<=", (a, b) => a <= b),
+  ">": compare(">", (a, b) => a > b),
+  ">=": compare(">=", (a, b) => a >= b),
+  "&&": (args) => args.every(truthy),
+  "||": (args) => args.some(truthy),
+  "!": (args) => !truthy(args[0]),
+};
+
+/**
+ * THE FLOOR, at compile time.
+ *
+ * These are not host reaches. `Math.cos` is a FLOOR entry (`floor.ts`), declared `[Real] -> Real` and
+ * implemented by `ll_math_cos` on C -- the floor is the language's spec'd portable surface, and this
+ * is a third implementation of the same contract rather than a fourth opinion. That is what lets a
+ * comptime fold and a runtime call agree, which the corpus asserts directly.
+ *
+ * DETERMINISTIC ONLY. `Math.random` is a floor entry and is deliberately absent: a fold that is not
+ * reproducible makes the BUILD not reproducible, and baking a random constant into an artefact is
+ * worse than refusing to. It falls to the "floor operation not available at compile time" refusal
+ * above, by name and with a location -- a rule the vm could never have enforced, since it simply had
+ * the host's `Math` in scope.
+ */
+const FLOOR_BUILTINS: Record<string, Builtin> = {
+  "Math.abs": (a) => (typeof a[0] === "bigint" ? (a[0] < ZERO ? -a[0] : a[0]) : Math.abs(asReal(a[0]))),
+  "Math.sqrt": (a) => Math.sqrt(asReal(a[0])),
+  "Math.log": (a) => Math.log(asReal(a[0])),
+  "Math.exp": (a) => Math.exp(asReal(a[0])),
+  "Math.sin": (a) => Math.sin(asReal(a[0])),
+  "Math.cos": (a) => Math.cos(asReal(a[0])),
+  "Math.tan": (a) => Math.tan(asReal(a[0])),
+  "Math.asin": (a) => Math.asin(asReal(a[0])),
+  "Math.acos": (a) => Math.acos(asReal(a[0])),
+  "Math.atan": (a) => Math.atan(asReal(a[0])),
+  "Math.atan2": (a) => Math.atan2(asReal(a[0]), asReal(a[1])),
+  "Math.hypot": (a) => Math.hypot(...a.map(asReal)),
+  "Math.pow": (a) => Math.pow(asReal(a[0]), asReal(a[1])),
+  "Math.sign": (a) => Math.sign(asReal(a[0])),
+  // These four answer an INTEGER, and say so in bigint -- `(/ (Math.round x) 100)` must not silently
+  // become Int division, so the corpus's rounding idiom depends on getting this split right.
+  "Math.floor": (a) => Math.floor(asReal(a[0])),
+  "Math.ceil": (a) => Math.ceil(asReal(a[0])),
+  "Math.round": (a) => Math.round(asReal(a[0])),
+  "Math.trunc": (a) => Math.trunc(asReal(a[0])),
+  "Math.min": (a) => (a.every((x) => typeof x === "bigint")
+    ? (a as bigint[]).reduce((x, y) => (y < x ? y : x))
+    : Math.min(...a.map(asReal))),
+  "Math.max": (a) => (a.every((x) => typeof x === "bigint")
+    ? (a as bigint[]).reduce((x, y) => (y > x ? y : x))
+    : Math.max(...a.map(asReal))),
+};
+
+/** How a value reads when concatenated into a string. Ints print without a `n` suffix. */
+function display(v: CTValue): string {
+  if (v === null) return "nil";
+  if (Array.isArray(v)) return v.map(display).join(" ");
+  return String(v);
+}

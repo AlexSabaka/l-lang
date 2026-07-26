@@ -2,20 +2,23 @@ import * as ast from "../../frontend/ast";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { Context, LogLevel } from "../../Context";
 import { ComptimeDiagnostics as CO } from "../../rules/diagnostics";
-import { SymbolEntry } from "../../analysis/SymbolTable";
-import { JSTransformerAstVisitor } from "../../codegen/js-estree/visitors/JSTransformerAstVisitor";
-import { DesugarAstVisitor } from "./DesugarAstVisitor";
 import { hasModifier } from "../../helpers/modifiers";
-import * as vm from "node:vm";
-import { generate } from "astring";
-import { RuntimeProvider } from "../../runtime";
+import { ComptimeInterpreter } from "../../comptime/Interpreter";
 
+/**
+ * NO JAVASCRIPT REACHES THIS FILE ANY MORE (D73).
+ *
+ * It used to import `JSTransformerAstVisitor`, `astring`, `node:vm` and `RuntimeProvider`: a fold was
+ * performed by lowering the expression to JS, prepending the runtime shim, and running the result in
+ * a vm sandbox. That is what made the JS backend the compiler's own EVALUATOR rather than merely a
+ * target, and D69 named it as the reason the backend could not be deleted.
+ *
+ * `compiler/comptime/Interpreter.ts` evaluates the AST directly instead. Everything else here -- the
+ * two fold sites, the deletion of a folded declaration, the diagnostics -- is unchanged.
+ */
 export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
-  private runtimeCode = "";
-
   constructor(context: Context) {
     super(context);
-    this.prepareRuntime();
   }
 
   visit(node: ast.ASTNode): any {
@@ -70,33 +73,6 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
       ...node,
       program: visitedProgram,
     };
-  }
-
-  /**
-   * The sandbox runs THE REAL RUNTIME. It must, or folding is not evaluation -- it is a different
-   * language that happens to agree most of the time.
-   *
-   * This used to hand-roll ten operators. Two consequences, and the second is the serious one:
-   *
-   *   MISSING. `%`, `&&`, `||`, `!` are all real l-lang operators and none of them were here, so a
-   *   `:comptime` body using one blew up in the sandbox -- and, before the fix in this same commit,
-   *   blew up SILENTLY.
-   *
-   *   WRONG. The hand-rolled `+` was BINARY -- `(a, b) => a + b` -- while the real runtime's `+` is
-   *   VARIADIC. So the identical expression gave two different answers depending on when it ran:
-   *
-   *       (let :comptime folded (+ 1 2 3))   ->  3        <- the sandbox dropped the third argument
-   *       (let ran (+ 1 2 3))                ->  6        <- the real runtime
-   *
-   *   `:comptime` silently changed the ANSWER. A compile-time evaluator that disagrees with the
-   *   run-time one is worse than no compile-time evaluator at all: the bug only appears in the
-   *   builds where the fold fires.
-   *
-   * Taking the shim from RuntimeProvider -- the single source both paths already use -- makes the two
-   * impossible to diverge. It is never emitted; it exists only inside the vm sandbox.
-   */
-  private prepareRuntime() {
-    this.runtimeCode = RuntimeProvider.getRuntimeShim();
   }
 
   visitVariable(node: ast.VariableNode): ast.VariableNode {
@@ -220,111 +196,42 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
    * expression that legitimately evaluated to `undefined`, and could not say WHY anything failed.
    * Both callers now get the reason and put it in the diagnostic.
    */
+  /**
+   * Evaluate a comptime expression. The engine is `ComptimeInterpreter` -- an AST walker -- where this
+   * used to build a JS program, prepend the runtime shim, and run it in `node:vm`.
+   *
+   * Still a RESULT rather than a bare value, for the reason recorded when it became one: `undefined`
+   * as "it failed" cannot be told apart from an expression that legitimately evaluated to nothing, and
+   * both callers put the reason in their diagnostic.
+   */
   private evaluateExpression(
     expr: ast.ASTNode
   ): { ok: true; value: any } | { ok: false; error: string } {
-    let fullCode = "";
     try {
-      const transformer = new JSTransformerAstVisitor(this.context);
-      const esNode = transformer.visit(expr);
-      const code = generate(esNode);
-
-      // DRAIN THE INLINED DEFINITIONS. Visiting an imported symbol RENAMES it -- `PI` ->
-      // `__ll_inlined_PI_1`, so two modules' `PI` cannot collide -- and records its definition to be
-      // emitted later. `compile()` / `visitProgram` are what normally drain that, and this evaluator
-      // deliberately calls neither: it visits one expression, not a program.
-      //
-      // So the rename happened and the definition never arrived, and the sandbox was handed code
-      // referencing a name nothing in it declared: "__ll_inlined_PI_1 is not defined". `:comptime`
-      // could not see ANY imported symbol -- two shipped features that could not appear in one
-      // expression (AF-046).
-      //
-      // The REPL is the other external driver of this visitor and already does exactly this
-      // (ReplSession, "`visitProgram`/`compile` -- which we deliberately do not call -- are what
-      // normally drain these"). The operator registrations go with them: `(* PI 2)` emits `_2a(PI, 2)`,
-      // and an imported `:operator` overload has to be registered before that shim can find it.
-      const inlinedCode = transformer
-        .getInlinedDefinitions()
-        .map((s) => generate(s))
-        .join("\n");
-      const operatorCode = transformer
-        .getOperatorRegistrations()
-        .map((s) => generate(s))
-        .join("\n");
-
-      const sandbox = {
-        console: {
-          log: (...args: any[]) => this.context.log(LogLevel.Info, "[comptime] " + args.join(" ")),
-          error: (...args: any[]) => this.context.log(LogLevel.Error, "[comptime] " + args.join(" "))
-        }
-      };
-      vm.createContext(sandbox);
-
-      // Order is load-bearing: the runtime shims, then the inlined imports and their operator
-      // registrations, then the local comptime deps, and only then the expression that uses them.
-      fullCode = this.runtimeCode + "\n";
-      fullCode += inlinedCode + "\n";
-      fullCode += operatorCode + "\n";
-      const deps = this.collectComptimeDependencies(expr);
-      fullCode += deps + "\n";
-      fullCode += code;
-
-      const result = vm.runInContext(fullCode, sandbox);
-      this.context.log(LogLevel.Info, "[comptime] Evaluated: " + code + " -> " + result);
-      return { ok: true, value: result };
+      const value = new ComptimeInterpreter(this.context.symbolTable).evaluate(expr);
+      this.context.log(LogLevel.Info, "[comptime] Evaluated -> " + String(value));
+      return { ok: true, value };
     } catch (e: any) {
-      this.context.log(LogLevel.Error, `Comptime evaluation error: ${e.message}`);
-      if (fullCode) {
-        this.context.log(LogLevel.Error, "Full code was: \n" + fullCode);
-      }
-      return { ok: false, error: String(e?.message ?? e) };
+      const message = String(e?.message ?? e);
+      this.context.log(LogLevel.Error, `Comptime evaluation error: ${message}`);
+      return { ok: false, error: message };
     }
   }
 
-  private collectComptimeDependencies(node: ast.ASTNode): string {
-    let code = "";
-    const transformer = new JSTransformerAstVisitor(this.context);
-    const visited = new Set<string>();
-
-    const findDeps = (n: ast.ASTNode) => {
-      if (!n) return;
-      if (n._type === "simple-identifier") {
-        const id = (n as ast.SimpleIdentifierNode).id;
-        if (!visited.has(id)) {
-          visited.add(id);
-          const symbol = this.context.symbolTable?.resolveSymbol(id);
-          if (symbol && symbol.isComptime && symbol.nodeType === "function") {
-            let fnNode = symbol.value as ast.FunctionNode;
-            
-            // Desugar the function node to ensure implicit returns are injected
-            // `true`: inject implicit returns. That is the ONLY reason this call exists -- the sandbox
-          // needs a function that RETURNS something, and without it `(factorial 5)` folds to `null`.
-          const desugarer = new DesugarAstVisitor(this.context, true);
-            fnNode = desugarer.visit(fnNode) as ast.FunctionNode;
-            
-            const esFn = transformer.visit(fnNode);
-            code += generate(esFn) + "\n";
-            fnNode.body.forEach(findDeps);
-          }
-        }
-      }
-      
-      const iterableKeys = ast.getNodeIterableKeys(n);
-      for (const key of iterableKeys) {
-        const value = (n as any)[key];
-        if (Array.isArray(value)) {
-          value.forEach(findDeps);
-        } else if (value && typeof value === 'object' && '_type' in value) {
-          findDeps(value);
-        }
-      }
-    };
-
-    findDeps(node);
-    return code;
-  }
-
   private createLiteralNode(value: any, original: ast.ASTNode): ast.ASTNode {
+    // An Int arrives as a BIGINT and keeps its exact decimal text. `match` is the lossless copy every
+    // downstream reader wants -- `ResolveHirToCir` reads it precisely because `value` as a JS number
+    // has already rounded past 2^53, which is the bug the vm path shipped: `(inc 9007199254740992)`
+    // folded to ...992, losing the `+ 1`, while the same call at run time was exact.
+    if (typeof value === "bigint") {
+      return {
+        _type: "integer-number",
+        value: Number(value),
+        match: value.toString(),
+        _location: original._location,
+        _parent: original._parent,
+      } as any;
+    }
     if (typeof value === "number") {
       const isInt = Number.isInteger(value);
       return {
