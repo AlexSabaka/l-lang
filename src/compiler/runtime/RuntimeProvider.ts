@@ -746,6 +746,7 @@ function __ll_is_type(val, type) {
     // Refinement boundary check (D46 amend): PANIC if v is outside the (open-ended) interval, else
     // return v. checkLo/checkHi gate each side (0n => open there). v/lo/hi are BigInt Ints.
     "__refine_check_int": `const __refine_check_int = (v, lo, hi, clo, chi) => { if ((clo && v < lo) || (chi && v > hi)) { throw new Error("refinement violated: " + v + " is outside the declared range"); } return v; };`,
+    "__refine_check_real": `const __refine_check_real = (v, lo, hi, clo, chi) => { if ((clo && v < lo) || (chi && v > hi)) { throw new Error("refinement violated: " + v + " is outside the declared range"); } return v; };`,
 
     "codepoint-length": `const codepoint2dlength = (s) => BigInt([...String(s)].length);`,
     "codepoint-at": `const codepoint2dat = (s, i) => {

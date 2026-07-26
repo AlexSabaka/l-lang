@@ -2365,6 +2365,16 @@ static int64_t ll_refine_check_int(int64_t v, int64_t lo, int64_t hi, int64_t cl
     return v;
 }
 
+static double ll_refine_check_real(double v, double lo, double hi, int64_t clo, int64_t chi) {
+    if ((clo && v < lo) || (chi && v > hi)) {
+        /* %g, matching how a Real is displayed elsewhere -- the message names the value the program
+           actually had, and a %f here would print 300.000000 for a bound written 300. */
+        fprintf(stderr, "refinement violated: %g is outside the declared range\n", v);
+        exit(1);
+    }
+    return v;
+}
+
 /* Look up a class descriptor by name in the module registry (for the :extends chain walk). */
 static const ll_class *ll_class_by_name(const char *name) {
   for (size_t i = 0; i < __ll_class_count; i++) {

@@ -28,13 +28,21 @@ import { InferredType, SymbolTable } from "../analysis/SymbolTable";
  * boundaries already prove byte-identical on both backends.
  */
 
-/** An Int refined newtype's boundary check: inclusive bounds, plus a flag per side (0 = open). */
-export type RefineInfo = { lo: number; hi: number; clo: number; chi: number };
+/**
+ * A refined newtype's boundary check: inclusive bounds, a flag per side (0 = open), and the BASE the
+ * check runs on. The base picks the floor fn -- `Int` and `Real` have separate ones, because routing
+ * a Real through the Int signature would truncate the very bound being tested.
+ */
+export type RefineInfo = { lo: number; hi: number; clo: number; chi: number; base: "Int" | "Real" };
 
 /** Pack a pair of possibly-open bounds. Returns undefined when neither side is bounded. */
-export function toRefineInfo(lo: number | null, hi: number | null): RefineInfo | undefined {
+export function toRefineInfo(
+  lo: number | null,
+  hi: number | null,
+  base: "Int" | "Real"
+): RefineInfo | undefined {
   if (lo === null && hi === null) return undefined;
-  return { lo: lo ?? 0, hi: hi ?? 0, clo: lo !== null ? 1 : 0, chi: hi !== null ? 1 : 0 };
+  return { lo: lo ?? 0, hi: hi ?? 0, clo: lo !== null ? 1 : 0, chi: hi !== null ? 1 : 0, base };
 }
 
 /**
@@ -58,11 +66,9 @@ export function refinementOfType(
   if (!resolved || resolved.kind !== "type-alias" || !resolved.nominal || !resolved.refinement) {
     return undefined;
   }
-  // Int only for now: the check is `ll_refine_check_int`. A Real-based refined newtype keeps its
-  // nominal distinctness and is simply not range-checked yet.
   const base: any = resolved.aliasedType;
-  if (!base || base.name !== "Int") return undefined;
-  return toRefineInfo(resolved.refinement.lo, resolved.refinement.hi);
+  if (!base || (base.name !== "Int" && base.name !== "Real")) return undefined;
+  return toRefineInfo(resolved.refinement.lo, resolved.refinement.hi, base.name);
 }
 
 /** The bounds of a refined newtype named by a declared annotation (`<- uint8`). */
@@ -103,9 +109,16 @@ export function buildRefineCall(
   const loc = (value as any)._location;
   const mk = (type: string, fields: any): any => ({ ...fields, _type: type, _location: loc, _parent: parent });
   const id = (s: string) => mk("simple-identifier", { id: s });
-  const num = (v: number) => mk("integer-number", { match: String(v), value: v });
+  const int = (v: number) => mk("integer-number", { match: String(v), value: v });
+  // A Real bound is emitted as a FLOAT literal even when it is whole: `(0.0 .. 1.0)`'s bounds must
+  // reach a double parameter as doubles, and an integer literal there is an Int on both backends.
+  const bound = (v: number) =>
+    info.base === "Real"
+      ? mk("float-number", { match: Number.isInteger(v) ? `${v}.0` : String(v), value: v })
+      : int(v);
+  const check = info.base === "Real" ? "__refine_check_real" : "__refine_check_int";
   return mk("list", {
-    nodes: [id("__refine_check_int"), value, num(info.lo), num(info.hi), num(info.clo), num(info.chi)],
+    nodes: [id(check), value, bound(info.lo), bound(info.hi), int(info.clo), int(info.chi)],
   });
 }
 

@@ -204,6 +204,10 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   //    are 0/1 gates so an OPEN bound (`(0 ..)`) is checked on one side only. Returning v (not Void)
   //    lets it wrap the value in place: `(let x <- uint8 (__refine_check_int init 0 255 1 1))`.
   ["__refine_check_int", fn("ll_refine_check_int", [Int, Int, Int, Int, Int], Int)],
+  //    The Real twin. A separate floor fn rather than one boxed check: the bounds and the value are
+  //    doubles, and routing them through the Int signature would truncate the very bound being
+  //    tested. The gates stay Int -- they are 0/1 flags, not values.
+  ["__refine_check_real", fn("ll_refine_check_real", [Real, Real, Real, Int, Int], Real)],
 
   // -- container/sequence primitives the runtime provides (the SYMBOL_MAP surface).
   ["get", fn("ll_get", [Any, Key], Any)],

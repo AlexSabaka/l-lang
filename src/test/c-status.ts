@@ -538,6 +538,12 @@ export const C_PASSING: readonly string[] = [
   // one hop only, subtype preferred, no refined target), and those are gated in test/type-errors.ts
   // rather than here, because a refusal has no output to compare.
   "16-stdlib/18_defcast_implicit.lisp",
+  // Real-based refinements: the bounds are now ENFORCED, not just nominally distinct. A separate
+  // floor check (`ll_refine_check_real`) because value and bounds are doubles -- the Int signature
+  // would truncate the bound being tested. C prints the value with %g, so the panic message agrees
+  // with JS and one .panic file grades both.
+  "16-stdlib/19_refinement_real.lisp",
+  "80-adversarial/refinement_panic_real.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.

@@ -3,7 +3,7 @@ import { valueIsTail } from "../../analysis/listForm";
 import { Context, LogLevel } from "../../Context";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { formatWithOptions } from "util";
-import { RefineInfo, buildRefineCall } from "../../hir/coerceInto";
+import { RefineInfo, buildRefineCall, toRefineInfo } from "../../hir/coerceInto";
 
 /**
  * DesugarAstVisitor — one tree, for the type checker and codegen alike.
@@ -104,15 +104,13 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     const walk = (n: any) => {
       if (!n || typeof n !== "object") return;
       if (Array.isArray(n)) { n.forEach(walk); return; }
-      if (n._type === "type-def" && n.refinement && this.typeNameOf(n.type) === "Int") {
+      const base = n._type === "type-def" && n.refinement ? this.typeNameOf(n.type) : undefined;
+      if (base === "Int" || base === "Real") {
         const bound = (b: any): number | null =>
           b && typeof b.value === "number" ? b.value : null;
-        const lo = bound(n.refinement.lo);
-        const hi = bound(n.refinement.hi);
+        const info = toRefineInfo(bound(n.refinement.lo), bound(n.refinement.hi), base);
         const name = n.name ? ast.symbolName(n.name) : undefined;
-        if (name && (lo !== null || hi !== null)) {
-          this.refinedInt.set(name, { lo: lo ?? 0, hi: hi ?? 0, clo: lo !== null ? 1 : 0, chi: hi !== null ? 1 : 0 });
-        }
+        if (name && info) this.refinedInt.set(name, info);
       }
       for (const k of ast.getNodeIterableKeys(n)) walk((n as any)[k]);
     };
