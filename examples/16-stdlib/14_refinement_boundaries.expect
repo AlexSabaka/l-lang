@@ -1,0 +1,6 @@
+param: 36
+explicit return: 255 7
+implicit tail: 200
+implicit if: 200 5
+open-ended: 42
+total: 14

@@ -507,6 +507,13 @@ export const C_PASSING: readonly string[] = [
   // kills the process on both backends with the same message (JS throws, C fprintf + exit 1). Until
   // this landed, the panic was only ever verified by hand -- the happy path was the only thing graded.
   "80-adversarial/refinement_panic.lisp",
+  // P3c-1c-ii closed the other two boundaries a value can enter a refined newtype through. The
+  // parameter check is a PROLOGUE (every caller, not just resolvable ones); the return check is
+  // placed by the same rule codegen uses for the implicit return, so the `if`-tail case lands on
+  // each branch. Both panic identically on the two backends.
+  "16-stdlib/14_refinement_boundaries.lisp",
+  "80-adversarial/refinement_panic_param.lisp",
+  "80-adversarial/refinement_panic_return.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.
