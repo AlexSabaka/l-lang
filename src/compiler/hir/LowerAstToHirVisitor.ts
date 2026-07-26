@@ -1728,11 +1728,23 @@ export class LowerAstToHirVisitor {
   }
 
   private lowerAssignment(node: ast.SimpleAssignmentNode | ast.CompoundAssignmentNode, dest: Dest): Lowered {
-    const rhs = this.lowerNode(node.value, VALUE);
-    if (rhs.value === null) return { stmts: rhs.stmts, value: null }; // RHS diverged -> the assignment is dead
-    const isSimpleForm =
+    // A COERCION SITE (see hir/coerceInto.ts), and the one the whole coercion point was built for.
+    // The TARGET carries no annotation -- `(x := 300)`, `(b.v := 300)` -- so its type comes off the
+    // type channel, which the desugar (pre-types) could never consult. Locals, fields and index
+    // targets all resolve through the same lookup, so one hook covers the three of them.
+    //
+    // The COMPOUND family (`+=`, `-=`, …) is deliberately excluded: its check belongs on the RESULT
+    // of the operation, not on the RHS operand, and that path routes through the legacy opaque-stmt
+    // emitter rather than this one. D2 makes `:=` the only assignment operator eventually.
+    const isSimple =
       node._type === "simple-assignment" || (node as ast.CompoundAssignmentNode).operator === ":=";
-    if (isSimpleForm) {
+    const targetInfo = isSimple
+      ? refinementOfType(this.context.nodeTypes.get(node.assignable), this.context.symbolTable)
+      : undefined;
+    const rhsAst = targetInfo ? buildRefineCall(node.value, targetInfo) : node.value;
+    const rhs = this.lowerNode(rhsAst, VALUE);
+    if (rhs.value === null) return { stmts: rhs.stmts, value: null }; // RHS diverged -> the assignment is dead
+    if (isSimple) {
       // `x := rhs`: emit the RHS INLINE via the HIR (no value-position init reaches legacy asExpression).
       const ha: HStmt = { ...this.base(node), kind: "user-assign", rhs: rhs.value };
       return { stmts: [...rhs.stmts, ha], value: dest.kind === "value" ? this.nil(node) : null };

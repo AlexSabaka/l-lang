@@ -520,6 +520,13 @@ export const C_PASSING: readonly string[] = [
   // by the class that declared it, via super, with no positional reasoning anywhere.
   "16-stdlib/15_refinement_fields.lisp",
   "80-adversarial/refinement_panic_field.lisp",
+  // P3c-2b, the last unguarded write. An assignment TARGET carries no annotation, so its type comes
+  // off the type channel after inference -- which is why this check sits at the HIR coercion point
+  // and not in the desugar with the binding guards. Local and field targets are distinct emitter
+  // paths, so both get a panic guard.
+  "16-stdlib/16_refinement_assignment.lisp",
+  "80-adversarial/refinement_panic_assign.lisp",
+  "80-adversarial/refinement_panic_assign_field.lisp",
   // Lf -- `std/core/types` rewritten onto the reflection floor. It was three JavaScript spellings
   // (Array.isArray / typeof / constructor.name) and therefore JS-only; nothing caught that, because
   // everything under lib/ is `library` -- compiled, never run.
