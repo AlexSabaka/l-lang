@@ -77,6 +77,7 @@ export class BaseAstVisitor {
         "tuple-type": this.visitTupleType.bind(this),
         "modifier": this.visitModifier.bind(this),
         "modifier-def": this.visitModifierDef?.bind(this),
+        "attribute-def": this.visitAttributeDef?.bind(this),
         "macro-def": this.visitMacroDef?.bind(this),
         "variable": this.visitVariable.bind(this),
         "function": this.visitFunction.bind(this),
@@ -304,6 +305,10 @@ export class BaseAstVisitor {
 
   visitModifierDef?(node: ast.ModifierDefNode): any {
     return this.onUnhandled(node, "visitModifierDef");
+  }
+
+  visitAttributeDef?(node: ast.AttributeDefNode): any {
+    return this.onUnhandled(node, "visitAttributeDef");
   }
 
   // A `:satisfies (...)` refinement rides on a TypeDefNode as metadata; passes that care about it read

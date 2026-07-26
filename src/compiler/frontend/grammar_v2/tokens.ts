@@ -84,6 +84,10 @@ export const ModKeyword = createToken({ name: "ModKeyword", pattern: Lexer.NA })
 // Declaration Keywords
 export const DefInterfaceKw = createToken({ name: "DefInterfaceKw", pattern: /definterface/, longer_alt: Identifier, categories: [BareKeyword] });
 export const DefModifierKw = createToken({ name: "DefModifierKw", pattern: /defmodifier/, longer_alt: Identifier, categories: [BareKeyword] });
+// D72 -- an ATTRIBUTE: annotation DATA, as opposed to `defmodifier`'s transformer. Declared as a name
+// and typed parameters with no body, applied as `:name[args]` through D68-a's adjacency-gated
+// modifier arguments, and carried into the reflection graph rather than run.
+export const DefAttributeKw = createToken({ name: "DefAttributeKw", pattern: /defattribute/, longer_alt: Identifier, categories: [BareKeyword] });
 export const DefStructKw = createToken({ name: "DefStructKw", pattern: /defstruct/, longer_alt: Identifier, categories: [BareKeyword] });
 export const DefClassKw = createToken({ name: "DefClassKw", pattern: /defclass/, longer_alt: Identifier, categories: [BareKeyword] });
 export const DefMacroKw = createToken({ name: "DefMacroKw", pattern: /defmacro/, longer_alt: Identifier, categories: [BareKeyword] });
@@ -381,7 +385,7 @@ export const defaultModeTokens: TokenType[] = [
   WhiteSpace,
   Comment,
   // Keywords (most specific first)
-  DefInterfaceKw, DefModifierKw, DefStructKw, DefClassKw, DefMacroKw, DefEnumKw, DefTypeKw, DefCastKw, CastKw,
+  DefInterfaceKw, DefModifierKw, DefAttributeKw, DefStructKw, DefClassKw, DefMacroKw, DefEnumKw, DefTypeKw, DefCastKw, CastKw,
   FinallyKw, MatchKw, WhileKw, CatchKw, AwaitKw, AsyncKw,
   // D47 restart keywords -- multi-word (hyphenated) forms FIRST so they win over their bare prefixes.
   RestartCaseKw, InvokeRestartKw, SignalKw, HandleKw,
@@ -427,7 +431,7 @@ export const formatExprModeTokens: TokenType[] = [
   WhiteSpace,
   Comment,
   // Keywords
-  DefInterfaceKw, DefModifierKw, DefStructKw, DefClassKw, DefMacroKw, DefEnumKw, DefTypeKw, DefCastKw, CastKw,
+  DefInterfaceKw, DefModifierKw, DefAttributeKw, DefStructKw, DefClassKw, DefMacroKw, DefEnumKw, DefTypeKw, DefCastKw, CastKw,
   FinallyKw, MatchKw, WhileKw, CatchKw, AwaitKw, AsyncKw,
   // D47 restart keywords -- multi-word (hyphenated) forms FIRST so they win over their bare prefixes.
   RestartCaseKw, InvokeRestartKw, SignalKw, HandleKw,

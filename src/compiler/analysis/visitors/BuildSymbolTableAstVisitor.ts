@@ -42,9 +42,9 @@ class ScanPassVisitor extends BaseAstTreeWalker {
         return;
       }
 
-      if (item._type === "function" || item._type === "class" || item._type === "interface" || 
-          item._type === "variable" || item._type === "type-def" || item._type === "struct" || 
-          item._type === "modifier-def") {
+      if (item._type === "function" || item._type === "class" || item._type === "interface" ||
+          item._type === "variable" || item._type === "type-def" || item._type === "struct" ||
+          item._type === "modifier-def" || item._type === "attribute-def") {
         this.symbolTableBuilder.defineSymbol(item as any);
       }
     };
@@ -82,6 +82,10 @@ class ScanPassVisitor extends BaseAstTreeWalker {
   visitModifierDef(node: ast.ModifierDefNode) {
     // ScanPass: Don't visit modifier body yet
     // This is handled in ResolvePass
+  }
+
+  visitAttributeDef(node: ast.AttributeDefNode) {
+    // ScanPass: already defined above; an attribute has no body to defer.
   }
 
   visitSpread(node: ast.SpreadNode) {
@@ -322,6 +326,22 @@ class ResolvePassVisitor extends BaseAstTreeWalker {
 
     [...node.params, ...node.body].map((x) => this.visitIfNotNull(x));
     this.symbolTableBuilder.exitScope();
+  }
+
+  /**
+   * D72 -- an attribute's parameters are a SIGNATURE, not bindings.
+   *
+   * No scope is entered and nothing is declared, which is the difference from `visitModifierDef`
+   * directly above: a modifier's params exist to be referenced from its body, and an attribute has no
+   * body, so there is nowhere a param name could be read from. Declaring them anyway would mean
+   * entering a scope for the sake of symmetry -- and that comment above records what entering a scope
+   * unnecessarily already cost this file once.
+   *
+   * The params are still VISITED, so their types and any `:in`/`:out` modifiers get the ordinary
+   * checks; they simply do not become resolvable names.
+   */
+  visitAttributeDef(node: ast.AttributeDefNode) {
+    node.params.forEach((p) => this.visitIfNotNull(p));
   }
 
   visitSpread(node: ast.SpreadNode) {

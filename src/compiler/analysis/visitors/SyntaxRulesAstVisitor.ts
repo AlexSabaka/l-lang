@@ -5,6 +5,7 @@ import { SyntaxDiagnostics as SD } from "../../rules/diagnostics";
 import {
   builtinModifiersFor,
   collectDefinedModifiers,
+  collectAnnotationDeclarations,
   suggestModifier,
   RESERVED_NATIVE_MODIFIERS,
 } from "../../helpers/modifiers";
@@ -20,7 +21,36 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
   visitProgram(node: ast.ProgramNode) {
     this.definedModifiers = collectDefinedModifiers(node);
     this.refinedTypeNames = collectRefinedTypeNames(node);
+    this.checkAnnotationCollisions(node);
     return node;
+  }
+
+  /**
+   * D72/LL0031 -- one `:name`, one meaning.
+   *
+   * The three roles share a namespace on purpose, so that reading `:tag` at a use site tells you
+   * whether it transforms the declaration or merely describes it. Nothing enforced that: two
+   * declarations of one name simply collapsed to the last, which silently turned a working decorator
+   * into an attribute that wraps nothing. Reported at the SECOND declaration, where the conflict is
+   * introduced.
+   */
+  private checkAnnotationCollisions(node: ast.ProgramNode) {
+    const describe = (k: "decorator" | "attribute") =>
+      k === "attribute" ? "an attribute (defattribute)" : "a decorator (defmodifier)";
+    const seen = new Map<string, "decorator" | "attribute">();
+
+    for (const d of collectAnnotationDeclarations(node)) {
+      const first = seen.get(d.name);
+      if (first === undefined) {
+        seen.set(d.name, d.kind);
+        continue;
+      }
+      this.report(SD.DuplicateAnnotation, d.node, {
+        name: d.name,
+        first: describe(first),
+        second: describe(d.kind),
+      });
+    }
   }
 
   /**

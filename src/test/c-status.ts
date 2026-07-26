@@ -236,6 +236,10 @@ export const C_PASSING: readonly string[] = [
   // in 06 and is NOT pinned: applying a `defmodifier` on C is ELL0106, so a decorator cannot be
   // attached there at all, never mind reflected on.
   "07-types/05_modifier_reflection.lisp",
+  // D72 attributes. C-pinned deliberately: "an attribute is portable" is the claim the split makes,
+  // and this is where it is checked -- including on a CLASS, which a decorator cannot do on either
+  // backend.
+  "07-types/08_attributes.lisp",
   // D70 enum RTTI. Also pins that the metadata's member-value rule agrees with the fold both
   // emitters apply -- including an implicit member after an explicit one, which takes its ORDINAL
   // here rather than C#'s previous-plus-one.

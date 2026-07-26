@@ -7,7 +7,7 @@
 (* ===== productions ===== *)
 
 program                ::= expression* ;
-expression             ::= ( comment | importExpr | exportExpr | variable | functionExpr | classDecl | structDecl | enumDecl | interfaceDecl | typeDefDecl | castDefDecl | castExpr | modifierDefDecl | macroDecl | whenExpr | ifExpr | condExpr | forExpr | whileExpr | tryCatchExpr | restartCaseExpr | handleExpr | signalExpr | invokeRestartExpr | matchExpr | awaitExpr | spreadExpr | assignmentOrExpr | quoteExpr | nil | boolean | number | string ) ;
+expression             ::= ( comment | importExpr | exportExpr | variable | functionExpr | classDecl | structDecl | enumDecl | interfaceDecl | typeDefDecl | castDefDecl | castExpr | modifierDefDecl | attributeDefDecl | macroDecl | whenExpr | ifExpr | condExpr | forExpr | whileExpr | tryCatchExpr | restartCaseExpr | handleExpr | signalExpr | invokeRestartExpr | matchExpr | awaitExpr | spreadExpr | assignmentOrExpr | quoteExpr | nil | boolean | number | string ) ;
 assignmentOrExpr       ::= primaryExpr assignmentOp? ;
 primaryExpr            ::= ( list | matrix | vector | map | identifier ( ( indexerSuffix | memberSuffix ) )* ) ;
 assignmentOp           ::= ( ":=" expression | <PlusEq> expression | "-=" expression | <StarEq> expression | <SlashEq> expression | "%=" expression ) ;
@@ -61,6 +61,7 @@ castDefDecl            ::= "defcast" modifier* <LBracket> parameter <RBracket> "
 refinementConstraint   ::= <LParen> expression? <Range> expression? <RParen> ;
 macroDecl              ::= "defmacro" <Identifier>? expression* ;
 modifierDefDecl        ::= "defmodifier" <Identifier> ( <LBracket> ( parameter ","? )* <RBracket> )? expression* ;
+attributeDefDecl       ::= "defattribute" <Identifier> ( <LBracket> ( parameter ","? )* <RBracket> )? ;
 importExpr             ::= "import" ( importDefinition ","? )+ ;
 importDefinition       ::= ( importSymbols | importSource ) ;
 importSymbols          ::= <LBrace> ( symbolAlias ","? )+ <RBrace> "from" importSource ;

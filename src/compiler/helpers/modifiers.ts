@@ -110,7 +110,45 @@ export function builtinModifiersFor(constructType: string | undefined): readonly
  * and `:memoized`, and why it is xfail'd against D4.
  */
 export function collectDefinedModifiers(root: ast.ASTNode): Set<string> {
-  const found = new Set<string>();
+  return new Set(collectDeclaredAnnotations(root).keys());
+}
+
+/**
+ * Every `:name` a MODULE declares, with which of D68's roles it is and how many arguments it takes.
+ *
+ * One registry, not two, because the three roles share ONE namespace: a `:foo` is a builtin modifier,
+ * a decorator or an attribute, and never two of them at once. Collecting them separately would let a
+ * `defmodifier retry` and a `defattribute retry` coexist, and then every consumer would have to pick a
+ * winner -- each in its own way.
+ *
+ * Module-local, and that is inherited rather than chosen: `defmodifier` is not exported across module
+ * boundaries today (see the note on `collectDefinedModifiers` above), and `defattribute` gets the same
+ * limit for the same unsolved reason.
+ */
+export function collectDeclaredAnnotations(
+  root: ast.ASTNode
+): Map<string, { kind: "decorator" | "attribute"; arity: number }> {
+  const found = new Map<string, { kind: "decorator" | "attribute"; arity: number }>();
+  for (const d of collectAnnotationDeclarations(root)) {
+    found.set(d.name, { kind: d.kind, arity: d.arity });
+  }
+  return found;
+}
+
+/**
+ * Every `defmodifier` / `defattribute` DECLARATION in the tree, in source order and WITHOUT
+ * deduplication.
+ *
+ * The map above is the convenient form and it is lossy exactly where it matters: two declarations of
+ * one name collapse to whichever came last, so `(defmodifier tag …)` followed by `(defattribute tag
+ * …)` silently made `:tag` an attribute and the decorator quietly stopped firing. That is the failure
+ * the collision check needs to see, so the list is the primitive and the map is derived from it --
+ * one traversal, two views, no chance of them disagreeing about what a module declares.
+ */
+export function collectAnnotationDeclarations(
+  root: ast.ASTNode
+): { name: string; kind: "decorator" | "attribute"; arity: number; node: ast.ASTNode }[] {
+  const found: { name: string; kind: "decorator" | "attribute"; arity: number; node: ast.ASTNode }[] = [];
 
   const walk = (n: any): void => {
     if (!n || typeof n !== "object") return;
@@ -118,8 +156,13 @@ export function collectDefinedModifiers(root: ast.ASTNode): Set<string> {
       n.forEach(walk);
       return;
     }
-    if (n._type === "modifier-def" && typeof n.name === "string") {
-      found.add(n.name.toLowerCase());
+    if ((n._type === "modifier-def" || n._type === "attribute-def") && typeof n.name === "string") {
+      found.push({
+        name: n.name.toLowerCase(),
+        kind: n._type === "attribute-def" ? "attribute" : "decorator",
+        arity: (n.params ?? []).length,
+        node: n,
+      });
     }
     for (const key of Object.keys(n)) {
       if (key === "_parent" || key === "_location") continue;

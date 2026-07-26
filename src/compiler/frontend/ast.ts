@@ -80,6 +80,7 @@ export type NodeType =
   | "tuple-type"
   | "modifier"
   | "modifier-def"
+  | "attribute-def"
   | "macro-def"
   | "variable"
   | "function"
@@ -452,6 +453,19 @@ export interface ModifierDefNode extends ASTNode<"modifier-def"> {
   name: string;
   params: ParameterNode[];
   body: ASTNode[];
+}
+
+/**
+ * `(defattribute docstring [text <- String])` -- D68's third role, D72.
+ *
+ * Deliberately a ModifierDefNode without a `body`. A `defmodifier` has one because it returns the
+ * function it wraps a declaration with; an attribute is never applied to anything, so there is
+ * nothing for a body to hold. That absence IS the distinction, which is why this is its own node type
+ * rather than a flag on the other: a flag would leave a body field that means nothing half the time.
+ */
+export interface AttributeDefNode extends ASTNode<"attribute-def"> {
+  name: string;
+  params: ParameterNode[];
 }
 
 /**

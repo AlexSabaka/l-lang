@@ -121,7 +121,7 @@ export class LLangAstBuilder extends BaseCstVisitor {
     const alternatives = [
       "comment", "importExpr", "exportExpr", "variable", "functionExpr",
       "classDecl", "structDecl", "enumDecl", "interfaceDecl", "typeDefDecl", "castDefDecl", "castExpr",
-      "modifierDefDecl", "macroDecl", "whenExpr", "ifExpr", "condExpr", "forExpr",
+      "modifierDefDecl", "attributeDefDecl", "macroDecl", "whenExpr", "ifExpr", "condExpr", "forExpr",
       "whileExpr", "tryCatchExpr",
       "restartCaseExpr", "handleExpr", "signalExpr", "invokeRestartExpr",
       "matchExpr", "awaitExpr", "spreadExpr",
@@ -1059,6 +1059,14 @@ export class LLangAstBuilder extends BaseCstVisitor {
     const params = ctx.parameter ? ctx.parameter.map((p: any) => this.visit(p)) : [];
     const body = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
     return this.makeNode("modifier-def", ctx, { name, params, body });
+  }
+
+  /** `(defattribute docstring [text <- String])` -- D72. Lowercased like a modifier name, because
+   *  that is the namespace it is applied from: `:docstring[…]` reaches D4's same check. */
+  attributeDefDecl(ctx: any): ast.AttributeDefNode {
+    const name = ctx.Identifier[0].image.toLowerCase();
+    const params = ctx.parameter ? ctx.parameter.map((p: any) => this.visit(p)) : [];
+    return this.makeNode("attribute-def", ctx, { name, params });
   }
 
   // ========================================================================

@@ -28,7 +28,7 @@ import { CType, C_BOOL, C_INT, C_REAL, C_STR, C_VALUE, C_VOID, mapType, ctypeEqu
 import { INTRINSIC_CALLS, NATIVE_METHODS, NATIVE_FIELDS } from "./intrinsics";
 import { nativeMemberDeclared } from "../../types/nativeMembers";
 import { freeVariables, freeVariablesOfBody } from "../../hir/freevars";
-import { isBuiltinModifier } from "../../helpers/modifiers";
+import { isBuiltinModifier, collectDeclaredAnnotations } from "../../helpers/modifiers";
 import { buildTypesMetadata, conformedInterfaceNames } from "../../reflection/metadata";
 import { buildExtensionTable, conformingExtensionFn, memberKindIn, receiverType, ExtCandidate } from "../../hir/extensionResolution";
 import { lowerCoroutine, CoroutineRefusal } from "../../hir/LowerCoroutines";
@@ -163,6 +163,8 @@ export class ResolveHirToCir {
   /** `defmodifier` names whose body is EMPTY -- a genuine identity, safe to ignore. Anything else
    *  refuses (see refuseCustomModifier); the C backend cannot apply a decorator. */
   private readonly emptyModifiers = new Set<string>();
+  /** D72: names declared by `defattribute` in this module -- annotation data, nothing to apply. */
+  private readonly attributeNames = new Set<string>();
   /** Imported module-level bindings already hoisted to C globals (dedup for ensureImportedValue). */
   private readonly importedValues = new Set<string>();
   /** Their initializers, spliced in FRONT of `main` -- an import is evaluated before the importer. */
@@ -275,6 +277,14 @@ export class ResolveHirToCir {
     // so C emits its descriptor (message, and `cause` once added); SyntaxError/ReferenceError stay
     // synthetic host-error stand-ins. `root` scopes the ambient-class lookup.
     this.registerBuiltinClasses(root);
+    // D72 -- the module's attribute names, through the SAME registry the JS backend reads, so the two
+    // cannot disagree about whether a given `:name` is annotation data or a decorator to refuse. It
+    // walks the AST rather than the flattened top-level statements, which also means a `defattribute`
+    // that is not top-level is still seen. A separate set from `emptyModifiers` because the reason
+    // differs: an empty modifier is a decorator with nothing to apply, an attribute is never applied.
+    for (const [name, info] of collectDeclaredAnnotations(root)) {
+      if (info.kind === "attribute") this.attributeNames.add(name);
+    }
     // The top-level declarations, flattened out of the HIR body (the whole program is one block, so
     // each declaration arrives as an opaque-stmt whose `src` is the desugared StructNode / ClassNode
     // / FunctionNode). Drive the pre-pass off these, not the raw program (which is still list-wrapped).
@@ -1831,9 +1841,10 @@ export class ResolveHirToCir {
       case "type-def":
       case "interface":
       case "modifier-def":
+      case "attribute-def":
       case "macro-def":
       case "enum":
-        return []; // compile-time / erased declarations (interfaces are erased per D24; enums are constants)
+        return []; // compile-time / erased declarations (interfaces are erased per D24; enums are constants; an attribute is metadata, D72)
       case "struct":
       case "class":
         this.collectClassMembers(node as ast.StructNode | ast.ClassNode);
@@ -3159,6 +3170,11 @@ export class ResolveHirToCir {
   private refuseCustomModifier(fn: ast.FunctionNode, name: string): boolean {
     for (const m of fn.modifiers ?? []) {
       if (isBuiltinModifier(m.modifier)) continue;
+      // D72 -- an ATTRIBUTE is annotation data, so there is nothing here to refuse. It reaches the
+      // reflection graph and emits no code, which is what makes this backend's support for
+      // annotations real rather than pending: the hard part of D68 is the DECORATOR, and this
+      // separates the two so C stops rejecting both for the sins of one.
+      if (this.attributeNames.has(m.modifier)) continue;
       if (this.emptyModifiers.has(m.modifier)) continue;
       this.refuse(fn, `modifier:${m.modifier} on '${name}'`, "collectFunction");
       return true;

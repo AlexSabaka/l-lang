@@ -393,6 +393,14 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "at runtime (D51: a literal is a BigInt only where the checker typed it). So it is a checker " +
       "question, and this pins the diagnostic. `(get v (Math.trunc 1.7))` is the supported spelling.",
   },
+  "90-diagnostics/ll0031_duplicate_annotation.lisp": {
+    status: "negative", codes: ["LL0031"],
+    reason:
+      "D72: one `:name` declared as both a decorator and an attribute -> LL0031. The three roles " +
+      "share one namespace, and without this the failure was SILENT -- the name-keyed registry both " +
+      "backends read let the second declaration win, so the decorator quietly stopped wrapping while " +
+      "the program still compiled and ran.",
+  },
   "90-diagnostics/ll0030_leading_zero.lisp": {
     status: "negative", codes: ["LL0030"],
     reason:

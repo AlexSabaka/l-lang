@@ -15,7 +15,7 @@ import {
 } from "../../../utils";
 import { CodegenDiagnostics as CD } from "../../../rules/diagnostics";
 import { shouldCopyOnStore, shouldCopyParam } from "../../../hir/valueCopy";
-import { isBuiltinModifier, hasModifier } from "../../../helpers/modifiers";
+import { isBuiltinModifier, hasModifier, collectDeclaredAnnotations } from "../../../helpers/modifiers";
 import * as acorn from "acorn";
 import { ClassBuilder } from "../JSClassBuilder";
 import { EmitHirToEstree, LegacyLeafEmitter, LowerAstToHirVisitor } from "../../../hir";
@@ -289,6 +289,20 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
 
 
   private modifierDefinitions: Map<string, ast.ModifierDefNode> = new Map();
+  /** D72: names declared by `defattribute` in this module. */
+  private attributeNames: Set<string> = new Set();
+
+  /**
+   * Does this `:name` get a `__ll_modifier_<name>(…)` wrapper?
+   *
+   * Only a DECORATOR does. This used to be spelled `!isBuiltinModifier` at both application sites,
+   * which was right while "not builtin" meant "declared by defmodifier" -- D72 makes it also mean
+   * "declared by defattribute", and an attribute has no `__ll_modifier_` function to call, so the
+   * old test would have emitted a reference to something that was never emitted.
+   */
+  private isDecorator(name: string): boolean {
+    return !isBuiltinModifier(name) && !this.attributeNames.has(name.replace(/^:/, ""));
+  }
 
   // ===========================================================================================
   // THE EXTERNAL-DRIVER SEAM.
@@ -718,6 +732,21 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
   visitProgram(node: ast.ProgramNode): ESTree.Program {
     const statements: ESTree.Statement[] = [];
 
+    // D72 -- collect the module's attribute names BEFORE anything is emitted. `isDecorator` is
+    // consulted while a declaration is being written out, and a `defattribute` is perfectly entitled
+    // to appear AFTER the declaration that carries it; populating this from `visitAttributeDef`
+    // would make the answer depend on source order, which is how `modifierDefinitions` earned its
+    // own ordering comment.
+    //
+    // Through the shared registry rather than a hand-rolled scan of `node.program`, because that
+    // array is LIST-WRAPPED and not by one level: a whole-program `( … )` arrives as one list whose
+    // nodes are themselves the per-form lists, so a top-level `(defattribute …)` sits two deep.
+    // Getting the depth wrong fails SILENTLY -- the attribute is simply not recognised, treated as a
+    // decorator, and emitted as a call to a `__ll_modifier_` function that was never written.
+    for (const [name, info] of collectDeclaredAnnotations(node)) {
+      if (info.kind === "attribute") this.attributeNames.add(name);
+    }
+
     this.inlineImportedOperators();
 
     const hirBody = this.context.hir?.bodyFor(node);
@@ -872,7 +901,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     declaration: ESTree.ClassDeclaration
   ): ESTree.ClassDeclaration | ESTree.VariableDeclaration {
     const customModifiers =
-      node.modifiers?.filter((m) => !isBuiltinModifier(m.modifier)) || [];
+      node.modifiers?.filter((m) => this.isDecorator(m.modifier)) || [];
 
     // An unmodified class stays a bare declaration -- no wrap, no hoisting change, no noise.
     if (customModifiers.length === 0) return declaration;
@@ -958,6 +987,18 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       type: "EmptyStatement",
       loc: ESTreeBuilder.loc(node),
     }));
+  }
+
+  /**
+   * D72 -- an attribute DECLARATION emits nothing, like an interface (D24). It describes a shape that
+   * the reflection graph carries; there is no function to call and no value to construct. The
+   * declaration's only runtime trace is the metadata entry on whatever it was applied to.
+   */
+  visitAttributeDef(node: ast.AttributeDefNode): ESTree.EmptyStatement {
+    return {
+      type: "EmptyStatement",
+      loc: ESTreeBuilder.loc(node),
+    };
   }
 
   /**
@@ -1390,7 +1431,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
     // broke. `isBuiltinModifier` has existed in helpers/modifiers.ts all along -- codegen simply
     // never asked it.
     const customModifiers =
-      node.modifiers?.filter((m) => !isBuiltinModifier(m.modifier)) || [];
+      node.modifiers?.filter((m) => this.isDecorator(m.modifier)) || [];
 
     if (customModifiers.length === 0) {
       return declaration;

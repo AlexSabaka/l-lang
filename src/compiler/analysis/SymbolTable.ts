@@ -20,6 +20,8 @@ export enum ScopeType {
    * collide with a module-level `n`.
    */
   "modifier-def" = "modifier-def",
+  /** D72. Registered so both backends can ask "is this name an attribute?" from one source. */
+  "attribute-def" = "attribute-def",
 
   // list = "list",
   // quote = "quote",
@@ -1115,7 +1117,7 @@ export class SymbolTableBuilder {
     this.active = this.active.parent;
   }
 
-  defineSymbol(node: ast.VariableNode | ast.FunctionNode | ast.ClassNode | ast.InterfaceNode | ast.TypeDefNode | ast.StructNode | ast.ModifierDefNode | ast.EnumNode) {
+  defineSymbol(node: ast.VariableNode | ast.FunctionNode | ast.ClassNode | ast.InterfaceNode | ast.TypeDefNode | ast.StructNode | ast.ModifierDefNode | ast.AttributeDefNode | ast.EnumNode) {
     if (this.root === undefined) {
       throw new Error("No root scope. Cannot define symbol.");
     }
@@ -1158,9 +1160,9 @@ export class SymbolTableBuilder {
     if (node._type === "type-def" || node._type === "struct") {
       // TypeDefNode and StructNode have name as an IdentifierNode or TypeNameNode
       name = (node as any).name?.id || (node as any).name?.name;
-    } else if (node._type === "modifier-def") {
-      // ModifierDefNode has name as a string
-      name = (node as ast.ModifierDefNode).name;
+    } else if (node._type === "modifier-def" || node._type === "attribute-def") {
+      // ModifierDefNode and AttributeDefNode both carry `name` as a plain string
+      name = (node as ast.ModifierDefNode | ast.AttributeDefNode).name;
     } else {
       // Other node types (variable, function, class, interface)
       name = (node as any).name?.id ?? (node as any).name?.name;

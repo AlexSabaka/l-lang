@@ -5605,3 +5605,46 @@ and lacks the one it requires, and `017` silently means 15.
 `0o` becomes the only octal spelling. Bare leading-zero octal is removed — and removing it is not enough
 on its own, because `[+-]?[0-9]+` would then match `017` as decimal 17, turning one silent wrong answer
 into a different silent wrong answer. A leading zero on a multi-digit integer is therefore a DIAGNOSTIC.
+
+---
+
+## D72 — `defattribute`: D68's third role gets a declaration form (2026-07-26)
+
+D68 named three roles and the language could spell two. A name was a MODIFIER if `isBuiltinModifier`
+said so and a DECORATOR otherwise — there was no way to say "this is annotation data, not a
+transformer", so an annotation had to be smuggled in as a decorator. That is why a custom modifier on a
+class threw `TypeError: Widget is not a constructor`, and why the C backend refused the entire category.
+
+**`(defattribute docstring [text <- String])` — a name and typed parameters, and NO BODY.** Refused in
+the grammar rather than by a diagnostic, because the absence is the distinction: a `defmodifier` has a
+body because it returns the function it wraps a declaration with, and an attribute is never applied to
+anything, so there is nothing a body could hold. A `defattribute` that wanted one was reaching for
+`defmodifier`, and the parse error says so at the brace. Its own AST node for the same reason — a flag
+on `ModifierDefNode` would leave a `body` field that means nothing half the time.
+
+**No application syntax was needed.** D68-a's adjacency gate already parses `:docstring["…"]` with
+arguments on every construct; the form existed and simply had no way to mean "data".
+
+**ONE NAMESPACE, enforced (LL0031).** A `:name` is a builtin modifier, a decorator or an attribute, and
+never two at once, so that reading `:tag` at a use site tells you whether it transforms the declaration
+or merely describes it. Nothing enforced this and the failure was silent, not loud: the registry both
+backends consult is keyed by name, so a second declaration simply won — `(defmodifier tag …)` followed
+by `(defattribute tag …)` left `:tag` an attribute, the decorator stopped wrapping, and the program
+kept compiling and running. A decorator that silently stops decorating is exactly what the C backend's
+`refuseCustomModifier` was written to prevent, arriving by another door.
+
+**THE SPLIT IS WHAT MAKES ANNOTATIONS PORTABLE.** Both backends decided "is this a decorator?" with
+`!isBuiltinModifier`, and both were wrong about an attribute in opposite directions: C refused it
+(`ELL0106`), while JS emitted a call to a `__ll_modifier_<name>` that was never written
+(`ReferenceError`). Teaching both to skip attributes is the whole of the backend work, and it turns
+"C has none of this feature" into "C has most of it" — including attributes on a CLASS, which a
+decorator still cannot do on either backend. The decorator remains the hard part, and it is now the
+only part that is hard.
+
+Both backends read the same registry (`collectAnnotationDeclarations`), so they cannot disagree about
+whether a `:name` is data or a transformer. That registry walks the AST rather than the flattened
+top-level statements — the raw program is list-wrapped more than one level deep, and a hand-rolled
+scan at the wrong depth fails SILENTLY by finding nothing and treating every attribute as a decorator.
+
+**Module-local, inherited rather than chosen.** `defmodifier` is not exported across module boundaries
+today, and `defattribute` gets the same limit for the same unsolved reason.

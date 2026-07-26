@@ -68,6 +68,7 @@ class LLangParser extends CstParser {
   castExpr: ParserMethod<[], CstNode>;
   refinementConstraint: ParserMethod<[], CstNode>;
   modifierDefDecl: ParserMethod<[], CstNode>;
+  attributeDefDecl: ParserMethod<[], CstNode>;
   macroDecl: ParserMethod<[], CstNode>;
   importExpr: ParserMethod<[], CstNode>;
   importDefinition: ParserMethod<[], CstNode>;
@@ -169,6 +170,7 @@ class LLangParser extends CstParser {
         { ALT: () => this.SUBRULE(this.castDefDecl) },
         { ALT: () => this.SUBRULE(this.castExpr) },
         { ALT: () => this.SUBRULE(this.modifierDefDecl) },
+        { ALT: () => this.SUBRULE(this.attributeDefDecl) },
         { ALT: () => this.SUBRULE(this.macroDecl) },
         // Control flow (keywords: when, if, cond, for, while, try, match)
         { ALT: () => this.SUBRULE(this.whenExpr) },
@@ -1202,6 +1204,31 @@ class LLangParser extends CstParser {
       });
       this.MANY(() => {
         this.SUBRULE(this.expression);
+      });
+    });
+
+    /**
+     * D72 -- `(defattribute docstring [text <- String])`. Annotation DATA, not a transformer.
+     *
+     * Shaped like `modifierDefDecl` with ONE deliberate omission: there is no body. A `defmodifier`
+     * has a body because it returns a function to wrap the declaration with; an attribute is not
+     * applied to anything, so there is nothing for a body to be. Refusing it in the GRAMMAR rather
+     * than as a diagnostic keeps the two forms honestly different -- a `defattribute` that wanted a
+     * body was reaching for `defmodifier`, and the parse error says so at the brace.
+     *
+     * No application syntax is needed: D68-a's adjacency gate already parses `:docstring["…"]` with
+     * arguments on every construct.
+     */
+    this.attributeDefDecl = this.RULE("attributeDefDecl", () => {
+      this.CONSUME(t.DefAttributeKw);
+      this.CONSUME(t.Identifier);
+      this.OPTION(() => {
+        this.CONSUME(t.LBracket);
+        this.MANY(() => {
+          this.SUBRULE(this.parameter);
+          this.OPTION2(() => this.CONSUME(t.Comma));
+        });
+        this.CONSUME(t.RBracket);
       });
     });
 

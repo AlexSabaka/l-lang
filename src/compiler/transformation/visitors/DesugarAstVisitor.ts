@@ -716,6 +716,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       "enum",
       "type-def",
       "modifier-def",
+      "attribute-def",
       "macro-def",
       "import",
       "export",

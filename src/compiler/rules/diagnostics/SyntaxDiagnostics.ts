@@ -75,6 +75,21 @@ export const SyntaxDiagnostics = {
       `in the C family and decimal here, so it is refused rather than quietly read as one of them.`
   ),
 
+  // LL0031 (D72) -- one `:name` declared twice.
+  //
+  // D68's three roles share ONE namespace, deliberately: a `:foo` is a builtin modifier, a decorator
+  // or an attribute, and never two of them. Without this the second declaration silently won and the
+  // first stopped meaning anything -- `(defmodifier tag …)` then `(defattribute tag …)` left `:tag`
+  // an attribute, so the decorator no longer wrapped and nothing said so.
+  DuplicateAnnotation: def<{ name: string; first: string; second: string }>(
+    "LL0031",
+    Error,
+    (p) =>
+      `'${p.name}' is declared twice -- once as ${p.first}, once as ${p.second}. A ':name' is a ` +
+      `builtin modifier, a decorator (defmodifier) or an attribute (defattribute), and never two at ` +
+      `once: they share one namespace so that reading ':${p.name}' tells you what it does. Rename one.`
+  ),
+
   // LL0023 -- D3: `defmacro`/`defsyntax` are reserved but not implemented in 0.x
   // LL0241 (D46/B-3) -- a `defcast` must say WHEN it fires.
   //
