@@ -235,6 +235,10 @@ export const C_PASSING: readonly string[] = [
   // D73: a comptime fold past 2^53 agrees with the runtime and the literal. Pinned on C too --
   // the old vm path was identically wrong on both, so one backend could not have caught it.
   "80-adversarial/comptime_int_precision.lisp",
+  // An escape sequence in a MATCH PATTERN decodes like every other string. It did not, silently,
+  // so a `match` over escaped characters fell to its catch-all -- which is what a regex engine
+  // hits first, since `\` is the character it must be able to match on.
+  "80-adversarial/match_escaped_pattern.lisp",
   // D68 modifier reflection. One shared metadata entry, so C answers identically. The CUSTOM arm is
   // in 06 and is NOT pinned: applying a `defmodifier` on C is ELL0106, so a decorator cannot be
   // attached there at all, never mind reflected on.

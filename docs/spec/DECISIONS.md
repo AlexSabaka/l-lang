@@ -5414,12 +5414,13 @@ newly possible.
 - Deliberate, visible price: `r"cat"` and `"cat"` mean DIFFERENT things in pattern position (regex vs
   equality). The prefix is right there in the source.
 
-**Two bugs in the PoC, found statically (it hangs — do not run it).** `parse-atom`'s catch-all literal
-arm never advances the cursor: every sibling arm calls `(parser-take parser)`, that one peeks and builds,
-so `parse-sequence`'s `while` re-peeks forever and `terms.push` grows unbounded (an OOM, not a stack
-overflow). Every test starts with a literal, so it hangs immediately. Second, latent: the escape
-fallthrough `_ => ((parser-take parser) (RegexNode "literal" (parser-take parser) …))` consumes TWICE —
-the backslash was already eaten — so `v1\.2` takes `2` as the escaped literal.
+**CORRECTED 2026-07-26 — see D74.** The paragraph that stood here claimed two bugs in the PoC, found
+by reading it rather than running it, and stated that it hangs. All three claims were wrong. Measured:
+it does not hang; `parse-atom`'s catch-all does advance the cursor; and the escape fallthrough consumes
+exactly once. Nine of eleven assertions passed on the first run and the tenth named the real defect,
+`escaped metacharacter` — which was in the COMPILER: `constantPattern` did not decode a match pattern's
+string, so `"\\"` as a pattern could never match a backslash. With that one line fixed, all thirteen
+assertions pass against an unmodified PoC.
 
 **Phasing (not started).** Fix the two PoC bugs → land `std/text/regex` + a corpus example → the `r"` /
 `f"` prefix-literal mechanism → the match-pattern sugar. Missing vs JS RegExp and explicitly out of
@@ -5745,3 +5746,35 @@ JS exception carries a JS stack.
 Remaining: `cli/repl/ReplSession.ts` has its own `node:vm` and executes ARBITRARY user code rather than
 the comptime subset — a different problem wearing the same word — and the differential-testing oracle
 still wants the fuzzer named in the status appendix before losing a second backend is safe.
+
+---
+
+## D74 — a match pattern's string decodes like every other string (2026-07-26)
+
+`constantPattern` sliced the quotes off a pattern's string literal and stopped, where every other
+string in the language is decoded. So one spelling meant two things depending on which side of a match
+arm it sat on:
+
+    (== s "\\")                 ->  true          one backslash, correctly decoded
+    (match s { "\\" => … })     ->  never fired   two characters, compared against one
+    (match c { "\t" => … })     ->  never fired
+
+Word for word the defect the `string` builder carries a comment about having fixed for ITSELF in the
+formatted-versus-plain split — *"same escape, two answers, in one language"* — applied there and never
+to the pattern path.
+
+**Silent, and invisible to inspection.** The arm does not error; it simply never matches, so the form
+falls to its catch-all and produces a plausible wrong answer. Both backends agreed, so the differential
+oracle could not have found it either — the same shape as D73's comptime precision bug.
+
+**How it surfaced, which is the part worth keeping.** D67 recorded "two bugs in the PoC, found
+statically (it hangs — do not run it)", derived by reading `regex_poc.lisp` rather than running it. All
+three claims were wrong: it does not hang, and neither named bug exists. Running it took one command
+and answered exactly: nine assertions passed, and the tenth — `escaped metacharacter` — named this. A
+regex engine is simply the first program that must match on `\`, which is why the defect had gone
+years unnoticed and why it blocked the engine immediately.
+
+That is the second time this month a decision asserted a property of code that a measurement then
+refuted (D72-c withdrew "there is no way to write a class-shaped decorator" the same way). The rule
+earned: a claim about code is a claim about a measurement, and the measurement is usually cheaper than
+the argument.

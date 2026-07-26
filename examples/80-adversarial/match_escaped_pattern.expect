@@ -1,0 +1,7 @@
+backslash length: 1
+backslash: matched
+tab: matched
+newline: matched
+quote: matched
+not a tab: correctly fell through
+agrees with ==: true

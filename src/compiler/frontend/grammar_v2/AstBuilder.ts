@@ -1450,8 +1450,22 @@ export class LLangAstBuilder extends BaseCstVisitor {
   constantPattern(ctx: any): ast.ConstantPatternNode {
     let constant;
     if (ctx.StringLiteral) {
+      // DECODE, like every other string. This sliced the quotes off and stopped, so a match PATTERN
+      // kept its escape sequences raw while the identical literal as an EXPRESSION was unescaped:
+      //
+      //     (== s "\\")                        -> true   (one backslash, correctly decoded)
+      //     (match s { "\\" => … })            -> never fired
+      //     (match c { "\t" => … })            -> never fired
+      //
+      // The same escape, two answers, in one language -- which is word for word the defect the
+      // `string` builder above carries a comment about having fixed for ITSELF, in the formatted-vs-
+      // plain split. The pattern path was never given the same treatment.
+      //
+      // Silent, and unreachable by inspection: the arm simply never matched, so a `match` over
+      // escaped characters fell to its catch-all and produced a plausible wrong answer. It is what a
+      // regex engine hits first, since `\` is the one character it must be able to match on.
       constant = this.makeNode("string", ctx, {
-        value: ctx.StringLiteral[0].image.slice(1, -1),
+        value: this.unescapeString(ctx.StringLiteral[0].image.slice(1, -1)),
       });
     } else if (ctx.NilKw) {
       constant = this.makeNode("null", ctx, { keyword: "nil" });
