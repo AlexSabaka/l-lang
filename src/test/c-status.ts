@@ -333,6 +333,12 @@ export const C_PASSING: readonly string[] = [
   // `done` flag now (C#'s MoveNext shape) instead of spelling "exhausted" as nil -- so a nil ELEMENT
   // is just an element. Written as a record of a live defect, promoted to a guard when it was fixed.
   "80-adversarial/boxed_nil_iteration.lisp",
+  // A COMMENT occupies no slot. It used to keep a positional one, so a block's LAST item -- the thing
+  // that decides its value -- could be a trailing `;;`, and `(let a (… 42 ;; note))` was nil on JS and
+  // ELL0106 'comment' on C. Also call arity (`(f ;; c)` was "expects 0 arguments, got 1"), the
+  // grouping-vs-block branch, and the implicit return (a body ending `99 ;; the value` returned the
+  // comment). Six positions, both backends, one filter in `listNodes`.
+  "80-adversarial/comment_in_value_position.lisp",
   // D67 prefixed literals. Purely lexical, so C is byte-identical -- which is the point: `r"…"`
   // costs nothing in the type system and needs no runtime support on either backend.
   "00-basics/10_string_prefixes.lisp",

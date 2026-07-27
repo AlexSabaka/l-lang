@@ -1,0 +1,12 @@
+  effect a
+trailing:   42
+  effect b
+no comment: 42
+  effect c
+surrounded: 7
+only:       nil
+grouping:   3
+nullary:    5
+args:       3
+  effect f
+implicit:   99

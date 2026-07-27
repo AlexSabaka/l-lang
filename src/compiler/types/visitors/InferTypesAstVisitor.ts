@@ -1,5 +1,5 @@
 import * as ast from "../../frontend/ast";
-import { isCallList, valueIsTail, isBlockList, classifyList, SPECIAL_FORMS } from "../../analysis/listForm";
+import { isCallList, valueIsTail, isBlockList, classifyList, listNodes, SPECIAL_FORMS } from "../../analysis/listForm";
 import { Context, LogLevel } from "../../Context";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { TypeEnvironment } from "../TypeEnvironment";
@@ -3877,7 +3877,9 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
       case "list": {
         const listNode = node as ast.ListNode;
-        if (listNode.nodes.length === 0) {
+        // `listNodes`, not `.nodes`: a list holding NOTHING BUT comments has nodes and no forms, so
+        // the raw length said "not empty" and the head below came back undefined.
+        if (listNodes(listNode).length === 0) {
           inferredType = TypeEnvironment.unknown();
           break;
         }
@@ -3902,7 +3904,9 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           break;
         }
 
-        const firstNode = listNode.nodes[0];
+        // D25 again: `listNodes` is the classifier's own view of this list, so the head and the
+        // argument COUNT below cannot disagree with `form` about whether a comment occupies a slot.
+        const firstNode = listNodes(listNode)[0];
 
         // Check if it's a function call
         if (firstNode._type === "simple-identifier" || firstNode._type === "composite-identifier") {
@@ -3921,7 +3925,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           // Zia/LL0218. Here as well as on the core `call` node: `(type "Money")` as the user writes it
           // is a LIST, and only the desugared core form is a `CallNode` -- so the call arm alone never
           // sees the shape this hint is about.
-          if (funcName === "type") this.hintTypeOfStringLiteral(listNode.nodes.slice(1), listNode);
+          if (funcName === "type") this.hintTypeOfStringLiteral(listNodes(listNode).slice(1), listNode);
 
           // The TOTAL container accessors are the ONLY things in the language that PRODUCE a `T?`.
           //
@@ -3940,7 +3944,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           // JS gap to passing. Possibly a real improvement, but an accidental one with an unmeasured
           // blast radius; it wants its own investigation, not a side effect of this fix.
           if (funcName === "get" || funcName === "elem" || funcName === "head") {
-            const accessorArgs = listNode.nodes.slice(1);
+            const accessorArgs = listNodes(listNode).slice(1);
             const accessorArgTypes = accessorArgs.map((a) => this.inferExpressionType(a));
             const totalAccessor = this.inferTotalAccessorType(funcName, accessorArgs, accessorArgTypes);
             if (totalAccessor) {
@@ -3968,7 +3972,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             //
             // What must NOT come back is the CHECK: `nativeMembers` records return types only, so
             // modelling a method as a function type makes the arity check fire on `csv.split(",")`.
-            for (const a of listNode.nodes.slice(1)) this.inferExpressionType(a);
+            for (const a of listNodes(listNode).slice(1)) this.inferExpressionType(a);
             inferredType = nativeMethod;
             break;
           }
@@ -3976,7 +3980,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           // An `:extension` call on a NAMED receiver -- `(gen.map f)`, `(rect.area)` (Phase Nb). Types as
           // the extension's instantiated return, so the value can chain or be checked. AFTER the native
           // branch, so a native member always wins -- codegen's dispatch order.
-          const extCall = this.inferExtensionCallType(funcName, firstNode, listNode.nodes.slice(1));
+          const extCall = this.inferExtensionCallType(funcName, firstNode, listNodes(listNode).slice(1));
           if (extCall) {
             inferredType = extCall;
             break;
@@ -3996,12 +4000,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           // An operator is not a function you can shadow; which overload applies depends on the
           // OPERAND types, which is exactly what inferOperatorType/TypeChecker.findOperator does.
           if (TypeChecker.isOperatorName(funcName)) {
-            inferredType = this.inferOperatorType(funcName, listNode.nodes.slice(1));
+            inferredType = this.inferOperatorType(funcName, listNodes(listNode).slice(1));
           }
           // Handle function calls
           else if (funcType && funcType.kind === "function") {
             // Check argument types
-            const args = listNode.nodes.slice(1);
+            const args = listNodes(listNode).slice(1);
             const argTypes = args.map(arg => this.inferExpressionType(arg));
 
             // ARITY. There was no check at all: the loop below iterates the ARGUMENTS with an
@@ -4023,7 +4027,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           // Handle struct and class constructors. `(Box 42)` is a `Box<Int>` (P5c), and its arguments
           // are checked -- which, until now, they were not, at all.
           else if (funcType && (funcType.kind === "struct" || funcType.kind === "class")) {
-            const ctorArgs = listNode.nodes.slice(1);
+            const ctorArgs = listNodes(listNode).slice(1);
             const ctorArgTypes = ctorArgs.map((a) => this.inferExpressionType(a));
             inferredType = this.inferConstruction(
               funcType,
@@ -4037,7 +4041,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             // which resolves to nothing. It used to fall into inferOperatorType and emit a
             // spurious "Invalid binary operator 'new' for types ...". Model it the way the bare
             // `(Box 5)` form above already is: an instance of the named class/struct.
-            inferredType = this.inferNewExpression(listNode.nodes.slice(1));
+            inferredType = this.inferNewExpression(listNodes(listNode).slice(1));
           } else {
             // A call head we could not resolve, and which is not an operator: a JS global
             // (`Math.log`), a member call (`s.indexOf`), or a genuinely undefined function.
@@ -4055,7 +4059,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
             // The arguments were never visited at all, so a member access INSIDE one was invisible --
             // `(let z h.length)` reported LL0205 while `(console.log h.length)`, the same expression,
             // reported nothing. Member checks only; see inferArgumentsForMembersOnly.
-            this.inferArguments(listNode.nodes.slice(1));
+            this.inferArguments(listNodes(listNode).slice(1));
 
             inferredType = TypeEnvironment.unknown();
           }

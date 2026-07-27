@@ -15,7 +15,7 @@
 // call SHAPE is now classified; only 0-arg dynamic member access + dotted chains stay `opaque`.
 
 import * as ast from "../frontend/ast";
-import { classifyList, isDottedMemberIndexer } from "../analysis/listForm";
+import { classifyList, isDottedMemberIndexer, listNodes } from "../analysis/listForm";
 import { RuntimeProvider } from "../runtime";
 import { buildExtensionTable, conformingExtensionFn, memberKindOn, receiverType } from "./extensionResolution";
 
@@ -79,7 +79,10 @@ function isPrimitiveTypeFold(node: ast.ListNode, head: ast.ASTNode, args: ast.AS
  */
 export function classifyCall(node: ast.ListNode, ctx: CallClassCtx): CallDispatch {
   if (classifyList(node).kind !== "call") return { kind: "opaque" }; // special / apply / block / grouping / empty
-  const nodes = Array.isArray(node.nodes) ? node.nodes : [node.nodes];
+  // `listNodes`, not the raw array: a comment occupies no slot (D25). It counts here twice over --
+  // `args.length > 0` below is what separates a VIRTUAL call from a member READ, so a stray `;;` in
+  // `(obj.m ;; note)` turned a read into a call.
+  const nodes = listNodes(node);
   const head = nodes[0];
   const args = nodes.slice(1);
 

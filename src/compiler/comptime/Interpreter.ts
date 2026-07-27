@@ -1,4 +1,5 @@
 import * as ast from "../frontend/ast";
+import { listNodes } from "../analysis/listForm";
 import { SymbolTable } from "../analysis/SymbolTable";
 import { FLOOR } from "../floor/floor";
 
@@ -181,7 +182,9 @@ export class ComptimeInterpreter {
   }
 
   private evalList(node: ast.ListNode, env: Env): CTValue {
-    const nodes = (node.nodes ?? []).filter(Boolean);
+    // Comments occupy no slot (D25/`listNodes`) -- a `:comptime` body is a block like any other, so a
+    // trailing `;;` would otherwise be its VALUE and fold the function to nil.
+    const nodes = listNodes(node).filter(Boolean);
     if (nodes.length === 0) return null;
 
     const head: any = nodes[0];

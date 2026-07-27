@@ -25,7 +25,7 @@
 import type { Context } from "../Context";
 import * as ast from "../frontend/ast";
 import type { InferredType } from "../analysis/SymbolTable";
-import { classifyList } from "../analysis/listForm";
+import { classifyList, listNodes } from "../analysis/listForm";
 import { classifyCall } from "./classifyCall";
 import { shouldCopyOnStore, shouldCopyParam } from "./valueCopy";
 import { refinementOfType, refinementOfTypeName, typeNameOf, buildRefineCall, implicitCastCall } from "./coerceInto";
@@ -720,8 +720,13 @@ export class LowerAstToHirVisitor {
   private lowerSeq(items: ast.ASTNode[], dest: Dest): Lowered {
     const stmts: HStmt[] = [];
     if (items.length === 0) return { stmts, value: null };
+    // A block's VALUE is its last item -- and a comment is not a value (D25). It stays in `items` as a
+    // statement (Zb: block comments still reach the output), so the value position is the last
+    // NON-comment index rather than `length - 1`. Otherwise `(let a (… 42 ;; note))` bound the comment.
+    let valueAt = items.length - 1;
+    while (valueAt >= 0 && items[valueAt]?._type === "comment") valueAt--;
     for (let i = 0; i < items.length; i++) {
-      const isLast = i === items.length - 1;
+      const isLast = i === valueAt;
       const r = this.lowerNode(items[i], isLast ? dest : EFFECT);
       stmts.push(...r.stmts);
       if (isLast) return { stmts, value: dest.kind === "value" ? r.value : null };
@@ -1008,7 +1013,7 @@ export class LowerAstToHirVisitor {
   }
 
   private lowerCallLike(node: ast.ListNode, dest: Dest): Lowered {
-    const ops = this.lowerOperands(node.nodes.slice(1));
+    const ops = this.lowerOperands(listNodes(node).slice(1));
     if (ops.diverged) return { stmts: ops.prelude, value: null };
     // Nothing hoisted -> the callee stays inline exactly as written; no reorder is possible.
     if (ops.prelude.length === 0) return this.leaf(node, dest);
@@ -1105,8 +1110,8 @@ export class LowerAstToHirVisitor {
    * When no right operand has a prelude, stay opaque -- the legacy native LogicalExpression, zero churn.
    */
   private lowerLogical(node: ast.ListNode, dest: Dest): Lowered {
-    const op = (node.nodes[0] as ast.SimpleIdentifierNode).id as "||" | "&&";
-    const args = node.nodes.slice(1);
+    const op = (listNodes(node)[0] as ast.SimpleIdentifierNode).id as "||" | "&&";
+    const args = listNodes(node).slice(1);
     if (args.length <= 1) return this.leaf(node, dest);
 
     const lowered = args.map((a) => this.lowerNode(a, VALUE));

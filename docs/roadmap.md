@@ -563,6 +563,32 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     entry exists so the next one has somewhere to attach. `80-adversarial/cond_dangling_else.lisp` and
     `paren_absorption.lisp` are the neighbours; this family has bitten before.
 
+*   **PARKED (2026-07-27): decoration-time SETUP hoisting on C.** A decorator whose `defmodifier` body
+    has statements before the wrapper — `(let cache {})` in `:memoized` — is refused BY NAME
+    (`decorator-setup:<modifier> on '<fn>'`, `collectDecorated`) rather than dropped, because dropping
+    the setup silently would give every call a fresh cache. It is the last non-async C refusal
+    (`10-modifiers/05_multiple_modifiers`), and it also blocks `20-algorithms/10_memoization_modifier`,
+    whose fix is to declare the `:memoized` the file already applies.
+
+    **Naming is not the blocker, which is the part worth writing down.** The unfolded layers are
+    already per-site unique — `emitLayer` builds `sum__w0`, `sum__w1`, … `sum` — so a hoisted `cache`
+    can be `sum__w1__cache` and collide with nothing, no new scheme required. Encoding the decorator's
+    ARGUMENTS in the name (`retry_4`) would be actively wrong: two sites carrying the same decorator
+    with the same arguments would then share one cache, and per-site is the correct key.
+
+    **What is missing is the REDIRECT.** `emitLayer` lowers the wrapper inside `isolated()`, so `cache`
+    in the wrapper body resolves as a local of that layer. Setup has to lower ONCE at module scope and
+    then be pre-declared into the layer's scope bound to the global cName. A `{}` initializer is a
+    runtime call, not a constant, so it needs the module-scope ASSIGNMENT slot
+    (`globalNames`/`globalDecls`/`globalDeclared`) rather than a file-scope initializer.
+
+*   **PARKED (2026-07-27): `for :init` mutable capture on C.** `03-loops/01_for.lisp` is the corpus's
+    one `not-yet`: it compiles and loops forever. `j` is a `mut` that a nested `inc-j` mutates, so
+    D48/Q3 makes it a by-reference capture, but `computeCellVars` does not promote it inside a
+    `for :init` block — the env gets a copy, the counter never advances. The reduced cause with the
+    emitted C is written out at `src/test/c-status.ts:28-40`; this entry is the pointer, not a second
+    copy of it.
+
 *   ~~**`export` has no CIR lowering, and it is SIX of the eleven C refusals.**~~ — **FIXED.** One
     `case "export": return []` beside the existing `import` arm. C went 239 -> 245 passing, refusals
     11 -> 5, and the six files now grade against goldens they had never reached. Original entry: `(export …)` at a module's

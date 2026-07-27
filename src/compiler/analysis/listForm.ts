@@ -100,16 +100,50 @@ export function lambdaLiteralIn(
     : undefined;
 }
 
+/**
+ * A list's nodes with COMMENTS REMOVED -- the array every pass should read instead of `node.nodes`.
+ *
+ * Exported because `classifyList` alone was not enough: the type checker asks the classifier for the
+ * grouping case and then falls back to raw `listNode.nodes[0]` / `.slice(1)` for everything else, so
+ * the two disagreed on argument COUNT and `(nullary ;; note)` reported "expects 0 arguments, got 1".
+ * A pass that genuinely needs the raw array (source-faithful printing, `quote`) reads `node.nodes`.
+ */
+export function listNodes(node: ast.ListNode): ast.ASTNode[] {
+  const all = Array.isArray(node.nodes) ? node.nodes : [node.nodes];
+  return all.some((n) => n?._type === "comment") ? all.filter((n) => n?._type !== "comment") : all;
+}
+
 /** D25, in one place. */
 export function classifyList(node: ast.ListNode): ListForm {
-  const nodes = Array.isArray(node.nodes) ? node.nodes : [node.nodes];
+  // A COMMENT IS NOT A FORM. `AstBuilder.positionalExpressions` already rules this for `if`/`when`/
+  // `while` -- "comments are not values and never occupy a slot" -- but a plain list was built from a
+  // raw `ctx.expression.map`, so a comment kept its slot here and every consumer of D25 inherited it.
+  //
+  // The damage was silent, because a comment is invisible at exactly the place it changed the answer.
+  // A block's value is its LAST item, so a trailing `;;` comment BECAME the value:
+  //
+  //     (let a ( (console.log "x") 42 ;; note ))   ->  a = nil on JS, LL0106 'comment' on C
+  //     (let b ( (console.log "x") 42        ))   ->  b = 42 on both
+  //
+  // Two spellings of one block, differing only by a comment, disagreeing on the value. `(foo ;; c)`
+  // was the same bug in call position -- a one-argument call whose argument was the comment.
+  //
+  // Filtered HERE rather than in either frontend: D25 is the single question every pass asks, so one
+  // filter answers it for grammar_v2 and the PEG at once, and the comment stays in the tree for
+  // `quote` (which emits the raw node as DATA and never consults this) and for tooling.
+  const nodes = listNodes(node);
   if (nodes.length === 0) return { kind: "empty" };
 
   const [head, ...args] = nodes;
 
   // Redundant parens around a single non-name: `((+ 1 2))` -> 3. A dotted member is the exception --
   // `(gs[0].hi)` is a call, and unwrapping it to a member READ is the bug this exception exists for.
-  if (nodes.length === 1 && !isName(head) && !isDottedMemberIndexer(head)) {
+  //
+  // Tested against the RAW length, not the filtered one. `grouping` yields `inner` and DISCARDS
+  // everything else, so `( ;; note \n (+ 1 2) )` would take this branch and lose the comment -- which
+  // is Zb's trade widened by accident. With a comment present it stays a BLOCK whose value is its last
+  // form, and both branches answer 3.
+  if (node.nodes.length === 1 && !isName(head) && !isDottedMemberIndexer(head)) {
     return { kind: "grouping", inner: head };
   }
 
@@ -133,7 +167,12 @@ export function classifyList(node: ast.ListNode): ListForm {
       : { kind: "call", callee: head, args };
   }
 
-  return { kind: "block", items: nodes };
+  // A block's items are STATEMENTS, and `items` keeps the comments deliberately -- Zb ruled that a
+  // comment in a block still reaches the output, and only a POSITIONAL one is dropped. The filtering
+  // above answers "what SHAPE is this list"; it is not a claim that a comment cannot be a statement.
+  // What must skip them is the VALUE position -- a block's value is its last item -- and that is done
+  // where the value is chosen (`lowerSeq`, `wrapTail`), not by deleting them here.
+  return { kind: "block", items: Array.isArray(node.nodes) ? node.nodes : [node.nodes] };
 }
 
 /** Is this list a CALL (or a special form) rather than a block? The question all three passes asked. */

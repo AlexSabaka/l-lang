@@ -6293,3 +6293,50 @@ Pinned by `80-adversarial/catchable_data_traps.lisp` (catch by precise type and 
 `finally` running on the way out — proving the trap uses the same unwinder `throw` does rather than
 jumping straight to the handler — and execution continuing normally afterwards).
 `refinement_panic.lisp` is unchanged and pins the other side.
+
+## D83 — a comment occupies no slot, and is not a value (2026-07-27)
+
+`AstBuilder.positionalExpressions` already carried this ruling, verbatim — *"comments are not values
+and never occupy a slot. One helper, so the four cannot disagree"* — and `if` / `when` / `while` /
+`cond` were built through it. A plain **list** was not: `AstBuilder.list` mapped `ctx.expression`
+directly, so a comment kept a positional slot and every consumer of D25 inherited it.
+
+**The damage was silent, because a comment is invisible at exactly the place it changed the answer.**
+A block's value is its LAST item, so a trailing `;;` BECAME the value:
+
+    (let a ( (console.log "x") 42 ;; note ))   ->  a = nil on JS, ELL0106 'comment' on C
+    (let b ( (console.log "x") 42        ))   ->  b = 42 on both
+
+Two spellings of one block, differing only by a comment, disagreeing on the value — with no diagnostic
+on either backend. It reached **six** positions, found by writing the adversarial file rather than by
+reading the code; only the first was known when the round opened:
+
+1. **a block's value** — the case above;
+2. **call arity** — `(nullary ;; note)` reported `LL0211 expects 0 arguments, got 1`;
+3. **argument lowering** — `(add2 1 ;; between \n 2)` emitted `add2(1n, /* ; between */, 2n)`, which is
+   not valid JavaScript, and `ELL0106 'comment'` on C;
+4. **virtual-vs-read dispatch** — `classifyCall` separates a virtual call from a member READ by
+   `args.length > 0`, so a stray comment turned a read into a call;
+5. **the implicit return** — a body ending `99  ;; the value` wrapped the COMMENT, so the function
+   answered nil on JS and an uninitialized read on C;
+6. **a list of nothing but comments** — non-empty by raw length, so the head came back `undefined`.
+
+**Ruled:** a comment is not a form. `listNodes` is the filtered view, exported beside `classifyList`,
+and it is what a pass reads instead of `node.nodes`. Fixed there rather than in either frontend: D25 is
+the single question every pass asks, so one filter answers it for grammar_v2 and the PEG together, and
+the comment stays in the tree for `quote` (which emits the raw node as DATA and never consults the
+classifier).
+
+**Two boundaries, and they are the interesting part.**
+
+*   **A block's ITEMS keep their comments.** Zb already ruled that a comment in a BLOCK still reaches
+    the output and only a POSITIONAL one is dropped; filtering `items` would have widened that trade by
+    accident, and `test:codegen`'s guard on it is what caught the attempt. What skips a comment is the
+    **value position**, chosen in `lowerSeq` and `wrapTail` — not the item list.
+*   **`grouping` is tested against the RAW length.** It yields `inner` and discards everything else, so
+    `( ;; note \n (+ 1 2) )` taking that branch would silently drop the comment. With one present the
+    list stays a BLOCK whose value is its last form. Both branches answer 3; only one keeps the comment.
+
+Pinned by `80-adversarial/comment_in_value_position.lisp`, C-passing, all six positions plus the
+comment-free twin of each — the twin is the assertion, since the finding is that two spellings of one
+block must agree.

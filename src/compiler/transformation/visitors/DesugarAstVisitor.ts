@@ -610,11 +610,21 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
   private wrapTail(items: ast.ASTNode[]): ast.ASTNode[] {
     if (items.length === 0) return items;
 
-    const last = items[items.length - 1];
+    // The tail is the last FORM, not the last node. A comment occupies no slot (D25), so a body
+    // ending `99  ;; the value` wrapped the COMMENT in the implicit return and the function answered
+    // whatever `return /* … */` lowers to -- nil on JS, an uninitialized read on C.
+    //
+    // SKIPPED here, not filtered: Zb already ruled that a comment in a BLOCK still reaches the output
+    // and only a POSITIONAL one is dropped. Filtering the list would have quietly widened that trade.
+    let i = items.length - 1;
+    while (i >= 0 && items[i]?._type === "comment") i--;
+    if (i < 0) return items;
+
+    const last = items[i];
     const wrapped = this.wrapIfValue(last);
     if (wrapped === last) return items;
 
-    return [...items.slice(0, -1), wrapped];
+    return [...items.slice(0, i), wrapped, ...items.slice(i + 1)];
   }
 
   private wrapIfValue(node: ast.ASTNode): ast.ASTNode {
