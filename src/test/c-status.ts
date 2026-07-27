@@ -311,6 +311,11 @@ export const C_PASSING: readonly string[] = [
   // `JSON.stringify` uncovered a SECOND refusal underneath, `(console.log ...a)` -- spread into an
   // INTRINSIC callee, which has no CIR lowering (already-logged debt from the D75 spread round). So
   // it is still LL0106-refused, for a different and now-visible reason. One blocker down, one left.
+  // `vec.reduceRight` -- one native method, one user (`std/fn`'s `compose`), and it refused this
+  // whole file. Declared with no `c` like `reduce`, so it routes through `ll_dyn_method`'s vec branch;
+  // the ARM was added first, because declaring without one trades a compile-time refusal for a
+  // runtime trap. `compose(sqr, inc)(3) = 16` is what pins the fold DIRECTION -- a left fold answers 10.
+  "16-stdlib/test_stdlib.lisp",
   // A DATA error is CATCHABLE; a CONTRACT violation is not. `ll_trap` was `exit(70)` unconditionally,
   // so an out-of-range index killed the process here while JS threw a catchable Error. Refinement
   // violations still panic -- they never routed through `ll_trap`, so the ruled split was already

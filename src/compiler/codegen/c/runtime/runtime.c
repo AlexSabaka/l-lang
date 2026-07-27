@@ -2129,6 +2129,15 @@ static ll_value ll_vec_reduce(ll_vec *v, ll_value op, ll_value init) {
   for (size_t i = 0; i < v->len; i++) { ll_value a[2] = {acc, v->items[i]}; acc = ll_call(op, 2, a); }
   return acc;
 }
+/* The right fold. Same shape as `ll_vec_reduce` walking backwards, and the accumulator stays the
+ * FIRST argument to the operator -- matching `Array.prototype.reduceRight`, where the callback is
+ * `(acc, element)` regardless of direction. Getting that backwards would make `compose` compose in the
+ * wrong order and still typecheck. */
+static ll_value ll_vec_reduce_right(ll_vec *v, ll_value op, ll_value init) {
+  ll_value acc = init;
+  for (size_t i = v->len; i > 0; i--) { ll_value a[2] = {acc, v->items[i - 1]}; acc = ll_call(op, 2, a); }
+  return acc;
+}
 static ll_vec *ll_vec_map(ll_vec *v, ll_value fn) {
   ll_vec *out = ll_vec_new(v->len);
   for (size_t i = 0; i < v->len; i++) { ll_value a[1] = {v->items[i]}; ll_vec_push(out, ll_call(fn, 1, a)); }
@@ -2199,6 +2208,7 @@ static ll_value ll_dyn_method(int n, ll_value *vals) {
     if (ll_dyn_name_is(name, "indexOf")) return ll_box_int(ll_vec_index_of(v, args[0]));
     if (ll_dyn_name_is(name, "includes")) return ll_box_bool(ll_vec_includes(v, args[0]));
     if (ll_dyn_name_is(name, "reduce")) return ll_vec_reduce(v, args[0], argc > 1 ? args[1] : ll_nil());
+    if (ll_dyn_name_is(name, "reduceRight")) return ll_vec_reduce_right(v, args[0], argc > 1 ? args[1] : ll_nil());
     if (ll_dyn_name_is(name, "map")) return ll_box_vec(ll_vec_map(v, args[0]));
     if (ll_dyn_name_is(name, "filter")) return ll_box_vec(ll_vec_filter(v, args[0]));
     if (ll_dyn_name_is(name, "forEach")) return ll_vec_for_each(v, args[0]);

@@ -136,6 +136,13 @@ const ARRAY_MEMBERS: Record<string, NativeMember> = {
   map: method(arrOf(Unknown)),
   filter: methodOf((el) => arrOf(el)),
   reduce: method(Unknown),
+  // `reduceRight` follows `reduce`: no `c`, because `ll_dyn_method`'s vec branch implements it. The
+  // ARM WAS ADDED FIRST -- this table's rule is that declaring without an arm trades a compile-time
+  // refusal for a runtime trap, which `lastIndexOf` and `flat` above are here to remember.
+  //
+  // It has exactly one user, `std/fn`'s `compose`, and that one user was enough to refuse
+  // `16-stdlib/test_stdlib` outright on C.
+  reduceRight: method(Unknown),
 };
 
 /** Every declared member, keyed the way the C backend keys them (`str.x` / `vec.x`). */
