@@ -269,6 +269,10 @@ export const C_PASSING: readonly string[] = [
   // D67: the regex engine is l-lang, so both backends run the SAME program -- which is the entire
   // argument for not binding POSIX <regex.h> on one side and JS RegExp on the other.
   "16-stdlib/20_regex.lisp",
+  // std/text/builder: chunks in, one native join out. Pinned here because the interesting assertion
+  // is `length` -- CODEPOINTS (D52), where `.length` on the joined string would answer UTF-16 units
+  // on JS and BYTES on C. `héllo wörld` is 11 on both only because the floor owns the question.
+  "16-stdlib/21_builder.lisp",
   // D67 prefixed literals. Purely lexical, so C is byte-identical -- which is the point: `r"…"`
   // costs nothing in the type system and needs no runtime support on either backend.
   "00-basics/10_string_prefixes.lisp",

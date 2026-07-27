@@ -1,0 +1,16 @@
+Hello, l-lang!
+chunks: 3
+length: 14
+abc
+same object: true 3
+after clear: 0 true
+one
+two
+
+chunks for 2 lines: 4
+----------
+repeat length: 10
+non-positive repeat: true 0
+héllo wörld
+codepoints: 11
+empty renders: true 0 true

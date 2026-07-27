@@ -5900,3 +5900,38 @@ miss, which is the trap D67 recorded from the P3a `<-` migration.
 
 The check on the migration is that **no golden moves**: for these programs the change is a spelling,
 so identical output on both backends is the evidence it was one.
+
+## D76 — std/text/builder: a string accumulator, because `+` in a loop is quadratic (2026-07-27)
+
+`std/text/builder` is a `StringBuilder`: text goes in as CHUNKS and is joined only when a `String` is
+asked for. Surface: `append`, `append-line`, `line-break`, `append-repeat`, `clear`, `length`,
+`chunk-count`, `is-empty`, `to-string`. Adapted from `string_builder_poc.lisp` in ../l-lang-codewars.
+
+**The ruling is that this is a complexity fix, not a spelling.** Repeated `(s := (+ s chunk))` copies
+the entire accumulated prefix on every append, so n appends copy the text n times — accidentally
+O(n²), invisible until the output gets big, which for a help screen or a JSON document is exactly
+when it starts to matter. Every `append` here is one vector push and `to-string` is ONE native
+`.join`, which is a single pass on both backends (`ll_vec_join` / `Array.prototype.join`) rather than
+a fold of `+`. Total work is linear and the copy happens once.
+
+That claim is not directly observable in a golden — both spellings print the same string — so
+`chunk-count` is public and asserted. It is the one visible consequence of not concatenating, and
+without it the class's entire justification would be untestable.
+
+**`length` is in CODEPOINTS** (D52), not chunks and not bytes. It is the only length a caller can act
+on: `.length` on the joined string answers UTF-16 code units on JS and BYTES on C, and those disagree
+the moment the text is not ASCII (`héllo wörld` is 11 here, 11 there, 13 as C bytes). Computed on
+demand rather than tracked incrementally — a running counter is a second source of truth that every
+future mutator would have to remember to maintain.
+
+**NO IMPORTS.** `.join` is a native member and `codepoint-length` is a floor entry, both ambient on
+both backends, so the accumulator every other text module will want to sit on carries no dependency
+of its own. `std/core/string`'s `join` is the same operation wrapped; this reaches the primitive
+directly rather than adding a module-graph edge for one call.
+
+**`to-string` is not `format`.** `format` is `Formattable`'s method (D63) and means "render this VALUE
+for display"; a builder is not a value being rendered, it is the thing doing the rendering. No
+`:implements` either — `(x :of SomeInterface)` answers false on both backends today (the D58
+amendment records this), so declaring it would buy nothing a plain method does not.
+
+Pinned by `examples/16-stdlib/21_builder.lisp`, C-pinned, byte-identical on both backends.
