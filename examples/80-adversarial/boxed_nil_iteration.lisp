@@ -1,8 +1,8 @@
 ;; ADVERSARIAL: `for :each` over a BOXED container stops at the first `nil` element on C.
 ;;
-;; SILENT WRONG ANSWER, and one this file is expected to FAIL on the native backend today -- it is a
-;; record of a live defect, not a passing guard. Found by `std/text/json`: rendering `[1 nil 2]` gave
-;; `[1,null,2]` on JS and `[1]` on C, with no diagnostic anywhere.
+;; FIXED. This file was written as a record of a live defect -- it FAILED on C -- and is now the guard
+;; that keeps it fixed. Found by `std/text/json`: rendering `[1 nil 2]` gave `[1,null,2]` on JS and
+;; `[1]` on C, with no diagnostic anywhere.
 ;;
 ;; THE CAUSE is the iteration protocol's sentinel. The floor rules that `next` answering nil means the
 ;; sequence is EXHAUSTED (D30/D50) -- so a nil ELEMENT and the end of the sequence are the same value,
@@ -16,13 +16,18 @@
 ;; dynamic data has, JSON being the obvious one -- goes through `iter`/`next` and is not. So the two
 ;; spellings of "walk this container" disagree only for containers holding nil, and only on C.
 ;;
-;; JS is CORRECT here, so this file has an ordinary golden recording the right answer. Until the
-;; protocol grows an out-of-band "done" the C run fails it, which the runner reports as `not-yet`
-;; because the path is absent from `c-status.ts`. When it is fixed, the ratchet will say so by name.
+;; THE FIX (ruled by Sabaka): the cursor carries a `done <- Boolean` flag -- C#'s
+;; `MoveNext()`/`Current` split, where advancing reports WHETHER there was an element and the element
+;; is read separately. That takes "exhausted" out of the value space, so no value can end a walk.
 ;;
-;; The workaround, for anything that must be correct today, is to walk a boxed container BY INDEX
-;; through `get` -- the floor's total accessor, which answers the element whatever it is and so cannot
-;; be terminated by a value. `std/text/json`'s `write-array` does exactly that, with a comment.
+;; A sentinel could not have worked, and the floor's neighbours show why they are not a precedent:
+;; `codepoint-at` and `file-open` answer -1 because a codepoint and a file descriptor are non-negative
+;; BY DEFINITION. `next` answers a `T?` for a `T` the floor cannot name -- there is no value left over
+;; to spend on "done".
+;;
+;; A USER `Iterator<T>` keeps the nil rule, and that is correct rather than a fallback: D30's protocol
+;; is `(fn next [] -> T?)`, so nil is the only signal it offers. Changing that shape is a language
+;; decision, and this was not one.
 (
     (let xs <- Any[] [1 nil 2])
 

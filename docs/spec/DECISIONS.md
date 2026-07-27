@@ -6013,13 +6013,22 @@ terminated by a value. `80-adversarial/boxed_nil_iteration.lisp` records the def
 (JS) golden and is deliberately absent from `c-status.ts`, so C reports it as `not-yet` rather than
 red.
 
-**RULED (Sabaka, 2026-07-27): the cursor carries a `done <- Boolean` flag** — C#'s
+**RULED (Sabaka, 2026-07-27) and FIXED the same day: the cursor carries a `done <- Boolean` flag** — C#'s
 `IEnumerator.MoveNext()` shape, where advancing answers *whether there was an element* and the element
 is read separately. That takes "exhausted" out of the value space entirely, so no value can terminate a
 walk, and it generalises where a sentinel cannot: `-1` works for `codepoint-at` because a codepoint is
 non-negative, but `next` answers `T?` for a `T` the floor cannot name, so there is no out-of-band value
-available to pick. Once it lands, `boxed_nil_iteration.lisp` joins `c-status.ts` and the by-index
-workarounds in `std/text/json` can go back to `for :each`.
+available to pick.
+
+**Landed.** `ll_cursor_env` gained the flag, `ll_cursor_step` sets it, and `ll_iter_done(it, last)`
+answers it: a BUILT-IN cursor is a closure identified by its own step function, so the flag is read
+straight off the env; a USER cursor keeps the nil rule, which is correct FOR D30's protocol
+(`(fn next [] -> T?)` offers no other signal) rather than a fallback. The emitter's
+`if (e.tag == LL_NIL) break` became `if (ll_iter_done(it, e)) break`.
+
+`boxed_nil_iteration.lisp` is C-pinned, and `std/text/json`'s `write-array` went back to an ordinary
+`for :each` — **its golden did not move across that revert**, which is the end-to-end evidence the
+adversarial file alone could not give. C: 245 → 246 passing.
 
 ## D78 — std/time/calendar: proleptic Gregorian civil time, UTC, zero floor entries (2026-07-27)
 

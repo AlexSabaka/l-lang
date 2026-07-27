@@ -528,9 +528,15 @@ export class EmitCirToC {
         // may read the variable's last value (the corpus golden proves this semantic).
         const v = `__c${this.fresh++}`;
         const i = `__i${this.fresh++}`;
-        // D30's PROTOCOL arm: a cursor from `ll_iter`, stepped by `ll_next`, nil means done. Used for
-        // every collection that is not statically a vector -- a string, a map, a user `Iterable`, or a
-        // boxed value whose shape is only known at run time.
+        // D30's PROTOCOL arm: a cursor from `ll_iter`, stepped by `ll_next`. Used for every collection
+        // that is not statically a vector -- a string, a map, a user `Iterable`, or a boxed value
+        // whose shape is only known at run time.
+        //
+        // EXHAUSTION IS ASKED FOR, NOT INFERRED FROM THE VALUE. This used to break on `${e}.tag ==
+        // LL_NIL`, which reads "the element is nil" as "the sequence ended" -- so `[1 nil 2]` walked
+        // exactly once and a leading nil lost the container entirely, on C only and in silence.
+        // `ll_iter_done` reads a flag off a built-in cursor and falls back to the nil rule only for a
+        // user `Iterator<T>`, whose protocol offers nothing else.
         if (s.viaProtocol) {
           const it = `__it${this.fresh++}`;
           const e = `__e${this.fresh++}`;
@@ -542,7 +548,7 @@ export class EmitCirToC {
           this.line(`for (;;) {`);
           this.indent++;
           this.line(`ll_value ${e} = ll_next(${it});`);
-          this.line(`if (${e}.tag == LL_NIL) break;`);
+          this.line(`if (ll_iter_done(${it}, ${e})) break;`);
           const got = `ll_copy(${e})`; // D11 per-iteration copy (identity for non-structs)
           if (s.varCType.k === "value") this.line(`${s.varCName} = ${got};`);
           else this.line(`${s.varCName} = ${UNBOX_FN[s.varCType.k]}(${got});`);

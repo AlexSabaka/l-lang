@@ -311,11 +311,10 @@ export const C_PASSING: readonly string[] = [
   // `JSON.stringify` uncovered a SECOND refusal underneath, `(console.log ...a)` -- spread into an
   // INTRINSIC callee, which has no CIR lowering (already-logged debt from the D75 spread round). So
   // it is still LL0106-refused, for a different and now-visible reason. One blocker down, one left.
-  // NOT LISTED, deliberately: `80-adversarial/boxed_nil_iteration.lisp`. It records a LIVE C defect --
-  // `for :each` over a boxed container stops at the first nil element, because the iteration
-  // protocol spells "done" as nil (D9's in-band lie, inside the floor's own protocol). JS is correct
-  // and holds the golden; C fails it, which the runner reports as `not-yet`. When the protocol grows
-  // an out-of-band sentinel the ratchet will demand this line.
+  // `for :each` over a BOXED container no longer stops at the first nil element. The cursor carries a
+  // `done` flag now (C#'s MoveNext shape) instead of spelling "exhausted" as nil -- so a nil ELEMENT
+  // is just an element. Written as a record of a live defect, promoted to a guard when it was fixed.
+  "80-adversarial/boxed_nil_iteration.lisp",
   // D67 prefixed literals. Purely lexical, so C is byte-identical -- which is the point: `r"…"`
   // costs nothing in the type system and needs no runtime support on either backend.
   "00-basics/10_string_prefixes.lisp",

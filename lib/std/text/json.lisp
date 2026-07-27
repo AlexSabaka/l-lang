@@ -123,29 +123,29 @@
         ))
     ))
 
-    ;; BY INDEX, NOT `for :each`, and that is a correctness requirement rather than a style choice.
+    ;; `xs` arrives BOXED -- the parameter is `Any`, because the value came out of a JSON document and
+    ;; its element type is not knowable.
     ;;
-    ;; `xs` arrives BOXED (the parameter is `Any`, because the value came out of a JSON document and
-    ;; its element type is not knowable). On C a `for :each` over a boxed container goes through the
-    ;; floor's iteration protocol, where `next` answering nil MEANS EXHAUSTED -- so a nil ELEMENT is
-    ;; indistinguishable from the end, and `[1 nil 2]` iterates exactly once. It is D9's in-band lie,
-    ;; living inside the protocol itself: measured here as `[1,null,2]` on JS and `[1]` on C, silently.
+    ;; THIS WAS AN INDEX WALK, and the reason is worth keeping even though the reason is gone: a
+    ;; `for :each` over a boxed container used to stop at the first nil ELEMENT on C, because the
+    ;; iteration protocol spelled "exhausted" as nil. `[1 nil 2]` rendered `[1,null,2]` on JS and `[1]`
+    ;; here, silently -- and JSON is the worst place to inherit that, since `null` is one of its value
+    ;; kinds, so losing one corrupts a document rather than truncating it visibly.
     ;;
-    ;; `get` is the floor's TOTAL indexed accessor and answers the element whatever it is, so the
-    ;; traversal cannot be terminated by a value. JSON is the worst possible place to inherit that bug,
-    ;; since `null` is one of its seven value kinds and dropping it corrupts the document rather than
-    ;; truncating it visibly.
+    ;; The cursor now carries a `done` FLAG, so a nil element is just an element and this is an
+    ;; ordinary loop again. The guard is `80-adversarial/boxed_nil_iteration.lisp` plus the
+    ;; `nil in array:` row of this module's own golden, which did not move across the revert.
     (fn write-array [sb <- StringBuilder xs <- Any indent <- Int depth <- Int] -> Void (
         ;; An EMPTY container renders as `[]` on one line even when pretty-printing. `[\n\n]` is what
         ;; the general path would produce and no formatter emits it.
         (if (== xs.length 0) (sb.append "[]") (
             (sb.append "[")
-            (mut i <- Int 0)
-            (while (< i xs.length) (
-                (if (> i 0) (sb.append ","))
+            (mut first <- Boolean #t)
+            (for :each x :from xs :then (
+                (if (not first) (sb.append ","))
+                (first := #f)
                 (write-break sb indent (+ depth 1))
-                (write-value sb (get xs i) indent (+ depth 1))
-                (i := (+ i 1))
+                (write-value sb x indent (+ depth 1))
             ))
             (write-break sb indent depth)
             (sb.append "]")

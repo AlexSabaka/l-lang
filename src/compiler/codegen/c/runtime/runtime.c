@@ -2174,22 +2174,24 @@ static ll_value ll_dyn_method(int n, ll_value *vals) {
  * `next` method. No new tag, no cursor class, and nothing a user can accidentally construct -- a
  * 2-element vec used as a cursor would have been indistinguishable from a user's 2-element vec.
  * --------------------------------------------------------------------------------------------- */
-typedef struct { ll_value src; int64_t i; } ll_cursor_env;
+typedef struct { ll_value src; int64_t i; int done; } ll_cursor_env;
 
+/* `done` IS A FLAG, NOT A VALUE, and that is the whole of the fix below. See `ll_iter_done`. */
 static ll_value ll_cursor_step(void *env, int argc, ll_value *argv) {
   (void)argc;
   (void)argv;
   ll_cursor_env *e = (ll_cursor_env *)env;
   if (e->src.tag == LL_VEC) {
     ll_vec *v = e->src.as.v;
-    if (e->i >= (int64_t)v->len) return ll_nil();
+    if (e->i >= (int64_t)v->len) { e->done = 1; return ll_nil(); }
     return v->items[e->i++];
   }
   if (e->src.tag == LL_STR) {
     ll_str *s = e->src.as.s;
-    if (e->i >= ll_cp_length(s)) return ll_nil();
+    if (e->i >= ll_cp_length(s)) { e->done = 1; return ll_nil(); }
     return ll_box_str(ll_str_char_at(s, e->i++));
   }
+  e->done = 1;
   return ll_nil();
 }
 
@@ -2215,12 +2217,12 @@ static ll_value ll_iter(ll_value x) {
   ll_cursor_env *e = (ll_cursor_env *)ll_gc_alloc(sizeof(ll_cursor_env), LL_H_CURSOR);
   e->src = x;
   e->i = 0;
+  e->done = 0;
   return ll_box_closure(ll_closure_make(ll_cursor_step, e, 0, "cursor"));
 }
 
-/* nil MEANS DONE -- the whole protocol, and the reason it needs no `{value, done}` pair. D9 gives the
- * language exactly one bottom value, so "no more elements" and "absent" are the same answer, and a
- * sequence containing nil is not expressible anyway. */
+/* Advance the cursor and answer the element. Whether the sequence is EXHAUSTED is a separate
+ * question -- `ll_iter_done` below -- and that separation is the correction described there. */
 static ll_value ll_next(ll_value it) {
   if (it.tag == LL_NIL) return ll_nil();
   if (it.tag == LL_CLOSURE) return ll_call(it, 0, (ll_value *)0);
@@ -2231,6 +2233,40 @@ static ll_value ll_next(ll_value it) {
   /* A raw sequence handed straight to `next` -- take a cursor over it and step once. Not useful on
    * its own, but it keeps `next` total rather than trapping on a plain array. */
   return ll_next(ll_iter(it));
+}
+
+/* IS THE CURSOR EXHAUSTED? A FLAG, not a sentinel value.
+ *
+ * This function exists because the previous rule -- "nil means done" -- was wrong, and the comment
+ * that justified it said so out loud: "a sequence containing nil is not expressible anyway". It is.
+ * `[1 nil 2]` is an ordinary vector, and under the old rule a walk of it STOPPED AT THE nil: C
+ * rendered `[1,null,2]` as `[1]` while JS printed all three, silently, with no diagnostic. A leading
+ * nil lost the whole container. D9's single bottom value is exactly why the sentinel cannot work --
+ * "no more elements" and "an element that is nil" are the same value, so they cannot be the same
+ * channel.
+ *
+ * The floor's neighbours dodge this and cannot lend their trick: `codepoint-at` answers -1 and
+ * `file-open` answers -1 because a codepoint and a file descriptor are non-negative BY DEFINITION, so
+ * a negative is genuinely out of band. `next` answers a `T?` for a `T` the floor cannot name -- there
+ * is no value left over. A separate flag is the only total answer, which is C#'s
+ * `MoveNext()`/`Current` split: advancing reports WHETHER there was an element, and the element is
+ * read separately.
+ *
+ * TWO CURSOR KINDS, two answers:
+ *
+ *   * A BUILT-IN cursor (vector, string) is a closure over `ll_cursor_env`, identified by its own
+ *     step function -- so the flag is read straight off the env and a nil ELEMENT is just an element.
+ *   * A USER cursor is an object implementing D30's `(fn next [] -> T?)`, where nil genuinely is the
+ *     only signal the protocol offers. It keeps the old rule, which is correct FOR THAT PROTOCOL
+ *     rather than a fallback: a user iterator that must yield nil has to say so in its own type, and
+ *     changing `Iterator<T>`'s shape is a language decision this is not.
+ *
+ * `last` is the value `ll_next` just produced, needed only for the second case. */
+static int ll_iter_done(ll_value it, ll_value last) {
+  if (it.tag == LL_CLOSURE && it.as.fn->fn == ll_cursor_step) {
+    return ((ll_cursor_env *)it.as.fn->env)->done;
+  }
+  return last.tag == LL_NIL;
 }
 
 /* D58: release an ABANDONED sequence source. Total -- a value with no `dispose` member is left
