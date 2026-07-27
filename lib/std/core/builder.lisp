@@ -1,4 +1,4 @@
-;; std/text/builder -- a mutable string accumulator.
+;; std/core/builder -- a mutable string accumulator.
 ;;
 ;; Text is kept as CHUNKS and joined only when a String is asked for. That is the whole idea, and it
 ;; is worth stating why it is not merely a nicer spelling of `+`.
@@ -11,6 +11,13 @@
 ;; Here every `append` is one vector push, and `to-string` is ONE join. The join is the native
 ;; `.join`, which is a single pass on both backends (`ll_vec_join` on C, `Array.prototype.join` on JS)
 ;; rather than a fold of `+` -- so the total work is linear in the output, and the copy happens once.
+;;
+;; IT LIVES IN `std/core`, NOT `std/text`, and that is forced rather than aesthetic. Two modules in one
+;; package cannot import each other -- the loader reports `WLL0300 import cycle`, because pulling in a
+;; sibling re-enters the package that is still loading -- so anything meant to be a DEPENDENCY of
+;; `std/text` cannot live inside it, and `std/text/json` is built on this. It belongs here anyway: an
+;; accumulator is a primitive that text PROCESSING sits on, not a text-processing module, and
+;; `std/core/string` is its nearest neighbour.
 ;;
 ;; NO IMPORTS, deliberately. `.join` is a native member and `codepoint-length` is a floor entry (D50),
 ;; both ambient on both backends, so an accumulator that every other text module will want to sit on

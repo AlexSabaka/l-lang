@@ -7,7 +7,7 @@
 ;; That claim is not directly observable in a golden -- both spellings print the same string -- so
 ;; `chunk-count` is exposed and asserted below. It is the one visible consequence of not concatenating.
 (
-    (import "std/text/builder")
+    (import "std/core/builder")
 
     ;; -- appending and chaining --------------------------------------------------------------------
     ;;

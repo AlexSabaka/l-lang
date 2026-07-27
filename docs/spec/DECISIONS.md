@@ -5903,7 +5903,7 @@ so identical output on both backends is the evidence it was one.
 
 ## D76 — std/text/builder: a string accumulator, because `+` in a loop is quadratic (2026-07-27)
 
-`std/text/builder` is a `StringBuilder`: text goes in as CHUNKS and is joined only when a `String` is
+`std/core/builder` is a `StringBuilder`: text goes in as CHUNKS and is joined only when a `String` is
 asked for. Surface: `append`, `append-line`, `line-break`, `append-repeat`, `clear`, `length`,
 `chunk-count`, `is-empty`, `to-string`. Adapted from `string_builder_poc.lisp` in ../l-lang-codewars.
 
@@ -5935,3 +5935,80 @@ for display"; a builder is not a value being rendered, it is the thing doing the
 amendment records this), so declaring it would buy nothing a plain method does not.
 
 Pinned by `examples/16-stdlib/21_builder.lisp`, C-pinned, byte-identical on both backends.
+
+**Amended the same day**: this landed at `std/text/builder` and moved to `std/core/builder` when
+D77 built `std/text/json` on it. Two modules in one package cannot import each other (the loader
+reports `WLL0300 import cycle`, because pulling in a sibling re-enters the package that is still
+loading), so a module meant to be a DEPENDENCY of `std/text` cannot live inside it. An accumulator
+is a primitive that text processing builds on rather than a text-processing module, so beside
+`std/core/string` is where it belonged; the cycle is what made that visible.
+
+## D77 — std/text/json: the engine is l-lang, and the escape table is pinned by the host (2026-07-27)
+
+`std/text/json` is `to-json` / `to-json-pretty` / `parse-json` / `try-parse-json`, written in l-lang
+over the codepoint floor. It retires `JSON.stringify`, the last JavaScript host global still leaking
+past D50 — which had made `80-adversarial/hex_string_escape` and `spread_in_literals` `LL0107`-refused
+on C, i.e. the two files whose whole job is to notice a silent backend divergence could not run on the
+backend where one would happen.
+
+**An engine, not a binding**, for D67's reason: one source compiles to every backend, so there is no
+dialect to diverge on. Binding a C JSON library while JS kept `JSON.stringify` would have reproduced
+exactly the split D66 deprecated the JS backend to prevent — and JSON is full of places two
+implementations quietly disagree (which control characters get named escapes, whether non-ASCII is
+escaped, whether `1.0` renders as `1`).
+
+**The escape table is PINNED BY AN EXISTING GOLDEN, not chosen.** `hex_string_escape.expect` was
+recorded from the host and fixes U+001B as a four-digit lowercase `\u001b` rather than a named
+escape; `spread_in_literals.expect` fixes arrays as compact, no space after the comma. Both files
+keep their goldens **unchanged** across this module landing. An l-lang implementation reproducing a
+host's output byte for byte on files it never saw is a conformance test; recording fresh goldens would
+have been a blessing. Verified against `node`'s `JSON.stringify` on every non-obvious row,
+pretty-printing included.
+
+`hex_string_escape` is C-pinned by this. `spread_in_literals` is NOT: retiring its `JSON.stringify`
+uncovered a SECOND refusal underneath it — `(console.log ...a)`, spread into an INTRINSIC callee, which
+has no CIR lowering (logged debt from the D75 spread round). One blocker down, one still there, and
+now visible instead of hidden behind the first.
+
+**Placement: the builder moved to `std/core/builder`** (D76 landed it in `std/text`). Two modules in
+ONE package cannot import each other — the loader reports `WLL0300 import cycle` because pulling in a
+sibling re-enters the package that is still loading — so anything meant to be a DEPENDENCY of
+`std/text` cannot live inside it. A string accumulator is a primitive text processing builds on rather
+than a text-processing module, so `std/core` beside `string.lisp` is where it belonged anyway; the
+cycle is what made that visible. The alternative was for `json` to hand-roll its own accumulator,
+which is the duplication the one-owner-per-operation rule exists to prevent.
+
+**Numbers.** Rendering goes through the `display` renderer, ruled identical on both backends (D55), so
+a whole Real prints as `1` — matching the host, because JSON has one number type and l-lang's Int/Real
+distinction is not expressible in the output. Reading back therefore answers an Int; that asymmetry is
+the format's. On the way IN the rule is the language's own (D71): `.`, `e` or `E` makes it a Real,
+otherwise an Int through `try-parse-int`, which is exact and overflow-checked past 2^53 — so a 64-bit
+id round-trips instead of becoming a nearby double, the single most common JSON data-loss bug.
+
+**Non-JSON data is refused loudly.** A class instance or function has no JSON rendering, and both
+alternatives are worse than throwing: `null` loses the field silently, `{}` claims an object that never
+existed. Conversion is the caller's job; a `Jsonable` protocol would be a design round.
+
+**Two conventions, never three**: `parse-json` throws, `try-parse-json` answers nil — the split
+`std/core/string` already uses. Trailing content is refused, because accepting a prefix is how a
+truncated response is mistaken for a complete one.
+
+Pinned by `examples/16-stdlib/22_json.lisp`, C-pinned, byte-identical on both backends.
+
+### What it found: `for :each` over a boxed container truncates at nil on C
+
+Rendering `[1 nil 2]` gave `[1,null,2]` on JS and `[1]` on C, silently. **The iteration protocol spells
+"exhausted" as nil** (D30/D50), so a nil ELEMENT is indistinguishable from the end and a container is
+truncated at its first one. It is D9's in-band lie living inside the protocol D50 exists to keep
+identical — and the floor's own neighbours already avoid it, `codepoint-at` and `file-open` each
+answering -1 with a written note that a negative is out of band. `next` had no such value available.
+
+It only bites when BOXED, which is why nothing caught it: an `Any[]` parameter lowers to an index walk
+and is correct, while an `Any` parameter — the shape all dynamic-data code has — goes through
+`iter`/`next` and is not. So the two spellings of "walk this container" disagree only for containers
+holding nil, and only on C. A leading nil loses the whole container, so it is not an off-by-one.
+
+`std/text/json` walks boxed arrays BY INDEX through `get`, the floor's total accessor, which cannot be
+terminated by a value. `80-adversarial/boxed_nil_iteration.lisp` records the defect with the correct
+(JS) golden and is deliberately absent from `c-status.ts`, so C reports it as `not-yet` rather than
+red. **Fixing it needs an out-of-band "done" for `next` and is not this round.**

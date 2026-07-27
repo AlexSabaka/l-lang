@@ -1,0 +1,6 @@
+length: 3
+typed Any[]: 3
+boxed Any: 3
+boxed by index: 3
+boxed, no nil: 3
+leading nil: 3

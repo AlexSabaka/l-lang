@@ -273,6 +273,24 @@ export const C_PASSING: readonly string[] = [
   // is `length` -- CODEPOINTS (D52), where `.length` on the joined string would answer UTF-16 units
   // on JS and BYTES on C. `héllo wörld` is 11 on both only because the floor owns the question.
   "16-stdlib/21_builder.lisp",
+  // D77: std/text/json. The engine is l-lang, so both backends run one program -- and the escape
+  // table is pinned by two goldens RECORDED FROM THE HOST before the module existed, which is a
+  // conformance test rather than a blessing.
+  "16-stdlib/22_json.lisp",
+  // One of the two files `JSON.stringify` was holding hostage -- each exists to notice a silent
+  // backend divergence, and neither could run on the backend where one would happen. It keeps its
+  // ORIGINAL host-recorded golden, which is what makes the l-lang renderer's agreement evidence.
+  "80-adversarial/hex_string_escape.lisp",
+  //
+  // `spread_in_literals.lisp` is NOT here, and the reason is worth the line: retiring its
+  // `JSON.stringify` uncovered a SECOND refusal underneath, `(console.log ...a)` -- spread into an
+  // INTRINSIC callee, which has no CIR lowering (already-logged debt from the D75 spread round). So
+  // it is still LL0106-refused, for a different and now-visible reason. One blocker down, one left.
+  // NOT LISTED, deliberately: `80-adversarial/boxed_nil_iteration.lisp`. It records a LIVE C defect --
+  // `for :each` over a boxed container stops at the first nil element, because the iteration
+  // protocol spells "done" as nil (D9's in-band lie, inside the floor's own protocol). JS is correct
+  // and holds the golden; C fails it, which the runner reports as `not-yet`. When the protocol grows
+  // an out-of-band sentinel the ratchet will demand this line.
   // D67 prefixed literals. Purely lexical, so C is byte-identical -- which is the point: `r"…"`
   // costs nothing in the type system and needs no runtime support on either backend.
   "00-basics/10_string_prefixes.lisp",
