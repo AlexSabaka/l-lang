@@ -1,0 +1,35 @@
+epoch day: 0
+2026-07-27: 20661
+2000: true 1900: false 2024: true
+Feb 2024: 29 Feb 2100: 28
+iso: 2026-07-27
+weekday: 1 Monday
+month: July day of year: 208
+bijection over 202 sampled days, both signs: true
+day -1: 1969-12-31
+era base: 0000-03-01
+year -1: -0001-12-31
+negative year pads: -0044-03-15
+add 100 days: 2026-11-04
+back 100 days: 2026-07-27
+Jan 31 + 1 month: 2026-02-28
+and back again:   2026-01-28
+Jan 31 2024 + 1m: 2024-02-29
+Feb 29 + 1 year:  2025-02-28
+days between: 364
+time: 12:34:56
+with millis: 12:34:56.789
+from ns: 2026-01-27T00:00:00Z
+round trip ns: 1769472123456789000
+before epoch: 1969-12-31T23:59:59.999Z
+one day before: 1969-12-31T00:00:00Z
+manual clock: 2026-01-27T00:00:00Z
+after 1h1m1s: 2026-01-27T01:01:01Z
+today: 2026-01-27
+parse date: 2026-07-27
+parse negative: -0044-03-15
+parse instant: 2026-07-27T12:34:56Z
+parse fraction: 2026-07-27T12:34:56.789Z
+refused: CivilDate: day is out of range for that month: 30 in month 2
+refused: CivilDate: month is 1..12, got 13
+refused: parse-iso: a UTC offset is not supported (this calendar is UTC only): 2026-07-27T12:34:56+02:00

@@ -273,6 +273,11 @@ export const C_PASSING: readonly string[] = [
   // is `length` -- CODEPOINTS (D52), where `.length` on the joined string would answer UTF-16 units
   // on JS and BYTES on C. `héllo wörld` is 11 on both only because the floor owns the question.
   "16-stdlib/21_builder.lisp",
+  // D78: std/time/calendar -- Hinnant's civil algorithms, exact integer, zero floor entries. Pinned
+  // here for the NEGATIVE cases above all: the algorithms lean on `/` truncating toward zero, and the
+  // example round-trips 202 sampled days across both signs so a rounding disagreement between the
+  // backends cannot hide behind the positive range everybody actually tests.
+  "16-stdlib/23_calendar.lisp",
   // D77: std/text/json. The engine is l-lang, so both backends run one program -- and the escape
   // table is pinned by two goldens RECORDED FROM THE HOST before the module existed, which is a
   // conformance test rather than a blessing.

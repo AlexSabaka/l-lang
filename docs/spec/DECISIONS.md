@@ -6012,3 +6012,61 @@ holding nil, and only on C. A leading nil loses the whole container, so it is no
 terminated by a value. `80-adversarial/boxed_nil_iteration.lisp` records the defect with the correct
 (JS) golden and is deliberately absent from `c-status.ts`, so C reports it as `not-yet` rather than
 red. **Fixing it needs an out-of-band "done" for `next` and is not this round.**
+
+## D78 — std/time/calendar: proleptic Gregorian civil time, UTC, zero floor entries (2026-07-27)
+
+`std/time/calendar` turns a `clock-ns` reading into a date. Nothing in the language could do that —
+`std/sys/timers` answers 1769472000000000000 and stops — which is why `10-modifiers/03_timing_modifier`
+reached for `Date.now` and why the CLI scratchpads carry no timestamps.
+
+**ZERO FLOOR ENTRIES**, which is the ruling. Every line is integer arithmetic over the `clock-ns` entry
+the floor already has, so the calendar is portable by construction — exactly D50's shape: the
+irreducible part is "ask the host the time", everything above it is l-lang. Binding `localtime_r` was
+the alternative and is the divergence risk D50 exists to refuse: machine-dependent output, not
+goldenable, and different on two hosts by definition.
+
+**UTC ONLY, and stated rather than implied.** No time-zone type, no local rendering. A zone database
+is DATA — tzdata changes several times a year because governments change their minds — and shipping a
+stale copy inside a compiler is worse than not having one. Anything wanting a local rendering takes an
+offset from the caller, who knows something this library cannot. A parsed `+02:00` is REFUSED rather
+than ignored, because ignoring an offset silently shifts the instant.
+
+**The kernel is Howard Hinnant's `days_from_civil` / `civil_from_days`** (public domain), exact integer
+algorithms with no floating point. They are correct for negative years, which the naive
+`365*y + y/4 - y/100 + y/400` is not, and they are a BIJECTION rather than an approximation. The
+`- 399` and `- 146096` terms exist to make a TRUNCATING division behave like a flooring one on
+negatives — C99 and JS BigInt both truncate toward zero. That the two backends agree on this is
+ASSERTED, not assumed: the example round-trips 202 sampled days across both signs, because a shared
+wrong assumption about rounding is precisely what two agreeing backends cannot catch by agreeing.
+
+Day 0 is 1970-01-01, matching `clock-ns "wall"`. Weekday 0 is Sunday (`strftime %w`).
+
+**`CivilDate` / `CivilTime` / `CivilDateTime`, not `Date`.** The ambient prelude declares a JS host
+extern named `Date`, and the compiler said so — `WLL0240`, resolution takes `js.lisp`'s and *"which one
+that is depends on module processing order"*. A silently-wrong resolution is not a name worth keeping,
+and "civil" is Hinnant's own word for a y/m/d with no zone attached.
+
+**`utc-now` takes a `Clock`** rather than reading the wall clock itself, which is what makes a
+timestamp goldenable: under `ManualClock` every stamped line is exactly reproducible. Same argument
+`Ticker` and `Scheduler` are built on, and the reason `std/log` can have an exact golden.
+
+**Construction validates.** An impossible date is refused where it is written; `days-from-civil`
+answers a number for month 13 — the wrong one — so a `CivilDate` that cannot exist would otherwise
+propagate silently through arithmetic that accepts it. `add-months` CLAMPS at end of month
+(2026-01-31 + 1 month = 2026-02-28), stated because every date library must choose and the cost —
+adding a month is not invertible — should be visible rather than discovered.
+
+Pinned by `examples/16-stdlib/23_calendar.lisp`, C-pinned, byte-identical on both backends.
+
+### What it found: the JS backend loses Int precision on a chained method call
+
+`((from-epoch-ns 1769472123456789000).to-epoch-ns)` answers **...788992 on JS and ...789000 on C** —
+the JS emitter loses the Int type when a method is chained directly onto a parenthesised call result
+and rounds through a double. Binding the intermediate to a `let` first is exact on both. **C is the
+correct one**, which is the notable part: the usual direction of a divergence is the reverse.
+
+It matters beyond this module because nanoseconds since 1970 passed 2^53 in May 1970, so every real
+timestamp is in the range where this is wrong. Not fixed — D66 makes the JS backend oracle-only, "no
+longer fixed or extended" — and recorded here instead because it bears directly on the planned
+**differential fuzzer**: the oracle is not trustworthy for Int arithmetic across that shape, and a
+fuzzer that assumes it is would report C as the faulty side. The corpus writes the `let` form.
