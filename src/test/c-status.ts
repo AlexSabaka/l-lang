@@ -245,6 +245,11 @@ export const C_PASSING: readonly string[] = [
   "10-modifiers/04_retry_modifier.lisp",
   "07-types/06_decorator_reflection.lisp",
   "30-applications/03_undoable_modifier.lisp",
+  // The fifth decorator, unblocked by a two-line change rather than by backend work: it read the
+  // clock through `Date.now`, a JS host global on no floor, so it was LL0107-REFUSED here while the
+  // decorator machinery underneath it had been working since D75-d. `std/sys/timers`' `now-ns` is
+  // l-lang over the `clock-ns` floor entry, and the golden did not move.
+  "10-modifiers/03_timing_modifier.lisp",
   // D71 digit separators, and the 2^53 case that makes stripping them a precision requirement
   // rather than a cosmetic one -- C is where the raw-text path is read.
   "00-basics/09_digit_separators.lisp",
