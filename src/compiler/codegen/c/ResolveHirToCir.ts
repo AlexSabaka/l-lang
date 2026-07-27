@@ -92,6 +92,15 @@ interface ClassDesc {
   /** The transitive `:implements` closure -- D24 erases interfaces, so this is conformance's only
    *  runtime carrier (gap ledger §14.1). Consumed from the modeled `HClass.interfaces`. */
   interfaces: string[];
+  /** Every method callable on this class, INHERITED ENTRIES INCLUDED -- a child that does not override
+   *  carries the parent's entry verbatim, `cName` and all. That is what makes an override detectable
+   *  without a second table: `Add.methods.get("show").cName` is `__ll_method_BinOp_show` when `Add`
+   *  inherits it and `__ll_method_Add_show` when it overrides. See `overridesBelow`.
+   *
+   *  Filled by `registerClass` during the PRE-PASS (`collectClassesAndOperators`), which walks every
+   *  top-level declaration before a single body is lowered -- so the table is complete, for every
+   *  class, at the moment any method body asks a devirtualization question. `collectMethod` later
+   *  lowers the bodies; it adds no names. */
   methods: Map<string, { cName: string; params: CType[]; ret: CType }>;
   /** C names of `:ctor` initializer methods, in declaration order -- run on the object right after
    *  construction to compute derived fields (`this.full-name := ...`). */
@@ -2541,14 +2550,70 @@ export class ResolveHirToCir {
   }
 
   /** A method call on a typed struct/class receiver, devirtualized to a direct call with self. */
+  /**
+   * Does any class BELOW `className` override `method` with its own implementation?
+   *
+   * Answered by comparing C names: an inheriting child carries the parent's entry verbatim, so a
+   * DIFFERENT `cName` for the same method name is exactly an override. No second table, and nothing
+   * that can drift out of step with the one being read.
+   *
+   * The walk is over every registered class rather than a child index, because the pre-pass records
+   * `parent` and nothing builds the inverse edge. Class counts are small and this runs once per
+   * candidate call site.
+   */
+  private overridesBelow(className: string, method: string, baseCName: string): boolean {
+    for (const d of this.classes.values()) {
+      if (d.name === className) continue;
+      const own = d.methods.get(method);
+      if (!own || own.cName === baseCName) continue;
+      for (let p = d.parent; p; p = this.classes.get(p)?.parent) {
+        if (p === className) return true;
+      }
+    }
+    return false;
+  }
+
+  /** `(recv.method args)` through the class method table -- the same `ll_dyn_method` shape the native
+   *  fallback and the interface-typed receiver already use. Answers a boxed `ll_value`; P2 unboxes at
+   *  the consumer, exactly as it does for every other dynamically-dispatched call. */
+  private dynMethodCall(node: ast.ASTNode, recv: CExpr, method: string, cArgs: CExpr[]): CExpr {
+    const dyn = NATIVE_METHODS.get("dyn.method")!;
+    const nameLit: CExpr = { src: node, ctype: C_STR, kind: "c-lit", lit: "str", value: method };
+    const boxed: CExpr = { src: node, ctype: C_VALUE, kind: "c-box", inner: recv, from: recv.ctype };
+    return { src: node, ctype: dyn.ret, kind: "c-call", callee: { kind: "intrinsic", ...dyn }, args: [boxed, nameLit, ...cArgs] };
+  }
+
   private resolveObjMethod(node: ast.ASTNode, recv: CExpr, method: string, args: ast.ASTNode[], argVals?: CExpr[]): CExpr {
     const className = (recv.ctype as any).className as string;
     const desc = this.classes.get(className)!;
     const m = desc.methods.get(method);
     if (m) {
-      this.ledger.record("A3", "method-devirt", node, "method call devirtualized to a direct call with explicit self (SIL-style)");
       const cArgs = argVals ?? args.map((a) => this.resolveAstExpr(a));
-      return { src: node, ctype: m.ret, kind: "c-call", callee: { kind: "free", cName: m.cName, params: [{ k: "obj", className }, ...m.params], ret: m.ret }, args: [recv, ...cArgs] };
+      // DEVIRTUALIZE ONLY WHEN NOTHING BELOW OVERRIDES. Otherwise this is a VIRTUAL call and has to go
+      // through the method table, because the receiver's static class is an upper bound, not an
+      // identity -- `this` inside a base method is routinely a subclass instance, which is the entire
+      // point of declaring the method there.
+      //
+      // This used to devirtualize unconditionally, and it was a SILENT WRONG ANSWER rather than a
+      // missing feature. `09-oop/03_dispatch_and_type_patterns` has `BinOp.show` call `this.symbol`,
+      // overridden by `Add` and `Mul`: the emitted C called `__ll_method_BinOp_symbol` and printed the
+      // base's placeholder, so `((2 + 3) * (4 + (5 * 6)))` came out as `((2 ? 3) ? (4 ? (5 ? 6)))`.
+      // Nothing failed; the answer was simply wrong, on the supported backend.
+      //
+      // Why it survived: the same method's `this.left.show` DID dispatch dynamically -- `left` is
+      // typed as the INTERFACE `Node`, which has no class to devirtualize to. So a file exercising
+      // both shapes looked like it was testing virtual dispatch, and half of it was.
+      //
+      // The dynamic path costs a name lookup in the class's method table; the tables and their `_dyn`
+      // adapters were already emitted for every class (`__ll_methods_Add[]`), so this changes which
+      // call is emitted and nothing else. Devirtualization still applies to every method nobody
+      // overrides, which is nearly all of them.
+      if (!this.overridesBelow(className, method, m.cName)) {
+        this.ledger.record("A3", "method-devirt", node, "method call devirtualized to a direct call with explicit self (SIL-style)");
+        return { src: node, ctype: m.ret, kind: "c-call", callee: { kind: "free", cName: m.cName, params: [{ k: "obj", className }, ...m.params], ret: m.ret }, args: [recv, ...cArgs] };
+      }
+      this.ledger.record("A3", "method-virtual", node, `'${method}' is overridden below '${className}' -- dispatched through the method table`);
+      return this.dynMethodCall(node, recv, method, cArgs);
     }
     if (desc.fieldSlot.has(method)) {
       // `(obj.field)` with NO args is a D1 field READ; with args, a call through a field-held closure.

@@ -311,6 +311,13 @@ export const C_PASSING: readonly string[] = [
   // `JSON.stringify` uncovered a SECOND refusal underneath, `(console.log ...a)` -- spread into an
   // INTRINSIC callee, which has no CIR lowering (already-logged debt from the D75 spread round). So
   // it is still LL0106-refused, for a different and now-visible reason. One blocker down, one left.
+  // A BASE method calling an overridden method reaches the OVERRIDE. `resolveObjMethod` used to
+  // devirtualize on the receiver's static class without asking whether anything below it overrode --
+  // so `this.symbol` in a base method called the base's own, silently. Two levels of `:extends`, and
+  // the never-overridden case, which must still devirtualize.
+  "80-adversarial/virtual_dispatch_from_base.lisp",
+  // The file that FOUND it: `((2 + 3) * (4 + (5 * 6)))` came out as `((2 ? 3) ? (4 ? (5 ? 6)))`.
+  "09-oop/03_dispatch_and_type_patterns.lisp",
   // `for :each` over a BOXED container no longer stops at the first nil element. The cursor carries a
   // `done` flag now (C#'s MoveNext shape) instead of spelling "exhausted" as nil -- so a nil ELEMENT
   // is just an element. Written as a record of a live defect, promoted to a guard when it was fixed.

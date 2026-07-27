@@ -6214,3 +6214,43 @@ round would begin with an open-ended hunt rather than a fix, and there is no use
 while the flat spelling exists. It is recorded here and in `docs/roadmap.md` so that the next sighting
 has somewhere to attach — a second instance is what would make the shape reducible. Do not treat the
 absence of a diagnosis as the absence of a bug.
+
+## D81 — a base method's call to an overridden method is VIRTUAL on C (2026-07-27)
+
+`resolveObjMethod` devirtualized every method call whose receiver had a statically-known class,
+without asking whether anything BELOW that class overrides it. A receiver's static class is an UPPER
+BOUND, not an identity — `this` inside a base method is routinely a subclass instance, which is the
+entire reason the method was declared on the base — so the emitted call could not reach an override.
+
+**A silent wrong answer, not a missing feature.** `09-oop/03_dispatch_and_type_patterns` has
+`BinOp.show` call `this.symbol`, overridden by `Add` and `Mul`. The emitted C called
+`__ll_method_BinOp_symbol` and printed the base's placeholder, so `((2 + 3) * (4 + (5 * 6)))` came out
+as `((2 ? 3) ? (4 ? (5 ? 6)))`. Nothing failed; the answer was wrong, on the supported backend, and the
+file sat in the corpus classified as an ordinary "output mismatch".
+
+**Why the corpus missed it.** `09-oop/00_inheritance.lisp` is C-pinned and exercises `:extends` field
+and method inheritance, but never has a base method call an overridden one. And in the file that DID,
+the neighbouring `this.left.show` dispatched correctly — because `left` is typed as the INTERFACE
+`Node`, which has no class to devirtualize to. Half that expression was testing virtual dispatch and
+the other half only looked like it was.
+
+**The rule: devirtualize only when nothing below overrides.** An override is detected by comparing C
+names — an inheriting child carries the parent's method entry verbatim, `cName` included, so a
+different `cName` for the same method name IS an override. No second table, and nothing that can drift
+out of step with the one being read.
+
+The data is available early enough because `registerClass` fills `methods` during the PRE-PASS
+(`collectClassesAndOperators`), which walks every top-level declaration before a single body is
+lowered. `collectMethod` later lowers bodies and adds no names. (A first draft of this ruling assumed
+the opposite and planned a second name-only index; measurement showed the existing table is already
+complete at the point the question is asked.)
+
+**It stays a devirtualizing backend.** Measured across the corpus: **849 `method-devirt` dips against 5
+`method-virtual`** — only five call sites in the whole corpus need dynamic dispatch. The tables and their
+`_dyn` adapters were already emitted for every class, so this changes which call is emitted and
+nothing else.
+
+Pinned by `80-adversarial/virtual_dispatch_from_base.lisp` — two levels of `:extends` with the
+grandchild overriding only one of the two methods (so `describe` must reach `Dog.name` and
+`Puppy.speak` in one call), a base-TYPED binding holding a subclass instance, a virtual call two
+frames below the entry point, and a never-overridden method that must still devirtualize.

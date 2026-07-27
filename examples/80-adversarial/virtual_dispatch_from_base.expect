@@ -1,0 +1,6 @@
+animal:  animal says ...
+dog:     dog says woof
+puppy:   dog says yip
+as base: yip dog says yip
+no override: thud
+indirect: hello, dog says yip
