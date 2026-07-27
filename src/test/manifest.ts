@@ -97,13 +97,11 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "(placeholder for now)'. The example is at fault. Fixing it means adding a real " +
       "(defmodifier memoized ...) -- which examples/06-modifiers/ now has -- and authoring a golden.",
   },
-  "03-loops/02_more_for_loops.lisp": {
-    status: "xfail",
-    reason:
-      "D12 landed and the for-loops now PARSE. Blocked instead on ':inline' (LL0015) -- an " +
-      "undeclared modifier that appears nowhere else in the corpus and has no (defmodifier " +
-      "inline ...). The example is at fault, not the compiler.",
-  },
+  // Was xfail on TWO example faults, both now fixed: `:inline` applied with no `(defmodifier inline)`
+  // anywhere (LL0015), and a live call to `ij-loop-macro` whose `defmacro` is commented out. JS-only:
+  // on C the nested `fn`s declared in a `for :init` are not visible to `:cond`/`:step`, the parked
+  // `for :init` gap (roadmap Known gaps, with `03-loops/01_for`).
+  "03-loops/02_more_for_loops.lisp": { status: "test" },
   // Was xfail "parse failure, see Phase 3 (form layer)" -- and that diagnosis was wrong. There is no
   // form-layer gap here; the FILE was never valid l-lang. Three syntax typos (a stray `]` closing the
   // param list of `reduce-array` early, and `[a <- Int :b Int]` twice where the second parameter is
@@ -115,17 +113,12 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   // -> closure`, a raw stack trace out of EmitCirToC rather than a clean ELL0106 refusal -- when a
   // function declared `-> (fn [Int] -> Int)` returns a closure. That is a backend gap AND a
   // fail-loudly-but-cleanly gap; it is why this file is not in c-status.ts.
-  "04-pattern-matching/04_destructuring.lisp": {
-    status: "xfail",
-    reason:
-      "Re-measured 2026-07-22: parses and type-checks past the old blockers; its `-> nil` returns " +
-      "were corrected to `-> Void`. Now blocked on FOUR ELL0212s -- `a`, `b`, `r` and `name` are each " +
-      "declared twice in the one top-level scope, because the sections reuse names " +
-      "(`[r g b]` at :18 vs `[q r]` at :90, `{:name :age}` at :29 vs the nested `{:user {:name :id}}` " +
-      "at :43). Three of those are mechanical renames. The fourth is not: :76-80 does `(let a 1) " +
-      "(let b 2) (let [a b] [b a])` to demonstrate a SWAP, and D10 says a `let` binds once. Whether " +
-      "l-lang wants destructuring ASSIGNMENT is a language question.",
-  },
+  // Was xfail on FIVE `already declared` errors -- the top level is one scope and the sections reused
+  // `a`/`b`/`r`/`name` independently. Renamed, plus two sections written against the colon path
+  // (`person:name`), which D39 ruled is not a feature and which lexed as one identifier and emitted an
+  // undefined name. JS-only: the renames unmasked three C lowerings that do not exist yet --
+  // `destructuring-element:rest-pattern`, nested `map-pattern`, and `param-destructuring`.
+  "04-pattern-matching/04_destructuring.lisp": { status: "test" },
   "00-basics/03_optional_and_mutability.lisp": {
     status: "test",
   },
@@ -206,26 +199,20 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "20-algorithms/00_bfs.lisp": {
     status: "xfail",
     reason:
-      "Re-measured 2026-07-22: `new` expressions ARE typed now -- the diagnostic names `Point?`, " +
-      "which is the inferred type doing its job. The live blocker is nil-safety: ELL0205 " +
-      "'current is possibly nil (Point?)', from reading a field off a queue-shift result without " +
-      "checking it. D9 friction on a real algorithm, not a missing feature.",
+      "Re-measured 2026-07-27, and the blocker MOVED to the oracle. The two example faults are fixed: " +
+      "D9's forced nil-check on `queue.shift` (`Point?`) is written out, and `visited[key]` became " +
+      "`(get visited key)` because the INDEXER is partial and raised KeyError on every unvisited cell. " +
+      "C is now CORRECT -- all 13 lines match a hand-derived BFS trace ending `Found goal at 4, 4`. " +
+      "JS prints `Visiting 0, 0` twice and `No path found`, because it DROPS CONSTRUCTOR ARGUMENTS: " +
+      "`(new Point 3 4)` answers (0,0) for a class or struct with no explicit `:ctor`, so every queued " +
+      "point is the origin. Reduced to five lines; D66 says the JS backend is not fixed. No golden, " +
+      "because the corpus cannot yet say 'pinned against C, oracle known-wrong' -- the manifest is " +
+      "backend-independent. That mechanism is what this file and `hyphen_field_encoding` are both " +
+      "waiting on.",
   },
-  "20-algorithms/02_game_of_life.lisp": {
-    status: "xfail",
-    reason:
-      "The for-OF blocker is GONE (Pa): the old reason offered 'either add a :of clause to D12 or " +
-      "rewrite the example' -- the example was rewritten, to `:each dy :from offsets :then`. Pa also " +
-      "had to replace its `(not (and ...))` / `(or ...)` with `!`/`&&`/`||`, because the word-forms " +
-      "did not exist (`(and a b)` was LL0210 'and' is not defined). That is RESOLVED: D39 ruled the " +
-      "aliases in and Qd built them, so the example's ORIGINAL word-forms are restored -- the " +
-      "workaround outlived its cause by four commits. " +
-      "The file now COMPILES CLEAN and RUNS -- no diagnostics, exit 0 up to the throw. It fails at " +
-      "RUNTIME: `RangeError: IndexOutOfRange: -1 (length 3)`, because count-neighbors reads " +
-      "`grid[(+ y dy)]` with dy=-1 at y=0. The COMPILER IS CORRECT -- that is its emitted bounds " +
-      "check firing. The EXAMPLE is unfinished: its own comment at :10 says 'Simplified for brevity: " +
-      "assuming 3x3 grid without bounds check error'. Needs the bounds logic actually written.",
-  },
+  // The bounds check its own comment admitted was missing is now written -- one flat `and` whose
+  // short-circuit runs the bounds tests before the indexer that depends on them. Passes on BOTH.
+  "20-algorithms/02_game_of_life.lisp": { status: "test" },
   // THE STDLIB RUNS. It has a golden, it is executed on every `npm test`, in both frontends.
   //
   // It was xfail because it called `length`, `first`, `last` and `at` -- four functions that existed

@@ -563,6 +563,35 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     entry exists so the next one has somewhere to attach. `80-adversarial/cond_dangling_else.lisp` and
     `paren_absorption.lisp` are the neighbours; this family has bitten before.
 
+*   **The corpus cannot say "pinned against C, oracle known-wrong".** `manifest.ts` is
+    backend-independent — a file is `test` (graded on both) or `xfail` (graded on neither) — and
+    `c-status.ts` only ratchets which files C must not regress on. So a file where **C is correct and
+    JS is wrong** has nowhere to live: a golden would fail the JS run, and `xfail` leaves C's correct
+    answer ungraded and free to regress silently.
+
+    Two files are waiting on this today, and both were measured, not guessed:
+    - **`20-algorithms/00_bfs`** — C produces all 13 lines of a hand-derived BFS trace ending
+      `Found goal at 4, 4`; JS prints `Visiting 0, 0` twice then `No path found`.
+    - **`80-adversarial/hyphen_field_encoding`** — C makes all three spellings of `.next-dir` agree,
+      which is verbatim the "EXPECTED" block in the file's own header; JS mangles the dot access to
+      `next2ddir` and the map grows a second key.
+
+    D66 makes this a growing category rather than a temporary one: the oracle is frozen, so every
+    divergence found from here is a case where C is presumptively right. Round D's differential fuzzer
+    needs the same list, which is why this is worth a mechanism rather than a per-file note.
+
+*   **JS DROPS CONSTRUCTOR ARGUMENTS (oracle-only, D66).** For a class or struct with no explicit
+    `:ctor`, `(new Point 3 4)` answers `(0, 0)` on JS and `(3, 4)` on C. Reduced to five lines; it is
+    what makes `00_bfs` fail on the oracle. Not fixed — the JS backend is retained for differential
+    testing only — but it belongs on the known-divergence list Round D's fuzzer consumes, beside
+    chained-call Int precision (D78) and the skipped `:ctor` initializer (D80). This is the broader
+    defect of the two: the arguments never reach the constructor at all.
+
+*   **`KeyError` does not name the key on C.** JS raises `KeyError: 0,1`, C raises
+    `KeyError: missing key`. Cosmetic, and small, but it is the one D82 trap message that does NOT
+    match its JS twin — `ll_trap_index` was matched verbatim (`IndexOutOfRange: 99 (length 3)`)
+    precisely so a catchable trap reads the same on both. Found while fixing `00_bfs`.
+
 *   **PARKED (2026-07-27): decoration-time SETUP hoisting on C.** A decorator whose `defmodifier` body
     has statements before the wrapper — `(let cache {})` in `:memoized` — is refused BY NAME
     (`decorator-setup:<modifier> on '<fn>'`, `collectDecorated`) rather than dropped, because dropping

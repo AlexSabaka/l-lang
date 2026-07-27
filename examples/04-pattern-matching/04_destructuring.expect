@@ -1,0 +1,32 @@
+--- Vector Destructuring ---
+Coordinates: x= 10 , y= 20
+Color: R= 255  G= 128  B= 64
+First: 1 Second: 2 Rest: [3 4 5]
+--- Map Destructuring ---
+Person:  Alice , Age:  30
+User: Bob Smith
+--- Nested Destructuring ---
+User: Charlie (ID: 123 ) Theme: dark
+--- Destructuring in Functions ---
+Point: ( 5 ,  10 )
+Point: ( 100 ,  200 )
+Hello Diana you are 28 years old
+Hello Eve you are 35 years old
+--- Destructuring in Loops ---
+x= 1  y= 2
+x= 3  y= 4
+x= 5  y= 6
+--- Reading with a Default ---
+Host: localhost Timeout: 5000
+--- Swap Pattern ---
+Before: a= 1  b= 2
+After: a= 2  b= 1
+--- Multiple Returns ---
+17 / 5 =  3  remainder  2
+--- Destructuring in Pattern Matching ---
+User data: ID= 1  Name= Frank
+--- Complex Nested ---
+Status: success
+Item ID= 1  Value= A
+Item ID= 2  Value= B
+Item ID= 3  Value= C

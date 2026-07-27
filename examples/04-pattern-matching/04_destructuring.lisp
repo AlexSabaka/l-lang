@@ -40,8 +40,10 @@
         :user {:name "Charlie" :id 123}
         :settings {:theme "dark" :lang "en"}
     })
-    (let {:user {:name :id} :settings {:theme}} user-profile)
-    (console.log "User:" name "(ID:" id ") Theme:" theme)
+    ;; Aliased, because `name` is already bound by section 4 and D10 says a `let` binds ONCE -- so the
+    ;; nested key has to land under a name of its own rather than shadowing.
+    (let {:user {:name user-name :id user-id} :settings {:theme}} user-profile)
+    (console.log "User:" user-name "(ID:" user-id ") Theme:" theme)
 
     ;; 7. Destructuring in function parameters
     (console.log "--- Destructuring in Functions ---")
@@ -52,8 +54,12 @@
     (print-point [100 200])
 
     ;; 8. Destructuring map in function parameters
+    ;;
+    ;; `person["name"]`, not `person:name`. The colon path is NOT a feature (D39) -- it lexed as one
+    ;; identifier and emitted `person3aname`, an undefined name, which is why this section used to die
+    ;; at run time rather than be rejected.
     (fn greet [person <- {:name <- String :age <- Int}] -> Void (
-        (console.log "Hello" person:name "you are" person:age "years old")
+        (console.log "Hello" person["name"] "you are" person["age"] "years old")
     ))
     (greet {:name "Diana" :age 28})
     (greet {:name "Eve" :age 35})
@@ -65,20 +71,36 @@
         (console.log "x=" x " y=" y)
     ))
 
-    ;; 10. Destructuring with default values (if supported)
-    (console.log "--- Destructuring with Defaults ---")
+    ;; 10. Reading with a default
+    ;;
+    ;; There is no get-with-default form. `(config:host "default-host")` was reaching for one through
+    ;; the same non-existent colon path as section 8. What the language has is the TOTAL accessor:
+    ;; `(get m k)` answers nil for a missing key where the indexer `m[k]` raises KeyError, and the
+    ;; default is then an ordinary nil check.
+    (console.log "--- Reading with a Default ---")
     (let config {:host "localhost" :port 8080})
-    (let host (config:host "default-host"))  ;; Use value if exists, else default
-    (let timeout (config:timeout 5000))      ;; Default if not in config
+    (let raw-host (get config "host"))
+    (let raw-timeout (get config "timeout"))
+    (let host (if (== raw-host nil) "default-host" raw-host))
+    (let timeout (if (== raw-timeout nil) 5000 raw-timeout))
     (console.log "Host:" host "Timeout:" timeout)
 
     ;; 11. Swapping with destructuring
+    ;;
+    ;; The classic `[a b] = [b a]` is an ASSIGNMENT to two names that already exist. l-lang has no
+    ;; destructuring assignment today, and D10 says a `let` binds once -- so `(let [a b] [b a])` is
+    ;; `'a' is already declared in this scope`, not a swap. The swap is spelled as what it actually is
+    ;; here: a new binding whose pattern reads the old pair in the other order. Whether the language
+    ;; wants destructuring assignment as well is an open question, not something this file decides.
+    ;; `left`/`right` and not `a`/`b`: section 2's `[r g b]` already bound `b` in this same scope, and
+    ;; the top level IS one scope. Three of this file's five duplicate-declaration errors were that --
+    ;; sections written independently, reusing the obvious short names.
     (console.log "--- Swap Pattern ---")
-    (let a 1)
-    (let b 2)
-    (console.log "Before: a=" a " b=" b)
-    (let [a b] [b a])
-    (console.log "After: a=" a " b=" b)
+    (let left 1)
+    (let right 2)
+    (console.log "Before: a=" left " b=" right)
+    (let [swapped-a swapped-b] [right left])
+    (console.log "After: a=" swapped-a " b=" swapped-b)
 
     ;; 12. Multiple return value destructuring
     (console.log "--- Multiple Returns ---")
@@ -87,8 +109,9 @@
         (let remainder (% a b))
         (return [quotient remainder])
     ))
-    (let [q r] (divide-with-remainder 17 5))
-    (console.log "17 / 5 = " q " remainder " r)
+    ;; `rem` and not `r`: section 2's `[r g b]` already took `r` in this same scope.
+    (let [q rem] (divide-with-remainder 17 5))
+    (console.log "17 / 5 = " q " remainder " rem)
 
     ;; 13. Destructuring in pattern matching
     (console.log "--- Destructuring in Pattern Matching ---")

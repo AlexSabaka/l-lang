@@ -339,6 +339,10 @@ export const C_PASSING: readonly string[] = [
   // grouping-vs-block branch, and the implicit return (a body ending `99 ;; the value` returned the
   // comment). Six positions, both backends, one filter in `listNodes`.
   "80-adversarial/comment_in_value_position.lisp",
+  // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
+  // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check
+  // fired -- the compiler being right about an algorithm that was wrong.
+  "20-algorithms/02_game_of_life.lisp",
   // D67 prefixed literals. Purely lexical, so C is byte-identical -- which is the point: `r"…"`
   // costs nothing in the type system and needs no runtime support on either backend.
   "00-basics/10_string_prefixes.lisp",

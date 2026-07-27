@@ -1,0 +1,21 @@
+--- Complex Linear 2D For Loop ---
+--- Using Inline Function ---
+Inline Loop - i: 0, j: 0
+Inline Loop - i: 0, j: 1
+Inline Loop - i: 0, j: 2
+Inline Loop - i: 1, j: 0
+Inline Loop - i: 1, j: 1
+Inline Loop - i: 1, j: 2
+Inline Loop - i: 2, j: 0
+Inline Loop - i: 2, j: 1
+Inline Loop - i: 2, j: 2
+--- Direct Implementation ---
+i: 0, j: 0
+i: 0, j: 1
+i: 0, j: 2
+i: 1, j: 0
+i: 1, j: 1
+i: 1, j: 2
+i: 2, j: 0
+i: 2, j: 1
+i: 2, j: 2

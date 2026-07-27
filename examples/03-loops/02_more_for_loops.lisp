@@ -2,14 +2,21 @@
 ;;
 ;; This example demonstrates:
 ;; - C-style for loop (:init, :cond, :step, :then)
-;; - Loop variable scope
-;; - Break patterns
+;; - a `for :init` block declaring both the counters AND the functions that drive them
+;;
+;; The `:init` block is the point: it holds `mut` counters and two nested `fn`s that CLOSE OVER and
+;; MUTATE them, with `:cond` and `:step` then being plain calls. That shape is why this file is a
+;; JS-only test today -- on C the nested `fn`s declared in `:init` are not visible to `:cond`/`:step`
+;; (`ELL0107 'forward'`), the same `for :init` gap parked in the roadmap alongside `03-loops/01_for`.
 
 (
     ;; 1. Complex for loop
     (console.log "--- Complex Linear 2D For Loop ---")
 
-    (fn :inline ij-loop-inline [max-i max-j callback] 
+    ;; `:inline` was applied here without any `(defmodifier inline ...)` anywhere -- LL0015, and
+    ;; the modifier appears nowhere else in the corpus. Dropped rather than invented: an
+    ;; inlining hint is a language decision, not a thing an example gets to declare in passing.
+    (fn ij-loop-inline [max-i max-j callback] 
         (for
             :init (
                 (mut i 0)
@@ -51,10 +58,9 @@
     ;; ))
 
 
-    (console.log "--- Using Macro and Inline Function ---")
-    (ij-loop-macro i j 3 3 (
-        (console.log '"Macro Loop - i: {(i)}, j: {(j)}")
-    ))
+    ;; The `ij-loop-macro` call that stood here is gone with it: the `defmacro` it named is COMMENTED
+    ;; OUT above, so the call was to a function that does not exist. The commented block stays as a
+    ;; record of the intent -- macros are not a feature yet.
 
     (console.log "--- Using Inline Function ---")
     (ij-loop-inline 3 3 (fn [i j] (
