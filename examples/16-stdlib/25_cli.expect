@@ -1,0 +1,27 @@
+ll -- Compile and run l-lang programs
+
+Commands:
+  compile <file>        Compile a source file
+  run <file>            Compile and execute a source file
+
+Options:
+  -v, --verbose         Show compiler diagnostics
+  -I, --lib <path>      Add a library root
+
+ok: true command: compile positionals: ["a.lisp"]
+verbose: true lib: /opt/l
+separate value: /opt/l positionals: ["b.lisp"]
+short form: /x
+absent: nil has: false true
+after --: ["-v" "--lib"] verbose still: nil
+unknown option: false unknown option '--nope'
+unknown command: false unknown command 'deploy'
+missing value: option '--lib' needs a value
+value on a flag: option '--verbose' takes no value
+first error wins: unknown option '--nope'
+no commands: nil ["x.txt" "y.txt"] true
+  compiling main.lisp with lib /opt/l
+exit: 0
+  running main.lisp
+exit: 0
+exit on bad usage: 2

@@ -6130,3 +6130,64 @@ This is why `10-modifiers/02_logging_modifier` never hit it — its decorator bo
 `console.log`, which is a floor global. Any decorator touching module state needs the indirection until
 the unfold learns to capture module scope, which is the same gap as the still-refused
 decoration-time SETUP hoisting.
+
+## D80 — std/cli: parse answers a value, dispatch is a thin layer over it (2026-07-27)
+
+`std/cli` is `Opt` / `Command` / `Cli` / `ParseResult` / `parse` / `help-text` / `run`.
+`std/sys/process` gave a program its `args` and stopped there, so `cli_poc.lisp`,
+`a_scratchpad.lisp` and `b_scratchpad.lisp` in ../l-lang-codewars each hand-rolled the loop
+differently.
+
+**PARSE ANSWERS A VALUE.** `parse` produces a `ParseResult` — command, positionals, option map, or an
+error — and nothing else happens; the caller `match`es on it. That is what makes it testable without a
+process, a terminal or an exit code: a parser that dispatches cannot be asserted on without running
+the thing it dispatches to. `run` sits on top for the convenience case at fifteen lines, and it is
+optional — the scratchpads that started from the dispatch layer ended up with the grammar tangled
+inside it.
+
+`run` does **not** call `exit`; it answers a code (0, or 2 for a usage error). A library that
+terminates the process cannot be tested or embedded, and `main` is the caller's.
+
+**AN UNKNOWN FLAG IS AN ERROR IN THE RESULT, NOT A THROW.** A CLI parse failure is the single most
+likely thing a user does; the answer is a help screen and exit 2, which is a value the caller
+produces. A throw would make the most common path the exceptional one. The FIRST error wins — it is
+the one to fix.
+
+**The spec is DATA and the help screen is derived from it**, so the two cannot drift: there is one
+description of the grammar. That is the argument for a spec object over a pile of registrations.
+
+**The grammar, stated rather than discovered**: `--flag`, `--opt=value`, `--opt value`, `-f`,
+`-f value`, and `--` after which everything is an operand. **BUNDLING (`-abc`) is deliberately absent**
+— it is ambiguous the moment any short option takes a value, every implementation resolves that
+differently, and `--opt=value` already covers what bundling is reached for. A valued option at the END
+of argv is an ERROR, not an empty string: `--out` with no path is a typo, and binding "" silently is
+how a program writes to a file called nothing. A boolean given `=value` is likewise named rather than
+ignored, because dropping it is how `--verbose=false` turns verbosity ON.
+
+`run` invokes a handler through `call`, which passes the result AS WRITTEN — one argument, typed,
+arity checked (D25, pinned by `80-adversarial/call_spread_args.lisp`). **A typed function field works
+on C**: `(let :ctor action <- (fn [String[]] -> Void))` constructs, stores and invokes correctly on
+both backends. `cli_poc.lisp`'s comment that "function-valued class fields are not yet callable on C"
+is stale — measured, not assumed, and the third stale claim this round corrected.
+
+Pinned by `examples/16-stdlib/25_cli.lisp`, C-pinned, stdout byte-identical on both backends.
+
+### Two things this cost, both recorded
+
+**A `:ctor` initializer does not run on JS when the class has no `:ctor` PARAMETERS.** Measured:
+`(defclass T (mut m <- Any nil) (fn :ctor init [] (this.m := {})))` then `(T)` leaves `m` nil on JS
+and `{}` on C. **C is correct.** This is the second JS-emitter divergence found this round (D78 has
+the Int-precision one), both in the direction of JS being wrong, and both consistent with D66's
+"it may now degrade". Not fixed — JS is oracle-only. `ParseResult` therefore has exactly one
+constructor function, `new-result`, which creates the map explicitly; it also cannot use a
+map-literal field default, which has no CIR lowering on C (D79).
+
+**An OPEN QUESTION: nested `if` with `when` leaves produced two mutually exclusive outcomes.** Written
+as a three-argument `if` nested in the THEN branch of another, with `when` in the leaves, `--lib=/opt/l`
+BOTH consumed the following token as the value AND reported "option '--lib' takes no value" — while
+`takes-value` printed `true` from inside that same branch. No diagnostic. **The shape did not reduce**:
+plain nested if/else, and a `when` as an if branch, each behave correctly in isolation on both
+backends, so the trigger is the combination and is NOT characterised. Recorded here as an open
+question rather than a diagnosed bug, and worth a targeted round — the corpus already keeps
+`cond_dangling_else.lisp` and `paren_absorption.lisp` because this family has bitten before. The
+module is written with flat `cond` arms, which cannot absorb one another.

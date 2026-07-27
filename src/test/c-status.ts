@@ -273,6 +273,11 @@ export const C_PASSING: readonly string[] = [
   // is `length` -- CODEPOINTS (D52), where `.length` on the joined string would answer UTF-16 units
   // on JS and BYTES on C. `héllo wörld` is 11 on both only because the floor owns the question.
   "16-stdlib/21_builder.lisp",
+  // D80: std/cli -- parse answers a VALUE, dispatch is a thin optional layer over it. The `run`
+  // handler is invoked through `call`, which passes the ParseResult as ONE typed argument (D25) --
+  // the semantics `80-adversarial/call_spread_args.lisp` pins, and the reason a handler can be typed
+  // at all rather than taking `Any`.
+  "16-stdlib/25_cli.lisp",
   // D79: std/log -- the whole example runs on a ManualClock into a MemorySink, so the timestamps are
   // EXACT rather than "output happened". Includes a `:logged` decorator, which is the reason this
   // module waited for D75-d: a decorator is two ordinary functions on C now, not a composed value.

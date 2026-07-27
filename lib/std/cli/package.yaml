@@ -1,0 +1,2 @@
+name: std/cli
+sources: ["*.lisp"]
