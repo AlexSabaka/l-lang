@@ -1,0 +1,15 @@
+levels: 0 1 2 3 4 5
+names: INFO FATAL
+events: 2
+2026-01-27T00:00:00Z [INFO ] cache.miss key="product:42" tier="memory"
+2026-01-27T00:00:00.250Z [WARN ] payment.retrying attempt=2 reason="timeout"
+2026-01-27T00:00:00.250Z [INFO ] types s="text" n=42 r=1.5 b=true nothing=null xs=[1,2]
+2026-01-27T00:00:00.250Z [INFO ] request.started service="checkout" request-id="req-7" path="/pay"
+2026-01-27T00:00:00.250Z [INFO ] unrelated service="checkout"
+2026-01-27T00:00:00.250Z [INFO ] override service="billing" request-id="req-7"
+after filtering: 1
+enabled trace? false error? true
+{"timestamp":"2026-01-27T00:00:00.250Z","level":"INFO","event":"order.placed","properties":{"id":4210,"total":99.5}}
+result: 42
+2026-01-27T00:00:00.250Z [INFO ] call.entered args=[21]
+2026-01-27T00:00:00.250Z [INFO ] call.returned result=42

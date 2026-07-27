@@ -6070,3 +6070,63 @@ timestamp is in the range where this is wrong. Not fixed — D66 makes the JS ba
 longer fixed or extended" — and recorded here instead because it bears directly on the planned
 **differential fuzzer**: the oracle is not trustworthy for Int arithmetic across that shape, and a
 fuzzer that assumes it is would report C as the faulty side. The corpus writes the `let` form.
+
+## D79 — std/log: a logger takes a Clock, and an event is a name plus properties (2026-07-27)
+
+`std/log` is `Level` / `LogEvent` / `Sink` / `ConsoleSink` / `JsonSink` / `MemorySink` / `Logger`.
+Adapted from `logger_poc.lisp` in ../l-lang-codewars, which sampled three API shapes and reached its
+own conclusion — all three normalise to a `LogEvent` — so that is the type and the spellings are ways
+to build one.
+
+**A LOGGER TAKES A CLOCK, which is what makes logging testable.** Every line carries a timestamp, and
+a timestamp read from the wall clock differs every run — so a logging module measured against the real
+clock can assert that output was PRODUCED and nothing about what it said. That is a smoke check, not a
+test. `Logger` takes a `Clock` exactly as `Ticker` and `Scheduler` do, so under `ManualClock` the
+timestamps are exact and a transcript is a golden. `MemorySink` is the other half: it keeps events
+rather than printing them, so assertions are about events — count, level, properties — instead of
+scraped stdout. Same philosophy D65 states as "seeded determinism IS the API".
+
+**AN EVENT IS A NAME PLUS PROPERTIES. NO MESSAGE TEMPLATES.** Serilog's `"User {Name} logged in"` is a
+second string language: a parser, an escaping rule, and a holes-vs-arguments mismatch catchable only at
+run time. l-lang already has interpolation checked at COMPILE time, so a template parser here would be
+a worse duplicate of something the language does better. The event NAME is what you grep and alert on;
+properties stay structured all the way to the sink, and rendering is the SINK's choice.
+
+Property values render through `to-json` (D77), so a String is quoted and a container keeps its shape.
+`display` renders `hello` and `"hello"` identically — the ambiguity that makes a log line unparseable
+exactly when you need to parse it.
+
+**Levels are a `defenum` with NO explicit values**, so members fold to ordinals 0..5 and `>=` filtering
+is ordinary integer comparison. Explicit values would be a trap: a member FOLLOWING an explicit one
+takes its ordinal rather than predecessor+1 (pinned by `07-types/07_enum_reflection`), so a
+hand-numbered tower would silently renumber itself. D70 makes the names reflectable.
+
+**`with` answers a NEW logger.** A child adding a request id must not add it to its parent — the bug
+every hand-rolled contextual logger has, and one that only appears once two requests are in flight,
+i.e. never in testing. An event property WINS over context on a collision: the specific beats the
+general, and the reverse would let a logger-wide field silently mask a call site's own.
+
+Pinned by `examples/16-stdlib/24_log.lisp`, C-pinned, byte-identical on both backends.
+
+### Two C constraints this surfaced
+
+**A class field cannot DEFAULT to a map literal.** `(mut context <- Any {})` is
+`ELL0106: no CIR lowering exists for 'map'`. A VECTOR-literal default is fine — `MemorySink`'s
+`(mut events <- LogEvent[] [])` compiles — so it is specifically the map literal. Worked around with a
+`:ctor` initializer (`(this.context := {})`), which lowers, and recorded rather than absorbed.
+
+**A decorator's wrapper body cannot close over a module-level `let`.** D75-d's static unfold lifts the
+wrapper into a TOP-LEVEL C function, where a module-level `let` is not in scope: writing
+`(audit.info ...)` inside the wrapper emits a reference to `u_audit` that no declaration produces, and
+the C compiler rejects it. A top-level FUNCTION *is* visible from the lifted body and can reach the
+module global itself, so one level of indirection is the entire fix:
+
+```lisp
+(fn audit-info [name <- String props <- Any] -> Void (audit.info name props))
+(defmodifier logged [] (fn [original ...args] (audit-info "call.entered" { :args args }) …))
+```
+
+This is why `10-modifiers/02_logging_modifier` never hit it — its decorator body only reaches
+`console.log`, which is a floor global. Any decorator touching module state needs the indirection until
+the unfold learns to capture module scope, which is the same gap as the still-refused
+decoration-time SETUP hoisting.

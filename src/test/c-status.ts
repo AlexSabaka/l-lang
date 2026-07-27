@@ -273,6 +273,10 @@ export const C_PASSING: readonly string[] = [
   // is `length` -- CODEPOINTS (D52), where `.length` on the joined string would answer UTF-16 units
   // on JS and BYTES on C. `héllo wörld` is 11 on both only because the floor owns the question.
   "16-stdlib/21_builder.lisp",
+  // D79: std/log -- the whole example runs on a ManualClock into a MemorySink, so the timestamps are
+  // EXACT rather than "output happened". Includes a `:logged` decorator, which is the reason this
+  // module waited for D75-d: a decorator is two ordinary functions on C now, not a composed value.
+  "16-stdlib/24_log.lisp",
   // D78: std/time/calendar -- Hinnant's civil algorithms, exact integer, zero floor entries. Pinned
   // here for the NEGATIVE cases above all: the algorithms lean on `/` truncating toward zero, and the
   // example round-trips 202 sampled days across both signs so a rounding disagreement between the
