@@ -1937,6 +1937,23 @@ export class ResolveHirToCir {
       case "import":
         this.ledger.record("A9-extern", "import", node, "module import skipped (v0 intrinsics stand in for the stdlib)");
         return [];
+      // An EXPORT emits nothing, for the same reason an import does: it is a symbol-table fact, and
+      // the passes that consume it (`BuildSymbolTableAstVisitor`, `InlineImportsAstVisitor`) have long
+      // since run. There is no C to generate for "this name is visible outside the module".
+      //
+      // Its absence here was not a decision, it was a HOLE: `resolveAstStmt`'s `default` arm treats an
+      // unrecognised node as "an expression evaluated for effect" and hands it to `resolveAstExpr`,
+      // which has no arm for it either -- so a module ending in `(export …)` refused with
+      // `ELL0106 Cannot generate C for 'export'`. That was SIX of the C backend's eleven refusals
+      // (`15-modules/00_lib`, `01_lib_a/b/c`, `18-error-handling/20_imported_error_lib` and
+      // `21_imported_error_tower_lib`), each carrying a golden it never reached, and every one of them
+      // a module whose only sin was declaring what it exports.
+      //
+      // Not ledger-recorded, unlike `import`. A skipped import is a real gap being tracked -- the v0
+      // intrinsics stand in for the stdlib and one day will not. A skipped export is complete: there
+      // is nothing further to emit, now or later.
+      case "export":
+        return [];
       case "type-def":
       case "interface":
       case "modifier-def":

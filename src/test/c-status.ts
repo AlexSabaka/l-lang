@@ -273,6 +273,17 @@ export const C_PASSING: readonly string[] = [
   // is `length` -- CODEPOINTS (D52), where `.length` on the joined string would answer UTF-16 units
   // on JS and BYTES on C. `héllo wörld` is 11 on both only because the floor owns the question.
   "16-stdlib/21_builder.lisp",
+  // `export` lowers to nothing on C (it is a symbol-table fact, consumed long before codegen). Its
+  // absence was a HOLE, not a decision: `resolveAstStmt`'s default arm handed the node to
+  // `resolveAstExpr`, which has no arm either, so ANY module declaring what it exports refused with
+  // ELL0106. These six each carried a golden they never reached -- SIX of the eleven C refusals, one
+  // missing case.
+  "15-modules/00_lib.lisp",
+  "15-modules/01_lib_a.lisp",
+  "15-modules/01_lib_b.lisp",
+  "15-modules/01_lib_c.lisp",
+  "18-error-handling/20_imported_error_lib.lisp",
+  "18-error-handling/21_imported_error_tower_lib.lisp",
   // D80: std/cli -- parse answers a VALUE, dispatch is a thin optional layer over it. The `run`
   // handler is invoked through `call`, which passes the ParseResult as ONE typed argument (D25) --
   // the semantics `80-adversarial/call_spread_args.lisp` pins, and the reason a handler can be typed

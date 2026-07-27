@@ -563,7 +563,9 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     entry exists so the next one has somewhere to attach. `80-adversarial/cond_dangling_else.lisp` and
     `paren_absorption.lisp` are the neighbours; this family has bitten before.
 
-*   **`export` has no CIR lowering, and it is SIX of the eleven C refusals.** `(export …)` at a module's
+*   ~~**`export` has no CIR lowering, and it is SIX of the eleven C refusals.**~~ — **FIXED.** One
+    `case "export": return []` beside the existing `import` arm. C went 239 -> 245 passing, refusals
+    11 -> 5, and the six files now grade against goldens they had never reached. Original entry: `(export …)` at a module's
     top level is `ELL0106 Cannot generate C for 'export'`, so any module carrying one cannot be compiled
     standalone — `15-modules/00_lib`, `01_lib_a/b/c`, `18-error-handling/20_imported_error_lib` and
     `21_imported_error_tower_lib` all refuse for this one reason, each with a golden it never reaches.
