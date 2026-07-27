@@ -48,18 +48,47 @@ const NUMERIC = (t: CType) => t.k === "int" || t.k === "real";
 /** The vec-of-boxed-values type: what a REST parameter receives, and what `ll_list` returns. */
 const VEC_OF_VALUE: CType = { k: "vec", elem: C_VALUE };
 
+/**
+ * Escape one source name into C's identifier alphabet, INJECTIVELY.
+ *
+ * The old spelling was `name.replace(/[^A-Za-z0-9_]/g, ch => "_" + hex)`, which is not injective for
+ * two independent reasons -- and both bit:
+ *
+ *   1. `_` PASSED THROUGH UNESCAPED, so an escape was indistinguishable from a literal underscore
+ *      followed by hex digits: `a-b` -> `u_a` + `_2d` + `b` = `u_a_2db`, and `a_2db` -> `u_a_2db`.
+ *      Two distinct bindings, one C identifier.
+ *   2. THE HEX RUN HAD NO TERMINATOR, and a codepoint's hex is variable-length. ` ac` (space, a, c)
+ *      escapes to `_20` + `ac`; U+20AC escapes to `_20ac`. Same string. Escaping `_` alone would have
+ *      left this one live.
+ *
+ * So: `_` doubles to `__`, and every other disallowed character becomes `_<hex>_`. A `_` is followed
+ * by either another `_` (a literal underscore) or by at least one hex digit and a closing `_` (an
+ * escape) -- and hex digits are never `_`, so the two cases are told apart by the second character.
+ *
+ * This also makes the METHOD-NAME JOIN injective, which was a separate reported collision:
+ * `__ll_method_<class>_<method>` could be reached two ways, class `Foo` + method `bar_baz` and class
+ * `Foo_bar` + method `baz`. Neither part can now produce a lone `_`, so the separator is unambiguous:
+ * `Foo_bar__baz` and `Foo__bar_baz`.
+ */
+function escapeC(name: string): string {
+  let out = "";
+  for (const ch of name) {
+    if (ch === "_") out += "__";
+    else if (/[A-Za-z0-9]/.test(ch)) out += ch;
+    else out += `_${ch.codePointAt(0)!.toString(16)}_`;
+  }
+  return out;
+}
+
 /** Mangle an l-lang identifier into a collision-free C identifier. Lowering temps pass through. */
 export function mangleC(name: string): string {
   if (name.startsWith("__ll_hir")) return name;
-  return (
-    "u_" +
-    name.replace(/[^A-Za-z0-9_]/g, (ch) => `_${ch.codePointAt(0)!.toString(16)}`)
-  );
+  return "u_" + escapeC(name);
 }
 
 /** Mangle without the `u_` user prefix, for compiler-synthesized symbols (class/method names). */
 function mangleBare(name: string): string {
-  return name.replace(/[^A-Za-z0-9_]/g, (ch) => `_${ch.codePointAt(0)!.toString(16)}`);
+  return escapeC(name);
 }
 
 /** Encode an operator's characters to hex, mirroring the JS backend's encodeIdentifier. */

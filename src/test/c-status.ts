@@ -339,6 +339,11 @@ export const C_PASSING: readonly string[] = [
   // grouping-vs-block branch, and the implicit return (a body ending `99 ;; the value` returned the
   // comment). Six positions, both backends, one filter in `listNodes`.
   "80-adversarial/comment_in_value_position.lisp",
+  // `mangleC` was not injective: `_` passed through unescaped, so `a-b` and `a_2db` both became
+  // `u_a_2db` -- a `cc` redefinition when both are globals, and a SILENT wrong answer when one is a
+  // parameter shadowing the other (10 where JS said 116). The same escape fixes the
+  // `__ll_method_<class>_<method>` join, which `Foo`+`bar_baz` and `Foo_bar`+`baz` both reached.
+  "80-adversarial/mangle_injective.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check
   // fired -- the compiler being right about an algorithm that was wrong.

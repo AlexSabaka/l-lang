@@ -1,0 +1,5 @@
+two globals: 111 222
+shadowed:   116
+join:       Foo.bar_baz Foo_bar.baz
+kebab:      12 Ada
+underscore: 1 2 3 4

@@ -6340,3 +6340,48 @@ classifier).
 Pinned by `80-adversarial/comment_in_value_position.lisp`, C-passing, all six positions plus the
 comment-free twin of each — the twin is the assertion, since the finding is that two spellings of one
 block must agree.
+
+## D84 — the C name mangling is injective (2026-07-27)
+
+Reported by the 2026-07-27 adversarial audit as six of its 29 findings; triaged to **two roots**, both
+confirmed, both closed by one function.
+
+`mangleC` escaped each character outside `[A-Za-z0-9_]` to `_<hex>` and let `_` through untouched, so
+the escape was **not self-delimiting**:
+
+    a-b     ->  u_a + _2d + b  =  u_a_2db
+    a_2db   ->  u_a_2db
+
+Two distinct source names, one C identifier. It surfaced two ways, and the audit led with the milder:
+
+*   **hard failure** — `cc: error: redefinition of 'u_a_2db'`, no binary produced;
+*   **SILENT WRONG ANSWER** — when one of the pair is a PARAMETER it does not redefine the global, it
+    **shadows** it. `(let a-b 111)` with a parameter `a_2db` printed **10 where JS printed 116**, and
+    nothing anywhere reported a problem. That is the reason this went first among the audit's items:
+    it is the only confirmed finding in the report that produced a wrong answer with no diagnostic.
+
+**The method-name join had the same defect, independently.** `__ll_method_<class>_<method>` is
+reachable two ways — class `Foo` with method `bar_baz`, and class `Foo_bar` with method `baz` — because
+either part could contain the `_` used as the separator.
+
+**Ruled: the escape is `_` → `__`, everything else → `_<hex>_`.** A `_` is followed by either another
+`_` (a literal underscore) or by at least one hex digit and a closing `_` (an escape); a hex digit is
+never `_`, so the two cases are distinguished by the second character alone. Since neither half of the
+join can now emit a lone `_`, the separator is unambiguous and the join is injective as a consequence —
+one change, both roots.
+
+**The terminator is not decoration, and this is the part the audit's own proposed fix would have
+missed.** It suggested escaping `_` (as `_5f`). That leaves a second, independent collision live,
+because a codepoint's hex is **variable-length**:
+
+    x-ac    ->  x + _2d + ac   =  x_2dac      (`-` is U+002D, two hex digits)
+    xⶬ      ->  x + _2dac      =  x_2dac      (`ⶬ` is U+2DAC, four)
+
+Non-ASCII identifiers lex, so that pair is reachable rather than theoretical. C answers `10 20`
+correctly now. It is **not** in the corpus example: the **JS backend has the identical collision** and
+emits `const x2dac` twice — a syntax error — so the file could not pass on both backends. Logged with
+the other "C right, oracle wrong" cases waiting on a way to pin them.
+
+Pinned by `80-adversarial/mangle_injective.lisp`, C-passing: the colliding pair as two globals, the
+silent shadowing shape, the join at two classes, and — as the guard that the longer escape did not
+break the common case — ordinary kebab names plus `snake_case`/`snake-case`/`_leading`/`trailing_`.

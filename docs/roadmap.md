@@ -569,7 +569,9 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     JS is wrong** has nowhere to live: a golden would fail the JS run, and `xfail` leaves C's correct
     answer ungraded and free to regress silently.
 
-    Two files are waiting on this today, and both were measured, not guessed:
+    Three files are waiting on this today, and all were measured, not guessed:
+    - **variable-length hex in the C mangler (D84)** — `x-ac` and `xⶬ` are distinct on C and collide on
+      JS, which emits `const x2dac` twice and is saved only by that being a JS syntax error.
     - **`20-algorithms/00_bfs`** — C produces all 13 lines of a hand-derived BFS trace ending
       `Found goal at 4, 4`; JS prints `Visiting 0, 0` twice then `No path found`.
     - **`80-adversarial/hyphen_field_encoding`** — C makes all three spellings of `.next-dir` agree,
