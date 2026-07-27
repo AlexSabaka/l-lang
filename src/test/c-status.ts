@@ -245,6 +245,11 @@ export const C_PASSING: readonly string[] = [
   "10-modifiers/04_retry_modifier.lisp",
   "07-types/06_decorator_reflection.lisp",
   "30-applications/03_undoable_modifier.lisp",
+  // `(call f a b)` passes its arguments AS WRITTEN (D25) -- a vector is ONE argument, not a spread.
+  // `call_nullary_c.lisp` pinned only the zero-argument shape, and both runtimes still carry a
+  // SPREADING `call` shim that the desugar sits above and no source-level `call` reaches. Reading the
+  // shim and concluding the language spreads is a mistake this file now makes unrepeatable.
+  "80-adversarial/call_spread_args.lisp",
   // The fifth decorator, unblocked by a two-line change rather than by backend work: it read the
   // clock through `Date.now`, a JS host global on no floor, so it was LL0107-REFUSED here while the
   // decorator machinery underneath it had been working since D75-d. `std/sys/timers`' `now-ns` is

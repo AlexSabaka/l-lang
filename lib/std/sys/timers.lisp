@@ -40,11 +40,26 @@
 ;; spelling is the one whose name does not promise ambient firing.
 ;;
 ;; -----------------------------------------------------------------------------------------------
-;; A CALLBACK TAKES NO ARGUMENTS, and that is currently forced too. `(call f args)` does not SPREAD:
-;; it compiles to `f(args)`, handing the callback the argument vector as a single value. On JS that
-;; can look right by coercion -- `(call double [21])` answers 42, because `[21] * 2` is 42 -- and on C
-;; it traps honestly. Zero-argument callbacks are unaffected, which is the shape a timer wants
-;; anyway; nothing here may grow an argument until that is fixed.
+;; A CALLBACK TAKES NO ARGUMENTS, which is a CHOICE here rather than a limitation -- an earlier
+;; version of this paragraph said it was forced, and that was wrong in a way worth recording.
+;;
+;; `(call f args)` does not SPREAD: it compiles to `f(args)`, handing the callback the argument vector
+;; as a single value. That much was right, and it is D25's application form -- `DesugarAstVisitor`
+;; rewrites `(call f a b)` into an ordinary call node, so `call` means exactly what head position
+;; means, with the arity and the argument types CHECKED. What was wrong was the conclusion drawn from
+;; it: "nothing here may grow an argument until that is fixed" framed a ruled semantics as a pending
+;; defect. Nothing is broken, so nothing is going to be fixed, and a callback CAN take an argument
+;; today -- `(call f payload)` passes `payload`, typed.
+;;
+;; Both runtimes do still carry a spreading `call` shim underneath (`ll_call_dyn` is
+;; `ll_call(fn, a->len, a->items)`; the JS side is `Array.isArray(args) ? f(...args) : f()`), and
+;; reading either one and concluding the language spreads is the exact mistake the paragraph above
+;; inverted. The desugar sits over them and no source-level `call` reaches that path.
+;; `80-adversarial/call_spread_args.lisp` pins the real semantics on both backends.
+;;
+;; A `Task` still holds `Any` and fires with no arguments, because a TIMER has nothing to pass: the
+;; callback already closed over everything it needs. That is the argument for the nullary shape, and
+;; it does not need a language limitation propping it up.
 (
     ;; -- units -------------------------------------------------------------------------------------
     ;;
