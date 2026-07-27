@@ -6011,7 +6011,15 @@ holding nil, and only on C. A leading nil loses the whole container, so it is no
 `std/text/json` walks boxed arrays BY INDEX through `get`, the floor's total accessor, which cannot be
 terminated by a value. `80-adversarial/boxed_nil_iteration.lisp` records the defect with the correct
 (JS) golden and is deliberately absent from `c-status.ts`, so C reports it as `not-yet` rather than
-red. **Fixing it needs an out-of-band "done" for `next` and is not this round.**
+red.
+
+**RULED (Sabaka, 2026-07-27): the cursor carries a `done <- Boolean` flag** — C#'s
+`IEnumerator.MoveNext()` shape, where advancing answers *whether there was an element* and the element
+is read separately. That takes "exhausted" out of the value space entirely, so no value can terminate a
+walk, and it generalises where a sentinel cannot: `-1` works for `codepoint-at` because a codepoint is
+non-negative, but `next` answers `T?` for a `T` the floor cannot name, so there is no out-of-band value
+available to pick. Once it lands, `boxed_nil_iteration.lisp` joins `c-status.ts` and the by-index
+workarounds in `std/text/json` can go back to `for :each`.
 
 ## D78 — std/time/calendar: proleptic Gregorian civil time, UTC, zero floor entries (2026-07-27)
 
@@ -6191,3 +6199,9 @@ backends, so the trigger is the combination and is NOT characterised. Recorded h
 question rather than a diagnosed bug, and worth a targeted round — the corpus already keeps
 `cond_dangling_else.lisp` and `paren_absorption.lisp` because this family has bitten before. The
 module is written with flat `cond` arms, which cannot absorb one another.
+
+**PARKED (Sabaka, 2026-07-27)**, deliberately and with the reason written down: it is not reduced, so a
+round would begin with an open-ended hunt rather than a fix, and there is no user-visible breakage
+while the flat spelling exists. It is recorded here and in `docs/roadmap.md` so that the next sighting
+has somewhere to attach — a second instance is what would make the shape reducible. Do not treat the
+absence of a diagnosis as the absence of a bug.

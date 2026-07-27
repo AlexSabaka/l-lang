@@ -550,6 +550,26 @@ refused by ruling (D60), and the collector (D59) is a separate lane.
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
+*   **PARKED (2026-07-27): a nested `if` with `when` leaves ran BOTH branches.** Found building
+    `std/cli` (D80). Written as a three-argument `if` nested in the THEN branch of another, with `when`
+    in the leaves, `--lib=/opt/l` BOTH consumed the following token as its value AND reported
+    "option '--lib' takes no value" — two mutually exclusive outcomes in one pass, while the flag
+    printed `true` from inside that same branch. No diagnostic, on either backend.
+
+    **It did not reduce.** Plain nested if/else, and a `when` as an if branch, are each correct in
+    isolation on both backends, so the trigger is the combination and is not characterised. Parked
+    deliberately: a round would open with an open-ended hunt rather than a fix, and the flat `cond`
+    spelling has no user-visible breakage. **A second sighting is what would make it reducible** — this
+    entry exists so the next one has somewhere to attach. `80-adversarial/cond_dangling_else.lisp` and
+    `paren_absorption.lisp` are the neighbours; this family has bitten before.
+
+*   **`export` has no CIR lowering, and it is SIX of the eleven C refusals.** `(export …)` at a module's
+    top level is `ELL0106 Cannot generate C for 'export'`, so any module carrying one cannot be compiled
+    standalone — `15-modules/00_lib`, `01_lib_a/b/c`, `18-error-handling/20_imported_error_lib` and
+    `21_imported_error_tower_lib` all refuse for this one reason, each with a golden it never reaches.
+    Codegen-wise an export is a no-op (it is a symbol-table fact, already consumed by the imports pass),
+    so this is plausibly a very small fix with a disproportionate effect on the refusal count.
+
 *   **`__ll_member` is a thermometer.** Where the checker cannot type a receiver, `(obj.m)` is dispatched
     at run time rather than guessed (D1, amended by Xe). It is correct, and it is also a **measurement**:
     every site that reaches it is a receiver the type checker failed to infer. It read **50** sites; three
