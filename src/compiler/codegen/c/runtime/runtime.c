@@ -2032,6 +2032,30 @@ static ll_value ll_call_spread(ll_value fn, size_t n, const int *spread, ll_valu
   return ll_call(fn, (int)v->len, v->items);
 }
 
+/* `(console.log ...xs)` -- a spread into a VARIADIC INTRINSIC, the third and last call shape spread
+ * had to learn. The first two (a vector literal, a call to an l-lang function) landed with D75; this
+ * one is different because the callee is a C function called directly, not a value passed to `ll_call`,
+ * so there is nothing to hand a built argument list to.
+ *
+ * Building the vector and then passing `v->len, v->items` needs the vector TWICE, which a C expression
+ * cannot do without a statement-expression (a GCC extension this runtime does not use). Passing the
+ * function itself solves it: the helper holds the vector in a local and makes the call.
+ *
+ * TWO of them, split on the return type rather than cast between function pointer types, because
+ * calling a function through an incompatible pointer type is undefined behaviour (C11 6.3.2.3p8) --
+ * `ll_console_log` returns void and `ll_list` returns `ll_value`, and -fsanitize would flag the cast
+ * even where it happens to work. Every variadic intrinsic takes `(int, ll_value *)`, so these two
+ * cover all of them. */
+static ll_value ll_spread_intrinsic(ll_value (*fn)(int, ll_value *), size_t n, const int *spread, ll_value *parts) {
+  ll_vec *v = ll_vec_build(n, spread, parts);
+  return fn((int)v->len, v->items);
+}
+
+static void ll_spread_intrinsic_void(void (*fn)(int, ll_value *), size_t n, const int *spread, ll_value *parts) {
+  ll_vec *v = ll_vec_build(n, spread, parts);
+  fn((int)v->len, v->items);
+}
+
 static ll_str *ll_vec_join(ll_vec *v, ll_str *sep) {
   ll_sb sb;
   ll_sb_init(&sb);

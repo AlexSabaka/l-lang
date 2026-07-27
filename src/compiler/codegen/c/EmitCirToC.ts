@@ -838,6 +838,16 @@ export class EmitCirToC {
             return `${e.callee.cName}(${args.join(", ")})`;
           case "intrinsic": {
             if (e.callee.variadic) {
+              // With a SPREAD the argument count is not known here, so the list is built first and the
+              // INTRINSIC is passed to a helper that can hold it -- `v->len, v->items` needs the vector
+              // twice, which a C expression cannot express without a statement-expression.
+              // Split on the return type rather than cast the function pointer: calling through an
+              // incompatible pointer type is UB (C11 6.3.2.3p8), and `ll_console_log` returns void.
+              if (e.spread?.some(Boolean)) {
+                const mask = e.spread.map((s) => (s ? "1" : "0")).join(", ");
+                const helper = e.callee.ret.k === "void" ? "ll_spread_intrinsic_void" : "ll_spread_intrinsic";
+                return `${helper}(${e.callee.runtimeFn}, ${args.length}, (int[]){${mask}}, (ll_value[]){${args.join(", ")}})`;
+              }
               return args.length
                 ? `${e.callee.runtimeFn}(${args.length}, (ll_value[]){${args.join(", ")}})`
                 : `${e.callee.runtimeFn}(0, (ll_value*)0)`;

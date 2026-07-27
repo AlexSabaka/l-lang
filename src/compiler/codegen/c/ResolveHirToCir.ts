@@ -1768,6 +1768,40 @@ export class ResolveHirToCir {
    * legacy path, so it arrives as an opaque expr whose `src` is the SpreadNode. Recognising it by
    * source is therefore the only handle there is, and it is the same handle the JS emitter uses.
    */
+  /**
+   * `(console.log ...xs)` -- a spread argument to an INTRINSIC callee. Answers undefined when there is
+   * no spread, so a caller can fall through to its ordinary path.
+   *
+   * The third and last call shape spread had to learn. The free-call path (`(f ...xs)`) got it in the
+   * D75 round and the vector literal (`[0 ...xs]`) with it, but an INTRINSIC callee reaches neither:
+   * its arguments are mapped through `resolveAstExpr`, which has no arm for a spread node. So the
+   * refusal named `spread` and pointed at the ARGUMENT, giving no hint that the callee was the reason
+   * -- which is why this outlived the round that fixed the other two.
+   *
+   * Shared by both intrinsic call sites deliberately. They resolve the same construct through
+   * different routes (a dotted head, a simple one), and a rule about how spread lowers should not
+   * depend on which spelling got there.
+   *
+   * Only a VARIADIC intrinsic can take one: a fixed-arity one (`Math.pow`) has a declared parameter
+   * list that a run-time-length argument list cannot satisfy, so that stays a refusal rather than
+   * silently truncating.
+   */
+  private intrinsicSpreadCall(
+    node: ast.ListNode,
+    name: string,
+    intrinsic: { runtimeFn: string; params: CType[]; ret: CType; variadic: boolean },
+    args: ast.ASTNode[]
+  ): CExpr | undefined {
+    const spread = args.map((a) => a?._type === "spread");
+    if (!spread.some(Boolean)) return undefined;
+    if (!intrinsic.variadic) throw this.refuse(node, `spread-into-fixed-arity:${name}`, "intrinsicSpreadCall");
+    const parts = args.map((a, i) =>
+      spread[i] ? this.resolveAstExpr((a as ast.SpreadNode).expression) : this.resolveAstExpr(a)
+    );
+    this.ledger.record("A3", "spread-intrinsic", node, `'${name}' called with a spread -- argument list built at run time`);
+    return { src: node, ctype: intrinsic.ret, kind: "c-call", callee: { kind: "intrinsic", ...intrinsic }, args: parts, spread };
+  }
+
   private spreadInner(h: HExpr): ast.ASTNode | undefined {
     const src: any = (h as any).src;
     return src?._type === "spread" ? (src as ast.SpreadNode).expression : undefined;
@@ -2404,6 +2438,20 @@ export class ResolveHirToCir {
   private resolveMethodCall(h: Extract<HExpr, { kind: "method-call" | "virtual-call" | "ext-call" }>): CExpr {
     // Consume the ALREADY-LOWERED operands (h.args): each rides its HRef/atom, so an argument read records
     // no A2:atom-ref dip. The receiver still resolves off the callee (raw AST).
+    //
+    // EXCEPT WITH A SPREAD, where pre-resolving is exactly wrong. `resolveExpr` on a spread operand
+    // reaches `resolveAstExpr`, which has no arm for one, so `(console.log ...xs)` refused HERE --
+    // before the member router could see that the callee was a variadic intrinsic able to take it.
+    // That is why the message named `spread` and pointed at the argument: the argument really was
+    // where it failed, and the callee -- the thing that decides whether a spread is legal -- had not
+    // been looked at yet.
+    //
+    // Handing the raw args down instead lets `resolveDottedCall` map them itself, which is where the
+    // spread rule lives. Every other operand takes the pre-lowered path exactly as before; this is a
+    // fallback for one shape, not a change of route.
+    if (h.args.some((a) => this.spreadInner(a) !== undefined)) {
+      return this.dispatchMemberCall(h.src as ast.ListNode, undefined);
+    }
     return this.dispatchMemberCall(h.src as ast.ListNode, h.args.map((a) => this.resolveExpr(a)));
   }
 
@@ -2414,7 +2462,7 @@ export class ResolveHirToCir {
    * resolveNativeMethod on the resolved receiver), with `argVals` the pre-resolved operands (empty for a
    * 0-arg field read). A shape the router does not cover falls back to the raw path.
    */
-  private dispatchMemberCall(list: ast.ListNode, argVals: CExpr[]): CExpr {
+  private dispatchMemberCall(list: ast.ListNode, argVals: CExpr[] | undefined): CExpr {
     const form = classifyList(list);
     if (form.kind === "call") {
       const callee = form.callee;
@@ -2964,6 +3012,8 @@ export class ResolveHirToCir {
         if (entry !== undefined && !this.isExtern(entry)) {
           this.ledger.record("A9-extern", "stdlib-intrinsic", node, `'${name}' stdlib body shadowed by a C intrinsic`);
         }
+        const spreadCall = this.intrinsicSpreadCall(node, name, builtin, args);
+        if (spreadCall) return spreadCall;
         const cArgs = args.map((a) => this.resolveAstExpr(a));
         return { src: node, ctype: builtin.ret, kind: "c-call", callee: { kind: "intrinsic", ...builtin }, args: cArgs };
       }
@@ -3161,6 +3211,8 @@ export class ResolveHirToCir {
 
     if (intrinsic) {
       this.ledger.record("A9-extern", "host-intrinsic", node, `'${whole}' resolved against the C runtime (JS resolves it against the host)`);
+      const spreadCall = this.intrinsicSpreadCall(node, whole, intrinsic, args);
+      if (spreadCall) return spreadCall;
       const cArgs = argVals ?? args.map((a) => this.resolveAstExpr(a));
       return { src: node, ctype: intrinsic.ret, kind: "c-call", callee: { kind: "intrinsic", ...intrinsic }, args: cArgs };
     }

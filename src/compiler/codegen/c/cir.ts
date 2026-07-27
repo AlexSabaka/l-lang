@@ -178,7 +178,8 @@ export interface CCall {
   /**
    * Per-argument: is this one SPREAD into the call rather than passed as one argument?
    *
-   * Only ever set on a `closure` callee, and that is forced rather than stylistic: with a spread the
+   * Set on a `closure` callee, or on a VARIADIC `intrinsic` one (`(console.log ...xs)`), and in both
+   * cases it is forced rather than stylistic: with a spread the
    * argument count is not known until run time, so the direct C convention cannot express the call
    * at all. `resolveFreeCall` converts even an ordinary top-level callee to a function VALUE when it
    * sees one.

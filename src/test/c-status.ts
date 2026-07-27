@@ -306,11 +306,9 @@ export const C_PASSING: readonly string[] = [
   // backend divergence, and neither could run on the backend where one would happen. It keeps its
   // ORIGINAL host-recorded golden, which is what makes the l-lang renderer's agreement evidence.
   "80-adversarial/hex_string_escape.lisp",
-  //
-  // `spread_in_literals.lisp` is NOT here, and the reason is worth the line: retiring its
-  // `JSON.stringify` uncovered a SECOND refusal underneath, `(console.log ...a)` -- spread into an
-  // INTRINSIC callee, which has no CIR lowering (already-logged debt from the D75 spread round). So
-  // it is still LL0106-refused, for a different and now-visible reason. One blocker down, one left.
+  // The other one, freed by the third and last spread call shape: `(console.log ...a)`, a spread into
+  // a VARIADIC INTRINSIC. It kept its ORIGINAL golden through both fixes.
+  "80-adversarial/spread_in_literals.lisp",
   // `vec.reduceRight` -- one native method, one user (`std/fn`'s `compose`), and it refused this
   // whole file. Declared with no `c` like `reduce`, so it routes through `ll_dyn_method`'s vec branch;
   // the ARM was added first, because declaring without one trades a compile-time refusal for a
