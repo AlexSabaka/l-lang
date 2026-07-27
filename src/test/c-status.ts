@@ -311,6 +311,14 @@ export const C_PASSING: readonly string[] = [
   // `JSON.stringify` uncovered a SECOND refusal underneath, `(console.log ...a)` -- spread into an
   // INTRINSIC callee, which has no CIR lowering (already-logged debt from the D75 spread round). So
   // it is still LL0106-refused, for a different and now-visible reason. One blocker down, one left.
+  // A DATA error is CATCHABLE; a CONTRACT violation is not. `ll_trap` was `exit(70)` unconditionally,
+  // so an out-of-range index killed the process here while JS threw a catchable Error. Refinement
+  // violations still panic -- they never routed through `ll_trap`, so the ruled split was already
+  // structural. The message text now matches the JS shim verbatim, because a caught error's
+  // `.message` is something a program READS.
+  "80-adversarial/catchable_data_traps.lisp",
+  // The corpus case: a `:safe` decorator catching an index error, which died at exit 70 on C.
+  "11-comptime/01_comptime_table.lisp",
   // A BASE method calling an overridden method reaches the OVERRIDE. `resolveObjMethod` used to
   // devirtualize on the receiver's static class without asking whether anything below it overrode --
   // so `this.symbol` in a base method called the base's own, silently. Two levels of `:extends`, and

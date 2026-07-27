@@ -58,10 +58,25 @@ struct ll_map { size_t len, cap; ll_str **keys; ll_value *vals; };
 
 /* -- traps --------------------------------------------------------------------------------------- */
 
+/* Try to raise this trap as a CATCHABLE l-lang error; returns only if it could not. Defined once the
+ * handler stack and the class registry exist -- see the long note at its definition. */
+static void ll_trap_as_error(const char *kind, const char *msg);
+
 static void ll_trap(const char *kind, const char *msg) {
+  ll_trap_as_error(kind, msg); /* does not return if it threw */
   fprintf(stderr, "%s: %s\n", kind, msg);
   exit(70);
 }
+
+/* An out-of-range container index, formatted exactly as the JS shim formats it. Static buffer: this
+ * is the last thing that happens before the trap either unwinds or exits, so there is no reentrancy to
+ * worry about, and it must not allocate -- allocation is a thing that can itself trap. */
+static void ll_trap_index(int64_t i, size_t len) {
+  static char buf[96];
+  snprintf(buf, sizeof buf, "IndexOutOfRange: %lld (length %zu)", (long long)i, len);
+  ll_trap("RangeError", buf);
+}
+
 
 static void *ll_alloc(size_t n) {
   void *p = malloc(n ? n : 1);
@@ -410,6 +425,48 @@ static void ll_unwind(ll_frame *from, ll_unwind_mode mode, ll_frame *target, ll_
 /* `throw` is a thin unwind: hand the payload to ll_unwind in THROW mode. */
 static void ll_throw(ll_value err) {
   ll_unwind(ll_handler_top, LL_UNWIND_THROW, 0, err, 0);
+}
+
+/* A DATA ERROR IS CATCHABLE; A CONTRACT VIOLATION IS NOT.
+ *
+ * `ll_trap` used to be `fprintf` + `exit(70)` unconditionally, so an index out of bounds KILLED the
+ * process on C while the same program on JS threw an ordinary `Error` a `catch` could handle.
+ * `11-comptime/01_comptime_table` is the corpus case: its `:safe` decorator catches and answers -1,
+ * which worked on one backend and died at exit 70 on the other.
+ *
+ * THE LINE (ruled): an index is DATA the program received, so it is catchable; a REFINEMENT is a
+ * CONTRACT the author declared, so violating it stays fatal (D46 amend / P3c-1b-ii). That split needed
+ * no work here -- `ll_refine_check_int`/`_real` do their own `fprintf` + `exit(1)` and never route
+ * through `ll_trap`, so they are already on the other side of the line.
+ *
+ * The kind string IS the class name, so there is no mapping table to keep in step: the D62 tower
+ * declares `TypeError`, `RangeError`, `ValueError` and `KeyError` as l-lang classes, and
+ * `ll_class_by_name` finds whichever the emitted module actually contains. A kind with no class simply
+ * stays fatal rather than being reported as something it is not.
+ *
+ * FOUR CONDITIONS BEFORE THROWING, each of which would otherwise turn a bad situation into a worse one:
+ *
+ *   * NO HANDLER INSTALLED -> exit as before. Throwing with nothing to catch it would unwind to the
+ *     top and lose the message that says what went wrong.
+ *   * OutOfMemory and ControlError stay FATAL. Building the error object ALLOCATES, which is precisely
+ *     what failed for OutOfMemory; and a ControlError is a broken internal invariant, not data the
+ *     program can be expected to handle.
+ *   * RE-ENTRANCY GUARD. Constructing the error can itself trap; without the flag that recurses until
+ *     the stack runs out, replacing a clear message with a crash.
+ *   * NO SUCH CLASS -> exit. A program that never imported the tower has no `RangeError` to throw. */
+static int ll_trapping = 0;
+
+static void ll_trap_as_error(const char *kind, const char *msg) {
+  if (!ll_handler_top) return;
+  if (ll_trapping) return;
+  if (strcmp(kind, "OutOfMemory") == 0 || strcmp(kind, "ControlError") == 0) return;
+  const ll_class *cls = ll_class_by_name(kind);
+  if (!cls) return;
+  ll_trapping = 1;
+  ll_value m = ll_box_str(ll_str_lit(msg));
+  ll_obj *o = ll_obj_new(cls, 1, &m);
+  ll_trapping = 0;
+  ll_throw(ll_box_obj(o));
 }
 
 /* ================================================================================================
@@ -1306,7 +1363,11 @@ static ll_value *ll_map_slot(ll_map *m, ll_value key) {
 /* -- indexing: partial (trap) vs total (nil) ----------------------------------------------------- */
 
 static ll_value ll_index_vec(ll_vec *v, int64_t i) {
-  if (i < 0 || (size_t)i >= v->len) ll_trap("RangeError", "vector index out of bounds");
+  /* The message NAMES THE INDEX AND THE LENGTH, matching the JS shim's `IndexOutOfRange: 99 (length 3)`
+   * verbatim. Now that a RangeError is catchable, `(e.message)` is something a program READS -- so the
+   * two backends producing different text would be a divergence a golden could not paper over, and
+   * "vector index out of bounds" told the reader nothing they could act on. */
+  if (i < 0 || (size_t)i >= v->len) ll_trap_index(i, v->len);
   return v->items[i];
 }
 
@@ -1404,7 +1465,7 @@ static ll_value *ll_index_slot(ll_value base, ll_value idx) {
   switch (base.tag) {
     case LL_VEC: {
       int64_t i = ll_unbox_int(idx);
-      if (i < 0 || (size_t)i >= base.as.v->len) ll_trap("RangeError", "vector index out of bounds");
+      if (i < 0 || (size_t)i >= base.as.v->len) ll_trap_index(i, base.as.v->len);
       return &base.as.v->items[i];
     }
     case LL_MAP: return ll_map_slot(base.as.m, idx);

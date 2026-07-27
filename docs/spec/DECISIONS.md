@@ -6254,3 +6254,42 @@ Pinned by `80-adversarial/virtual_dispatch_from_base.lisp` — two levels of `:e
 grandchild overriding only one of the two methods (so `describe` must reach `Dog.name` and
 `Puppy.speak` in one call), a base-TYPED binding holding a subclass instance, a virtual call two
 frames below the entry point, and a never-overridden method that must still devirtualize.
+
+## D82 — a data error is CATCHABLE, a contract violation is not (2026-07-27)
+
+`ll_trap` on C was `fprintf` + `exit(70)` unconditionally, so an index out of bounds KILLED the
+process while the same program on JS threw an ordinary `Error` a `catch` handled.
+`11-comptime/01_comptime_table` is the corpus case: its `:safe` decorator catches and answers -1,
+which worked on one backend and died at exit 70 on the other — a divergence the corpus could only
+report as "exit code 70".
+
+**The line, ruled:** an INDEX is DATA the program received — it can be wrong for reasons invisible in
+the source, so the program may handle it. A REFINEMENT is a CONTRACT the author declared
+(`(deftype uint8 <- Int :satisfies (0 .. 255))` is a promise), so breaking it is a bug rather than an
+input, and it still panics (D46 amend / P3c-1b-ii).
+
+**The split needed no enforcement.** `ll_refine_check_int`/`_real` do their own `fprintf` + `exit(1)`
+and never route through `ll_trap`, so they were already on the other side of it. That is a happy
+accident of how P3c was built, and it is worth stating so nobody "tidies" them onto the shared path.
+
+**The kind string IS the class name**, so there is no mapping table to keep in step: the D62 tower
+declares `TypeError`, `RangeError`, `ValueError` and `KeyError` as l-lang classes, and
+`ll_class_by_name` finds whichever the emitted module contains. A kind with no class stays fatal
+rather than being reported as something it is not. The error is a REAL instance, so a broad
+`catch e :of Error` catches it through `:extends`.
+
+**Four conditions before throwing**, each of which would otherwise make a bad situation worse: no
+handler installed → exit as before (throwing with nothing to catch it loses the message); `OutOfMemory`
+and `ControlError` stay fatal (building the error ALLOCATES, which is exactly what failed for the
+first, and the second is a broken internal invariant rather than data); a re-entrancy guard (constructing
+the error can itself trap); and no such class → exit.
+
+**The message text now matches the JS shim verbatim** — `IndexOutOfRange: 99 (length 3)` rather than
+`vector index out of bounds`. Once a RangeError is catchable, `(e.message)` is something a program
+READS, so two backends producing different text is a divergence no golden could paper over; and the
+old wording told the reader nothing actionable.
+
+Pinned by `80-adversarial/catchable_data_traps.lisp` (catch by precise type and through `:extends`, a
+`finally` running on the way out — proving the trap uses the same unwinder `throw` does rather than
+jumping straight to the handler — and execution continuing normally afterwards).
+`refinement_panic.lisp` is unchanged and pins the other side.

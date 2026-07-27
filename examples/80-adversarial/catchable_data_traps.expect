@@ -1,0 +1,7 @@
+in range:  20
+past end:  -1
+negative:  -1
+as Error: IndexOutOfRange: 99 (length 3)
+  cleanup ran
+nested:   caught outside
+after:    10 -1 30
