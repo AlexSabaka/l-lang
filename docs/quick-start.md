@@ -1,293 +1,181 @@
 # ⚡ Quick Start Guide
 
-Get up and running with l-lang in **5 minutes**.
+Get l-lang running, and get a program onto the **reference backend**, in about five minutes.
+
+> **There are two backends.** C is the reference implementation — that's what gets fixed and
+> extended. JavaScript is kept as a differential-testing oracle and is **deprecated**: it prints a
+> warning on every compile telling you to pass `--backend c`. This guide targets C. See
+> [DECISIONS.md](spec/DECISIONS.md) D66 and D86 for why.
 
 ---
 
 ## 🎯 Installation
 
+**`package.json` lives in `src/`, not at the repo root.** Every `npm` command below is run from
+there.
+
 ```bash
-# Clone & enter repo
 git clone https://github.com/AlexSabaka/l-lang.git
-cd l-lang
+cd l-lang/src
 
-# Install dependencies
-cd src && npm install
-
-# Build compiler & grammar
-npm run parser
+npm install
 npm run build
-
-npm install -g ./
 ```
 
-**Verify installation:**
-```bash
-npm test
-```
+Compiling to C shells out to `cc`, so you need a working C compiler on your PATH (Apple clang, gcc
+and clang are all fine). If you only ever use the JavaScript backend you don't need one — but you
+will be on the deprecated path.
 
 ---
 
 ## 🎨 Your First Program
 
 ### 1. Create `hello.lisp`
+
 ```lisp
-(console.log "Hello, l-lang! 👋")
+(
+    (console.log "Hello, l-lang! 👋")
+)
 ```
 
-### 2. Run it
+### 2. Run it on the reference backend
+
 ```bash
-l-lang run hello.lisp
+npx ts-node index.ts run --backend c hello.lisp
 ```
 
-**Output:**
 ```
 Hello, l-lang! 👋
 ```
+
+Behind that: l-lang → AST → symbols → desugar → types → HIR → C, then `cc`, then the binary runs.
+
+### 3. Or look at the C it emits
+
+```bash
+npx ts-node index.ts transform --backend c hello.lisp   # writes hello.c
+```
+
+Drop `--backend c` from either command and you get JavaScript instead — plus a deprecation warning,
+which is the compiler telling you the truth rather than a bug.
 
 ---
 
 ## 📚 Learn by Example
 
-### Variables & Types
-```lisp
-(mut count 0)           ;; Mutable variable
-(let name "World")      ;; Immutable constant
-(let x <- Int 42)       ;; Type annotation
-```
+`examples/` holds **326 programs**, and every one of them is a test: compiled and run by both
+backends, diffed against the same golden. They are the most reliable documentation in the repo,
+because a wrong one turns the build red.
 
-### Functions
-```lisp
-(fn greet [name] (
-    (+ "Hello, " name)
-))
+| you want | look at |
+|---|---|
+| variables, calls, control flow | `00-basics/`, `02-control-flow/` |
+| functions, pipelines, closures | `01-functions/` |
+| pattern matching, guards, type patterns | `04-pattern-matching/` |
+| classes, interfaces, dispatch | `09-oop/` |
+| generics and constraints | `08-generics/` |
+| refinement types and units | `07-types/`, `16-stdlib/26_units.lisp` |
+| errors, and conditions/restarts | `18-error-handling/`, `19-conditions/` |
+| the standard library | `16-stdlib/` |
+| things that are *supposed* to fail | `90-diagnostics/` |
+| edge cases that once broke the compiler | `80-adversarial/` |
 
-(greet "Alice")  ;; Output: "Hello, Alice"
-```
+Run any of them:
 
-### Pipelines (My Favorite!)
-```lisp
-(fn add [a b] (+ a b))
-(fn double [x] (* x 2))
-
-;; Instead of: (double (add 5 3))
-(5 |> (add 3) |> double)  ;; Output: 16
-```
-
-### Pattern Matching
-```lisp
-(fn describe [x] (
-    (match x {
-        0     => "Zero!"
-        1     => "One!"
-        _     => "Something else"
-    })
-))
-
-(describe 0)  ;; Output: "Zero!"
-```
-
-### Classes & OOP
-```lisp
-(defclass Animal
-    (let :ctor name)
-    
-    (fn speak [] (
-        (+ this.name " makes a sound")
-    ))
-)
-
-(let dog (new Animal "Dog"))
-(dog.speak)  ;; Output: "Dog makes a sound"
+```bash
+npx ts-node index.ts run --backend c ../examples/01-functions/04_pipelines.lisp
 ```
 
 ---
 
 ## 🔧 Common Commands
 
-| Command | Purpose |
-|---------|---------|
-| `npm test` | Run test suite (50/81 passing) |
-| `npm run build` | Compile TypeScript → `dist/` |
-| `npm run parser` | Regenerate PEG.js grammar |
-| `ts-node src/index.ts run FILE.lisp` | Compile & execute file |
-| `ts-node src/index.ts transform FILE.lisp` | Compile to JavaScript |
-| `ts-node src/index.ts repl` | Interactive REPL shell |
-| `ts-node src/index.ts run --perf FILE.lisp` | Run with performance profiling |
-| `ts-node src/index.ts transform --perf FILE.lisp` | Compile with performance metrics |
+All from `src/`.
+
+| command | what it does |
+|---|---|
+| `npx ts-node index.ts run FILE` | compile and execute (JS backend, the default) |
+| `npx ts-node index.ts run --backend c FILE` | compile to C, build with `cc`, execute |
+| `npx ts-node index.ts transform --backend c FILE` | emit `FILE.c` and stop |
+| `npx ts-node index.ts repl` | interactive session |
+| `npx ts-node index.ts run --stage types FILE` | stop after a stage (`parse`, `syntax`, `symbols`, `desugar`, `types`, `codegen`) |
+| `npx ts-node index.ts run --perf FILE` | per-phase timings |
+| `npm test` | the corpus on the JS oracle |
+| `npm run test:c` | the corpus on the C reference |
+| `npm run grammar:ebnf` | regenerate `docs/spec/GRAMMAR.ebnf` from the parser |
 
 ---
 
 ## 🐚 Interactive REPL
 
-Launch the feature-rich REPL:
 ```bash
-ts-node src/index.ts repl
+npx ts-node index.ts repl
 ```
 
-**Features:**
-- 🎨 Syntax highlighting
-- 🔍 Tab-complete keywords, symbols, & member access
-- 📝 Multi-line input support
-- ⌨️ Command history (↑/↓)
-- 🔧 Built-in commands:
-  - `.help` - Show help
-  - `.symbols` - List all symbols
-  - `.types` - Show type info
-  - `.reset` - Clear context
+Syntax highlighting, tab completion, multi-line input with bracket balancing, and a persistent
+session. `.help` lists the commands. Full documentation: **[repl.md](repl.md)**.
 
-**Example REPL session:**
-```
-> (+ 1 2)
-3
-
-> (let greet (fn [name] (+ "Hi " name)))
-undefined
-
-> (greet "Bob")
-"Hi Bob"
-
-> .symbols
-Available symbols: +, -, *, /, greet, ...
-
-> .exit
-```
-
-For detailed REPL docs: [development/REPL_GUIDE.md](repl.md)
+> The REPL evaluates through the JavaScript path regardless of `--backend`. That is a known
+> limitation, not a statement about which backend is the reference.
 
 ---
 
 ## 📊 Compilation Pipeline
 
-l-lang compiles through **6 stages**:
-
 ```
-Input (.lisp)
-    ↓
-[1] PARSE     → Raw AST (00_vars.parsed.json)
-    ↓
-[2] SYNTAX    → Grammar validation
-    ↓
-[3] SYMBOLS   → Symbol resolution (00_vars.symbols.json)
-    ↓
-[4] DESUGAR   → Normalize syntax (pipelines, etc.)
-    ↓
-[5] TYPES     → Type inference (00_vars.types.json)
-    ↓
-[6] CODEGEN   → JavaScript output (00_vars.js)
-    ↓
-Output (.js)
+hello.lisp
+    │
+    ├─ PARSE      Chevrotain grammar (grammar_v2) → AST
+    ├─ SYNTAX     form-level rules, modifier legality
+    ├─ SYMBOLS    scope tree, imports, exports, visibility
+    ├─ DESUGAR    pipelines, implicit returns, comptime folding
+    ├─ TYPES      inference (2-pass) + checking; coercions decided here
+    ├─ HIR        a typed, destination-driven IR — the neutral core
+    │
+    ├──► C        ResolveHirToCir → InsertCoercions → EmitCirToC → cc     ← the reference
+    └──► JS       ESTree → astring                                        ← the oracle
 ```
 
-**Inspect intermediate stages:**
+Stop anywhere with `--stage`:
+
 ```bash
-# View raw AST
-ts-node src/index.ts transform --stage parse examples/00-basics/00_vars.lisp
-cat examples/00-basics/00_vars.parsed.json | jq .
-
-# View symbol table (with types)
-ts-node src/index.ts transform --stage types examples/00-basics/00_vars.lisp
-cat examples/00-basics/00_vars.types.json | jq '.symbols'
-
-# View generated JavaScript
-ts-node src/index.ts transform examples/00-basics/00_vars.lisp
-cat examples/00-basics/00_vars.js
+npx ts-node index.ts run --stage parse   hello.lisp   # raw AST
+npx ts-node index.ts run --stage symbols hello.lisp   # symbol table with types
+npx ts-node index.ts run --stage types   hello.lisp   # after inference
 ```
 
 ---
 
 ## 🎯 Next Steps
 
-### I want to...
-
-**Learn the language**
-→ Read [language/SYNTAX.md](language-syntax.md) (starts with basics, goes to advanced features)
-
-**Understand the compiler**
-→ Read [architecture/COMPILER_ARCHITECTURE.md](language-compiler.md) (6-stage pipeline explanation)
-
-**Contribute features**
-→ Read [development/IMPLEMENTATION_GUIDE.md](spec/DECISIONS.md) (step-by-step patterns)
-
-**Debug issues**
-→ Read [architecture/COMPILER_ARCHITECTURE.md#critical-context--gotchas](architecture/COMPILER_ARCHITECTURE.md#critical-context--gotchas) (common pitfalls)
-
-**Check progress**
-→ Read [development/TODO.md](roadmap.md) (what's done & what's next)
-
-**See what's coming**
-→ Read [planning/ROADMAP.md](roadmap.md) (future phases)
-
----
-
-## ✅ Test Suite
-
-Run the full test suite:
-```bash
-npm test
-
-# Output:
-# ✅ Passed:  36
-# ❌ Failed:  1 (modifiers runtime issue)
-# 💥 Errors:  2 (stdlib not yet implemented)
-# ⚠️  Skipped: 42
-```
-
-**Run with verbose output:**
-```bash
-npm test -- --verbose
-```
-
-**Test categories:**
-- ✅ Variables, functions, closures
-- ✅ String interpolation
-- ✅ Pattern matching
-- ✅ Control flow (if/when/cond/for/while)
-- ✅ Classes & inheritance
-- ✅ Error handling
-- ✅ Module system
-- ✅ Pipelines
-- ⚠️ Modifiers (runtime helper issue)
-- ⚠️ Standard library (not yet implemented)
+| I want to... | go to |
+|---|---|
+| see every form the language has | **[Language Syntax](language-syntax.md)** |
+| find a built-in or a stdlib function | **[Language Reference](language-reference.md)** |
+| understand *why* something is the way it is | **[DECISIONS.md](spec/DECISIONS.md)** — start at the topic index |
+| know what's broken or unbuilt | **[Roadmap](roadmap.md)**, Known gaps |
+| work on the compiler | **[Contributing](CONTRIBUTING.md)** and **[CLAUDE.md](../CLAUDE.md)** |
+| read the exact grammar | **[GRAMMAR.ebnf](spec/GRAMMAR.ebnf)** |
 
 ---
 
 ## 🆘 Troubleshooting
 
-### "Command not found: ts-node"
-```bash
-cd src && npm install -g ts-node
-```
+**"Command not found: ts-node"** — you skipped `npm install`, or you are not in `src/`. `npx`
+resolves it from the local `node_modules`.
 
-### "npm test" fails
-```bash
-cd src
-npm install
-npm run build
-npm test
-```
+**A deprecation warning on every compile** — that is the JavaScript backend telling you it is the
+oracle, not the target. Pass `--backend c`.
 
-### Parser errors after grammar changes
-```bash
-npm run parser    # Regenerate l-lang.js from l-lang.pegjs
-npm run build     # Recompile TypeScript
-npm test          # Verify
-```
+**`cc` not found, or a compile error in the emitted C** — the C backend needs a C compiler on your
+PATH. If `cc` is present and the emitted C fails to build, that is a compiler bug worth reporting:
+the backend is *fail-closed* and is supposed to refuse (LL0105–LL0107) rather than emit something
+that will not compile.
 
-### Type errors not showing
-```bash
-# Check if types are being inferred
-ts-node src/index.ts transform --stage types FILE.lisp
-cat FILE.types.json | jq '.symbols.entries.YOUR_VAR.inferredType'
-```
+**`ELL0106 Cannot generate C for '…'`** — a construct the C backend refuses on purpose. It is being
+honest; `src/test/c-status.ts` carries the current list.
 
----
-
-## 📖 Full Documentation
-
-- **[INDEX.md](INDEX.md)** - Complete documentation hub
-- **[language/SYNTAX.md](language-syntax.md)** - Complete language reference
-- **[architecture/COMPILER_ARCHITECTURE.md](language-compiler.md)** - Deep dive into how it works
+**Type errors not showing** — check the stage: `npx ts-node index.ts run --stage types FILE`.
 
 ---
 
@@ -295,14 +183,10 @@ cat FILE.types.json | jq '.symbols.entries.YOUR_VAR.inferredType'
 
 > **"We get there when we get there, but we do it right."**
 
-l-lang is a statically-typed Lisp that marries:
-- 🎨 **Expressive syntax** (Lisp elegance)
-- 🛡️ **Static type safety** (TypeScript-grade types)
-- 🏗️ **Enterprise pragmatism** (real OOP, modules, standard library incoming)
-- 🚀 **Performance** (JavaScript today, LLVM tomorrow)
+Static typing is a basic necessity, not a ceremony. Lisp's expressiveness is worth keeping. Native
+compilation is the point — the JavaScript backend was the scaffolding, and it now exists to
+*disagree* with C so that disagreements get looked at.
 
----
-
-**Status**: Pre-Alpha | **Tests**: 36/39 ✅ | **Last Updated**: January 16, 2026
-
-For questions or issues, check [architecture/COMPILER_ARCHITECTURE.md#debugging-tips](architecture/COMPILER_ARCHITECTURE.md#debugging-tips).
+Every language decision is written down with the measurement that produced it, in
+**[DECISIONS.md](spec/DECISIONS.md)**. Nothing is decided by taste alone, and no claim about the
+compiler is made here without having been run.

@@ -8,70 +8,68 @@
 
 ## What Is This?
 
-Most Lisps are dynamic typing in nature, but I see static typing as a basic necessity. Most enterprise languages are way over verbose _imo_. With **l-lang** I try to marry expressiveness of lisps with static typing and possibly to be compiled into machine code.
+Most Lisps are dynamic typing in nature, but I see static typing as a basic necessity. Most enterprise languages are way over verbose _imo_. With **l-lang** I try to marry expressiveness of lisps with static typing and to compile down to native code.
 
-It's a general-purpose language currently transpiling to JavaScript (LLVM backend in the distant future yet). It features:
+It's a general-purpose language with **two backends**. The **C backend is the reference implementation** — that's the one that gets fixed and extended. The JavaScript backend is kept as a *differential-testing oracle*: every program in the test corpus is compiled by both and graded against **one** golden, so a disagreement has nowhere to hide.
 
-- **Homoiconic Syntax:** Code is data. Data is code. Everything is an S-expression because nested function calls are a crime against readability.
-- **TypeScript-Grade Type System:** Generics, interfaces, structural typing, union types (`Animal | Dog`). Static safety without the verbosity tax.
-- **Real OOP:** Classes, inheritance, constructors—not the weird prototype chain nonsense. If you liked C# but wished it had macros, this is your drug.
-- **Three-Tier Metaprogramming:** Zig-style `comptime` for type-level programming, Common Lisp `defmacro` for simple rewrites, full `defsyntax` for building DSLs. Pick your poison.
-- **Pipeline Operators:** Native `|>` support because `(f (g (h x)))` is visual torture.
-- **Pattern Matching:** Actual `match` expressions that make `switch` statements look like a joke from the 1970s.
-- **Trimmed RTTI:** C#-style reflection but lighter—just enough to inspect types at runtime without the bloat.
-- **Lazy LINQ:** collection-first `:gen` operators (`map`/`filter`/`take`/`zip`/…) over an iteration protocol, chained through the `|>` pipe. `(nums |> (map square) |> (take 3) |> to-list)` — lazy end to end, so it terminates over an infinite generator.
-- **Packages & visibility:** a `package.yaml` compilation unit (the C# assembly / Rust crate steal), with package-scoped `public`/`internal`/`private`. No `protected` — the implementation-inheritance leak Go and Rust drop.
-- **Extension methods:** `(fn :extension area [self <- Rectangle] ...)` so `(rect.area)` dispatches to a free function — compile-time and nominal, protocol-aware, and it composes with `:gen` for lazy extension methods.
+- **Static types, checked:** generics, interfaces, union types, tuples, records. Types are **nominal**; interfaces conform **structurally** (the Go model). Static safety without the verbosity tax.
+- **Refinement newtypes:** `(deftype uint8 <- Int :satisfies (0..255))` — a distinct type with bounds the compiler checks at every boundary, not a comment.
+- **Units of measure:** `(deftype :unit Meter <- Real)`, and `(/ d t)` is `Meter/Second`. Dimensions compose through `*` and `/`, `+` refuses to cross them, and the whole thing **erases** — no runtime cost.
+- **Real OOP:** classes, inheritance, constructors, virtual dispatch. Value-semantic structs. No `protected` — the implementation-inheritance leak Go and Rust both drop.
+- **Conditions & restarts:** Common Lisp's resumable second exception mechanism — `restart-case`, `handle`, `signal`, `invoke-restart` — native on C.
+- **Pipeline operators:** `|>` and `<|`, because `(f (g (h x)))` is visual torture.
+- **Pattern matching:** `match` with guards, type patterns, rest patterns, and regex arms.
+- **Compile-time evaluation:** Zig-style `:comptime`, folded by an in-house interpreter.
+- **Lazy LINQ:** collection-first `:gen` operators over an iteration protocol, chained through `|>`, lazy end to end — so it terminates over an infinite generator.
+- **Packages & visibility:** a `package.yaml` compilation unit with package-scoped `public`/`internal`/`private`.
+- **Extension methods:** `(fn :extension area [self <- Rectangle] ...)` so `(rect.area)` dispatches to a free function — compile-time and nominal.
+
+**What it deliberately isn't:** there are no macros. `defmacro` and `defsyntax` are *reserved and refused* (LL0023) — the tiers are designed (D69) and the grammar is not built. There is no `eval`; it needs a runtime AST interpreter, which is a phase of its own, and asking for one is a clean LL0236 rather than a silent fallthrough to the host's. `quote` gives you the AST datum, so code-is-data holds and code-as-code does not — yet.
 
 ---
 
 ## Sample of l-lang
 
-```lisp
-(defclass :internal FoodsController :extends ControllerBase
-    (let :ctor _repo <- IFoodsRepository<Food>)
+Every snippet below is lifted from a program in `examples/`, which is the end-to-end test suite —
+each one compiles and runs on both backends against a golden.
 
-    ;; Async + strict typing + pipelines
-    (fn :async :public GetAll [query] -> IActionResult (
-        (query
-            |> _repo.GetAll
-            |> .Skip (* query.Page query.PageSize)
-            |> .Take query.PageSize
-            |> Ok)))
+```lisp
+;; examples/01-functions/04_pipelines.lisp
+(let result-a
+    (5
+     |> (sub 7)
+     |> (add 1)
+     |> square))
+```
+
+```lisp
+;; examples/09-oop/03_dispatch_and_type_patterns.lisp
+(definterface Node
+    (fn eval [] -> Real)
+    (fn show [] -> String)
 )
 
-;; Pattern matching with destructuring
-(fn analyze-vector [vec] (
-    (match vec {
-        [1 2 3]   => "One, two, three"
-        [1 _ _]   => "Starts with one, of length 3"
-        [1 ...]   => "Starts with one, of any length"
-        []        => "Just an empty vector"
-        _         => "Literally anything"
-    })
-))
+(defclass Num :implements Node
+    (let :ctor value <- Real)
 
-;; Comptime generics (Zig-inspired)
-(fn :comptime max [a b] (if (> a b) a b))
+    (fn eval [] -> Real (return this.value))
+    (fn show [] -> String (return (+ "" this.value)))
+)
+```
 
-;; User-defined function modifiers
-(defmodifier memoized [])
-(fn :memoized fibonacci [n] (
-    (match n {
-        0 => 1
-        1 => 1
-        _ => (+ (fibonacci (- n 1)) (fibonacci (- n 2)))
-    })
-))
+```lisp
+;; examples/16-stdlib/26_units.lisp — dimensions, checked and then erased
+(deftype :unit Meter  <- Real)
+(deftype :unit Second <- Real)
+(deftype :unit Kg     <- Real)
 
-;; Runtime type introspection
-(fn describe [x] (
-    (match (typeof x) {
-        Int    => "A number with no identity crisis"
-        String => "Text, probably a lie"
-        _      => "Something we didn't plan for"
-    })
-))
+(deftype Speed  <- Real :satisfies (/ Meter Second))
+(deftype Watt   <- Real :satisfies (/ (* Kg Meter Meter) (* Second Second Second)))
+
+(let d <- Meter  10.0)
+(let t <- Second  2.0)
+(let v <- Speed (/ d t))     ;; typechecks: the dimensions match, not the names
+;; (+ d t)                   ;; LL0247 — 'Meter' and 'Second'
 ```
 
 ---
@@ -80,9 +78,10 @@ It's a general-purpose language currently transpiling to JavaScript (LLVM backen
 
 **Current State:** Under Construction
 
-The compiler transpiles to JavaScript. Stabilizing syntax and building the standard library while trying not to add every feature that seems cool.
+The compiler emits C (the reference target) and JavaScript (the oracle). LLVM is a future phase.
+Stabilizing syntax and building the standard library while trying not to add every feature that seems cool.
 
-See the [roadmap](docs/roadmap.md) for the details.
+See the [roadmap](docs/roadmap.md) for what's built, what's left, and what's broken on purpose.
 
 ---
 
@@ -91,18 +90,20 @@ See the [roadmap](docs/roadmap.md) for the details.
 **New to l-lang?** Start here:
 
 1. **[Quick Start](docs/quick-start.md)** ⚡ - Get running in 5 minutes
-2. **[Language Reference](docs/language-reference.md)** 🔌 - Built-in functions & standard library
-3. **[Language Syntax](docs/language-syntax.md)** 📖 - The complete syntax guide
+2. **[Language Syntax](docs/language-syntax.md)** 📖 - The syntax guide
+3. **[Language Reference](docs/language-reference.md)** 🔌 - Built-ins & standard library
 4. **[Documentation Index](docs/INDEX.md)** 📑 - Full documentation hub
 
 **Going deeper:**
+- **[Decisions log](docs/spec/DECISIONS.md)** 🧭 - Every ruling, D1–D90, with the measurement behind it. Start at its topic index.
 - **[Compiler](docs/language-compiler.md)** 🏗️ - The compilation pipeline
-- **[Decisions log](docs/spec/DECISIONS.md)** 🧭 - Every ruling (D1..D36), with the evidence
+- **[The intrinsic floor](docs/spec/FLOOR.md)** - The runtime contract the backends must not diverge on
+- **[Grammar](docs/spec/GRAMMAR.ebnf)** - Generated from the parser, so it cannot drift
 - **[Roadmap](docs/roadmap.md)** 🗺️ - Phases, status, and the known gaps
 - **[REPL](docs/repl.md)** - Interactive REPL features
 - **[Changelog](docs/changelog.md)** - What changed
 
-**For contributors:** read **[Contributing](docs/CONTRIBUTING.md)** 🤝, and the [decisions log](docs/spec/DECISIONS.md) for how rulings are made and gated.
+**For contributors:** read **[Contributing](docs/CONTRIBUTING.md)** 🤝 and **[CLAUDE.md](CLAUDE.md)** (the working contract — the gate, the ledgers, and why a golden is never blessed from output).
 
 ---
 
@@ -111,41 +112,30 @@ See the [roadmap](docs/roadmap.md) for the details.
 git clone https://github.com/AlexSabaka/l-lang.git
 cd l-lang
 
-# Install dependencies
-cd src && npm install
+# Install dependencies and build (note: package.json lives in src/)
+cd src && npm install && npm run build
 
-# Build the compiler
-npm run parser
-npm run build
+# Compile and run a file on the reference backend
+npx ts-node index.ts run --backend c ../examples/00-basics/00_vars.lisp
+
+# ...or on the JavaScript oracle (the default)
+npx ts-node index.ts run ../examples/00-basics/00_vars.lisp
+
+# Emit C, or JavaScript, without running it
+npx ts-node index.ts transform --backend c ../examples/00-basics/00_vars.lisp
 
 # Interactive REPL 🎨
-ts-node src/index.ts repl
+npx ts-node index.ts repl
 
-# Compile and run a file
-ts-node src/index.ts run examples/01-basics/00_vars.lisp
-
-# Or compile to JavaScript
-ts-node src/index.ts transform examples/01-basics/00_vars.lisp
-node examples/01-basics/00_vars.js
-
-# Performance profiling & optimization 🔍
-ts-node src/index.ts transform --perf examples/05-oop/00_inheritance.lisp
-ts-node src/index.ts run --perf examples/01-basics/08_pipelines.lisp
-
-# Run the golden test suite (green on both frontends; a handful of tracked xfails)
-npm test
-
-# Run tests with detailed output
-npm test -- --verbose
+# The corpus, on both backends
+npm test              # JavaScript — the oracle
+npm run test:c        # C — the reference
+npm run test:c:o2     # the same, optimized (this fence catches setjmp clobbers -O0 cannot)
 ```
+
+Compiling to C needs a working `cc` on your PATH.
 
 ### Interactive REPL
-
-Launch the feature-rich REPL for exploring l-lang:
-
-```bash
-ts-node src/index.ts repl
-```
 
 **Features:**
 - 🎨 Syntax highlighting
@@ -159,22 +149,16 @@ See [docs/repl.md](docs/repl.md) for complete documentation.
 
 ### Test Status
 
-**The golden suite is green on both frontends** (grammar_v2 and the legacy PEG), with a handful of
-tracked `xfail`s — each an example that asks for a feature not yet built, not a regression. Alongside it
-run the codegen, type-error (corpus reports **0** diagnostics), import, REPL, and grammar-smoke suites.
+**326 programs in `examples/`**, compiled and run by both backends and diffed against the same
+goldens. The live numbers are in the ledgers rather than transcribed here, because a number in a
+README goes stale and a ledger the suite reads cannot:
 
-All core features validated:
-- ✅ Variables, functions, closures
-- ✅ String interpolation  
-- ✅ Pattern matching
-- ✅ Control flow (if/when/cond/for/while)
-- ✅ Classes & inheritance
-- ✅ Error handling
-- ✅ Module system
-- ✅ Pipelines
-- ✅ **DefModifiers** - User-defined function transformers (`examples/06-modifiers/`)
+- `src/test/manifest.ts` — what every corpus file is (`test`, `library`, `fixture`, `xfail`, `negative`)
+- `src/test/c-status.ts` — what C must pass; an unlisted-but-passing file turns the build **red**
+- `src/test/js-status.ts` — what JS is known to fail; the same ratchet, opposite polarity
 
-See [src/test/README.md](src/test/README.md) for testing documentation.
+Alongside the corpus run the codegen, type-error, diagnostics, import, memory, AST-invariant and
+grammar-smoke suites. See [src/test/README.md](src/test/README.md).
 
 ---
 
@@ -182,17 +166,16 @@ See [src/test/README.md](src/test/README.md) for testing documentation.
 
 Sloths and turtle followers are welcomed! Here's how to get started:
 
-1. **Read [Contributing](docs/CONTRIBUTING.md)** for contribution guidelines
+1. **Read [Contributing](docs/CONTRIBUTING.md)** and **[CLAUDE.md](CLAUDE.md)** for the working rules
 2. **Check the [roadmap](docs/roadmap.md)** for status and the known gaps
 3. **Read the [Compiler doc](docs/language-compiler.md)** to understand the pipeline
 4. **Follow the rulings** in the [decisions log](docs/spec/DECISIONS.md) — every change is measured and gated
 
 **Want to help?** We need:
-- Bug fixes (the [decisions log](docs/spec/DECISIONS.md) records past ones and their evidence)
-- Documentation & examples
+- Bug fixes — the [known gaps](docs/roadmap.md#known-gaps) list is live and reproduced
+- Documentation & examples (adversarial ones especially — the corpus is the correctness net)
 - Standard library implementation
 - Type system improvements
-- Grammar enhancements
 - LLVM backend (future phase)
 
 ### Disclaimer
