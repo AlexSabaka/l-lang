@@ -46,7 +46,7 @@
   ;;
   ;; Separate, though, because bolting `dispose` onto `Iterator<T>` would break every hand-written
   ;; iterator in the corpus at once -- `:implements Iterator` is a PROMISE the checker enforces
-  ;; (LL0235), so a new member is a new obligation for code that has no resource to release. A
+  ;; (LL0209), so a new member is a new obligation for code that has no resource to release. A
   ;; consumer type-tests instead: dispose what is `Disposable`, leave everything else alone.
   ;;
   ;; GC is NOT the mechanism (D59: memory-only, no finalizers). That is not a limitation to work

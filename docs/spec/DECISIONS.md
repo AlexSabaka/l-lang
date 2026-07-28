@@ -1,16 +1,77 @@
 # l-lang Design Decisions
 
-Rulings on l-lang's language surface, taken 2026-07-12 following a full compiler audit (161 agents,
-148 verified findings across grammar, types, codegen, analysis passes, stdlib/runtime, docs
-conformance, examples, and hygiene). Every ruling was made with the eventual native/LLVM backend in
-front of it — several are not stylistic preferences, they are things that cannot be retrofitted
-later without breaking every existing program.
+Rulings on l-lang's language surface. **D1–D16 were taken 2026-07-12** following a full compiler
+audit (161 agents, 148 verified findings across grammar, types, codegen, analysis passes,
+stdlib/runtime, docs conformance, examples, and hygiene); the document has grown by ruling ever
+since, and runs to **D90** as of 2026-07-28. Every ruling was made with a native backend in front of
+it — several are not stylistic preferences, they are things that cannot be retrofitted later without
+breaking every existing program.
 
-This document is the spec. Where the grammar, the docs, or the example corpus disagree with a
-ruling here, **this document wins** — they get brought into line as each phase lands. None of these
-rulings are implemented yet; landing them is Phase 3 (form layer) and Phase 8 (type system) of the
-stabilization plan. See the audit's `03-stabilization-backlog.md` for the full evidence and blast
-radius behind each one.
+**This document is the spec.** Where the grammar, the docs, or the example corpus disagree with a
+ruling here, this document wins — they get brought into line as each phase lands.
+
+## How to read it
+
+**It is append-only, and ordered by WHEN a ruling was taken rather than by what it is about.** That
+is what makes it trustworthy as a record and hard to navigate as a reference; the
+[topic index](#topic-index) below is the way in.
+
+**A later ruling can amend or reverse an earlier one, and says so in a banner.** D5's banner naming
+D42 is the template. Where a section carries no banner, it is in force as written. Two seams reach
+across the whole document and are worth knowing before you read any single ruling:
+
+*   **The backend polarity flipped.** **D66** (2026-07-24) deprecated the JavaScript backend to an
+    oracle, and **D86** (2026-07-28) made C the specification. Roughly a dozen earlier rulings derive
+    language semantics from JavaScript runtime facts — D24 on hoisting and the temporal dead zone,
+    D43 on "JavaScript has one number type", D50 on the host deciding what an operation means. Read
+    those as *the reasoning that produced the rule*, not as a live description of the reference
+    backend.
+*   **"Does X implement interface I" is answered four different ways** in the tree — nominally for
+    `for :each` element typing (D30), structurally for parameters (D42, D89), by a runtime walk over
+    emitted metadata for `:of` and display (D63), and by a member-name match for disposal (D58). D42
+    and D63 give opposite answers to the same question by design; which one applies depends on
+    whether you are asking the checker or the runtime.
+
+**Status is not tracked here.** A ruling in this document is a decision, not a claim that it is
+built. What is built, what is partial and what is deliberately unbuilt lives in
+[`../roadmap.md`](../roadmap.md).
+
+**Historical evidence keeps its original names.** A measurement cited in a 2026-07 ruling names the
+file as it was then; the corpus was renumbered into decade blocks by commit `6df6f63`, and the
+stdlib left `examples/` for `lib/std/` at Sc2. Where a path no longer resolves it is annotated
+inline with its current home. (The audit's own `03-stabilization-backlog.md`, cited by the original
+header, was never in this repository.)
+
+---
+
+## Topic index
+
+Because the document is ordered by date, not by subject. A ruling appears under every topic it
+touches; **bold** marks the one to read first.
+
+| topic | rulings |
+|---|---|
+| **calling and member access** | **D1** (`(obj.m)`, settled twice — read the second), D25 (what a list IS: call / block / grouping) |
+| **binding and mutability** | **D10** (`let` is binding-immutable), D24 (declared before evaluated), D16 (destructuring) |
+| **the type system, broadly** | **D5** (superseded — see D42), **D42** (types nominal, interfaces structural), D44 (an annotation must name a type that exists), D43 (Int vs Real is static) |
+| **richer types** | D37 (tuples, records), D36 (typed surfaces, native members), D46 (refinements), **D90** (units of measure) |
+| **conversion and coercion** | **D46** (`defcast`, `(cast<T> x)`, refinements), D41 (`:of` narrows — a *guard*, not a conversion), D88 (promotion through an implicit cast) |
+| **protocols and interfaces** | **D42** (structural, for assignability), D63 (Comparable / Hashable / Formattable — *nominal*, at run time), D29 (constructs defined by protocols), D30 (Iterable / Iterator), D89 (`Ring`, and a primitive answering a protocol) |
+| **classes and structs** | **D11** (the class surface, value-semantic structs, no `protected`), D81 (a base method's call is virtual on C) |
+| **pattern matching** | **D25**, D26 (guards, `:when`), D27 (`:of` type patterns), D28 (rest patterns), D74 (a pattern's string decodes), D83 (a comment is not a value) |
+| **control flow and `return`** | D12 (control forms), **D40** (`return` returns from the function), D83 |
+| **nil, Void, and optionality** | **D9** (what `nil` is — ruled twice), D49 (Void, void-in-value) |
+| **numbers** | **D88** (the tower: literals, promotion, `..`), D8 (number literals), D71 (`_` separators, `0o`), D61 (bit operators), D43, D85 (division by zero), D89 (`Ring`), D90 (dimensions) |
+| **strings and text** | D67 (`r"…"` raw, `f"…"` formatted, the regex engine), D74, D52 (codepoints — see D50–D55) |
+| **metaprogramming** | **D69** (the three tiers), D3 + D3b/D3c/D3d, D73 (the in-house comptime interpreter), **D75** (`defmodifier` is flat), D68 (`:foo` is three roles), D72 (`defattribute`) |
+| **modules, packages, visibility** | **D35** (the package is the compilation unit), D6, D20–D22 (export, naming, layout), D7 (the stdlib boundary) |
+| **errors and conditions** | **D87** (the failure taxonomy), D82 (data is catchable, a contract violation is not), D62 (the typed error tower), **D47** (conditions / restarts), D85 |
+| **generators and async** | **D31** (`:gen` + `yield`), D32 (`Awaitable` / `Task`), D58 (coroutine lowering), D60 (`:async` stays C-refused), D33 (LINQ) |
+| **memory** | **D59** (a precise tracing GC, no finalizers — ruled, not built), D11 (value semantics) |
+| **the backends** | **D86** (C is the reference), D66 (JS is deprecated to an oracle), D39 (the PEG and js-legacy retired), D45 / D48 (the HIR), D50–D55 (the intrinsic floor), D84 (injective mangling) |
+| **diagnostics** | **D38** (one registry), D44, D4 (unknown modifiers), D15 (native-forward syntax) |
+| **the stdlib** | D7, D76 (builder), D77 (json), D78 (calendar), D79 (log), D80 (cli), D64 (path), D65 (random), D67 (regex), D62 (errors) |
+| **tooling and process** | D23 (REPL semantics), D38, D86, D87 |
 
 ---
 
@@ -72,6 +133,10 @@ checker learns to type stops reaching it and goes back to a direct `.x` or `.m()
 
 ## D2 — Assignment operator
 
+> **Two clauses were never built.** `(= a b)` is **not** the prefix equality function — there is no
+> `=` in the runtime symbol table and there never was, so `(= a b)` parses as a call to an undefined
+> name and lands on LL0210. Equality is `==`, with `!=` / `≠`. And `**=` has no token: the compound
+> set built is `:= += -= *= /= %=`.
 **Ruling:** `:=` becomes a real, first-class lexed token. The `SimpleAssignment` (`=`) rule is
 deleted — `=` becomes a syntax error as an assignment; `(= a b)` remains the prefix equality
 function. The compound-assignment set becomes an explicit enumeration: `+= -= *= /= %= **=`.
@@ -83,6 +148,11 @@ about 7 of which are also valid JS operators. `(x <= 5)` currently parses as an 
 
 ## D3 — `defmacro` / `defsyntax`
 
+> **Only `defmacro` is actually reserved.** `DefMacroKw` exists and is parsed purely so **LL0023** can
+> refuse it with a location. There is no `DefSyntaxKw` token and no rule, so `(defsyntax foo …)` still
+> parses as a call to an undefined name — the exact failure mode this ruling was written to prevent.
+> **D69** later rules all three tiers by what each handler receives, so the design is settled and only
+> the grammar is missing.
 **Ruling:** OUT for 1.0, documented as "Planned." The keywords are reserved — `(defmacro ...)`
 becomes a hard "not implemented in 0.x" error, never a silent call. Metaprogramming for 1.0 is
 `:comptime` + `defmodifier`, both of which are currently broken and must be fixed.
@@ -190,6 +260,11 @@ on a native backend. Maps cleanly to LLVM SSA.
 
 ## D11 — The class surface
 
+> **Bounded by D50.** By-copy governs l-lang's OWN collection stores. A **native member call** is an
+> escape hatch and produces host aliasing on both backends — `.slice` is shallow, so a fresh array's
+> slots alias the same structs where this ruling says a collection slot holds a copy. See
+> `examples/80-adversarial/native_member_boundary.lisp`, which also records that on C this is a
+> deliberate imitation of the host rather than a constraint: C has no host to be bound by.
 **Ruling:** `:extends` only (`:inherits` is not a synonym — it's a typo/doc error to be corrected).
 Closed, builtin modifier set per D4. Visibility (`:private`) is type-check-only and erased at
 codegen — no `#private` field emission. `defstruct` becomes a real value type: by-copy semantics,
@@ -228,6 +303,12 @@ out.
 
 ## D13 — Map keys
 
+> **Honoured on C; broken on JS, and the coherence claim below holds on exactly one backend.** A
+> hyphenated field is mangled on JS *dot access* but not as a map key, so `.next-dir` reads and writes
+> `next2ddir` while `w["next-dir"]` reads the original — three spellings of one field disagreeing, and
+> the map grows a second key. Pinned as `oracleDivergent` by
+> `examples/80-adversarial/hyphen_field_encoding.lisp`. **D84** rules the C mangling injective, which
+> is what makes this ruling satisfiable there; the JS side is frozen under D66.
 **Ruling:** Map keys are strings, never mangled. `{ :my-key 1 }` emits `{ "my-key": 1 }` verbatim.
 Cost: dot-access (`m.my-key`) can't reach these keys — use `m["my-key"]` instead.
 
@@ -563,7 +644,7 @@ emission ever needs module-level ordering — but wiring it in today would be ce
   test. No goldens moved.
 - **`export` enforcement is deferred.** It is decorative today: `exportName` is written in one place
   and **read nowhere**, so you can import a symbol that was never exported. Enforcing it is a
-  corpus-wide change — `20-stdlib/std/types.lisp` defines 8 functions and exports **zero**, and the
+  corpus-wide change — `20-stdlib/std/types.lisp` (the stdlib has since left the corpus; now `lib/std/core/types.lisp`) defines 8 functions and exports **zero**, and the
   stdlib has 6 `(export …)` forms against 53 `(fn …)` definitions. It needs its own phase and its own
   ruling, and must not be mistaken for an oversight.
 
@@ -571,7 +652,7 @@ emission ever needs module-level ordering — but wiring it in today would be ce
 
 `(defclass Container<T>)` reported itself as `{ generics: [null], properties: [{ type: 'Unknown' }] }`.
 `T` was not merely unchecked, it was **not represented** — and an `Unknown` silently disables every
-check that touches it. `08-types/10_generics_basic.lisp` was the suite's one red FAIL (not an xfail)
+check that touches it. `08-types/10_generics_basic.lisp` (now `examples/08-generics/00_generics_basic.lisp`) was the suite's one red FAIL (not an xfail)
 because of it; its golden already specified the right answer.
 
 ### The declared type was a lie (P7a)
@@ -1401,7 +1482,7 @@ It is the only one of the four papercuts that adds a FEATURE rather than fixing 
   P5b added to the class builder is what it will need.
 
 - **String keys in map literals do not parse.** `{"host" "localhost"}` — the `keyValue` rule requires
-  a leading colon. This, not codegen, is what actually blocks `04-data-types/02_maps.lisp`; its old
+  a leading colon. This, not codegen, is what actually blocks `04-data-types/02_maps.lisp` (now `examples/05-data-structures/02_maps.lisp`); its old
   xfail reason ("D13: map-key codegen crash") was stale, and D13's codegen half is now fixed.
 
 - **The numeric tower (D8).** `octal-number`, `binary-number`, `hex-number`, `fraction-number`,
@@ -1578,7 +1659,7 @@ None of them were P6's. Each was its own bug:
 | 7 | LL0210 | **A nested function is defined by nobody.** `visitFunction` said *"already defined in ScanPass"* — and ScanPass only scans top-level. `visitVariable`, ten lines up, carries the identical correction for the identical reason. |
 | 3 | LL0210 | **An enum is never defined as a symbol.** By anyone. Classes, structs, interfaces and aliases are; enums were left off the list. (And the head split had to learn `:` — the symbol in `HttpMethod:GET` is `HttpMethod`.) |
 | 3 | LL0211 | **A pipeline is never desugared.** See below. |
-| 3 | LL0203 | **True positives.** `08-types/00_primitives.lisp` says *"Shouldn't compile because of type mismatch"* — and compiled. Its golden recorded the results, `23` and `Help me!`, as though they were right: the file asserted the exact bug it was written to warn about. Split by ruling into a passing test plus `01_type_errors.lisp`, a `negative` test asserting the code. |
+| 3 | LL0203 | **True positives.** `08-types/00_primitives.lisp` (now `examples/07-types/00_primitives.lisp`) says *"Shouldn't compile because of type mismatch"* — and compiled. Its golden recorded the results, `23` and `Help me!`, as though they were right: the file asserted the exact bug it was written to warn about. Split by ruling into a passing test plus `01_type_errors.lisp`, a `negative` test asserting the code. |
 
 ## THE DESUGARER IS NOT WIRED INTO THE COMPILER
 
@@ -1959,7 +2040,7 @@ OTHER modules live, and they are **legitimately visible** here."*
 both were found by writing the gate before the fix:
 
 1. **`new`** routes to `inferNewExpression`, which returns Unknown on a miss. The *only* leaked
-   reference in `20-stdlib/complex_math_test/main.lisp` — **a live golden test**, not an xfail — is
+   reference in `20-stdlib/complex_math_test/main.lisp` (now `examples/16-stdlib/complex_math_test/main.lisp`) — **a live golden test**, not an xfail — is
    `Complex`, and it appears solely as `(new Complex 1.0 2.0)`.
 2. **A CALL HEAD that resolves.** `checkIdentifierResolves` is reached only on the `else` branch —
    when the head did *not* resolve. A call to an unexported function resolves perfectly well, takes
@@ -2049,7 +2130,7 @@ spurious LL0210s. So Sc1 added a gate after the symbols stage.
 
 It was `if (this.results.hasErrors)` — and that collection is **Context-wide, shared across every
 module in the build**. So an error in any *imported* module skipped the *importing* module's type
-checking entirely. Measured: **`99-p5js/main.lisp` fell from 60 diagnostics to 44**, because
+checking entirely. Measured: **`99-p5js/main.lisp` (now `examples/99-fixtures/main.lisp`) fell from 60 diagnostics to 44**, because
 `p5-bindings.lisp`'s 44 ambient-global LL0210s (a known gap) tripped the gate. Sixteen diagnostics did
 not get fixed — **they went silent**.
 
@@ -2539,6 +2620,13 @@ without it.
 
 ## D24 — forward references: a value must be declared before it is EVALUATED
 
+> **Basis inverted by D86.** This ruling derives itself from JavaScript's evaluation model — `fn` is
+> fine anywhere because *"it emits `function f(){}`, which JS hoists"*; a class is a value because
+> *"`class X {}` has a temporal dead zone"* — and its diagnostic examples are `ReferenceError`s.
+> **On the reference backend the runtime fact is the opposite**: a file-scope `static` is
+> zero-initialised, so the shape this rule outlaws would read a zero rather than trap. The RULE is
+> unchanged and correct; what changed is that **LL0219 is now the only thing standing between C and a
+> silent wrong answer**, where on JS it merely front-ran a crash.
 **Ruling:** a name is forward-referenceable **iff it is not evaluated before its declaration.** The
 rule *is* the runtime fact, and it is what every mainstream language does.
 
@@ -2971,6 +3059,10 @@ once, against the protocol; only the leaves change.
 
 ## D30 — the iteration protocol: `Iterable<T>` / `Iterator<T>`
 
+> **Two-thirds of the blanket-conformance table below is unbuilt**, on grounds D37 and D43 removed.
+> Read the table as the intent, not the tree. Note also that disposal is dispatched by matching the
+> member NAME (`dispose`) rather than by the `Disposable` interface this document declares — a fourth
+> answer to the conformance question catalogued under D42's scope banner.
 The first protocol under D29, in `lib/std/iter.lisp`:
 
 ```lisp
@@ -3043,7 +3135,7 @@ protocol) and user `:implements Iterable` type-checks but is not yet consumable 
 > hookless `Iterator` the cautionary tale.
 >
 > **Separate interface, NOT a member on `Iterator<T>`** — the ruling, and the reason is mechanical:
-> `:implements` is a promise the checker enforces (LL0235), so a new member on `Iterator` is a new
+> `:implements` is a promise the checker enforces (LL0209), so a new member on `Iterator` is a new
 > obligation for every hand-written iterator in the corpus, most of which hold no resource. Consumers
 > type-test instead: dispose what is `Disposable`, leave the rest alone. Per A-0 this is core (both
 > backends make the decision) and therefore nodified rather than left to each backend.
@@ -3300,6 +3392,9 @@ is the language's one infix form, and with the deliberately-Lisp prefix surface.
 
 ## D34 — modifier composition: DISPATCH modifiers vs BODY modifiers
 
+> **The "all four are built" status line is false.** The sibling rules (`:gen`, `:async`) are built;
+> the DISPATCH-vs-BODY taxonomy this ruling names exists nowhere in the tree as a taxonomy, and the
+> one composition rule it turns on is unenforced.
 Raised by "how should `:extension :gen` interact?". The ruling generalizes past that pair: function
 modifiers split into two kinds by **which compiler phase they govern**.
 
@@ -3777,6 +3872,16 @@ the type question in both pattern and expression position; a second `-> Type` sp
 
 ## D42 — types are nominal, interfaces are structural (the Go model; sub-phases Zf–Zg)
 
+> **Scope, added 2026-07-28: structural conformance governs ASSIGNABILITY. It does not govern the
+> RUNTIME.** Every runtime consumer — `(x :of I)`, `display`/Formattable, `compare`/Comparable,
+> `hash-of`/Hashable, `for :each` element typing — is **nominal**, and **D63** says so on purpose:
+> display is gated on a declared `:implements` *"NOT on 'has a method named `format`', so an
+> unrelated method of that name never hijacks rendering."*
+>
+> So a class that conforms by shape is accepted by `[x <- Ring]` at compile time and answers `false`
+> to `(x :of Ring)` at run time. **Two answers to one question, by design at each site and by nobody's
+> design taken together.** Pinned on both halves by `examples/80-adversarial/ring_protocol.lisp`;
+> reconciling them is a runtime-metadata change, tracked in `../roadmap.md`.
 **Ruling:** A class or struct keeps its **identity**: `Dog` is not a `Cat`, however identical their
 shapes, and no amount of matching members makes one assignable to the other. An **interface** is a
 **shape**: a class satisfies it by having its members, whether or not it declares `:implements`. A
@@ -4040,7 +4145,17 @@ probe removed), type-errors 0, imports 19/19, repl 26/0.
 
 ## D46 — the coercion pass is the type system's checked-conversion layer (Phase Cv)
 
-> **Ratified in the 2026-07 Sabaka⇄Dove design round; not yet built.** Long-form source of record:
+> **BUILT, 2026-07 — this header's "not yet built" is stale and the status blocks below are the
+> live record.** B-0 (tokens), B-1 (range refinements) and B-3 (`defcast` `:implicit`/`:explicit`
+> plus `(cast<T> x)`) all shipped — `cacc912`, `38d1c79`, `ab92b9f`, `3985492`. **B-2 (native fixed
+> widths) and B-1b (record-field refinements) did not.**
+>
+> **The `..` spelling below is now a hard error.** This section writes ranges spaced — `(0 .. 255)`,
+> `(lo .. hi)` — and its "permissive spacing" clause says `0..100` ≡ `0 .. 255`. **D88 reversed
+> that**: `..` binds by ADJACENCY, a standalone `..` is **LL0034**, and 16 corpus files were
+> migrated off the spaced form. Read every range in this section as adjacent.
+>
+> **Original note.** Ratified in the 2026-07 Sabaka⇄Dove design round. Long-form source of record:
 > `docs/_archive/hir-design-round-brief.md` §B. Recorded here so it is not re-opened.
 
 The native pipeline's coercion pass (A6, the C backend's `InsertCoercions` P2) is **not** "box/unbox for
@@ -4370,6 +4485,12 @@ conformance-tested. The floor is a cost (each entry must be tested for parity), 
 > on a native receiver is — `(xs.slice 0 1)`, `(s.length)`, `(nums.includes 2)` — and three separate
 > rulings have now each answered that question locally, in three different places, without anyone
 > naming the rule they share. Named here, because otherwise the next person "fixes" one of them:
+>
+> **Narrowed by D86.** The host defines the meaning only **where a host exists**. On C the authority
+> is C's own implementation; JS parity is a courtesy, not a rule. Without this narrowing the two
+> rulings give opposite verdicts on the same artifact — `"a😀b".length` is 3 on C and 4 on JS, which
+> this amendment reads as the boundary working and D86 reads as C being the specification. **The
+> REPRESENTATION half below stands unchanged.**
 >
 > **The host decides what the OPERATION MEANS. l-lang decides how the VALUES CROSSING IT are
 > REPRESENTED.**
@@ -5024,6 +5145,14 @@ information means most loops keep paying nothing. The library holds the other ha
 
 ## D59 — memory: a precise tracing GC with shadow-stack roots; no finalizers
 
+> **Half of the no-finalizers argument was retired the following day.** The JS-parity clause — *"it
+> buys parity for free: JS never runs an abandoned generator's `finally` either"* — was purchased one
+> day before **D66** stopped making JS parity a design goal, and **D86** made C the specification. The
+> prior-art half (JEP 421, `SafeHandle`, Go's `SetFinalizer`, Rust's `Drop`) is unaffected and is what
+> the ruling rests on now.
+>
+> **RULED, NOT BUILT.** The collector does not exist; C allocates and leaks by design. This is the
+> one decision in the document whose acceptance test is committed and red on purpose.
 **Direction: a precise tracing GC, shadow-stack root discipline.** Ruled now so D58's frame
 representation is written GC-ready; **built later** (not in this build order).
 
@@ -5068,6 +5197,11 @@ any collector work begins.
 
 ## D60 — async posture: `:async` stays C-refused, and l-lang owns await ordering
 
+> **Read against D86.** This ruling pins l-lang's await ordering to a golden that **only the
+> deprecated backend can produce** — `:async` is refused on C, so the reference implementation cannot
+> run the files that define the semantics. Until it can, the ordering rule is a JS-oracle observation
+> with l-lang's name on it. Its *"no `.c.expect`, ever"* clause is superseded in spirit by D86's
+> `oracleDivergent`, which spends the same-golden control deliberately and records why.
 **`:async` remains refused on C** (LL0105 narrows to `:async` only once `:gen` lands). The mirror of
 D47 — C-native restarts / JS-refused — so the asymmetry is a shape already ruled acceptable.
 
@@ -5242,7 +5376,7 @@ field-layout trap) remains open — the ctor-only rule dodges it rather than fix
 
 §10 of the stdlib roadmap ("complete the set") calls for the three small universal protocols the
 existing interface family (Iterable/Writer/Clock) implies but never shipped. `std/core/protocols` adds
-them, each a one-method nominal interface (`:implements`, checked LL0235):
+them, each a one-method nominal interface (`:implements`, checked LL0209):
 
 - `Comparable<T>` — `(fn compare-to [other <- T] -> Int)`; the sign is the whole order (negative /
   0 / positive gives `<` `=` `>`). A single method rather than four operator overloads.
@@ -5721,6 +5855,10 @@ working-by-accident into a parse error some distance from the mistake. The DECLA
 it legible, which is why the diagnostic had to wait for this round's registry: one argument declared,
 none supplied, and in practice exactly one reason for that.
 
+> **Re-ruled by D75, which refuses it on principle rather than on a heuristic — and neither ruling is
+> built.** See D75's *"A decorator on a CLASS is refused"* banner for what the compiler actually does,
+> which is a third thing again.
+
 **A decorator on a class is NOT refused — tried, and withdrawn on evidence.** D68 and this decision both
 asserted there is no way to write a class-shaped decorator, so applying one should be an error. That
 generalisation is wrong, and the corpus already contained the counterexample: `Qf/AF-019` pins a
@@ -5881,6 +6019,19 @@ can produce. Worth recording so nobody plans on it being free.
 
 ### A decorator on a CLASS is refused
 
+> **RULED, NOT BUILT — and three rulings disagree about this one sentence.** D68 says applying an
+> argument-taking decorator to a class *"is a DIAGNOSTIC, not a runtime crash"*; **D72-c** says it is
+> *"NOT refused — tried, and withdrawn on evidence"*; this section says it is refused. **The compiler
+> implements none of the three.**
+>
+> Measured 2026-07-28: `checkAnnotationUse` raises only LL0033/LL0036/LL0032, so there is no
+> diagnostic. On C, `refuseCustomModifier` takes a `FunctionNode` and is called only from
+> `collectFunction`, so a class decorator is **silently dropped**. On JS,
+> `JSTransformerAstVisitor.applyModifiersToClass` still **applies** it — emitting the curried
+> `__ll_modifier_X(...)(...)` shape of D3b, the contract *this very decision replaced*. The test that
+> would have caught the drift survives because it was never migrated either.
+>
+> So the refusal below is the intent. Tracked in `../roadmap.md`; nothing here is enforced.
 The flat contract has no coherent reading for one: `original` would be a constructor and `...args` its
 arguments, which is a different operation from wrapping a call. `defattribute` (D72) is the form for
 annotating a class, works on every construct, and needs no runtime support.
