@@ -40,3 +40,4 @@ inverted relative to the project today.
 | `std-math-numerics-blockers.md` | the two blocked `std/math` numerics modules | `random` shipped (D65); `fft` is in `roadmap.md`, and its draft is lost |
 | `regex-literals-recon.md` | the `/pattern/flags` literal, and why it cannot work | D67 — `r"…"` raw strings, an l-lang engine, `std/text/regex` |
 | `rtti-and-cast-brief.md` | five research lenses on RTTI and whether a cast form should exist | D41 (`:of` narrows) and D46/B-3 (`defcast` converts) |
+| `l-lang-rfc-0001.md` | "The l-lang Report" — a 2996-line prose consolidation of the whole language | never ratified; measured at 35% drift 48 hours after its own corrections pass. Appendix E extracted to `spec/PRIOR-ART.md` |

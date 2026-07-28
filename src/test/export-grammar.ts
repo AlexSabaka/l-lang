@@ -1,6 +1,6 @@
 // Export the l-lang Chevrotain grammar (grammar_v2/Parser) as EBNF, straight off the
 // serialized GAST so it can never drift from the real parser.
-//   npm run grammar:ebnf   ->   docs/inbox/l-lang.grammar.ebnf
+//   npm run grammar:ebnf   ->   docs/spec/GRAMMAR.ebnf
 import * as fs from "fs";
 import * as path from "path";
 import { parser } from "../compiler/frontend/grammar_v2/Parser";
@@ -92,6 +92,6 @@ for (const [name, pat] of [...lexicals].sort()) {
   out.push(`<${name}>`.padEnd(24) + `::= ${rhs}`);
 }
 
-const dest = path.join(__dirname, "../../docs/inbox/l-lang.grammar.ebnf");
+const dest = path.join(__dirname, "../../docs/spec/GRAMMAR.ebnf");
 fs.writeFileSync(dest, out.join("\n") + "\n", "utf8");
 console.log(`grammar:ebnf -> ${dest} (${gast.length} productions, ${lexicals.size} lexical terminals)`);

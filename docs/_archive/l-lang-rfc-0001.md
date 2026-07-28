@@ -1,3 +1,31 @@
+> **ARCHIVED 2026-07-28 — frozen at `376c84a`, not brought current.**
+>
+> It described itself as *"Draft — consolidating seed. Not yet canonical"* and deferred to
+> `DECISIONS.md`, `FLOOR.md` and `STDLIB.md` wherever they disagreed. Two independent audits of its
+> halves measured the drift at **37% and 34% of subsections** — 39 commits and 16 rulings after its
+> one and only corrections pass, which was itself two days old. D68 through D90 are absent or wrong
+> throughout: the `:foo` trichotomy, the metaprogramming tiers, `defattribute`, the in-house comptime
+> interpreter, the flat `defmodifier` contract, six stdlib modules, **C becoming the reference
+> backend**, the numeric tower, `Ring`, and units of measure.
+>
+> **Why it is not repaired.** Its most accurate sections verify *because they restate* something else
+> — D47, `FLOOR.md` §3.5, `Context.ts`, `regex.lisp`. It was a second copy of the truth in a different
+> register, and a second copy decays at the rate the first one changes. It also created a **contested
+> normative claim**: §11.4 says *"this is the normative specification"* of the display format, and
+> `FLOOR.md` §3.5 says *"this section IS the specification"* of the same thing, in transcribed-
+> identical prose, with no rule for which wins.
+>
+> **What it got right is the reader problem**, stated in its own §0.1: `DECISIONS.md` is ordered by
+> *when* a ruling was taken, not by *what* it is about, so a newcomer cannot find anything. The answer
+> is a topic index inside `DECISIONS.md` — pointers cannot drift into falsehood the way re-narrated
+> prose did.
+>
+> **One section was extracted** before archiving: Appendix E's prior-art synthesis, which existed
+> nowhere else, is now [`docs/spec/PRIOR-ART.md`](../spec/PRIOR-ART.md).
+>
+> Source comments citing *"RFC-0001 §5.6"* (the refusal of narrowing casts) refer to this document;
+> the ruling they actually depend on is **D41** (`:of` narrows) with **D46/B-3** (`defcast` converts).
+
 # RFC-0001 — The l-lang Report
 
 > **A statically typed Lisp that compiles to native code.**

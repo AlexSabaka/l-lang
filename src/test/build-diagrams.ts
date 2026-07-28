@@ -1,12 +1,12 @@
 // Build a self-contained railroad-diagram viewer for the l-lang grammar.
 // Inlines chevrotain's vendored railroad-diagrams lib + builder + behavior, plus the
 // precomputed serialized GAST, so the page needs zero external resources (Artifact-CSP safe).
-//   npm run grammar:diagrams   ->   docs/inbox/l-lang.grammar.html  (open in a browser)
+//   npm run grammar:diagrams   ->   docs/spec/GRAMMAR.html  (open in a browser)
 import * as fs from "fs";
 import * as path from "path";
 import { parser } from "../compiler/frontend/grammar_v2/Parser";
 
-const OUT = path.join(__dirname, "../../docs/inbox/l-lang.grammar.html");
+const OUT = path.join(__dirname, "../../docs/spec/GRAMMAR.html");
 const DIA = path.join(__dirname, "../node_modules/chevrotain/diagrams");
 
 const read = (p: string) => fs.readFileSync(path.join(DIA, p), "utf8");

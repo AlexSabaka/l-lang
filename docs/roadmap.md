@@ -624,6 +624,20 @@ fold n-ary operators pairwise before `inferOperatorType` and one rule covers eve
 the arity scope honestly in D88/D90. **Found by the documentation audit, not by the corpus** — no
 example exercises a three-operand `+` over dimensioned values.
 
+### The grammar artifacts have no regeneration gate
+
+`npm run grammar:ebnf` serializes Chevrotain's GAST straight off `Parser.ts`, so the EBNF **cannot**
+be wrong — but nothing makes anyone run it. The committed copy was three rulings stale when promoted
+to `docs/spec/GRAMMAR.ebnf` on 2026-07-28: it was missing `ImaginaryNumber` (D88) and the three
+dimension rules (D90). The fix is a `--check` mode in the generator plus a line in the gate, the
+same shape the diagnostics registry already uses to police its own code allocation.
+
+Related, and smaller: **12 of the 98 productions land in the diagram viewer's unlabelled "Other"
+bucket** — `build-diagrams.ts`'s `GROUPS` array hardcodes 86 rule names, so everything from D46
+(`refinementConstraint`, `castDefDecl`, `castExpr`), D47 (`restartCaseExpr`, `restartArm`,
+`handleExpr`, `handleClause`, `signalExpr`, `invokeRestartExpr`), D72 (`attributeDefDecl`) and D90
+(`dimensionConstraint`, `dimensionOperand`) is unnavigable in the viewer.
+
 ### `std/math/fft` is blocked, and its draft is gone
 
 Blocked on the C `computed-callee` refusal (`ResolveHirToCir.ts`) plus an unpinned JS index bug. Its
