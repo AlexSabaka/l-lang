@@ -359,6 +359,13 @@ const PROBES: Probe[] = [
   // `EmitCirToC.ts:977` instead of a diagnostic pointing at the user's source. They are pinned HERE
   // and not in the corpus because both COMPILE AND RUN on JS, so there is no manifest status that
   // fits: `negative` asserts failure on both backends, `xfail` asserts nothing at all.
+  // D88 N3: the GUARD on promotion -- it adds assignability through DECLARED conversions and invents
+  // none. There is no `String -> Int` defcast, so this stays an error.
+  {
+    name: "LL0204 promotion does not invent a conversion",
+    source: '(console.log (- 3 "s"))',
+    stage: "types",
+  },
   // D88 N2: a radix literal is an Int, so a bad assignment is caught. It inferred Unknown before --
   // assignable in BOTH directions -- so this compiled clean. The literal did not merely lack a type;
   // it turned checking off at its use site.

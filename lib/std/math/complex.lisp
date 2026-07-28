@@ -426,5 +426,14 @@
     ;; `(rect a b)` directly.
     (let I (Complex 0.0 1.0))
 
+    ;; D88/N3 -- PROMOTION, one declaration per source type. ONE HOP only (`hasImplicitCast` never
+    ;; chains), so `Int -> Complex` cannot be reached via `Int -> Real -> Complex` and has to be its
+    ;; own. Both are exact: every Int and every Real is a complex number with a zero imaginary part.
+    ;;
+    ;; No `Complex -> Real`: it would have to drop the imaginary part, and a promotion that silently
+    ;; discards half the value is worse than a compile error.
+    (defcast :implicit [r <- Real] -> Complex (Complex r 0.0))
+    (defcast :implicit [n <- Int] -> Complex (Complex n 0.0))
+
     (export Complex rect polar scale I real-fixed)
 )

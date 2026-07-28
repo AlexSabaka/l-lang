@@ -3330,6 +3330,16 @@ export class ResolveHirToCir {
       const overload = this.operators.get(`${canonOp}:${lhs.ctype.className}`);
       if (overload) {
         this.ledger.record("A3", "operator-call", src, "operator overload dispatched statically to a direct call");
+        // D88/N3, the MIRROR case: the overload is the left's, and the right needs promoting into the
+        // operand type it declares -- `(+ 1/2 1)`. The checker already accepts it, because
+        // `isAssignable` consults `:implicit` casts when matching the parameter; without this the
+        // backend then emitted a `c-cast int -> obj` that has no lowering, so the two stages agreed
+        // the program was valid and only one of them could produce it.
+        const want = overload.otherCType;
+        if (want?.k === "obj" && rhs.ctype.k !== "obj") {
+          const promotedRhs = this.implicitConvert(rhs, want.className, src);
+          if (promotedRhs) rhs = promotedRhs;
+        }
         return {
           src, ctype: overload.ret, kind: "c-call",
           // The right param is the operator's DECLARED operand type, NOT the concrete `rhs.ctype`: a
@@ -3340,9 +3350,75 @@ export class ResolveHirToCir {
         };
       }
     }
+    // D88/N3 -- PROMOTION. The lookup above asks only the LEFT operand, so `(+ 1 1/2)` asked `Int` and
+    // came away empty: the overload lives on `Rational`. If the RIGHT operand owns the operator and
+    // the left has an `:implicit` defcast to it, convert the left and dispatch. The checker's
+    // `promoteOperand` decides the same thing on the same evidence; this materializes the call it
+    // implied, so the two cannot disagree about whether the program type-checked.
+    const promoted = this.promoteBinop(canonOp, lhs, rhs, src);
+    if (promoted) return promoted;
+
     const mode = this.binopMode(canonOp, lhs, rhs, src, intDiv);
     const ctype = this.binopCType(canonOp, mode);
     return { src, ctype, kind: "c-binop", op: canonOp, mode, lhs, rhs };
+  }
+
+  /** The l-lang type NAME a C type stands for, for building a `__cast_<S>_to_<T>` lookup. */
+  private static typeNameOfCType(t: CType): string | undefined {
+    switch (t.k) {
+      case "int": return "Int";
+      case "real": return "Real";
+      case "str": return "String";
+      case "bool": return "Boolean";
+      case "char": return "Char";
+      case "obj": return t.className;
+      default: return undefined;
+    }
+  }
+
+  /**
+   * `expr` converted to the l-lang type `to` through its `:implicit` defcast, or undefined if there
+   * is none. The conversion is an ordinary function -- the AstBuilder rewrites a `defcast` into
+   * `__cast_<S>_to_<T>` -- so this lowers it on demand exactly as any other imported body and adds no
+   * cast machinery of its own.
+   */
+  private implicitConvert(expr: CExpr, to: string, src: ast.ASTNode): CExpr | undefined {
+    const from = ResolveHirToCir.typeNameOfCType(expr.ctype);
+    if (!from || from === to) return undefined;
+    const castName = `__cast_${from}_to_${to}`;
+    const entry = this.resolveSymbolSafe(castName, src);
+    if (!entry || this.isExtern(entry) || (entry.value as any)?._type !== "function") return undefined;
+    if (!(entry.value as ast.FunctionNode).modifiers?.some((m) => m.modifier === "implicit")) return undefined;
+    const alias = this.lowerImportedFunction(castName, entry.value as ast.FunctionNode);
+    const sig = this.topLevelFns.get(alias);
+    if (!sig) return undefined;
+    this.ledger.record("A6", "operand-promotion", src, `'${from}' promoted to '${to}' via an :implicit defcast at an operator operand`);
+    return {
+      src, ctype: sig.ret, kind: "c-call",
+      callee: { kind: "free", cName: mangleC(alias), params: sig.params, ret: sig.ret },
+      args: [expr],
+    };
+  }
+
+  /**
+   * `lhs op rhs` where the OVERLOAD belongs to `rhs`'s class and `lhs` converts into it.
+   *
+   * The conversion is an ordinary function: a `defcast` is rewritten by the AstBuilder into
+   * `__cast_<S>_to_<T>`, so this looks the name up and lowers it on demand exactly as any other
+   * imported body -- no cast machinery of its own, which is the point. `:implicit` was always the
+   * declaration for this; it had simply never been consulted at an operand position.
+   */
+  private promoteBinop(op: string, lhs: CExpr, rhs: CExpr, src: ast.ASTNode): CExpr | undefined {
+    if (rhs.ctype.k !== "obj") return undefined;
+    const overload = this.operators.get(`${op}:${rhs.ctype.className}`);
+    if (!overload) return undefined;
+    const converted = this.implicitConvert(lhs, rhs.ctype.className, src);
+    if (!converted) return undefined;
+    return {
+      src, ctype: overload.ret, kind: "c-call",
+      callee: { kind: "free", cName: overload.cName, params: [converted.ctype, overload.otherCType ?? rhs.ctype], ret: overload.ret },
+      args: [converted, rhs],
+    };
   }
 
   private binopMode(op: string, l: CExpr, r: CExpr, src: ast.ASTNode, intDiv = false): BinopMode {

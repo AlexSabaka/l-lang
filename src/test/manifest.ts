@@ -203,6 +203,15 @@ export const MANIFEST: Record<string, ManifestEntry> = {
     status: "xfail",
     reason: "D5: array/generic argument type-checking",
   },
+  "80-adversarial/numeric_promotion.lisp": {
+    status: "test",
+    oracleDivergent:
+      "Promotion is implemented on C only, because D66/D86 freeze the JS path -- no new fixes land " +
+      "there. The checker accepts `(+ 1 1/2)` on both, so JS emits `1 + <object>` and prints " +
+      "`1[object Object]`, then dies on `Cannot mix BigInt and other types`. This is the first place " +
+      "the tower's two halves part company: the LITERALS are portable (they desugar to ordinary " +
+      "constructions and both backends run them), and PROMOTION is not.",
+  },
   "80-adversarial/numeric_radix_literals.lisp": {
     status: "test",
     oracleDivergent:

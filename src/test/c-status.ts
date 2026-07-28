@@ -369,6 +369,10 @@ export const C_PASSING: readonly string[] = [
   // file is oracle-divergent; the imaginary literal is portable and graded on both.
   "80-adversarial/numeric_radix_literals.lisp",
   "80-adversarial/numeric_imaginary_literal.lisp",
+  // D88 N3. `(+ 1 1/2)` was `arith-on-int/obj`: the operator lookup asks the LEFT operand and the
+  // overload lives on `Rational`. `:implicit` defcast already declared the relation and was simply
+  // never consulted at an operand position. Both directions, one hop, C-only (JS is frozen).
+  "80-adversarial/numeric_promotion.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

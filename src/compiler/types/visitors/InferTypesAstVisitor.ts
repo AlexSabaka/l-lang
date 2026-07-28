@@ -5117,6 +5117,22 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         }
       }
 
+      // D88/N3 -- PROMOTION. The lookup above asks the LEFT operand for the operator, so `(+ 1 1/2)`
+      // asked `Int` and came away empty: the overload lives on `Rational`. If the RIGHT operand has
+      // it and the left has an `:implicit` defcast to the right's type, the operator applies with the
+      // left promoted, and the result is the operator's own return type.
+      //
+      // NOT A NEW MECHANISM. `:implicit` defcast (D46/B-3) already declares exactly this relation and
+      // `hasImplicitCast` already answers it -- it was simply never asked at an operand position, so a
+      // declared conversion worked for assignment and was ignored by arithmetic. That asymmetry is
+      // what made `1/2` a value you could bind but not add to.
+      //
+      // ONE HOP, inherited from `hasImplicitCast`: `Int -> Complex` is its own declaration, never
+      // `Int -> Real -> Complex`. A chain would make the promotion order depend on what happens to be
+      // declared, which is exactly the ambiguity a tower is supposed to remove.
+      const promoted = this.promoteOperand(op, leftType, rightType);
+      if (promoted) return promoted;
+
       // Gradual typing -- see the unary case above.
       if (TypeChecker.isUnknown(leftType) || TypeChecker.isUnknown(rightType)) {
         return TypeEnvironment.unknown();
@@ -5141,6 +5157,25 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     }
     
     return TypeEnvironment.unknown();
+  }
+
+  /**
+   * The RIGHT operand owns the operator and the LEFT can be converted to it: `(+ 1 1/2)`.
+   *
+   * Deliberately one-directional. The reverse -- left owns it, right converts -- already works
+   * without help, because the lookup starts from the left and `isAssignable` consults implicit casts
+   * when matching the parameter. So this closes the missing half rather than adding a second path.
+   */
+  private promoteOperand(op: string, leftType: InferredType, rightType: InferredType): InferredType | undefined {
+    if (TypeChecker.isUnknown(leftType) || TypeChecker.isUnknown(rightType)) return undefined;
+    const rightOp = TypeChecker.findOperator(rightType, op, 1, this.symbolTable);
+    if (!rightOp || rightOp.kind !== "function") return undefined;
+    // The operand the operator declares must accept the RIGHT type -- this is `Rational + Rational`,
+    // and we are asking whether the left can become a Rational, not whether the operator is variadic.
+    const param = rightOp.params?.[0];
+    if (!param || !TypeChecker.isAssignable(rightType, param, this.symbolTable)) return undefined;
+    if (!TypeChecker.isAssignable(leftType, rightType, this.symbolTable)) return undefined;
+    return rightOp.returns || TypeEnvironment.unknown();
   }
 
   /**

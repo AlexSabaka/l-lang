@@ -379,5 +379,15 @@
              (i := (+ i 1))))
         (return (Rational h0 k0)))
 
+    ;; D88/N3 -- PROMOTION. An `:implicit` defcast is how l-lang declares "this converts to that", and
+    ;; the checker now asks it at operator operands too, so `(+ 1 1/2)` works: `Int` has no `+` taking
+    ;; a Rational, `Rational` does, and this says an Int can become one.
+    ;;
+    ;; `n/1` is exact and needs no reduction -- gcd(n, 1) = 1 -- so the ctor's invariant holds trivially
+    ;; and the conversion is lossless in the direction that matters. The reverse (Rational -> Int) is
+    ;; deliberately NOT declared: it would silently truncate, and a promotion that loses information is
+    ;; how a numeric tower stops being trustworthy.
+    (defcast :implicit [n <- Int] -> Rational (Rational n 1))
+
     (export Rational from-int from-real)
 )

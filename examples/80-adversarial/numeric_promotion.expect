@@ -1,0 +1,9 @@
+int + rat:  3/2
+int * rat:  1
+int - rat:  7/4
+rat + int:  3/2
+rat / int:  1/2
+int + cplx: 3.0000+4.0000i
+real + cplx: 3.0000+4.0000i
+E - 6j:     2.7183-6.0000i
+done

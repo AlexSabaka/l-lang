@@ -481,6 +481,16 @@
     ]
   },
   {
+    "probe": "LL0204 promotion does not invent a conversion",
+    "diagnostics": [
+      {
+        "code": "LL0204",
+        "severity": "error",
+        "text": "Operator '-' is not defined for Int and String."
+      }
+    ]
+  },
+  {
     "probe": "LL0200 a hex literal is an Int, not Unknown",
     "diagnostics": [
       {
