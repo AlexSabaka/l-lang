@@ -154,6 +154,7 @@ enough that an unmeasured claim in a commit message is a defect in the commit.
 
 | you want | read |
 |---|---|
+| what l-lang is, and is not | `docs/spec/IDENTITY.md` |
 | what was decided and why | `docs/spec/DECISIONS.md` |
 | what is built, what is left, what is broken | `docs/roadmap.md` |
 | the runtime contract both backends must not diverge on | `docs/spec/FLOOR.md` |

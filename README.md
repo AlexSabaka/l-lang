@@ -95,7 +95,8 @@ See the [roadmap](docs/roadmap.md) for what's built, what's left, and what's bro
 4. **[Documentation Index](docs/INDEX.md)** 📑 - Full documentation hub
 
 **Going deeper:**
-- **[Decisions log](docs/spec/DECISIONS.md)** 🧭 - Every ruling, D1–D90, with the measurement behind it. Start at its topic index.
+- **[What l-lang is, and is not](docs/spec/IDENTITY.md)** 🧭 - The shape of the language, its refusals, and where the design is currently incoherent.
+- **[Decisions log](docs/spec/DECISIONS.md)** - Every ruling, D1–D90, with the measurement behind it. Start at its topic index.
 - **[Compiler](docs/language-compiler.md)** 🏗️ - The compilation pipeline
 - **[The intrinsic floor](docs/spec/FLOOR.md)** - The runtime contract the backends must not diverge on
 - **[Grammar](docs/spec/GRAMMAR.ebnf)** - Generated from the parser, so it cannot drift
