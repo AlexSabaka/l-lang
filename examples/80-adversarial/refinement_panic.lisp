@@ -8,7 +8,7 @@
 ;; on the message and disagree on the envelope (JS throws with a stack trace, C fprintf + exit 1),
 ;; which is exactly why the panic form matches a substring of stderr rather than all of it.
 (
-    (deftype uint8 <- Int :satisfies (0 .. 255))
+    (deftype uint8 <- Int :satisfies (0..255))
 
     ;; In range: flows through untouched, and prints. Everything up to the panic is still graded.
     (let ok <- uint8 255)

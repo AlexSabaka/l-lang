@@ -6,7 +6,7 @@
 ;;
 ;; Here the tail is an `if`, so the check lands on each BRANCH rather than around the `if`.
 (
-    (deftype uint8 <- Int :satisfies (0 .. 255))
+    (deftype uint8 <- Int :satisfies (0..255))
 
     (fn pick [big <- Boolean] -> uint8 (if big 999 5))
 

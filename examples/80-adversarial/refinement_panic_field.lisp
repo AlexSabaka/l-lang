@@ -5,7 +5,7 @@
 ;; the child's constructor calls `super`, so an inherited refined field is guarded by the class that
 ;; declared it -- which is also why a cross-module parent needs no special handling.
 (
-    (deftype uint8 <- Int :satisfies (0 .. 255))
+    (deftype uint8 <- Int :satisfies (0..255))
 
     (defclass Base (let :ctor v <- uint8))
     (defclass Derived :extends Base (let :ctor tag <- String))

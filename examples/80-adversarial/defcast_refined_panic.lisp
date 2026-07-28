@@ -4,7 +4,7 @@
 ;;
 ;; The body of the conversion is doing nothing wrong; the value it produces is simply out of range.
 (
-    (deftype uint8 <- Int :satisfies (0 .. 255))
+    (deftype uint8 <- Int :satisfies (0..255))
 
     (defclass Volume (let :ctor raw <- Int))
     (defcast :explicit [v <- Volume] -> uint8 v.raw)

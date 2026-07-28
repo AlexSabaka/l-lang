@@ -6,7 +6,7 @@
 ;; One hook covers a local, a field and an index target, because all three resolve the same way.
 ;; Every value here is in range; the sad paths live in 80-adversarial/.
 (
-    (deftype uint8 <- Int :satisfies (0 .. 255))
+    (deftype uint8 <- Int :satisfies (0..255))
     (deftype Level <- Int :satisfies (1 ..))          ;; open-ended: 1 and up
 
     ;; A local `mut`.

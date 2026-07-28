@@ -17,6 +17,27 @@ const FractionHasZeroDenominator = createRule<ast.FractionNumberNode>()
   .addTest((node) => node.denominator === 0)
   .build();
 
+// D88/N4. `..` binds by ADJACENCY: `1..2` is a Range, `1 .. 2` is three elements where the middle one
+// is a standalone `..`. That middle element is the SPAN/wildcard -- `array[1 .. 2]` meaning
+// `array[1, *, 2]` -- and multidimensional views do not exist yet, so it is reported rather than left
+// to fail later.
+//
+// It has to be caught HERE. `AstBuilder` has no diagnostics channel, and letting the marker through
+// was measurably worse than either alternative: dropped, `(0 .. 3)` silently became the block `(0 3)`
+// whose value is 3 and failed at RUN TIME as "value is not iterable"; kept as a bare identifier, it
+// slipped past the checker entirely and died at `cc` on an undeclared `u__2e__2e_`.
+const RangeSpanNotImplemented = createRule<ast.IdentifierNode>()
+  .addTypeFilter("simple-identifier")
+  .addSeverity(RuleSeverity.Error)
+  .addCode("LL0034")
+  .addMessage(
+    "A standalone '..' is a SPAN, and spans are not implemented. `..` binds by adjacency: write " +
+    "'1..2' for a range. Spaced, it is a separate element -- 'array[1 .. 2]' means 'array[1, *, 2]', " +
+    "a view across a middle dimension, which needs multidimensional views."
+  )
+  .addTest((node) => (node as any).id === "..")
+  .build();
+
 const ImportMustHaveSource = createRule<ast.ImportNode>()
   .addTypeFilter("import")
   .addSeverity(RuleSeverity.Error)
@@ -287,4 +308,5 @@ export const Rules = {
   WhenMustHaveThenClause,
   MatchMustHaveCases,
   IdentifierMustHaveName,
+  RangeSpanNotImplemented,
 } as const;

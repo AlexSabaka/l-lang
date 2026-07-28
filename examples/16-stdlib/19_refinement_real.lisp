@@ -6,7 +6,7 @@
 ;; doubles, and routing them through the Int signature would truncate the very bound being tested.
 ;; Everything else is shared -- the same coercion point, the same boundaries, the same message.
 (
-    (deftype Ratio  <- Real :satisfies (0.0 .. 1.0))
+    (deftype Ratio  <- Real :satisfies (0.0..1.0))
     (deftype Kelvin <- Real :satisfies (0.0 ..))       ;; open-ended: absolute zero and up
 
     ;; let-init

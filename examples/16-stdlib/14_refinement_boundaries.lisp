@@ -8,7 +8,7 @@
 ;;
 ;; Every value here is IN range: the sad paths panic, and live in 80-adversarial/.
 (
-    (deftype uint8 <- Int :satisfies (0 .. 255))
+    (deftype uint8 <- Int :satisfies (0..255))
     (deftype Level <- Int :satisfies (1 ..))          ;; open-ended: 1 and up
 
     ;; PARAMETER: checked on entry, whatever the call site looked like.

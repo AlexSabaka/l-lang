@@ -359,6 +359,13 @@ const PROBES: Probe[] = [
   // `EmitCirToC.ts:977` instead of a diagnostic pointing at the user's source. They are pinned HERE
   // and not in the corpus because both COMPILE AND RUN on JS, so there is no manifest status that
   // fits: `negative` asserts failure on both backends, `xfail` asserts nothing at all.
+  // D88 N4: a standalone `..` is the span/wildcard, and spans are not implemented. Reported at the
+  // syntax stage, so both backends agree.
+  {
+    name: "LL0034 a spaced `..` is a span, not a range",
+    source: "(for :each i :from (0 .. 3) :then (console.log i))",
+    stage: "types",
+  },
   // D88 N3: the GUARD on promotion -- it adds assignability through DECLARED conversions and invents
   // none. There is no `String -> Int` defcast, so this stays an error.
   {

@@ -6508,3 +6508,94 @@ worth stating so it is not "fixed" later into agreement.
 
 Pinned by `80-adversarial/debug_panic_is_fatal.lisp`, which wraps a failing `assert` in a broad
 `catch :of Error` and has a `.panic` golden: a regression to catchable shows up as extra stdout.
+
+## D88 — the numeric tower: literals, promotion, and the `..` rule (2026-07-28)
+
+The tower had been in the grammar for years and was never wired: `ComplexNumber`/`FractionNumber`
+tokens, `complex-number`/`fraction-number` AST nodes, HIR literal handling, a
+`FractionHasZeroDenominator` validation rule — and `std/math/rational` and `std/math/complex` sitting
+complete beside them with operator overloads. Nothing joined the two halves. The roadmap's signature
+failure mode: *written, never wired*.
+
+### The literals are desugars
+
+`1/2` → `(Rational 1 2)`, `3+4i` → `(Complex 3.0 4.0)`, `4i` → `(Complex 0.0 4.0)` — the shape
+`AstBuilder` already used for `(lo .. hi)` → `(Range …)`. **No backend work**, which is how the frozen
+JS backend gained the literals for free.
+
+In `DesugarAstVisitor`, not `AstBuilder`, and the ordering is the design: `Context.injectPrelude` runs
+after parse and before the symbols stage and decides what to inject by **looking for these literal
+nodes**. Rewriting at parse time erases the evidence the injector reads.
+
+### A literal implies its import; a name does not
+
+Writing `1/2` **is** the request — the user never typed `Rational`, so there is nothing to warn about
+and no remedy to offer. **The stdlib does not go ambient**: with no literal anywhere, a bare
+`Rational` is still `LL0210` (verified). The one fragile case is a name that resolves *only* because a
+literal elsewhere pulled the module in — deleting that literal would break a line that never mentioned
+it — and that is **LL0245**.
+
+`findIdentifier` skips `synthetic` nodes, and that skip is the whole correctness of LL0245: `..`
+desugars to a `(Range …)` head at parse time, so without it every `(0..3)` warned about a name the
+author never wrote.
+
+### Radix literals are Int
+
+`0xFF`/`0o17`/`0b1010` had no checker arm and inferred **Unknown** — the gap ledger's
+`A1:numeric-tower-literal`. An Unknown is assignable **both ways**, so the literal did not merely lack
+a type, it turned checking off at its use site: `(let h <- String 0xFF)` compiled clean. They take
+**no postfix**, ever, which falls out of token order rather than a check.
+
+### Promotion is the tower
+
+`(+ 1 1/2)` was `arith-on-int/obj`: the operator lookup asks the **left** operand and the overload
+lives on `Rational`. **Not a new mechanism** — `:implicit` defcast (D46/B-3) has always declared this
+relation and `hasImplicitCast` has always answered it; it was consulted for *assignment* and never at
+an operand position. Both directions now consult it, **one hop only** (`Int → Complex` is its own
+declaration, never `Int → Real → Complex`), and **nothing promotes downward** because that would
+silently drop information. The guard: `(- 3 "s")` is still `LL0204` — promotion follows declarations
+and invents nothing.
+
+Promotion is **C-only**; D66/D86 freeze the JS path. This is where the tower's halves part company:
+the literals are portable, promotion is not.
+
+### `..` binds by adjacency
+
+`1..2` is one element; `1 .. 2` is three, the middle one a standalone `..` — the span/wildcard, so
+`array[1..2]` is a range index and `array[1 .. 2]` is `array[1, *, 2]`. **Not an operator whose
+meaning changes with whitespace**: l-lang separates list elements by whitespace, so this is the same
+boundary question as `12` versus `1 2`, applied to a token that happens to be punctuation.
+
+Spans need multidimensional views, which do not exist, so a standalone `..` is **LL0034** rather than
+silence — the alternatives were measurably worse (dropped, `(0 .. 3)` became the block `(0 3)` whose
+value is `3`, failing at *run time* as "value is not iterable"; kept as a bare identifier, it slipped
+past the checker and died at `cc`). **16 corpus files** were migrated from the spaced form, mostly
+`:satisfies (0 .. 255)` refinements. Doing this before spans exist is the cheap moment.
+
+`Range` is demand-injected on the same ruling, which finally makes `..` whole: it had desugared to an
+unreachable name since it landed.
+
+### Recorded, not implemented
+
+*   **`[1 2 3]` is a ROW vector; `[1 | 2 | 3]` is a COLUMN** — already the implemented behaviour
+    (measured: `[[1] [2] [3]]`), never written down.
+*   **A matrix's elements must share a Ring** (`+` and `*`); a vector may hold a union. A vector is the
+    general container, a matrix exists for linear algebra, and `*` on mixed elements is meaningless.
+    The rule is *not* "must be numeric" — that would wrongly exclude `Complex` and `Rational`. Ring is
+    the natural fourth protocol beside D63's `Comparable`/`Hashable`/`Formattable`.
+*   **Units are declared, not inferred**, reusing `:satisfies`:
+    `(deftype Watt <- Real :satisfies (/ (* Kg Meter Meter) (* Second Second Second)))`. Full
+    dimensional analysis — deriving `Kelvin/Meter` — is F#-style units of measure and research-scale;
+    declaring derived units is the tractable 90%, and `+`/`-` between distinct unit types becomes an
+    error, which is the half that catches the most real bugs.
+*   **`i`/`j` are a reserved pair, not user-extensible.** D3 keeps `defsyntax` out for 1.0. `e`/`E`
+    remain available as future postfixes because an exponent is always followed by digits: `3.3e5` is
+    an exponent, `3.3e` a postfix, `3.3e5e` both.
+
+### Two things that do not work, measured rather than assumed
+
+*   **`E-6j` does not lex.** `-` is a kebab-case identifier character, so it is ONE identifier. The
+    spelling is prefix `(- E 6j)`, which promotion makes work: `2.7183-6.0000i`.
+*   **`..` is a LIST form, not an expression-level operator.** `[1..2 3..4]` does not parse and
+    `(let a 1..2)` is not a range — the branch fires only when the `..` and its two operands are the
+    whole list, so a range needs its own parens. Both predate adjacency and are their own parser work.

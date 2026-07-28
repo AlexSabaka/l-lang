@@ -2,7 +2,7 @@
 ;; range and is re-assigned out of it -- which every other boundary check would have missed, because
 ;; they all key on an annotation written next to the value and an assignment target has none.
 (
-    (deftype uint8 <- Int :satisfies (0 .. 255))
+    (deftype uint8 <- Int :satisfies (0..255))
 
     (mut brightness <- uint8 10)
 

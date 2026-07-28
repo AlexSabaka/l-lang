@@ -242,14 +242,24 @@ export class Context {
    * ONE entry covers `Rational` AND `Complex`: importing a module co-processes its package siblings,
    * and both live in `std/math`.
    */
-  private static readonly SYNTAX_MODULES: { module: string; nodeTypes: string[]; names: string[] }[] = [
+  private static readonly SYNTAX_MODULES: {
+    module: string;
+    nodeTypes?: string[];
+    /** A `synthetic` marker the AstBuilder stamps on a node it desugared from an operator. */
+    synthetic?: string;
+    names: string[];
+  }[] = [
     { module: "std/math/rational", nodeTypes: ["fraction-number", "complex-number"], names: ["Rational", "Complex"] },
+    // `(0..3)` desugars to `(Range 0 3 nil true)` at PARSE time, so there is no literal node left to
+    // find -- the marker is what the injector keys on. Same ruling as a numeric literal: the operator
+    // IS the request, so `..` needs no import, while a bare `Range` still warns (LL0245).
+    { module: "std/iter", synthetic: "range-op", names: ["Range"] },
   ];
 
   private injectSyntaxModules(file: string, ast: ASTNode): void {
     const here = path.resolve(file);
-    for (const { module, nodeTypes, names } of Context.SYNTAX_MODULES) {
-      if (!Context.astUsesAny(ast, nodeTypes)) continue;
+    for (const { module, nodeTypes, synthetic, names } of Context.SYNTAX_MODULES) {
+      if (!Context.astUsesAny(ast, nodeTypes, synthetic)) continue;
       const resolved = ModuleResolver.resolve(module, file, this.libPaths);
       // A missing lib/ is not a compiler error -- same rule as the prelude. The literal then fails as
       // an ordinary undefined-name, which is the honest answer when the library is genuinely absent.
@@ -281,13 +291,24 @@ export class Context {
     }
   }
 
-  /** Does the tree contain an `(import "<pkg>/…")`? */
+  /**
+   * Does the tree contain an `(import "<pkg>/…")`?
+   *
+   * The path is NESTED -- `ImportNode.imports[].source.file.value` -- not a `source` string on the
+   * node. Reading it as one made this always answer false, so LL0245 fired on files that DID import
+   * the module (`16-stdlib/12_range`, which imports `std/iter` on line 5).
+   */
   private static astImportsFrom(root: ASTNode, pkg: string): boolean {
     let found = false;
     const walk = (n: any): void => {
       if (found || !n || typeof n !== "object") return;
       if (Array.isArray(n)) { for (const c of n) walk(c); return; }
-      if (n._type === "import" && typeof n.source === "string" && n.source.startsWith(pkg)) { found = true; return; }
+      if (n._type === "import") {
+        for (const def of n.imports ?? []) {
+          const spec = def?.source?.file?.value ?? def?.source?.namespace;
+          if (typeof spec === "string" && spec.replace(/\.lisp$/, "").startsWith(pkg)) { found = true; return; }
+        }
+      }
       for (const k of Object.keys(n)) {
         if (k === "_parent" || k === "_location") continue;
         walk(n[k]);
@@ -297,13 +318,20 @@ export class Context {
     return found;
   }
 
-  /** The first `simple-identifier` in the tree spelled `name`, for the diagnostic's location. */
+  /**
+   * The first USER-WRITTEN `simple-identifier` spelled `name`, for the diagnostic's location.
+   *
+   * `synthetic` nodes are skipped, and that skip is the whole correctness of LL0245: `..` desugars to
+   * a `(Range …)` head at PARSE time, so the tree already contains the name when the injector scans.
+   * Without it every `(0..3)` warned that `Range` was unimported -- about a name the author never
+   * typed, which is exactly the false positive this warning was shaped to avoid.
+   */
   private static findIdentifier(root: ASTNode, name: string): ASTNode | undefined {
     let hit: ASTNode | undefined;
     const walk = (n: any): void => {
       if (hit || !n || typeof n !== "object") return;
       if (Array.isArray(n)) { for (const c of n) walk(c); return; }
-      if (n._type === "simple-identifier" && n.id === name) { hit = n as ASTNode; return; }
+      if (n._type === "simple-identifier" && n.id === name && n.synthetic === undefined) { hit = n as ASTNode; return; }
       for (const k of Object.keys(n)) {
         if (k === "_parent" || k === "_location") continue;
         walk(n[k]);
@@ -313,14 +341,15 @@ export class Context {
     return hit;
   }
 
-  /** Does the tree contain any node of these types? Walks the raw AST -- this runs before the HIR. */
-  private static astUsesAny(root: ASTNode, types: string[]): boolean {
-    const want = new Set(types);
+  /** Does the tree contain a node of these types, or one carrying this `synthetic` marker? */
+  private static astUsesAny(root: ASTNode, types?: string[], synthetic?: string): boolean {
+    const want = new Set(types ?? []);
     let found = false;
     const walk = (n: any): void => {
       if (found || !n || typeof n !== "object") return;
       if (Array.isArray(n)) { for (const c of n) walk(c); return; }
       if (typeof n._type === "string" && want.has(n._type)) { found = true; return; }
+      if (synthetic !== undefined && n.synthetic === synthetic) { found = true; return; }
       for (const k of Object.keys(n)) {
         if (k === "_parent" || k === "_location") continue; // `_parent` would walk back up forever
         walk(n[k]);

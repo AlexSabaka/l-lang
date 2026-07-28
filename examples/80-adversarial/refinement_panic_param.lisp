@@ -5,7 +5,7 @@
 ;; The check is a PROLOGUE inside `scale`, not a wrap at the call site, so it fires for every caller
 ;; rather than only the ones a desugar-time signature lookup could have found.
 (
-    (deftype uint8 <- Int :satisfies (0 .. 255))
+    (deftype uint8 <- Int :satisfies (0..255))
 
     (fn scale [x <- uint8] -> Int (* x 2))
 

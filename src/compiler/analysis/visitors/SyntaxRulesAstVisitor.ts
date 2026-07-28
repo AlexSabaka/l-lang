@@ -282,6 +282,17 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
     checkRules(node, [r.ExternFunctionCannotHaveBody], this.context);
   }
 
+  /**
+   * D88/N4 -- a STANDALONE `..` (the span/wildcard), which is not implemented.
+   *
+   * The only identifier this visitor inspects, and it exists because `AstBuilder` has no diagnostics
+   * channel: `..` binds by adjacency, so a spaced one is deliberately left in the tree as its own
+   * element and has to be reported from the first stage that can report anything.
+   */
+  visitSimpleIdentifier(node: ast.SimpleIdentifierNode) {
+    checkRules(node, [r.RangeSpanNotImplemented as Rule<ast.ASTNode>], this.context);
+  }
+
   visitFunctionParameter(node: ast.ParameterNode) {
     checkRules(node, [r.FunctionParameterMustHaveName], this.context);
     node.modifiers.forEach((modifier) =>

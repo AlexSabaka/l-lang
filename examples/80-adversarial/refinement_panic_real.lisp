@@ -2,7 +2,7 @@
 ;; backends: C prints the value with `%g`, which is what makes `1.5` there and `1.5` on JS rather
 ;; than the `1.500000` a `%f` would give -- so the one panic file grades both.
 (
-    (deftype Ratio <- Real :satisfies (0.0 .. 1.0))
+    (deftype Ratio <- Real :satisfies (0.0..1.0))
 
     ;; At the top of the range: fine, inclusive bounds.
     (let ok <- Ratio 1.0)

@@ -8,7 +8,7 @@
 ;;
 ;; Every value here is in range; the sad path lives in 80-adversarial/.
 (
-    (deftype uint8 <- Int :satisfies (0 .. 255))
+    (deftype uint8 <- Int :satisfies (0..255))
 
     ;; A class `:ctor` field.
     (defclass Pixel (let :ctor level <- uint8))

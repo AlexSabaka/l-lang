@@ -373,6 +373,10 @@ export const C_PASSING: readonly string[] = [
   // overload lives on `Rational`. `:implicit` defcast already declared the relation and was simply
   // never consulted at an operand position. Both directions, one hop, C-only (JS is frozen).
   "80-adversarial/numeric_promotion.lisp",
+  // D88 N4. `..` binds by adjacency -- `1..2` is one element, `1 .. 2` is three. And `Range` is
+  // demand-injected now, so the operator that had desugared to an unreachable name since it landed
+  // finally works with no import.
+  "80-adversarial/range_adjacency.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

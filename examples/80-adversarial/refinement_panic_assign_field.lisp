@@ -2,7 +2,7 @@
 ;; a local, and the case that decided where this check lives: the target's type belongs to the field,
 ;; reached through the object, so it is only knowable after inference.
 (
-    (deftype uint8 <- Int :satisfies (0 .. 255))
+    (deftype uint8 <- Int :satisfies (0..255))
 
     (defclass Lamp (mut :ctor level <- uint8))
     (let lamp (Lamp 5))

@@ -9,7 +9,7 @@
 ;; Exactly one of `:implicit`/`:explicit` is required. `:explicit` fires only where `(cast<T> x)` is
 ;; written; `:implicit` additionally fires at coercion sites on its own.
 (
-    (deftype uint8 <- Int :satisfies (0 .. 255))
+    (deftype uint8 <- Int :satisfies (0..255))
 
     (defclass Celsius (let :ctor degrees <- Real))
     (defclass Volume  (let :ctor raw <- Int))

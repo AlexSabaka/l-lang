@@ -481,6 +481,16 @@
     ]
   },
   {
+    "probe": "LL0034 a spaced `..` is a span, not a range",
+    "diagnostics": [
+      {
+        "code": "LL0034",
+        "severity": "error",
+        "text": "A standalone '..' is a SPAN, and spans are not implemented. `..` binds by adjacency: write '1..2' for a range. Spaced, it is a separate element -- 'array[1 .. 2]' means 'array[1, *, 2]', a view across a middle dimension, which needs multidimensional views."
+      }
+    ]
+  },
+  {
     "probe": "LL0204 promotion does not invent a conversion",
     "diagnostics": [
       {

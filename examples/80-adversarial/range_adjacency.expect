@@ -1,0 +1,20 @@
+up:   0
+up:   1
+up:   2
+up:   3
+down: 3
+down: 2
+down: 1
+by 5: 0
+by 5: 5
+by 5: 10
+excl: 0
+excl: 1
+excl: 2
+bound: 1
+bound: 2
+bound: 3
+a:    1
+a:    2
+b:    3
+b:    4

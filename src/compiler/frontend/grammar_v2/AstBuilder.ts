@@ -92,6 +92,27 @@ export class LLangAstBuilder extends BaseCstVisitor {
     this.validateVisitor();
   }
 
+  /**
+   * `..` BINDS BY ADJACENCY (D88/N4): `1..2` is a Range, `1 .. 2` is not.
+   *
+   * l-lang separates list elements by WHITESPACE, so `1..2` versus `1 .. 2` is the same boundary
+   * question as `12` versus `1 2` -- one element or three. It is not an operator whose meaning changes
+   * with spacing; it is the language's existing element rule applied to a token that happens to be
+   * punctuation. Which is what makes `array[1..2]` (one range index) and `array[1 .. 2]` (an index, a
+   * span, an index) distinguishable without inventing a second token or requiring commas.
+   *
+   * Offsets rather than a lexer mode, because the lexer cannot see across tokens: chevrotain's
+   * `endOffset` is INCLUSIVE of the last character, and a node's `_location.end.offset` is EXCLUSIVE
+   * (pinned by a grammar-v2 smoke test), so the two comparisons are deliberately asymmetric.
+   */
+  private static rangeIsTight(ctx: any, nodes: any[]): boolean {
+    const dots = ctx.Range?.[0];
+    const lhsEnd = nodes[0]?._location?.end?.offset;
+    const rhsStart = nodes[1]?._location?.start?.offset;
+    if (dots == null || lhsEnd == null || rhsStart == null) return true; // no offsets: keep the old answer
+    return lhsEnd === dots.startOffset && dots.endOffset + 1 === rhsStart;
+  }
+
   private loc(ctx: any): ast.Location {
     return createLocation(ctx, this.source);
   }
@@ -577,10 +598,25 @@ export class LLangAstBuilder extends BaseCstVisitor {
     // Iterable construction. Exactly one expr each side (the `..` binds two operands); anything else
     // keeps the list shape and the type stage reports it, mirroring the `:of` fall-through above.
     if (ctx.Range && nodes.length === 2) {
-      const head = this.makeNode("simple-identifier", ctx, { id: "Range" });
-      const stepNil = this.makeNode("null", ctx, { keyword: "nil" });
-      const inclusive = this.makeNode("boolean", ctx, { value: true });
-      return this.makeNode("list", ctx, { nodes: [head, nodes[0], nodes[1], stepNil, inclusive] });
+      if (LLangAstBuilder.rangeIsTight(ctx, nodes)) {
+        // `synthetic` marks this head as the RANGE OPERATOR's, not a user-written `Range`. The
+        // injector keys on it, so `(0..3)` pulls in `std/iter` while `(let Range 5)` does not.
+        const head = this.makeNode("simple-identifier", ctx, { id: "Range", synthetic: "range-op" });
+        const stepNil = this.makeNode("null", ctx, { keyword: "nil" });
+        const inclusive = this.makeNode("boolean", ctx, { value: true });
+        return this.makeNode("list", ctx, { nodes: [head, nodes[0], nodes[1], stepNil, inclusive] });
+      }
+      // SPACED, so it is not a range: the `..` is its own element, exactly as the whitespace says.
+      // Kept in the list rather than dropped, because dropping it turned `(0 .. 3)` into the block
+      // `(0 3)` -- whose value is 3, which then failed at RUN TIME as "value is not iterable". A
+      // silent re-reading is the one outcome worse than an error.
+      //
+      // It surfaces as `LL0210 '..' is not defined`, which is literally true and forward-compatible:
+      // a standalone `..` is the SPAN/wildcard (`array[1 .. 2]` = `array[1, *, 2]`), and
+      // multidimensional views do not exist yet. When they land, this name gains a meaning and this
+      // arm needs no change.
+      const dots = this.makeNode("simple-identifier", ctx, { id: ".." });
+      return this.makeNode("list", ctx, { nodes: [nodes[0], dots, nodes[1]] });
     }
 
     return this.makeNode("list", ctx, { nodes });

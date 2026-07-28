@@ -1,5 +1,5 @@
 (
-    (deftype uint8 Int :where Int :is (0 .. 255))
+    (deftype uint8 Int :where Int :is (0..255))
 
     (defstruct :public StringWrapper
         (mut :private :stack bytes <- uint8[256] [0])

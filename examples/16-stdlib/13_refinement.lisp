@@ -5,7 +5,7 @@
 ;; out-of-range value PANICS (a contract violation is a bug, not a catchable error -- so these values
 ;; are all in range). Open-ended bounds work too: `(0 ..)` is "0 and up".
 (
-    (deftype uint8  <- Int  :satisfies (0 .. 255))   ;; a bounded integer
+    (deftype uint8  <- Int  :satisfies (0..255))   ;; a bounded integer
     (deftype Kelvin <- Real :satisfies (0 ..))       ;; open-ended: absolute zero and up
 
     ;; Int flows into the distinct uint8 newtype; uint8 widens back to Int for arithmetic.

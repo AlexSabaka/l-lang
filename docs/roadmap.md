@@ -584,6 +584,19 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     match its JS twin — `ll_trap_index` was matched verbatim (`IndexOutOfRange: 99 (length 3)`)
     precisely so a catchable trap reads the same on both. Found while fixing `00_bfs`.
 
+*   **Spread adjacency should be ruled like `..` was (D88/N4), and is NOT ruled yet.** Measured
+    2026-07-28: `(add3 ... xs)` and `[0 ... xs]` both work, identically to the tight `...xs` — so the
+    "spread requires adjacency" rule that motivated the `..` ruling **does not exist anywhere**. `..`
+    now binds tight and `...` does not, which is an inconsistency between two operators that read as a
+    pair. Parked at Sabaka's instruction ("just a note for later"), and the fix is the same shape:
+    check token offsets where the spread is built.
+
+*   **`..` is a LIST form, not an expression-level operator.** `[1..2 3..4]` does not parse (the
+    vector/matrix rules consume plain expressions and the `..` branch lives in the list rule), and
+    `(let a 1..2)` is not a range — the branch fires only when the `..` and its two operands are the
+    WHOLE list, so a range needs its own parens. Both predate D88's adjacency ruling. `Range.start` /
+    `Range.end` also have no C lowering (`ELL0106 method:Range.start`).
+
 *   **PARKED (2026-07-27): decoration-time SETUP hoisting on C.** A decorator whose `defmodifier` body
     has statements before the wrapper — `(let cache {})` in `:memoized` — is refused BY NAME
     (`decorator-setup:<modifier> on '<fn>'`, `collectDecorated`) rather than dropped, because dropping
