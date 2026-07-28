@@ -350,6 +350,11 @@ export const C_PASSING: readonly string[] = [
   // catchable `ll_trap`), and INT_MIN/-1 produces D51's wrap value without going through UB to get
   // there. This file pins the values that must NOT have moved.
   "80-adversarial/integer_division_guard.lisp",
+  // D87. `std/debug`'s panic family used to `throw (FatalError …)`, which `catch :of Error` catches --
+  // so "this cannot happen" was silently downgraded to a handled condition by any broad handler up
+  // the stack. Now it ends the process. `.panic` golden, so a regression to catchable shows up as
+  // extra stdout.
+  "80-adversarial/debug_panic_is_fatal.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check
   // fired -- the compiler being right about an algorithm that was wrong.

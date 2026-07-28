@@ -6437,3 +6437,74 @@ behaviour.
 Pinned by `80-adversarial/integer_division_guard.lisp` (C-passing: the real cases, ordinary and
 negative operands, a non-literal divisor, and `INT64_MIN / -1` in both the bound and literal spellings)
 and by two `test:diagnostics` probes for LL0244.
+
+## D86 — C is the reference implementation; JS divergence is expected, not a defect (2026-07-28)
+
+**Ruling (Sabaka): "accept JS divergence as fact and stop paying too much attention. C should become
+the new golden oracle that will support the LLVM transition, just like JS supported the C transition."**
+
+D66 deprecated the JS backend and made it a differential cross-check. It stopped short of saying which
+side is *right* when they disagree, and the gap showed: the 2026-07-27 adversarial audit opened by
+asserting the opposite — *"JS defines the intended behavior and the C result is the defect"* — and
+misfiled five findings on that premise, including one where C refuses cleanly and JS prints
+`[object Object]0.5`.
+
+This closes it. **Where the backends disagree, C is the specification** unless C is shown wrong on its
+own terms. JS is a frozen second implementation whose remaining value is that a disagreement is worth
+*looking at* — not that it settles anything.
+
+The symmetry is the point: JS was the reference that made the C backend implementable, and C is now the
+reference that makes LLVM implementable. Each target's replacement is validated against the one it
+replaces, and then the old one stops being authoritative.
+
+**The known divergences, all measured, all with JS on the wrong side:** chained-call Int precision
+(D78), a skipped `:ctor` initializer (D80), dropped constructor arguments, `hyphen_field_encoding`'s
+mangled dot access, the variable-length-hex mangling collision (D84), and now division by zero (D85).
+
+**Consequence for the harness, which is the actual work this unblocks.** `manifest.ts` is
+backend-independent — a file is `test` (graded on both) or `xfail` (graded on neither) — so a file where
+C is right and JS is wrong has nowhere to live, and three are currently parked for that reason. Under
+this ruling that is no longer an exception to be logged but the expected case, and the manifest needs a
+status meaning *pinned against C; JS known-divergent and not graded*.
+
+## D87 — the failure taxonomy: data, contract, unrecoverable (2026-07-28)
+
+Prompted by "where else should we rule on panic vs error, and where are the contradictions". Surveyed
+every failure path in the runtime and `lib/`. There are **three** layers, not two, and only two of them
+were written down.
+
+**1. DATA the program received → a CATCHABLE error.** An index, a key, a parse input, an IO failure —
+wrong for reasons the author cannot see from the source. `ll_trap` constructs the D62 tower class and
+throws (D82). Every `throw` in `lib/` is this layer — `ValueError`, `FileError`, `IOError`,
+`ArithmeticError`, `AssertionError` — and all of them are library input validation. **No contradictions
+found in this layer.**
+
+**2. A CONTRACT the author declared → a PANIC.** A refinement violation (D46/P3c), a zero divisor
+(D85), and — fixed here — `std/debug`'s `assert` / `unreachable` / `todo` / `unimplemented`. These do
+their own `fprintf` + `exit` and never route through the catchable `ll_trap`.
+
+> **The contradiction that was live:** `std/debug`'s panic family *threw* `FatalError`, which extends
+> `Error`, so `catch :of Error` caught it. "This cannot happen" was silently downgraded to a handled
+> condition by any broad handler up the stack — the opposite of what the word means.
+
+**3. The runtime CANNOT CONTINUE → fatal, never catchable.** `OutOfMemory` and `ControlError` are
+spelled as traps and pass through `ll_trap`, but `ll_trap_as_error` excludes them by name, so they can
+never become an error object. Both exclusions are correct — throwing needs an allocation, and a
+corrupted unwind stack has nothing to unwind to — but this category **had no name**, which is how it
+reads as an inconsistency in the trap table rather than a deliberate third tier.
+
+**Checked and NOT a contradiction** (worth recording so it is not re-investigated): catchability does
+**not** depend on the error tower being imported. `ll_trap_as_error` falls back to fatal when
+`ll_class_by_name` finds nothing, which would make `xs[99]` catchable in one program and fatal in
+another — but the D62 tower is genuinely **ambient**, emitted into a bare program with no imports
+(verified: `__ll_class_RangeError` is present in a four-line file's output).
+
+**Two loose ends, deliberately not changed here.** `(clock-ns "bogus")` raises a catchable `ValueError`
+for a bad literal argument, which is layer 2 by the rule and layer 1 by its spelling — too small to
+churn. And `std/math/rational` throws a catchable `ArithmeticError` for a zero denominator while the
+primitive `/` panics: that is **coherent rather than drift** — check explicitly and you get an
+exception, skip the check and you get a panic, the same split as `checked_div` versus `/` — but it is
+worth stating so it is not "fixed" later into agreement.
+
+Pinned by `80-adversarial/debug_panic_is_fatal.lisp`, which wraps a failing `assert` in a broad
+`catch :of Error` and has a `.panic` golden: a regression to catchable shows up as extra stdout.
