@@ -444,7 +444,7 @@ proven by a characterization snapshot (`test:diagnostics`, 42 probes, byte-for-b
 
 ## 🔮 The language-feature lane (2026-07 design round)
 
-The Sabaka⇄Dove design round (`docs/inbox/hir-design-round-brief.md`) ratified a lane of language
+The Sabaka⇄Dove design round (`docs/_archive/hir-design-round-brief.md`) ratified a lane of language
 features on the now-solid HIR / coercion substrate. **Post-design-round sequencing:** the HIR core tail
 (Phase 6, D48) → the conversion substrate (Cv) → bounded generics + ergonomics (Bg) → conditions /
 restarts (Cr). All of it is JS-safe (degrades, no-ops, or refuses honestly), so none *depends* on native
@@ -514,7 +514,7 @@ Sabaka has notes on the notation; nothing here should be settled before they lan
 
 ### 🔮 Phase G — coroutines on the native backend (D58–D60)
 
-Ratified in the 2026-07-23 round over `docs/inbox/coroutines-and-memory-brief.md`. The C backend has
+Ratified in the 2026-07-23 round over `docs/_archive/coroutines-and-memory-brief.md`. The C backend has
 refused `:gen`/`:async` since the probe began (LL0105, spec gap A8); this builds **`:gen` only**, which
 drains the entire lazy sequence library to C — 11 generator definitions of 15 exported operators — and
 *is* the LLVM coroutine work, since the transform is HIR-level and backend-neutral. `:async` stays

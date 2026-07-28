@@ -1,3 +1,13 @@
+> **ARCHIVED 2026-07-28.** Consumed: its rulings are **D46** (the coercion substrate — refinements,
+> `defcast`, `(cast<T> x)`), **D47** (conditions / restarts) and **D48** (the HIR core tail), plus
+> amendments to D26/D33/D41, all in [`DECISIONS.md`](../spec/DECISIONS.md). Phases Cv and Cr have
+> since SHIPPED; Bg has not.
+>
+> Read the rulings, not this file. Two of its specifics are now wrong: §B writes the range refinement
+> spaced (`(0 .. 255)`), which **D88 made an LL0034 hard error**, and its "LLVM" throughout means
+> what the C backend now is. Kept for the long-form reasoning behind rulings that were deliberately
+> closed here so they would not be re-opened.
+
 # Design-round brief — readiness answers, the coercion substrate, ideas triage, conditions
 
 > **Triaged 2026-07-20** into `docs/spec/DECISIONS.md` (**D46–D48** + amendments to D26/D33/D41) and

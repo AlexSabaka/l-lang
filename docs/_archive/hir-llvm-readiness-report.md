@@ -1,3 +1,11 @@
+> **ARCHIVED 2026-07-28.** All five of its open questions were answered in the design round it was
+> written for — see **D46** and **D48** in [`DECISIONS.md`](../spec/DECISIONS.md).
+>
+> Its numbers are dead: the 3287-dips-over-60-files measurement was taken when 60 corpus files
+> reached C. **269 do now**, and the backend it calls "a probe" became the reference implementation
+> at **D86**. Kept because the readiness *bar* it sets is the one a future LLVM backend is still
+> measured against.
+
 # HIR → LLVM readiness report
 
 **What this is.** An honest assessment of where `HirModule` stands against the separation bar in

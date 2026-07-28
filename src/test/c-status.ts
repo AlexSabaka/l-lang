@@ -788,7 +788,7 @@ export const C_PASSING: readonly string[] = [
   // ---------------------------------------------------------------------------------------------
   // PENDING PARITY GUARDS -- deliberately NOT listed above (they are soft `not-yet` under C on
   // purpose). Each is a minimal, JS-green guard in examples/80-adversarial/ that isolates one of the
-  // §5.2 silent-divergence clusters from docs/inbox/c-backend-gap-ledger.md. They exist so the C fix
+  // §5.2 silent-divergence clusters from docs/_archive/c-backend-gap-ledger.md. They exist so the C fix
   // has a crisp target: when C reaches parity the ratchet turns RED ("newly passing -- add it"),
   // which is the signal to MOVE the corresponding line down into the array above.
   //   (cluster 1 -- print_positional_format -- PROMOTED above; the mechanism worked as designed.)

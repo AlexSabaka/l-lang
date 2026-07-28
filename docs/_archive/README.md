@@ -1,0 +1,35 @@
+# The archive
+
+Documents that did their job. Nothing here is maintained, and nothing here should be read as a
+statement about the current tree.
+
+**Why they are kept rather than deleted.** Most of these are *briefs* and *recon* — the intel that
+produced a ruling. The ruling lives in [`docs/spec/DECISIONS.md`](../spec/DECISIONS.md) and is
+authoritative; what the brief still carries is the reasoning and the measurements behind it, which a
+one-paragraph ruling cannot hold. When a future round reopens a question, this is where the previous
+round's evidence is.
+
+**How to read one.** Every file here opens with a banner naming the date it was archived and the
+ruling that consumed it. Trust the banner and the D-number; do not trust the file's body against the
+current tree. Several of them were written when l-lang transpiled to JavaScript and the C backend was
+an experiment — a framing **D86 reversed**, so their verdicts about which backend is "right" are
+inverted relative to the project today.
+
+**If you are looking for something specific:**
+
+| you want | it is at |
+|---|---|
+| what was decided, and why | [`docs/spec/DECISIONS.md`](../spec/DECISIONS.md) |
+| what is built, what is left, what is broken | [`docs/roadmap.md`](../roadmap.md) |
+| C backend defects, still-cited, still live | [`docs/spec/C-BACKEND-FINDINGS.md`](../spec/C-BACKEND-FINDINGS.md) |
+| ideas parked but not ruled | [`docs/inbox/language-ideas.md`](../inbox/language-ideas.md) |
+
+## Contents
+
+| file | what it was | consumed by |
+|---|---|---|
+| `c-backend-gap-ledger.md` | §1–§8 of the probe record: the method, the A1–A9 dip counts (3287 across 60 files), the frontier | D48, D49, D50–D55; framing reversed by D86. §9–§21 promoted to `spec/C-BACKEND-FINDINGS.md` |
+| `hir-design-round-brief.md` | the Sabaka⇄Dove round that ratified the coercion substrate, the ideas triage, and conditions/restarts | D46, D47, D48; amendments to D26/D33/D41 |
+| `hir-llvm-readiness-report.md` | how far `HirModule` stood from the separation bar, and five open questions | all five answered in D46/D48 |
+| `hir-gaps-and-seams.md` | an adversarial multi-agent review of the JS/LLVM split (31 findings, 22 confirmed) | absorbed into D45/D48; the type channel it called write-only is now load-bearing on both backends |
+| `coroutines-and-memory-brief.md` | the measurements behind coroutines, the memory model, and async posture | D58, D59, D60 |

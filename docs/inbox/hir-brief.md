@@ -1,3 +1,14 @@
+> **KEPT, and consumed — this file is cited BY THE COMPILER.** Its requirements **R1–R6** are the
+> definition five source comments point at by name: `src/compiler/hir/index.ts:2`,
+> `src/compiler/hir/nodes.ts:7` and `:28`, `src/compiler/hir/EmitHirToEstree.ts:3`, and
+> `src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts:1224`. It is not archived for
+> that reason: moving it silently would leave five dangling references in the code.
+>
+> The rulings it produced are **D45** (the HIR) and **D48** (the HIR core tail) in
+> [`DECISIONS.md`](../spec/DECISIONS.md), and the HIR has since shipped. One correction to the text
+> below: it is written as if the HIR fed ONE backend. It feeds two, and **C is the reference** (D86)
+> while the JavaScript path it describes in most detail is the deprecated one.
+
 # HIR implementation brief — the hard requirements
 
 **Status:** brief for a fresh session (Sabaka ⇄ Cheetah). Not a plan; a spec of what the HIR MUST do

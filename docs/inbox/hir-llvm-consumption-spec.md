@@ -1,3 +1,16 @@
+> **KEPT — a live contract, not a spent brief.** Its **A1–A9** assumption taxonomy is the vocabulary
+> the running compiler records dips in: `src/compiler/codegen/c/GapLedger.ts:5`,
+> `src/compiler/codegen/c/cir.ts:6` and `src/compiler/rules/diagnostics/CBackendDiagnostics.ts:8` all
+> name this file. The dips it defines are measured on every C compile.
+>
+> **Status, 2026-07-28.** A2/A3/A4/A7 substantially landed. **A8 is BUILT** (D58 / Phase G) with the
+> residual refusal narrowed to `:async` by D60, plus nested and lambda generators. `HOpaqueExpr` and
+> `HHoist` survive as the modelling residue.
+>
+> **Read "LLVM" as "native".** This was written before a native backend existed; C now occupies the
+> role the document reserves for LLVM, and became the reference implementation at **D86**. The
+> separation bar it sets still applies to an eventual LLVM flow unchanged.
+
 # HIR → LLVM consumption spec (v1 — Dove-refined)
 
 **What this is.** The contract a native (LLVM) backend would consume from `HirModule` — the forcing

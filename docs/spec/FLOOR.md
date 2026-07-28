@@ -27,16 +27,27 @@ is genuinely single-backend.* D48 applies it to the **HIR** — the compile-time
 **the same rule one layer down**, at the **runtime** contract: a runtime operation both backends
 perform must be specified once, so the two implementations cannot silently drift.
 
-They *do* drift today. The [§5.2 parity audit](../inbox/c-backend-gap-ledger.md) found seven executable
-corpus files where **C runs and prints a wrong answer** — the silent-wrong class — in four clusters,
-all of them a runtime primitive implemented twice and disagreeing:
+They *did* drift, and the drift is what motivated this document. A parity audit on 2026-07-22 found
+seven executable corpus files where **the two backends printed different answers** — the silent-wrong
+class — in four clusters, every one a runtime primitive implemented twice and disagreeing:
 
-| cluster | JS | C | now a guard |
+| cluster | JS | C | the guard |
 |---|---|---|---|
-| `print` `{0}` positional | `x=5` | ✅ *fixed by rest-param packing* | `80-adversarial/print_positional_format.lisp` |
+| `print` `{0}` positional | `x=5` | `x={0}` | `80-adversarial/print_positional_format.lisp` |
 | container-in-string | `[ 1, 2, 3 ]` | `1,2,3` | `80-adversarial/interp_container_format.lisp` |
-| reflection depth | full `{kind,params,…}` | ✅ *fixed by Fd* | `80-adversarial/reflection_metadata_depth.lisp` |
-| modifier side effects | `[log]` prints | (C refuses, fail-closed) | — |
+| reflection depth | full `{kind,params,…}` | a `{name, extends}` stub | `80-adversarial/reflection_metadata_depth.lisp` |
+| modifier side effects | `[log]` prints | C refuses, fail-closed | — |
+
+**All four are now closed**, and the mechanism that closed them is the point: each became a minimal
+guard in `examples/80-adversarial/`, deliberately left *unlisted* in the C ratchet so that the day C
+reached parity the build turned red demanding promotion. All three guards are listed in
+`src/test/c-status.ts` today (lines 225, 525, 655) — rest-param packing, the Formattable display
+rewire, and Fd's metadata graph respectively. Cluster 4 never needed a guard: a fail-closed refusal
+is already the loud signal, and there is no silent-wrong to catch.
+
+> The audit itself is archived at [`docs/_archive/c-backend-gap-ledger.md`](../_archive/c-backend-gap-ledger.md)
+> §5.2 — its framing (C as a probe, JS as the oracle) was reversed by **D86**. The live half of that
+> ledger, still cited by name from `src/`, is [`C-BACKEND-FINDINGS.md`](./C-BACKEND-FINDINGS.md).
 
 And that is only what an **all-ASCII, small-integer** corpus exposes. Two divergences are latent,
 untested because nothing exercises them: `(length "café")` is 4 on JS (UTF-16 units) and 5 on C

@@ -1,3 +1,19 @@
+> **ARCHIVED 2026-07-28.** Consumed by **D58** (coroutine lowering), **D59** (a precise tracing GC
+> with shadow-stack roots, no finalizers) and **D60** (`:async` stays C-refused) in
+> [`DECISIONS.md`](../spec/DECISIONS.md).
+>
+> **D59 is ruled and NOT built** — the collector does not exist; C mallocs and leaks by design, on
+> the grounds that a probe debugging a garbage collector has failed its purpose. So a future
+> implementer will come looking, and this is what they will find: measurements, not decisions. The
+> allocation inventory (a single `ll_alloc` choke point, 19 runtime + 2 emitter call sites, 7
+> `realloc` growth sites) is the part D59 does not restate and is the reason this file is worth
+> opening.
+>
+> Note also that D59's *parity* argument — "JS never runs an abandoned generator's `finally` either"
+> — was purchased one day before **D66** stopped making JS parity a design goal. The prior-art half
+> of the argument (JEP 421, `SafeHandle`, Go's `SetFinalizer`, Rust's `Drop`) is what the ruling
+> rests on now.
+
 # Design-round brief — coroutines (`:gen` / `:async`) and the memory model
 
 **From:** the implementation lane (Cheetah/dev). **For:** the Sabaka⇄Dove round.

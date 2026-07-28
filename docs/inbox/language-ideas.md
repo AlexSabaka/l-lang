@@ -3,7 +3,7 @@
 **Status: TRIAGED in the 2026-07 Sabaka⇄Dove design round.** The wishlist rescued from
 `examples/W99_L_sloth_design_v1.lisp` has been sorted into decisions and roadmap — the rulings now live
 in `docs/spec/DECISIONS.md` (**D46–D48**) and `docs/roadmap.md` (**Phases Cv / Bg / Cr**). Long-form
-reasoning: `docs/inbox/hir-design-round-brief.md` §C. **This file now tracks only the ideas still open —
+reasoning: `docs/_archive/hir-design-round-brief.md` §C. **This file now tracks only the ideas still open —
 parked or deferred.** Everything resolved is in the table below for the record, then closed there.
 
 ---

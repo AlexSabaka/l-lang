@@ -1,3 +1,11 @@
+> **ARCHIVED 2026-07-28.** Absorbed into **D45** (the HIR) and **D48** (the HIR core tail) in
+> [`DECISIONS.md`](../spec/DECISIONS.md). The clean JS/native split it maps out is built; the C
+> backend consumes the HIR and became the reference at **D86**.
+>
+> **One of its findings inverted.** It reports the type channel as effectively write-only — that was
+> true when measured and is now false: the channel is load-bearing on both backends, and D45/D48 are
+> what made it so. Do not carry that claim forward.
+
 # HIR gaps & seams — the road to a clean JS/LLVM split
 
 **Purpose:** measure how close the HIR is to *cleanly separating* the JS lowering flow

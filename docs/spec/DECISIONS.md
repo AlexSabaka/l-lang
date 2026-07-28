@@ -2848,7 +2848,7 @@ and `functional-pattern`. Those are separate defects; this ruling is guards.
 
 **Predicate-lambda match arms are rejected.** A `(fn [x] …)` lambda used as a pattern is redundant with
 the `:when` guard this decision added — `n :when (pred n)` already expresses "match where a predicate
-holds," and one spelling is the rule. (Source: `docs/inbox/hir-design-round-brief.md` §C.)
+holds," and one spelling is the rule. (Source: `docs/_archive/hir-design-round-brief.md` §C.)
 
 ## D27 — `:of` type patterns
 
@@ -3296,7 +3296,7 @@ and D34).
 
 **`infix` is closed.** An `(infix a / b)` escape hatch conflicts with this decision's ruling that `|>`
 is the language's one infix form, and with the deliberately-Lisp prefix surface. Rejected.
-(Source: `docs/inbox/hir-design-round-brief.md` §C.)
+(Source: `docs/_archive/hir-design-round-brief.md` §C.)
 
 ## D34 — modifier composition: DISPATCH modifiers vs BODY modifiers
 
@@ -3719,7 +3719,7 @@ Zc refuses, correctly.
 
 **The `pattern -> Type =>` type-guard arm is rejected.** `:of` (this decision) is the *one* spelling for
 the type question in both pattern and expression position; a second `-> Type` spelling is redundant.
-(Source: `docs/inbox/hir-design-round-brief.md` §C.)
+(Source: `docs/_archive/hir-design-round-brief.md` §C.)
 
 ---
 
@@ -4041,7 +4041,7 @@ probe removed), type-errors 0, imports 19/19, repl 26/0.
 ## D46 — the coercion pass is the type system's checked-conversion layer (Phase Cv)
 
 > **Ratified in the 2026-07 Sabaka⇄Dove design round; not yet built.** Long-form source of record:
-> `docs/inbox/hir-design-round-brief.md` §B. Recorded here so it is not re-opened.
+> `docs/_archive/hir-design-round-brief.md` §B. Recorded here so it is not re-opened.
 
 The native pipeline's coercion pass (A6, the C backend's `InsertCoercions` P2) is **not** "box/unbox for
 `Unknown`" — it is the **boundary-conversion layer of the type system**. Every feature that inserts a
@@ -4151,7 +4151,7 @@ runtime predicates.** Two changes to the B-bundle as ratified:
 ## D47 — conditions / restarts: a resumable second exception mechanism (Phase Cr; C-native, JS-refused)
 
 > **Ratified in the 2026-07 design round; BUILT on the C backend (Phase Cr, 2026-07).** Source:
-> `docs/inbox/hir-design-round-brief.md` §D. All four forms lower natively; JS refuses with LL0108.
+> `docs/_archive/hir-design-round-brief.md` §D. All four forms lower natively; JS refuses with LL0108.
 > Conformance suite: `examples/19-conditions/` (21 programs). Two rulings were settled by building it:
 > a declining handler falls to the **next matching clause of the same form** before the walk moves
 > outward (the brief's "decline -> next handler"), and `signal` re-arms its frame's re-entry guard via
@@ -4198,8 +4198,8 @@ handler's discretion; flag the ordering when both land.
 
 ## D48 — the HIR core tail: nodify dual-backend decisions, reclassify single-backend passes (Phase 6)
 
-> **Ratified in the 2026-07 design round; the resolutions to `docs/inbox/hir-llvm-readiness-report.md`'s
-> five open questions.** Source: `docs/inbox/hir-design-round-brief.md` §A.
+> **Ratified in the 2026-07 design round; the resolutions to `docs/_archive/hir-llvm-readiness-report.md`'s
+> five open questions.** Source: `docs/_archive/hir-design-round-brief.md` §A.
 
 **A-0 (the governing rule).** The gap ledger's power is that a dip cannot be argued away. A thing leaves
 core **only** if it is genuinely a single-backend pass (JS has no version of it). A decision **both**
@@ -4885,7 +4885,7 @@ still import it, so retiring it is a migration, tracked separately from landing 
 
 ## D58–D60 — coroutines and memory (Phase G)
 
-> **Ratified in the 2026-07-23 Sabaka⇄Dove round.** Source: `docs/inbox/coroutines-and-memory-brief.md`
+> **Ratified in the 2026-07-23 Sabaka⇄Dove round.** Source: `docs/_archive/coroutines-and-memory-brief.md`
 > (the implementation lane's recon) plus Dove's rulings on its eight questions. The brief remains the
 > long-form record of the measurements; these are the decisions. Sequencing: **`:gen` alone** (D58),
 > with D59 ruled as a *constraint* and built later, and D60 a deliberate non-build.
