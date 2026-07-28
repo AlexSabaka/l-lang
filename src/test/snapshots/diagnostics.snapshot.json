@@ -465,6 +465,14 @@
     "diagnostics": []
   },
   {
+    "probe": "silent: a homogeneous matrix",
+    "diagnostics": []
+  },
+  {
+    "probe": "silent: a matrix of Rational",
+    "diagnostics": []
+  },
+  {
     "probe": "LL0105 C backend refuses an async function",
     "diagnostics": [
       {
@@ -575,6 +583,46 @@
         "code": "LL0203",
         "severity": "error",
         "text": "Argument 1 of 'f': expected Ordered, got Int."
+      }
+    ]
+  },
+  {
+    "probe": "LL0246 matrix cells of two different types",
+    "diagnostics": [
+      {
+        "code": "LL0246",
+        "severity": "error",
+        "text": "A matrix cell is 'String', but the matrix's other cells are 'Int'. A matrix's elements must share one type (D89) -- a vector '[a b c]' is the container that may hold a union; a matrix is for linear algebra, and there is no '*' across two different types."
+      }
+    ]
+  },
+  {
+    "probe": "LL0246 matrix cells that would need a promotion",
+    "diagnostics": [
+      {
+        "code": "LL0246",
+        "severity": "error",
+        "text": "A matrix cell is 'Rational', but the matrix's other cells are 'Int'. A matrix's elements must share one type (D89) -- a vector '[a b c]' is the container that may hold a union; a matrix is for linear algebra, and there is no '*' across two different types."
+      }
+    ]
+  },
+  {
+    "probe": "LL0246 a matrix of a type that is not a Ring",
+    "diagnostics": [
+      {
+        "code": "LL0246",
+        "severity": "error",
+        "text": "A matrix of 'String' has no arithmetic: the element type must be a Ring -- closed under '+' and '*' (D89). Int, Real, Rational and Complex are; String is not (it has '+' and no '*'). Use a vector of vectors '[[a b] [c d]]' for a grid of values that is not a matrix."
+      }
+    ]
+  },
+  {
+    "probe": "LL0200 a matrix literal is Int[][], not Unknown",
+    "diagnostics": [
+      {
+        "code": "LL0200",
+        "severity": "error",
+        "text": "Type mismatch: cannot assign Int[][] to String for variable 's'."
       }
     ]
   },

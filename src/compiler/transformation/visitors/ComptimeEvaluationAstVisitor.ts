@@ -57,8 +57,11 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
         //
         // It only surfaced when this pass started recursing at all -- before that it never reached a
         // composite-identifier, so a latently destructive filter looked harmless for years.
-        result[key] = value
-          .map((item: any) => (ast.isAstNode(item) ? this.visit(item) : item))
+        // `mapChildArray` descends into NESTED arrays -- `MatrixNode.rows` is `ASTNode[][]`, and the
+        // one-level map this replaces meant a `:comptime` fold inside a matrix silently did not
+        // happen, the same shape as the recursion bug in this class's own comment (D89).
+        result[key] = ast
+          .mapChildArray(value, (item) => this.visit(item))
           .filter((item: any, i: number) => !(ast.isAstNode(value[i]) && item === null));
       } else if (ast.isAstNode(value)) {
         result[key] = this.visit(value);

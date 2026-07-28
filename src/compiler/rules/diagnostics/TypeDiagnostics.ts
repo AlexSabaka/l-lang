@@ -456,6 +456,28 @@ export const TypeDiagnostics = {
       `(Real division is unaffected: '(/ 1.0 0.0)' is Infinity by IEEE 754.)`
   ),
 
+  // LL0246 -- D89. A matrix's cells must share ONE Ring. Two message variants, one identity: the
+  // cells disagree about their type at all, or they agree on a type that is not a Ring. A vector is
+  // the general container and may hold a union; a matrix exists for linear algebra, and `*` over
+  // mixed or non-algebraic elements means nothing.
+  MatrixElementsNotUniform: def<{ found: string; expected: string }>(
+    "LL0246",
+    Error,
+    (p) =>
+      `A matrix cell is '${p.found}', but the matrix's other cells are '${p.expected}'. A matrix's ` +
+      `elements must share one type (D89) -- a vector '[a b c]' is the container that may hold a ` +
+      `union; a matrix is for linear algebra, and there is no '*' across two different types.`
+  ),
+
+  MatrixElementNotRing: def<{ element: string }>(
+    "LL0246",
+    Error,
+    (p) =>
+      `A matrix of '${p.element}' has no arithmetic: the element type must be a Ring -- closed ` +
+      `under '+' and '*' (D89). Int, Real, Rational and Complex are; String is not (it has '+' and ` +
+      `no '*'). Use a vector of vectors '[[a b] [c d]]' for a grid of values that is not a matrix.`
+  ),
+
   // LL0230
   ArrayLazyMember: def<{ member: string }>(
     "LL0230",

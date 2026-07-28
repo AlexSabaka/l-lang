@@ -382,6 +382,11 @@ export const C_PASSING: readonly string[] = [
   // `[x <- Ring]` refused `3`. An operator-named member is now synthesized from the operator tables, so
   // Int/Real conform and `Comparable` still refuses `3` (a NAME, not punctuation).
   "80-adversarial/ring_protocol.lisp",
+  // D89 R2. A matrix literal had NO checker arm, so it inferred Unknown and `(let s <- String [1 2 |
+  // 3 4])` compiled clean. It has a type now, and its cells must share a Ring. The Rational and
+  // Complex matrices here also pin the desugar fix: `MatrixNode.rows` is an array OF arrays, and every
+  // rewriting visitor mapped one level, so NO desugar had ever reached a matrix cell.
+  "80-adversarial/matrix_ring_elements.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

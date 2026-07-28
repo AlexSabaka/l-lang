@@ -23,6 +23,26 @@ export function isAstNode(node: any): node is ASTNode {
 }
 
 /**
+ * Map a child ARRAY, descending into NESTED arrays (D89).
+ *
+ * One field in the language is an array OF arrays -- `MatrixNode.rows` is `ASTNode[][]` -- and every
+ * REWRITING visitor mapped one level: `v.map(x => isAstNode(x) ? visit(x) : x)`. A row is not an AST
+ * node, so it came back untouched and NOTHING inside a matrix was ever rewritten. Measured: `1/2` in
+ * a matrix reached both backends as a raw `fraction-number` (ELL0106/ELL0100), and `(and a b)` inside
+ * one was `LL0210 'and' is not defined` -- the logical alias never ran either. Not a fraction bug: no
+ * desugar at all reached a matrix cell.
+ *
+ * `BaseAstTreeWalker` already recursed properly, which is why READING passes (analysis, types) saw
+ * matrix cells and rewriting passes did not -- the two halves of the compiler disagreed about whether
+ * a matrix had children.
+ */
+export function mapChildArray(value: any[], visit: (node: ASTNode) => any): any[] {
+  return value.map((item: any) =>
+    Array.isArray(item) ? mapChildArray(item, visit) : isAstNode(item) ? visit(item) : item
+  );
+}
+
+/**
  * Narrow an ASTNode to a ListNode.
  *
  * `ASTNode<T>` is a generic interface, not a discriminated union, so a bare `node._type === "list"`

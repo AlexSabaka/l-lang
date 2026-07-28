@@ -123,7 +123,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     for (const k of ast.getNodeIterableKeys(node)) {
       const v = (node as any)[k];
       out[k] = Array.isArray(v)
-        ? v.map((x: any) => (ast.isAstNode(x) ? this.visit(x) : x))
+        ? ast.mapChildArray(v, (x) => this.visit(x))
         : ast.isAstNode(v) ? this.visit(v) : v;
     }
     return out as ast.ASTNode;
@@ -273,9 +273,9 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     for (const key of ast.getNodeIterableKeys(node)) {
       const value = (node as any)[key];
       if (Array.isArray(value)) {
-        result[key] = value.map((item: any) =>
-          ast.isAstNode(item) ? this.visit(item) : item
-        );
+        // NESTED arrays too -- `MatrixNode.rows` is `ASTNode[][]`, and a one-level map handed every
+        // row back untouched, so no desugar in this file ever reached a matrix cell (see mapChildArray).
+        result[key] = ast.mapChildArray(value, (item) => this.visit(item));
       } else if (ast.isAstNode(value)) {
         result[key] = this.visit(value);
       }

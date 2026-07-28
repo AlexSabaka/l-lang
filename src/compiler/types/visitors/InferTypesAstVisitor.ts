@@ -3818,6 +3818,23 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         break;
       }
 
+      // D89. A matrix literal had NO arm here at all, so `[1 2 | 3 4]` inferred Unknown -- and an
+      // Unknown is assignable BOTH ways, so `(let s <- String [1 2 | 3 4])` compiled clean. Exactly
+      // the defect D88/N2 fixed for `0xFF`: the literal did not merely lack a type, it turned
+      // checking off at its use site. Giving it a type is the first reason for this arm; the Ring
+      // rule is the second.
+      case "matrix": {
+        const matNode = node as ast.MatrixNode;
+        const cells = (matNode.rows ?? []).flat();
+        const elementType = cells.length === 0
+          ? TypeEnvironment.unknown()
+          : this.matrixElementType(cells);
+        // Array-of-array, matching how both backends already lower it (a `vec<vec<_>>`). A matrix is
+        // not its own runtime type -- D89 is a rule about its cells, not a new value.
+        inferredType = TypeEnvironment.array(TypeEnvironment.array(elementType));
+        break;
+      }
+
       // List (function call)
       // The CORE nodes, produced by the desugarer. A pipeline is a chain of these.
       //
@@ -5176,6 +5193,58 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     if (!param || !TypeChecker.isAssignable(rightType, param, this.symbolTable)) return undefined;
     if (!TypeChecker.isAssignable(leftType, rightType, this.symbolTable)) return undefined;
     return rightOp.returns || TypeEnvironment.unknown();
+  }
+
+  /**
+   * The one type a matrix's cells SHARE, or Unknown once the reason they do not has been reported.
+   *
+   * D89's rule in one place. A vector is the general container and may hold a union -- `[1 "a" 2.5]`
+   * is `Array<Int | String | Real>` and that is fine. A matrix exists for linear algebra: `*` across
+   * two different element types means nothing, and neither does `*` on a type that has no `*`.
+   *
+   * The rule is NOT "must be numeric", which would exclude `Rational` and `Complex` -- exactly the
+   * types D88 built. It is "closed under `+` and `*`", asked by resolving the `Ring` interface that
+   * `injectSyntaxModules` pulled in for this very node. One definition of a ring, in the stdlib, not a
+   * second hardcoded copy here that could drift from it.
+   */
+  private matrixElementType(cells: ast.ASTNode[]): InferredType {
+    const types = cells.map((c) => this.inferExpressionType(c));
+
+    // Gradual, the stance inferOperatorType takes: ONE cell we cannot type makes the whole question
+    // unanswerable, and reporting against an Unknown is how a checker becomes a noise generator.
+    // `Any` is covered -- it is `{kind: "unknown", name: "Any"}`, which `isUnknown` answers.
+    if (types.some((t) => TypeChecker.isUnknown(t))) {
+      return TypeEnvironment.unknown();
+    }
+
+    // SHARE means the SAME type, and `typesEqual` is deliberate where `isAssignable` was the obvious
+    // choice. Assignability consults implicit defcasts (D46/B-3) and numeric widening, so `[1 1/2 | 2 3]`
+    // would come back as a matrix of Rational -- and NOTHING COERCES THE CELLS. Measured: the emitted
+    // matrix still holds a raw `1` in cell 0, so the element type would be a claim the value does not
+    // honour, which is the in-band lie D9 exists to refuse. Promotion works for an OPERATOR because the
+    // backend emits the `__cast_*` call at the operand; a container has no such site.
+    //
+    // So the remedy is the source, and the diagnostic names it: write `1/1`, or `1.0`. All three matrix
+    // literals in the corpus are already homogeneous, so this costs nothing today.
+    const candidate = types[0];
+    const odd = types.findIndex((t) => !TypeChecker.typesEqual(t, candidate));
+    if (odd >= 0) {
+      this.report(TD.MatrixElementsNotUniform, cells[odd], {
+        found: TypeChecker.formatType(types[odd]),
+        expected: TypeChecker.formatType(candidate),
+      });
+      return TypeEnvironment.unknown();
+    }
+
+    // No `Ring` in scope means no `lib/` -- the same stance `injectSyntaxModules` takes on a module it
+    // cannot resolve. Check nothing rather than fall back to a second definition of the rule.
+    const ring: any = this.symbolTable.resolveSymbol("Ring", cells[0])?.inferredType;
+    if (ring?.kind === "interface" && !TypeChecker.isAssignable(candidate, ring, this.symbolTable)) {
+      this.report(TD.MatrixElementNotRing, cells[0], { element: TypeChecker.formatType(candidate) });
+      return TypeEnvironment.unknown();
+    }
+
+    return candidate;
   }
 
   /**

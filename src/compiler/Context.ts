@@ -254,6 +254,12 @@ export class Context {
     // find -- the marker is what the injector keys on. Same ruling as a numeric literal: the operator
     // IS the request, so `..` needs no import, while a bare `Range` still warns (LL0245).
     { module: "std/iter", synthetic: "range-op", names: ["Range"] },
+    // D89: a MATRIX literal's cells must share a `Ring`, and the checker asks that question by
+    // resolving the interface -- so a file with a matrix and no import would have nothing to ask.
+    // Same ruling shape as a numeric literal: writing `[1 2 | 3 4]` IS the request. Measured free --
+    // `05-data-structures/03_matrices` with the import added emits 2782 lines against the ~2775 floor
+    // and runs identically.
+    { module: "std/core/protocols", nodeTypes: ["matrix"], names: ["Ring", "Comparable", "Hashable", "Formattable"] },
   ];
 
   private injectSyntaxModules(file: string, ast: ASTNode): void {

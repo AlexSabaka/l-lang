@@ -341,6 +341,11 @@ const PROBES: Probe[] = [
       "(definterface Ring<T> (fn :operator + [other <- T] -> T) (fn :operator * [other <- T] -> T))\n" +
       "(fn f [x <- Ring] -> Int (return 1))\n(console.log (f 3) (f 2.5))",
   },
+  // D89/R2's positive half, and the guard on the injection: a homogeneous matrix says nothing, and
+  // in particular the demand-injected `std/core/protocols` must not make LL0245 fire on a file that
+  // merely wrote a matrix. The literal implies its own import; only a NAME warns.
+  { name: "silent: a homogeneous matrix", source: "(console.log [1 2 | 3 4])" },
+  { name: "silent: a matrix of Rational", source: "(console.log [1/2 1/3 | 1/4 1/5])" },
 
   // --- C backend refusals (LL0105 / LL0107): the probe's honest "not modeled" answers. These
   //     type-check clean (and compile on JS) but refuse on the C backend, so they run language:"c"
@@ -443,6 +448,32 @@ const PROBES: Probe[] = [
     source:
       "(definterface Ordered<T> (fn :operator < [other <- T] -> Boolean))\n" +
       "(fn f [x <- Ordered] -> Int (return 1))\n(console.log (f 3))",
+    stage: "types",
+  },
+  // D89/R2: a matrix's cells share ONE Ring. `Ring` reaches these probes by demand-injection on the
+  // `matrix` node, so they need no import -- which is itself part of what is pinned.
+  {
+    name: "LL0246 matrix cells of two different types",
+    source: '(let m [1 "x" | 2 3])\n(console.log m)',
+    stage: "types",
+  },
+  // Assignability was the obvious choice for "share" and is measurably wrong: D88's promotion would
+  // call this a Rational matrix while the emitted cell still holds a raw `1`. The remedy is `1/1`.
+  {
+    name: "LL0246 matrix cells that would need a promotion",
+    source: "(let m [1 1/2 | 2 3])\n(console.log m)",
+    stage: "types",
+  },
+  {
+    name: "LL0246 a matrix of a type that is not a Ring",
+    source: '(let m ["a" "b" | "c" "d"])\n(console.log m)',
+    stage: "types",
+  },
+  // THE REGRESSION THAT MOTIVATED THE ARM. A matrix literal inferred Unknown -- assignable both ways --
+  // so this compiled clean. It is an ordinary type mismatch now.
+  {
+    name: "LL0200 a matrix literal is Int[][], not Unknown",
+    source: "(let s <- String [1 2 | 3 4])\n(console.log s)",
     stage: "types",
   },
   {
