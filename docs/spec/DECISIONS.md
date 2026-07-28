@@ -6577,6 +6577,10 @@ unreachable name since it landed.
 
 ### Recorded, not implemented
 
+> **Superseded 2026-07-28.** The Ring rule is **D89** and units are **D90**, both built. The one
+> correction they carry: "reusing `:satisfies`" holds for a *derived* unit, but a BASE unit needed a
+> `:unit` modifier after all — a refinement's shape cannot tell a bounded value from a measurement.
+
 *   **`[1 2 3]` is a ROW vector; `[1 | 2 | 3]` is a COLUMN** — already the implemented behaviour
     (measured: `[[1] [2] [3]]`), never written down.
 *   **A matrix's elements must share a Ring** (`+` and `*`); a vector may hold a union. A vector is the
@@ -6599,3 +6603,158 @@ unreachable name since it landed.
 *   **`..` is a LIST form, not an expression-level operator.** `[1..2 3..4]` does not parse and
     `(let a 1..2)` is not a range — the branch fires only when the `..` and its two operands are the
     whole list, so a range needs its own parens. Both predate adjacency and are their own parser work.
+
+## D89 — `Ring`, and a matrix's cells (2026-07-28)
+
+D88 recorded two rules and built neither: a matrix's elements must share a **Ring**, and `Ring` is
+"the natural fourth protocol beside D63's". Building them was mostly a **measurement**.
+
+### A matrix literal had no type
+
+`inferExpressionType` had a `case "vector"` and **no `case "matrix"`**, so `[1 2 | 3 4]` inferred
+**Unknown** — and an Unknown is assignable *both ways*, so `(let s <- String [1 2 | 3 4])` compiled
+clean. Exactly the defect D88/N2 found for `0xFF`: the literal did not merely lack a type, it turned
+**checking off at its use site**. Giving it one (`Array<Array<T>>`) is the first reason for the arm;
+the Ring rule is the second.
+
+### And no desugar had ever reached a matrix cell
+
+Found while building it. `MatrixNode.rows` is `ASTNode[][]` — the language's only array-of-arrays
+field — and every **rewriting** visitor mapped one level (`v.map(x => isAstNode(x) ? visit(x) : x)`).
+A row is an array, not a node, so it came back untouched. Measured: `1/2` inside a matrix reached both
+backends as a raw `fraction-number` (ELL0106 / ELL0100), and `(and a b)` inside one was
+`LL0210 'and' is not defined` — the logical alias never ran either. **Not a fraction bug: nothing was
+ever rewritten in there.** `BaseAstTreeWalker` recursed properly all along, so the *reading* passes saw
+matrix cells and the *rewriting* passes did not — the two halves of the compiler disagreed about
+whether a matrix had children. `ast.mapChildArray` is now the one recursion, shared by both
+`DesugarAstVisitor` sites and `ComptimeEvaluationAstVisitor` (where the same one-level map meant a
+`:comptime` fold inside a matrix silently did not happen).
+
+### A primitive can answer a protocol
+
+`conformsStructurally` (D42/Zg, the Go model) has always answered `Ring` for a **class** — a class
+carrying `+` and `*` conforms without ever writing `:implements`, and operator members are recorded by
+their operator name on both sides. But it bailed on `source.kind !== "class" && !== "struct"`, so **no
+primitive conformed to any interface at all**: `[x <- Ring]` refused `3`, and so did
+`[x <- Comparable]`. A numeric protocol that refuses `Int` is a decoration.
+
+An **operator-named** required member is now synthesized from the operator tables and handed back in
+the shape a declared one has, so the comparison downstream is literally the same line — one rule for a
+primitive and a class, not two that can disagree. Scoped **by construction**:
+
+*   `isOperatorName` (the existing "is this punctuation" test) is the gate, so a **named** member is
+    never synthesized. `Comparable` still refuses `3`: `Int` has no `compare-to`, and inventing one is
+    a far larger claim than "Int can be multiplied".
+*   **Comparisons are excluded.** `getBinaryOpType` answers Boolean for every `<` whatever the
+    operands, so synthesizing one would make every type conform to any interface naming it. **An
+    operator that cannot say no is not evidence.**
+
+The rule is **not "must be numeric"** — that would exclude `Rational` and `Complex`, exactly the types
+D88 built, and a user class that is a ring and knows nothing about numbers. It is *closed under `+` and
+`*`*, which is what a ring is. `String` has `+` and no `*`, and fails.
+
+### SHARE means the SAME type
+
+`isAssignable` was the obvious choice for "share a Ring" and is measurably wrong: it consults implicit
+defcasts, so `[1 1/2 | 2 3]` would come back a matrix of `Rational` while **the emitted matrix still
+holds a raw `1` in cell 0**. The element type would be a claim the value does not honour. Promotion
+works for an *operator* because the backend emits the `__cast_*` call at the operand; a **container has
+no such site**. So the remedy is the source — write `1/1`, or `1.0` — and LL0246 says so. All three
+matrix literals in the corpus were already homogeneous.
+
+`std/core/protocols` is **demand-injected on the `matrix` node**, the same ruling shape as `1/2` pulling
+in `std/math` (D88/N1): writing a matrix *is* the request. Not a back door — naming `Formattable` in a
+file that only wrote a matrix is still LL0245.
+
+### Measured, and left alone
+
+*   **Static conformance and runtime `:of` disagree.** `:of` is nominal, so a class declaring
+    `:implements Ring` answers true and one that merely conforms — accepted by the very same parameter
+    — answers false. Making `:of` structural is a runtime-metadata change of its own.
+*   **`(* x x)` through a `<- Ring` parameter does not dispatch.** It unboxes as a number and traps
+    `expected a number`, exactly as `<- Any` does. A pre-existing gap in operator dispatch over boxed
+    values, not something the protocol introduces.
+*   **A bare `Ring` erases `T`**, so `Vec2` conforms (its `*` takes `Real` and returns `Vec2`).
+    Tightening to a genuine closed-under-`T` check needs bounded generics (Phase Bg).
+
+## D90 — units of measure: dimensions are declared, composed, and erased (2026-07-28)
+
+`(+ metres seconds)` printed `12` and `(/ metres seconds)` printed `5`. Only the *assignment* boundary
+was nominal (`ELL0200 cannot assign Second to Meter`); arithmetic was never checked at all, so the one
+class of bug units exist to catch was silent. D88 recorded the ruling and left it unbuilt.
+
+### A unit is DECLARED, and the cheaper rule was tried first
+
+The first ruling was **"every refined newtype is a base dimension"** — no new syntax, `(deftype Meter
+<- Real :satisfies (..))` doing double duty. It shipped in R3 and **R4 measured it wrong**: it broke
+five corpus files (`13_refinement`, `14_refinement_boundaries`, `16_refinement_assignment`,
+`17_defcast`, `19_refinement_real`), **three of them on lines labelled `"widened:"`**. `(+ brightness
+1)` where `brightness` is a `uint8` is ordinary arithmetic on a bounded integer, and those files exist
+to demonstrate it. A refinement's **shape cannot tell a bounded VALUE from a MEASUREMENT** — both are
+nominal newtypes — so the author says which:
+
+```lisp
+(deftype :unit Meter <- Real)                          ;; a BASE unit; `:unit` alone makes it nominal
+(deftype Speed <- Real :satisfies (/ Meter Second))    ;; DERIVED; the dimension implies unit-ness
+(deftype uint8 <- Int :satisfies (0..255))             ;; a bounded value -- dimensionless, untouched
+(deftype :unit Kelvin <- Real :satisfies (0.0 ..))     ;; both: dimension rules AND a bounds check
+```
+
+The pre-R3 corpus sweep that claimed "no `+`/`-` between refined types anywhere" was **wrong** — its
+grep alternation silently matched nothing under this shell. The five sites were always there.
+
+### A dimension is a TYPE-level term, not an expression
+
+Parsing `(/ Meter Second)` as an ordinary list would put `Meter` into the **value** namespace for every
+pass that walks generically — `LL0210 'Meter' is not defined` at the first identifier check.
+`dimensionConstraint` is its own grammar rule whose operands are plain **strings**, so there is nothing
+for such a pass to walk into. It is gated on `Star`/`Slash` as the token *after* the paren: a range
+constraint can never begin with either, so the two `:satisfies` forms never compete and no backtracking
+is needed. `dimensionOperand` is a separate rule rather than an inline `OR` because chevrotain buckets
+a CST by rule name — a nested dimension and a bare name would land in two arrays with their
+interleaving lost, and **order is the whole meaning of `/`**.
+
+### The algebra
+
+`(* a b)` adds exponents; `(/ a b c)` divides by everything *after* the first, the reading `(- 10 1 2)`
+already has. An exponent reaching **zero is deleted**, so `(/ (* Meter Second) Second)` normalizes to
+`{Meter: 1}` — **a unit is its normal form, not its source text**.
+
+*   **`+` `-` require EQUAL dimensions**, else LL0247.
+*   **`*` `/` COMPOSE.** The result is a synthetic nominal type carrying the map and **no user-facing
+    name**; it never needs one, because assignability compares dimensions. That is what lets `(let v
+    <- Speed (/ d t))` typecheck without anyone naming the intermediate.
+*   **A plain `Real` is DIMENSIONLESS, not unknown.** It is the *identity* for composition — so
+    `(* d 2.0)` is still a Meter, and without that a measurement could not be scaled at all — and a
+    *mismatch* for addition, so `(+ d 2.0)` is refused. That is the Mars Climate Orbiter shape.
+*   **Construction is untouched.** `(let d <- Meter 10.0)` is the author declaring the unit at a
+    boundary (D46's checked coercion); arithmetic is not a declaration.
+
+### A dimension is the identity, not the name
+
+`isAssignable`'s nominal branch compares normalized dimension **maps**, so a library's `Speed` and an
+application's `Velocity` — both `(/ Meter Second)` — finally meet without a cast. Non-units answer
+`null` and fall straight through to the name rule they always used.
+
+Normalized **lazily** and stored as written: a derived unit may name a type declared *lower* in the
+file, so resolving at declaration time would make a correct program's diagnosis depend on source order.
+**Not memoized** — a static cache keyed by type name is wrong the moment two modules each declare a
+`Meter`, and the expressions are a handful of names.
+
+**LL0248** for a dimension that does not resolve: circular, or naming something that is not a unit. The
+second matters more than it looks — a typo (`Metre`) would otherwise make the type silently
+dimensionless, which is exactly the failure units remove.
+
+### Units ERASE
+
+A dimensioned newtype carries no bounds, and the runtime checks are emitted **from** the bounds — so it
+emits **no `ll_refine_check_*` call site**, where its range-refined twin emits two. Measured. (A refined
+newtype's parameter is boxed either way; that is pre-existing and has nothing to do with dimensions.)
+
+### Deliberately not ruled
+
+*   **Comparisons and `%` across dimensions.** `(< metres seconds)` is the same category error. D88
+    ruled `+`/`-` and nothing else, and a rule invented rather than ruled is how a feature grows a
+    surface nobody agreed to.
+*   **Unit-polymorphic functions** (`fn sq<'u> [x <- Real<'u>] -> Real<'u^2>`) — F#'s research half,
+    explicitly outside D88's ruling. This stops exactly short of it.

@@ -461,6 +461,30 @@ The coercion pass reframed as the type system's checked-conversion layer. In ord
 *   [ ] **`defcast` (B-3):** `:implicit` (one-hop, lossless-widening, at coercion sites) / `:explicit`
         (`(cast<T> x)`), keyed by type-pair on the operator devirt path.
 
+### 🔮 Phase Tn — tensors: the last rung of the numeric tower
+
+**Planned, not designed.** The tower reads **Int – Rational – Real – Complex – Vector – Matrix – … –
+Tensor**, and D88/D89/D90 built every rung up to Matrix. Tensors are the natural next one and the
+notation is the hard part, so this entry exists to hold the open questions rather than answer them.
+
+What is already in place: a matrix literal has a TYPE (D89), its cells must share a **Ring**, and the
+element rule carries over to a tensor unchanged. What is not:
+
+*   **Notation.** `|` is spent on rank 2. Rank 3+ is either a new separator or **nesting** —
+    `[[1 2 | 3 4] [5 6 | 7 8]]` parses *today* as a vector of matrices, so the shape exists and only
+    the meaning is missing.
+*   **Slicing is already on the critical path.** `t[1 .. 2, *, 0]` is precisely the SPAN D88/N4
+    reserved and refuses as LL0034. Tensors are what make spans worth building — and the multi-index
+    `t[i, j, k]` indexer already parses (`05-data-structures/03_matrices` uses `m[0, 0]`).
+*   **Shape in the type.** `Tensor<Real, [2 3 4]>` needs value-level generic arguments. Unchecked
+    shape is the tractable alternative and probably the right first cut, the same way declaring
+    derived units was the tractable cut of D90.
+*   **Broadcasting** (numpy-implicit vs explicit) and **contraction notation** (einsum-ish vs named
+    `matmul` / `tensordot`) are each a RULING, not an implementation detail.
+*   **Where it lives** — a language-level literal, or `std/math/tensor` — is itself open.
+
+Sabaka has notes on the notation; nothing here should be settled before they land.
+
 ### 🔮 Phase Bg — bounded generics & ergonomics
 *   [ ] **The three `:where` relations** (`:is` / `:extends` / `:implements`, type-variable subject only)
         — reuse the existing `typesEqual` / `isSubtype` / `conformsStructurally` predicates.
@@ -590,6 +614,22 @@ Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DE
     now binds tight and `...` does not, which is an inconsistency between two operators that read as a
     pair. Parked at Sabaka's instruction ("just a note for later"), and the fix is the same shape:
     check token offsets where the spread is built.
+
+*   **Comparisons and `%` across dimensions are NOT ruled (D90).** `(< metres seconds)` and
+    `(% metres seconds)` are the same category error `+`/`-` now refuse, and both are still silent.
+    D88 ruled `+`/`-` and nothing else, so D90 built exactly that. The cost of extending it is
+    measurable and was measured: a comparison rule would refuse `(< brightness 255)`, which the corpus
+    already contains, so it needs a `:unit`-aware answer of its own rather than a one-line widening.
+
+*   **`:of` is nominal where the checker is structural (D89).** A class that conforms to an interface
+    by shape is accepted by `[x <- Ring]` at compile time and answers `false` to `(x :of Ring)` at run
+    time. Two answers to one question. Reconciling them is a runtime-metadata change, not a checker
+    one, and `80-adversarial/ring_protocol.lisp` pins both halves so the day it moves is visible.
+
+*   **Operator dispatch does not reach a boxed value (D89).** `(* x x)` where `x` is a `<- Ring` or
+    `<- Any` parameter unboxes as a number and traps `expected a number` — measured identical for
+    both, so this is not about protocols. It is why a protocol constrains parameters usefully and
+    cannot yet compute through them.
 
 *   **`..` is a LIST form, not an expression-level operator.** `[1..2 3..4]` does not parse (the
     vector/matrix rules consume plain expressions and the `..` branch lives in the list rule), and
