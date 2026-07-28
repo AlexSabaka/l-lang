@@ -93,6 +93,22 @@ export interface InferredType {
   // unwrapping. Absent/false => an ordinary transparent alias (Number, PathLike, ...), unchanged.
   nominal?: boolean;
   refinement?: { lo: number | null; hi: number | null };  // inclusive bounds; null = open (unbounded) that side
+  /**
+   * D90 -- the OTHER refinement form: a UNIT OF MEASURE, `:satisfies (/ Meter Second)`.
+   *
+   * Stored UNNORMALIZED, as the author wrote it. A derived unit may name a type declared later in the
+   * file, so normalizing at declaration time would make the answer depend on declaration order --
+   * which is the dependency the symbol table exists to remove. `TypeChecker.dimensionOf` resolves and
+   * memoizes it on demand.
+   *
+   * A dimensioned newtype carries NO `refinement`, which is what makes units ERASE: the runtime checks
+   * are emitted from `refinement.lo/.hi`, so there is nothing to emit.
+   *
+   * The map (`dimension`) is the NORMALIZED form -- base-type name to exponent -- and is present only
+   * on the synthetic types operator composition mints, which have no declaration to normalize from.
+   */
+  dimensionExpr?: ast.DimensionRefinementNode;
+  dimension?: ReadonlyMap<string, number>;
   // Type reference support (forward references to types)
   refName?: string;  // Name of the type being referenced
   resolved?: boolean;  // Whether this type-ref has been resolved

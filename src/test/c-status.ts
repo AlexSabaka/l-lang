@@ -289,6 +289,11 @@ export const C_PASSING: readonly string[] = [
   // the semantics `80-adversarial/call_spread_args.lisp` pins, and the reason a handler can be typed
   // at all rather than taking `Any`.
   "16-stdlib/25_cli.lisp",
+  // D90: units of measure. A `:satisfies` refinement can be a DIMENSION, every refined newtype is a
+  // base dimension, and two units with the same dimension are interchangeable however they are named.
+  // Pinned on C for the ERASURE above all: a dimensioned newtype emits no `ll_refine_check_*` call
+  // site where its range-refined twin emits two, so the whole feature costs nothing at run time.
+  "16-stdlib/26_units.lisp",
   // D79: std/log -- the whole example runs on a ManualClock into a MemorySink, so the timestamps are
   // EXACT rather than "output happened". Includes a `:logged` decorator, which is the reason this
   // module waited for D75-d: a decorator is two ordinary functions on C now, not a composed value.

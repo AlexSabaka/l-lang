@@ -478,6 +478,22 @@ export const TypeDiagnostics = {
       `no '*'). Use a vector of vectors '[[a b] [c d]]' for a grid of values that is not a matrix.`
   ),
 
+  // LL0248 -- D90. A `:satisfies` DIMENSION that does not resolve to a set of base units. Reported at
+  // the DECLARATION and in the second pass, so a derived unit may name a type declared later in the
+  // file -- resolving at declaration time would make the answer depend on source order.
+  DimensionUnresolved: def<{ type: string; reason: string; name: string }>(
+    "LL0248",
+    Error,
+    (p) =>
+      p.reason === "cycle"
+        ? `The dimension of '${p.type}' is CIRCULAR: normalizing it reaches '${p.name}' again. A ` +
+          `derived unit must reduce to base units, and one defined in terms of itself never does.`
+        : `The dimension of '${p.type}' names '${p.name}', which is not a unit. A dimension's operands ` +
+          `must be refined newtypes -- '(deftype ${p.name} <- Real :satisfies (..))' declares a base ` +
+          `unit. A plain alias or an undeclared name would make the dimension silently wrong, which is ` +
+          `the failure units exist to remove.`
+  ),
+
   // LL0230
   ArrayLazyMember: def<{ member: string }>(
     "LL0230",

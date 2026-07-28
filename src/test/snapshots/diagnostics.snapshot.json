@@ -473,6 +473,14 @@
     "diagnostics": []
   },
   {
+    "probe": "silent: same dimension, different name",
+    "diagnostics": []
+  },
+  {
+    "probe": "silent: a dimension that reduces to a base unit",
+    "diagnostics": []
+  },
+  {
     "probe": "LL0105 C backend refuses an async function",
     "diagnostics": [
       {
@@ -623,6 +631,36 @@
         "code": "LL0200",
         "severity": "error",
         "text": "Type mismatch: cannot assign Int[][] to String for variable 's'."
+      }
+    ]
+  },
+  {
+    "probe": "LL0248 a dimension names something that is not a unit",
+    "diagnostics": [
+      {
+        "code": "LL0248",
+        "severity": "error",
+        "text": "The dimension of 'Speed' names 'Metre', which is not a unit. A dimension's operands must be refined newtypes -- '(deftype Metre <- Real :satisfies (..))' declares a base unit. A plain alias or an undeclared name would make the dimension silently wrong, which is the failure units exist to remove."
+      }
+    ]
+  },
+  {
+    "probe": "LL0248 a circular dimension",
+    "diagnostics": [
+      {
+        "code": "LL0248",
+        "severity": "error",
+        "text": "The dimension of 'Loopy' is CIRCULAR: normalizing it reaches 'Loopy' again. A derived unit must reduce to base units, and one defined in terms of itself never does."
+      }
+    ]
+  },
+  {
+    "probe": "LL0200 a Meter is not a Speed",
+    "diagnostics": [
+      {
+        "code": "LL0200",
+        "severity": "error",
+        "text": "Type mismatch: cannot assign Meter to Speed for variable 'bad'."
       }
     ]
   },

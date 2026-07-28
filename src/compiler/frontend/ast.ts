@@ -112,6 +112,7 @@ export type NodeType =
   | "type-def"
   | "cast"
   | "range-refinement"
+  | "dimension-refinement"
   | "interface"
   | "implements"
   | "extends"
@@ -456,8 +457,9 @@ export interface TypeDefNode extends ASTNode<"type-def"> {
   type: TypeNode;
   modifiers: ModifierNode[];
   // `:satisfies (...)` (D46 amend). Present => this is a distinct NEWTYPE the compiler lays out and
-  // checks at boundaries; absent => a transparent alias. v1 carries only a range refinement.
-  refinement?: RangeRefinementNode | null;
+  // checks at boundaries; absent => a transparent alias. Either a range (a value bound, checked at
+  // run time) or a dimension (a unit of measure, checked at compile time and then ERASED -- D90).
+  refinement?: RangeRefinementNode | DimensionRefinementNode | null;
 }
 
 /**
@@ -467,6 +469,22 @@ export interface TypeDefNode extends ASTNode<"type-def"> {
 export interface RangeRefinementNode extends ASTNode<"range-refinement"> {
   lo: ASTNode | null;
   hi: ASTNode | null;
+}
+
+/**
+ * A `:satisfies (/ (* Kg Meter Meter) (* Second Second Second))` constraint -- a DIMENSION (D90).
+ *
+ * Operands are plain STRINGS, not identifier nodes, and that is deliberate: a dimension names TYPES,
+ * and an identifier node would put `Meter` into the value namespace for every pass that walks the tree
+ * generically. There is nothing here for such a pass to walk into.
+ *
+ * The compiler normalizes this to a base-name -> exponent map (`TypeChecker.dimensionOf`); the node
+ * keeps the shape the author wrote so a diagnostic can quote it.
+ */
+export interface DimensionRefinementNode extends ASTNode<"dimension-refinement"> {
+  /** `*` or `/`. */
+  op: string;
+  operands: (string | DimensionRefinementNode)[];
 }
 
 export interface ModifierDefNode extends ASTNode<"modifier-def"> {

@@ -89,6 +89,7 @@ export class BaseAstVisitor {
         "type-def": this.visitTypeDef.bind(this),
         "cast": this.visitCast.bind(this),
         "range-refinement": this.visitRangeRefinement?.bind(this),
+        "dimension-refinement": this.visitDimensionRefinement?.bind(this),
         "interface": this.visitInterface.bind(this),
         "implements": this.visitImplements.bind(this),
         "extends": this.visitExtends.bind(this),
@@ -316,6 +317,12 @@ export class BaseAstVisitor {
   // not reached in normal top-level traversal (a refinement is never a standalone statement).
   visitRangeRefinement?(node: ast.RangeRefinementNode): any {
     return this.onUnhandled(node, "visitRangeRefinement");
+  }
+
+  // Same story as the range refinement above: metadata on a TypeDefNode, mapped here only so the node
+  // type is exhaustive. Its operands are STRINGS (D90), so there is nothing under it to traverse.
+  visitDimensionRefinement?(node: ast.DimensionRefinementNode): any {
+    return this.onUnhandled(node, "visitDimensionRefinement");
   }
 
   visitVariable(node: ast.VariableNode): any {

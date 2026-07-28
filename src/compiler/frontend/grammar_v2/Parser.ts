@@ -67,6 +67,8 @@ class LLangParser extends CstParser {
   castDefDecl: ParserMethod<[], CstNode>;
   castExpr: ParserMethod<[], CstNode>;
   refinementConstraint: ParserMethod<[], CstNode>;
+  dimensionConstraint: ParserMethod<[], CstNode>;
+  dimensionOperand: ParserMethod<[], CstNode>;
   modifierDefDecl: ParserMethod<[], CstNode>;
   attributeDefDecl: ParserMethod<[], CstNode>;
   macroDecl: ParserMethod<[], CstNode>;
@@ -1157,18 +1159,64 @@ class LLangParser extends CstParser {
       });
     });
 
-    // A value refinement's constraint. v1: a RANGE `( lo .. hi )` -- a descriptive interval with STATIC
-    // bounds (NOT a `Range` VALUE: it parses the parens itself, so it never routes through `list`'s
-    // range desugar and never references the `Range` type). Enum `(a | b | c)` and length
-    // `(length (lo .. hi))` constraints are later alternatives here.
+    // A value refinement's constraint. Two forms:
+    //
+    //   RANGE      `( lo .. hi )` -- a descriptive interval with STATIC bounds (NOT a `Range` VALUE: it
+    //              parses the parens itself, so it never routes through `list`'s range desugar and never
+    //              references the `Range` type).
+    //   DIMENSION  `(/ (* Kg Meter Meter) (* Second Second Second))` -- D90's unit of measure.
+    //
+    // The GATE reads the token AFTER the paren. `Star` and `Slash` are their own tokens (they are also
+    // `simpleIdentifier` alternatives, which is how `(* a b)` parses at all), and a range constraint can
+    // never begin with either -- its first token is a literal or `..`. So the two forms never compete
+    // and no backtracking is needed.
+    //
+    // Enum `(a | b | c)` and length `(length (lo .. hi))` constraints are later alternatives here.
     this.refinementConstraint = this.RULE("refinementConstraint", () => {
-      // Both operands OPTIONAL -- open-ended intervals: `(0 ..)` = [0, inf), `(.. 100)` = (-inf, 100],
-      // `(..)` = unbounded (a distinct newtype with no range). Labels disambiguate which side is present.
+      this.OR([
+        {
+          GATE: () => {
+            const next = this.LA(2).tokenType;
+            return next === t.Star || next === t.Slash;
+          },
+          ALT: () => this.SUBRULE(this.dimensionConstraint),
+        },
+        {
+          ALT: () => {
+            // Both operands OPTIONAL -- open-ended intervals: `(0 ..)` = [0, inf), `(.. 100)` =
+            // (-inf, 100], `(..)` = unbounded (a distinct newtype with no range, which is how a BASE
+            // unit is spelled). Labels disambiguate which side is present.
+            this.CONSUME(t.LParen);
+            this.OPTION(() => this.SUBRULE(this.expression, { LABEL: "lo" }));
+            this.CONSUME(t.Range);
+            this.OPTION2(() => this.SUBRULE2(this.expression, { LABEL: "hi" }));
+            this.CONSUME(t.RParen);
+          },
+        },
+      ]);
+    });
+
+    // D90 -- a DIMENSION, which is a TYPE-level term and deliberately not an `expression`.
+    //
+    // Parsing it as an expression would put `Meter` and `Second` into the VALUE namespace for every
+    // pass that walks generically, and they are types -- `LL0210 'Meter' is not defined` at the first
+    // identifier check. A dedicated rule keeps them where they belong, and its operands come back as
+    // plain strings rather than identifier nodes so nothing can walk into them.
+    this.dimensionConstraint = this.RULE("dimensionConstraint", () => {
       this.CONSUME(t.LParen);
-      this.OPTION(() => this.SUBRULE(this.expression, { LABEL: "lo" }));
-      this.CONSUME(t.Range);
-      this.OPTION2(() => this.SUBRULE2(this.expression, { LABEL: "hi" }));
+      this.OR([{ ALT: () => this.CONSUME(t.Star) }, { ALT: () => this.CONSUME(t.Slash) }]);
+      this.AT_LEAST_ONE(() => this.SUBRULE(this.dimensionOperand));
       this.CONSUME(t.RParen);
+    });
+
+    // ONE subrule rather than an inline OR, and that is load-bearing: chevrotain buckets a CST by token
+    // and rule name, so a nested dimension and a bare name would arrive in two separate arrays with
+    // their interleaving lost -- and order is the whole meaning of `/`. One bucket keeps source order.
+    this.dimensionOperand = this.RULE("dimensionOperand", () => {
+      this.OR([
+        { ALT: () => this.SUBRULE(this.dimensionConstraint) },
+        { ALT: () => this.CONSUME(t.Identifier) },
+      ]);
     });
 
     // defmodifier name [params] body*

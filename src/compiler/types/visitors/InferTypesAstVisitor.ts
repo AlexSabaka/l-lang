@@ -1066,9 +1066,24 @@ class CollectTypesPass extends BaseAstTreeWalker {
     // consults `nominal`. A bare deftype (no refinement) stays a transparent alias, untouched.
     const staticBound = (n: ast.ASTNode | null | undefined): number | null =>
       n && typeof (n as any).value === "number" ? (n as any).value : null;
-    const refined = node.refinement
-      ? { nominal: true, refinement: { lo: staticBound(node.refinement.lo), hi: staticBound(node.refinement.hi) } }
-      : {};
+
+    // D90: the OTHER refinement form is a DIMENSION, and it carries no bounds -- which is what makes
+    // units erase. `coerceInto` and the HIR lowering emit `ll_refine_check_*` from `refinement.lo/.hi`,
+    // so a dimensioned newtype with `refinement: undefined` emits no runtime check at all. The dimension
+    // is stored UNNORMALIZED: a derived unit may name a type declared later in the file, so resolving it
+    // here would make the answer depend on declaration order. `TypeChecker.dimensionOf` normalizes on
+    // demand instead.
+    const refined = !node.refinement
+      ? {}
+      : node.refinement._type === "dimension-refinement"
+        ? { nominal: true, dimensionExpr: node.refinement as ast.DimensionRefinementNode }
+        : {
+            nominal: true,
+            refinement: {
+              lo: staticBound((node.refinement as ast.RangeRefinementNode).lo),
+              hi: staticBound((node.refinement as ast.RangeRefinementNode).hi),
+            },
+          };
 
     // Phase 3: Register the complete type
     const typeAliasType: InferredType = {
@@ -3316,6 +3331,17 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       
       this.typeEnv.bindIdentifier(typeName, finalType, node);
       this.context.log(LogLevel.Debug, `[InferAndCheckPass] Resolved type-alias '${typeName}'`);
+    }
+
+    // D90: normalize the dimension ONCE, here, purely to report a broken one at its declaration. This
+    // is the second pass, so every type in the file is already bound and a derived unit may name one
+    // declared BELOW it -- doing this in the collect pass would have made a correct program's diagnosis
+    // depend on the order its units happen to appear in.
+    if (node.refinement?._type === "dimension-refinement" && registeredType) {
+      TypeChecker.dimensionOf(registeredType, this.symbolTable, {
+        onProblem: (p) =>
+          this.report(TD.DimensionUnresolved, node, { type: typeName, reason: p.reason, name: p.name }),
+      });
     }
   }
 

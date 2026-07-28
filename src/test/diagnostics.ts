@@ -346,6 +346,25 @@ const PROBES: Probe[] = [
   // merely wrote a matrix. The literal implies its own import; only a NAME warns.
   { name: "silent: a homogeneous matrix", source: "(console.log [1 2 | 3 4])" },
   { name: "silent: a matrix of Rational", source: "(console.log [1/2 1/3 | 1/4 1/5])" },
+  // D90/R3: two units with the SAME dimension and different names are mutually assignable. The guard
+  // on the other side is `LL0200 a Meter is not a Speed` above.
+  {
+    name: "silent: same dimension, different name",
+    source:
+      "(deftype Meter <- Real :satisfies (..))\n(deftype Second <- Real :satisfies (..))\n" +
+      "(deftype Speed <- Real :satisfies (/ Meter Second))\n" +
+      "(deftype Velocity <- Real :satisfies (/ Meter Second))\n" +
+      "(let v <- Speed 5.0)\n(let u <- Velocity v)\n(console.log u)",
+  },
+  // And the algebra REDUCES: `(/ (* Meter Second) Second)` is `Meter`, so a unit is its normal form
+  // rather than its source text.
+  {
+    name: "silent: a dimension that reduces to a base unit",
+    source:
+      "(deftype Meter <- Real :satisfies (..))\n(deftype Second <- Real :satisfies (..))\n" +
+      "(deftype M2 <- Real :satisfies (/ (* Meter Second) Second))\n" +
+      "(let d <- Meter 3.0)\n(let m <- M2 d)\n(console.log m)",
+  },
 
   // --- C backend refusals (LL0105 / LL0107): the probe's honest "not modeled" answers. These
   //     type-check clean (and compile on JS) but refuse on the C backend, so they run language:"c"
@@ -474,6 +493,31 @@ const PROBES: Probe[] = [
   {
     name: "LL0200 a matrix literal is Int[][], not Unknown",
     source: "(let s <- String [1 2 | 3 4])\n(console.log s)",
+    stage: "types",
+  },
+  // D90/R3: a DIMENSION refinement, and the two ways it fails to resolve. Reported at the DECLARATION
+  // and in the second pass, so a derived unit may name a type declared later in the file.
+  {
+    name: "LL0248 a dimension names something that is not a unit",
+    source:
+      "(deftype Meter <- Real :satisfies (..))\n" +
+      "(deftype Speed <- Real :satisfies (/ Meter Metre))\n(console.log 1)",
+    stage: "types",
+  },
+  {
+    name: "LL0248 a circular dimension",
+    source:
+      "(deftype Meter <- Real :satisfies (..))\n" +
+      "(deftype Loopy <- Real :satisfies (/ Loopy Meter))\n(console.log 1)",
+    stage: "types",
+  },
+  // The boundary is still nominal-by-DIMENSION: `Meter` is not `Meter/Second`, whatever it is called.
+  {
+    name: "LL0200 a Meter is not a Speed",
+    source:
+      "(deftype Meter <- Real :satisfies (..))\n(deftype Second <- Real :satisfies (..))\n" +
+      "(deftype Speed <- Real :satisfies (/ Meter Second))\n" +
+      "(let d <- Meter 10.0)\n(let bad <- Speed d)\n(console.log bad)",
     stage: "types",
   },
   {

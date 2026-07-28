@@ -179,7 +179,17 @@ export class TypeChecker {
     const tN = this.nominalOf(target, symbolTable);
     if (sN || tN) {
       if (source.optional && !target.optional) return false;                     // forced-unwrap still holds
-      if (sN && tN) return sN.name === tN.name;                                   // refined <-> refined: same name only (else needs a cast)
+      if (sN && tN) {
+        // D90: two dimensioned newtypes are interchangeable when their DIMENSIONS match, whatever they
+        // are called -- `Speed` and `Velocity`, both `(/ Meter Second)`, measure the same thing and a
+        // name is not what makes them different. This SUBSUMES the name rule rather than replacing it:
+        // every refined newtype is a base dimension, so `Byte` is `{Byte:1}` and `Nibble` is
+        // `{Nibble:1}`, which compare exactly as their names did.
+        const sd = this.dimensionOf(sN, symbolTable);
+        const td = this.dimensionOf(tN, symbolTable);
+        if (sd && td) return this.dimensionsEqual(sd, td);
+        return sN.name === tN.name;                                               // refined <-> refined: same name only (else needs a cast)
+      }
       if (sN) return this.isAssignable(sN.aliasedType!, target, symbolTable);     // refined -> base: a widening
       return this.isAssignable(source, tN!.aliasedType!, symbolTable);            // base -> refined: a checked coercion (the check pass enforces the range)
     }
@@ -567,6 +577,103 @@ export class TypeChecker {
           : undefined) ?? symbolTable.resolveSymbol(t.refName)?.inferredType ?? t;
     }
     return resolved && resolved.kind === "type-alias" && resolved.nominal ? resolved : null;
+  }
+
+  /**
+   * The NORMALIZED dimension of a type -- base-type name to exponent -- or null if it has none (D90).
+   *
+   * EVERY REFINED NEWTYPE IS A BASE DIMENSION (Sabaka's ruling). `(deftype Meter <- Real :satisfies (..))`
+   * is `{Meter: 1}` with no extra syntax, and a `:satisfies (/ Meter Second)` substitutes its operands
+   * to `{Meter: 1, Second: -1}`. `Byte` and `Nibble` are dimensions too, which is why `(+ aByte aNibble)`
+   * becomes an error -- measured to break nothing: the corpus has no `+`/`-` between two refined types.
+   *
+   * A PLAIN `Int`/`Real` returns null: it is DIMENSIONLESS, not "unknown". That distinction is the whole
+   * of ruling 3 -- `(+ metres 2.0)` is an error because 2.0 has no dimension, while `(* metres 2.0)` is
+   * fine because a dimensionless factor is the identity of dimension multiplication.
+   *
+   * NOT MEMOIZED, deliberately. A static cache keyed by type NAME is wrong the moment two modules each
+   * declare a `Meter`, and the expressions are a handful of names -- recomputing is cheaper than being
+   * wrong across a compilation.
+   */
+  static dimensionOf(
+    t: InferredType | undefined,
+    symbolTable?: SymbolTable,
+    opts?: { seen?: Set<string>; onProblem?: (p: { reason: "cycle" | "unknown"; name: string }) => void }
+  ): ReadonlyMap<string, number> | null {
+    if (!t) return null;
+    // A COMPOSED type, minted by operator composition: it has no declaration to normalize from, so it
+    // carries the finished map.
+    if (t.dimension) return t.dimension;
+
+    const n = this.nominalOf(t, symbolTable);
+    if (!n?.name) return null;
+
+    const seen = opts?.seen ?? new Set<string>();
+    if (seen.has(n.name)) {
+      opts?.onProblem?.({ reason: "cycle", name: n.name });
+      return null;
+    }
+    if (!n.dimensionExpr) return new Map([[n.name, 1]]);
+
+    return this.normalizeDimension(n.dimensionExpr, symbolTable, new Set(seen).add(n.name), opts?.onProblem);
+  }
+
+  /**
+   * `(* a b)` adds exponents; `(/ a b c)` divides by everything AFTER the first, so it is `a/(b*c)` --
+   * the reading `(- 10 1 2)` already has. An exponent that reaches zero is DELETED, so `(/ (* Meter
+   * Second) Second)` and `Meter` normalize to the same map and compare equal.
+   */
+  private static normalizeDimension(
+    expr: any,
+    symbolTable: SymbolTable | undefined,
+    seen: Set<string>,
+    onProblem?: (p: { reason: "cycle" | "unknown"; name: string }) => void
+  ): ReadonlyMap<string, number> | null {
+    const out = new Map<string, number>();
+    let index = 0;
+    for (const operand of expr.operands ?? []) {
+      let part: ReadonlyMap<string, number> | null;
+      if (typeof operand === "string") {
+        const resolved = symbolTable?.resolveSymbol(operand)?.inferredType;
+        part = this.dimensionOf(resolved, symbolTable, { seen, onProblem });
+        // A name that resolves to nothing, or to something that is not a refined newtype, is a TYPO or
+        // a plain alias -- either way the dimension is not what the author wrote, and going silently
+        // dimensionless is the failure mode units exist to remove.
+        if (!part) {
+          if (!seen.has(operand)) onProblem?.({ reason: "unknown", name: operand });
+          return null;
+        }
+      } else {
+        part = this.normalizeDimension(operand, symbolTable, seen, onProblem);
+        if (!part) return null;
+      }
+
+      const sign = expr.op === "/" && index > 0 ? -1 : 1;
+      for (const [base, exponent] of part) {
+        const next = (out.get(base) ?? 0) + sign * exponent;
+        if (next === 0) out.delete(base);
+        else out.set(base, next);
+      }
+      index++;
+    }
+    return out;
+  }
+
+  /** Same bases, same exponents. A zero exponent never survives normalization, so size is comparable. */
+  static dimensionsEqual(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>): boolean {
+    if (a.size !== b.size) return false;
+    for (const [base, exponent] of a) if (b.get(base) !== exponent) return false;
+    return true;
+  }
+
+  /** `Meter/Second`, `Kg*Meter^2/Second^3` -- for a diagnostic. Bases sorted, so it is stable. */
+  static formatDimension(d: ReadonlyMap<string, number>): string {
+    if (d.size === 0) return "dimensionless";
+    const term = (base: string, e: number) => (Math.abs(e) === 1 ? base : `${base}^${Math.abs(e)}`);
+    const num = [...d].filter(([, e]) => e > 0).sort().map(([b, e]) => term(b, e));
+    const den = [...d].filter(([, e]) => e < 0).sort().map(([b, e]) => term(b, e));
+    const top = num.length ? num.join("*") : "1";
+    return den.length ? `${top}/${den.join("*")}` : top;
   }
 
   static unwrapType(type: InferredType, symbolTable?: SymbolTable): InferredType {

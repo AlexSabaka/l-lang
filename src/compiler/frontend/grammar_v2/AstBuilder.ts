@@ -1095,11 +1095,27 @@ export class LLangAstBuilder extends BaseCstVisitor {
     return this.makeNode("type-def", ctx, { name, type, modifiers, refinement });
   }
 
-  refinementConstraint(ctx: any): ast.RangeRefinementNode {
+  refinementConstraint(ctx: any): ast.RangeRefinementNode | ast.DimensionRefinementNode {
+    // D90's dimension form took the other alternative; the parser's GATE already decided which.
+    if (ctx.dimensionConstraint) return this.visit(ctx.dimensionConstraint[0]);
     // A range `( lo? .. hi? )` -- STATIC inclusive bounds; a missing side is an OPEN (unbounded) bound.
     const lo = ctx.lo ? this.visit(ctx.lo[0]) : null;
     const hi = ctx.hi ? this.visit(ctx.hi[0]) : null;
     return this.makeNode("range-refinement", ctx, { lo, hi });
+  }
+
+  dimensionConstraint(ctx: any): ast.DimensionRefinementNode {
+    const op = ctx.Star ? "*" : "/";
+    // ONE bucket, so SOURCE ORDER survives -- and order is the whole meaning of `/`. See the parser's
+    // note on why `dimensionOperand` is its own rule rather than an inline OR.
+    const operands = (ctx.dimensionOperand ?? []).map((o: any) => this.visit(o));
+    return this.makeNode("dimension-refinement", ctx, { op, operands });
+  }
+
+  /** A unit NAME (a plain string -- see ast.DimensionRefinementNode) or a nested dimension. */
+  dimensionOperand(ctx: any): string | ast.DimensionRefinementNode {
+    if (ctx.Identifier) return ctx.Identifier[0].image;
+    return this.visit(ctx.dimensionConstraint[0]);
   }
 
   /** `(defmacro ...)` -- parsed so it can be REFUSED by name (LL0023). See ast.MacroDefNode. */
