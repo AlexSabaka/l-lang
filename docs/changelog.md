@@ -1,6 +1,80 @@
-# 📜 Changelog & Implementation History
+# 📜 Changelog
 
-## 🚀 Recent Major Changes (July 2026)
+**What changed, in the order it changed, per release.**
+
+This is the narrative record. It is deliberately *not* the same thing as:
+
+| | |
+|---|---|
+| [`spec/DECISIONS.md`](spec/DECISIONS.md) | **why** — every ruling with the measurement that produced it, ordered by when it was taken |
+| [`roadmap.md`](roadmap.md) | **what is left** — phases, and the known gaps |
+| `src/test/{manifest,c-status,js-status}.ts` | **what is true right now** — read by the suite, so they cannot go stale |
+
+Nothing here restates a count or a status; those go stale, and this file has been the proof of it.
+
+---
+
+## 🚀 July 2026
+
+### The numeric tower — `Ring`, matrices, and units (D88–D90, 2026-07-28)
+**Status**: ✅ Complete
+
+Int – Rational – Real – Complex – Vector – Matrix, with tensors recorded as a planned phase.
+
+- **D88** — the scalar floor: `1/2`, `3+4i`, `0xFF`/`0o17`/`0b1010`, promotion through an
+  `:implicit` defcast at operand positions, and `..` binding by **adjacency** (a standalone `..` is
+  LL0034; 16 corpus files migrated off the spaced form).
+- **D89** — `Ring` joins the protocol family, a **primitive** can answer a protocol, and a matrix's
+  cells must share one. Building it found that **no desugar had ever reached a matrix cell**:
+  `MatrixNode.rows` is the only array-of-arrays field in the AST and every rewriting visitor mapped
+  one level, so `1/2` inside a matrix reached both backends as a raw `fraction-number`.
+- **D90** — units of measure. A `:satisfies` refinement can be a **dimension**; `*` and `/` compose
+  exponents, `+`/`-` require equality, assignability compares dimensions rather than names, and the
+  whole thing **erases** — a dimensioned newtype emits no `ll_refine_check_*` call site at all.
+  The `:unit` marker exists because a refinement's *shape* cannot distinguish a bounded value from a
+  measurement: the first attempt made every refined newtype a dimension and broke five corpus files,
+  three on lines labelled `"widened:"`.
+
+### C becomes the reference implementation (D85–D87, 2026-07-28)
+**Status**: ✅ Complete
+
+The polarity flip. **Where the backends disagree, C is the specification** unless C is shown wrong on
+its own terms; JavaScript is a frozen second implementation whose remaining value is that a
+disagreement is worth *looking at*. `manifest.ts` gained `oracleDivergent` — graded on C, skipped on
+JS, with the measured JS defect recorded in the string — so a file where the oracle is wrong finally
+had somewhere to live. D87 split the failure taxonomy into three layers (data / contract /
+unrecoverable) and D85 ruled integer division by zero a panic, with a literal zero a compile error.
+
+### The stdlib build-out (D76–D82, 2026-07-27)
+**Status**: ✅ Complete
+
+Six modules, each ruled before it was written: `std/core/builder` (D76 — `+` in a loop is quadratic),
+`std/text/json` (D77 — the engine is l-lang, the escape table is pinned by the host),
+`std/time/calendar` (D78 — proleptic Gregorian, UTC, **zero** floor entries), `std/log` (D79),
+`std/cli` (D80). Alongside them, D81 made a base method's call to an overridden method virtual on C,
+and D82 ruled that a **data** error is catchable while a contract violation is not — the rule that
+makes the error tower usable rather than decorative.
+
+### The language-surface round (D61–D75, 2026-07-23 → 07-26)
+**Status**: ✅ Complete
+
+- **D61** bit operators — Int only, 64-bit wrap, masked shifts, arithmetic `shr`.
+- **D62** `std/core/errors` — a typed error tower on the ambient `Error`, with `cause`.
+- **D63** the protocol family — `Comparable` / `Hashable` / `Formattable`.
+- **D64/D65** `std/sys/path` (a value type, `/` canonical) and `std/math/random` (seeded
+  determinism *is* the API).
+- **D66** — the JavaScript backend is deprecated to an oracle. C/LLVM is the target.
+- **D67** regex: the engine is **l-lang**, so one program runs on both backends; `r"…"` is a raw
+  string and `f"…"` the formatted one, which sidesteps the `/…/` division ambiguity without
+  touching `/`.
+- **D68/D72** — `:foo` is **three roles**, not one (modifier, decorator, attribute), and the third
+  gets `defattribute` plus an adjacency-gated `:name[args]` form.
+- **D69** the metaprogramming tiers, distinguished by what the handler *receives*.
+- **D70/D71** enum RTTI; numeric lexis (`_` separators, `0o`, and the octal contradiction).
+- **D73** `:comptime` moves to an **in-house interpreter** — `node:vm` leaves the compiler.
+- **D74** a match pattern's string decodes like every other string.
+- **D75** `defmodifier`'s contract becomes **flat**, with a setup slot. Breaking, and migrated
+  across the corpus, the games repo and `src/test/codegen.ts`.
 
 ### D47 conditions / restarts, native on C (Phase Cr, July 2026)
 **Status**: ✅ Complete
@@ -70,9 +144,9 @@ Implemented comprehensive generics and interface support with proper runtime typ
 - **Multiple Interface Implementation**: Classes can implement multiple interfaces with full metadata tracking
 
 **Key Implementation Files**:
-- [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - Fixed generics serialization and added interface tracking in `serializeTypeMetadata()`
-- [src/compiler/analysis/SymbolTable.ts](../../src/compiler/analysis/SymbolTable.ts) - InferredType structure with generics metadata
-- [examples/08-generics/](../../examples/08-generics/) - Complete test suite: 10_generics_basic, 11_interface_basic, 12-17 (advanced generics features)
+- [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - Fixed generics serialization and added interface tracking in `serializeTypeMetadata()`
+- [src/compiler/analysis/SymbolTable.ts](../src/compiler/analysis/SymbolTable.ts) - InferredType structure with generics metadata
+- [examples/08-generics/](../examples/08-generics/) - Complete test suite: 10_generics_basic, 11_interface_basic, 12-17 (advanced generics features)
 
 **Example**:
 ```lisp
@@ -112,10 +186,10 @@ Implemented comprehensive performance measurement system for the L-Lang compiler
 - **Full Pipeline Integration**: Works with all compilation stages and intermediate outputs (--stage parse/types/etc.)
 
 **Key Implementation Files**:
-- [src/compiler/PerformanceMetrics.ts](../../src/compiler/PerformanceMetrics.ts) - Complete rewrite with timing, memory tracking, and detailed reporting
-- [src/compiler/Context.ts](../../src/compiler/Context.ts) - Performance instrumentation around all compilation passes
-- [src/compiler/BaseAstVisitor.ts](../../src/compiler/BaseAstVisitor.ts) - Visit counting for granular operation tracking
-- [src/cli/index.ts](../../src/cli/index.ts) - CLI flag support and integration
+- [src/compiler/PerformanceMetrics.ts](../src/compiler/PerformanceMetrics.ts) - Complete rewrite with timing, memory tracking, and detailed reporting
+- [src/compiler/Context.ts](../src/compiler/Context.ts) - Performance instrumentation around all compilation passes
+- [src/compiler/BaseAstVisitor.ts](../src/compiler/BaseAstVisitor.ts) - Visit counting for granular operation tracking
+- [src/cli/index.ts](../src/cli/index.ts) - CLI flag support and integration
 
 **Example Usage**:
 ```bash
@@ -174,9 +248,9 @@ Implemented proper support for spread/rest parameters in function definitions:
 - **Template String Support**: Enables advanced string interpolation patterns with variable argument counts
 
 **Key Implementation Files**:
-- [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - RestElement generation for spread parameters
-- [lib/std/io/io.lisp](../../lib/std/io/io.lisp) - Template string function using spread parameters
-- [examples/16-stdlib/01_main.lisp](../../examples/16-stdlib/01_main.lisp) - Test cases demonstrating spread parameter usage
+- [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - RestElement generation for spread parameters
+- [lib/std/io/io.lisp](../lib/std/io/io.lisp) - Template string function using spread parameters
+- [examples/16-stdlib/01_main.lisp](../examples/16-stdlib/01_main.lisp) - Test cases demonstrating spread parameter usage
 
 **Example**:
 ```lisp
@@ -202,7 +276,8 @@ Implemented proper support for spread/rest parameters in function definitions:
 ---
 
 ### DefModifier System - User-Defined Function Modifiers (January 16, 2026)
-**Status**: ✅ Complete
+**Status**: ✅ Complete — **contract later replaced by D75** (flat, with a setup slot).
+Long-form implementation notes: [`_archive/impl-notes-2026-01.md`](_archive/impl-notes-2026-01.md).
 
 Implemented a complete compile-time metaprogramming system for user-defined function modifiers:
 
@@ -214,10 +289,10 @@ Implemented a complete compile-time metaprogramming system for user-defined func
 - **Type System Integration**: Modifiers processed through type inference pipeline with proper scope management
 
 **Key Implementation Files**:
-- [src/compiler/analysis/visitors/BuildSymbolTableAstVisitor.ts](../../src/compiler/analysis/visitors/BuildSymbolTableAstVisitor.ts) - Symbol registration and resolution
-- [src/compiler/types/visitors/InferTypesAstVisitor.ts](../../src/compiler/types/visitors/InferTypesAstVisitor.ts) - Type inference for modifier scopes  
-- [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - Code generation and function wrapping
-- [examples/10-modifiers/](../../examples/10-modifiers/) - Complete example suite with .expect files
+- [src/compiler/analysis/visitors/BuildSymbolTableAstVisitor.ts](../src/compiler/analysis/visitors/BuildSymbolTableAstVisitor.ts) - Symbol registration and resolution
+- [src/compiler/types/visitors/InferTypesAstVisitor.ts](../src/compiler/types/visitors/InferTypesAstVisitor.ts) - Type inference for modifier scopes  
+- [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - Code generation and function wrapping
+- [examples/10-modifiers/](../examples/10-modifiers/) - Complete example suite with .expect files
 
 **Example**:
 ```lisp
@@ -252,9 +327,9 @@ Implemented Zig-style compile-time evaluation for functions and constants:
 - **Constant Inlining**: All comptime function calls are replaced with literal values at compile time
 
 **Key Implementation Files**:
-- [src/compiler/transformation/visitors/ComptimeEvaluationAstVisitor.ts](../../src/compiler/transformation/visitors/ComptimeEvaluationAstVisitor.ts) - VM-based evaluation and AST node removal
-- [src/compiler/analysis/SymbolTable.ts](../../src/compiler/analysis/SymbolTable.ts) - Comptime metadata tracking
-- [examples/11-comptime/00_comptime.lisp](../../examples/11-comptime/00_comptime.lisp) - Test case with recursive factorial and addition
+- [src/compiler/transformation/visitors/ComptimeEvaluationAstVisitor.ts](../src/compiler/transformation/visitors/ComptimeEvaluationAstVisitor.ts) - VM-based evaluation and AST node removal
+- [src/compiler/analysis/SymbolTable.ts](../src/compiler/analysis/SymbolTable.ts) - Comptime metadata tracking
+- [examples/11-comptime/00_comptime.lisp](../examples/11-comptime/00_comptime.lisp) - Test case with recursive factorial and addition
 
 **Example**:
 ```lisp
@@ -279,13 +354,14 @@ Implemented comprehensive operator overloading support for both standalone funct
 - **Symbol Table Metadata**: Added `isOperator` and `operatorSymbol` tracking to `SymbolEntry`.
 
 **Key Implementation Files**:
-- [src/compiler/runtime/RuntimeProvider.ts](../../src/compiler/runtime/RuntimeProvider.ts) - Global operator registry and revamped operator dispatchers
-- [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - Operator registration hoisting and renaming
-- [src/compiler/analysis/SymbolTable.ts](../../src/compiler/analysis/SymbolTable.ts) - Operator metadata in symbol table
+- [src/compiler/runtime/RuntimeProvider.ts](../src/compiler/runtime/RuntimeProvider.ts) - Global operator registry and revamped operator dispatchers
+- [src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts](../src/compiler/codegen/js-estree/visitors/JSTransformerAstVisitor.ts) - Operator registration hoisting and renaming
+- [src/compiler/analysis/SymbolTable.ts](../src/compiler/analysis/SymbolTable.ts) - Operator metadata in symbol table
 
 ---
 
 ### Type System Extensions (January 3, 2026)
+Long-form `deftype`/`defstruct` notes: [`_archive/impl-notes-2026-01.md`](_archive/impl-notes-2026-01.md).
 **Status**: ✅ Complete
 
 Added support for user-defined type-aliases and struct types through comprehensive type system extensions:
@@ -296,10 +372,10 @@ Added support for user-defined type-aliases and struct types through comprehensi
 - **Symbol Table Integration**: All type information stored in symbol entries
 
 **Key Implementation Files**:
-- [src/compiler/analysis/SymbolTable.ts](../../src/compiler/analysis/SymbolTable.ts) - Type interface extensions
-- [src/compiler/analysis/visitors/BuildSymbolTableAstVisitor.ts](../../src/compiler/analysis/visitors/BuildSymbolTableAstVisitor.ts) - Symbol registration
-- [src/compiler/types/visitors/InferTypesAstVisitor.ts](../../src/compiler/types/visitors/InferTypesAstVisitor.ts) - Type inference implementation
-- [src/compiler/types/TypeChecker.ts](../../src/compiler/types/TypeChecker.ts) - Type compatibility rules
+- [src/compiler/analysis/SymbolTable.ts](../src/compiler/analysis/SymbolTable.ts) - Type interface extensions
+- [src/compiler/analysis/visitors/BuildSymbolTableAstVisitor.ts](../src/compiler/analysis/visitors/BuildSymbolTableAstVisitor.ts) - Symbol registration
+- [src/compiler/types/visitors/InferTypesAstVisitor.ts](../src/compiler/types/visitors/InferTypesAstVisitor.ts) - Type inference implementation
+- [src/compiler/types/TypeChecker.ts](../src/compiler/types/TypeChecker.ts) - Type compatibility rules
 
 **Related Documentation**: See [DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](spec/DECISIONS.md)
 
@@ -359,9 +435,9 @@ Critical bug fixes for parameter type binding and complex expression type infere
    - Solution: Implemented proper `case "indexer"` type inference
 
 **Test Results**:
-- ✅ [02_fn_types.lisp](../../examples/07-types/01_type_reflection.lisp) - Type annotations and parameter resolution
-- ✅ [06_flow_control.lisp](../../examples/02-control-flow/04_flow_control.lisp) - Flow control with typed parameters
-- ✅ [07_memoization.lisp](../../examples/20-algorithms/09_memoization_intro.lisp) - Map literals and indexer operations
+- ✅ [02_fn_types.lisp](../examples/07-types/01_type_reflection.lisp) - Type annotations and parameter resolution
+- ✅ [06_flow_control.lisp](../examples/02-control-flow/04_flow_control.lisp) - Flow control with typed parameters
+- ✅ [07_memoization.lisp](../examples/20-algorithms/09_memoization_intro.lisp) - Map literals and indexer operations
 
 ---
 
@@ -377,7 +453,7 @@ Proper class inheritance with constructor parameter passing:
 - Implicit return statements in function bodies
 - Complete cleanup of legacy string-based compiler
 
-**Test Example**: [examples/09-oop/00_inheritance.lisp](../../examples/09-oop/00_inheritance.lisp)
+**Test Example**: [examples/09-oop/00_inheritance.lisp](../examples/09-oop/00_inheritance.lisp)
 
 ---
 
@@ -424,66 +500,3 @@ Implemented forward references with two-pass symbol table:
 **Result**: Proper lexical scoping with forward reference support
 
 ---
-
-## 🐛 Known Issues
-
-### None Currently Reported
-All priority tasks completed. See [TODO.md](roadmap.md) for future work items.
-
----
-
-## 🔄 Previous Major Milestones
-
-### Phase 1: Stabilization & Architecture Fixes (v0.2.0) ✅
-- ESTree code generation
-- Two-pass symbol analysis
-- Module dependency fixing
-
-### Phase 2: Syntax & OOP (v0.3.0) ✅
-- Homoiconic attributes
-- Class inheritance
-- Type inference system
-- Runtime shim integration
-
-### Phase 2.5: Architecture Refactor (v0.3.5) ✅
-- Desugaring pass introduction
-- Directory reorganization
-- Runtime helper extraction
-- ClassBuilder standardization
-
-### Current: Type System Extensions (v0.3.6) ✅
-- Type-alias and struct support
-- Recursive type handling
-- Forward reference resolution
-
----
-
-## 🚦 Future Phases
-
-### Phase 3: Intermediate Representation (v0.4.0)
-Moving towards LLVM targeting with High-Level IR (HIR)
-
-### Phase 4: Native Compilation (v1.0.0)
-LLVM IR generation for native binaries
-
----
-
-## 📊 Compiler Statistics
-
-**Lines of Code** (TypeScript source only):
-- ~800 AST node interfaces ([ast.ts](../../src/compiler/frontend/ast.ts))
-- ~400 Symbol table implementation ([SymbolTable.ts](../../src/compiler/analysis/SymbolTable.ts))
-- ~1000 Type inference logic ([InferTypesAstVisitor.ts](../../src/compiler/types/visitors/InferTypesAstVisitor.ts))
-- ~1200 JavaScript code generation ([JSTransformerAstVisitor.ts](../../src/compiler/codegen/visitors/JSTransformerAstVisitor.ts))
-- ~400 Type checking rules ([TypeChecker.ts](../../src/compiler/types/TypeChecker.ts))
-
-**Test Coverage**:
-- 30+ example programs in `examples/` directory
-- Full compilation pipeline tested (parse → symbols → types → codegen)
-- All language features exercised
-
----
-
-**Last Updated**: January 2026
-
-For detailed implementation information, see [IMPLEMENTATION_GUIDE.md](spec/DECISIONS.md)
