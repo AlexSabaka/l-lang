@@ -144,8 +144,8 @@ All **9** leaks are in **2** files, and every one of them is the stdlib leaking 
 
 | File | Leaked name | From |
 |---|---|---|
-| `20-stdlib/test_stdlib.lisp` | `abs min max pow ceil floor round inc` | `std/math.lisp` |
-| `20-stdlib/complex_math_test/main.lisp` | `Complex` | `std/math.lisp` |
+| `20-stdlib/test_stdlib.lisp` (now `examples/16-stdlib/test_stdlib.lisp`) | `abs min max pow ceil floor round inc` | `std/math.lisp` |
+| `20-stdlib/complex_math_test/main.lisp` (now `examples/16-stdlib/complex_math_test/main.lisp`) | `Complex` | `std/math.lisp` |
 
 **So enforcing the boundary costs one export list.** The 46 legitimate cross-module references are
 untouched. This is the number Sb is planned against.

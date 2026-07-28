@@ -1,235 +1,54 @@
-# 🔌 l-lang API Reference
+# 🔌 l-lang reference — the floor, the ambient names, and the library
 
-Complete API reference for the **l-lang** standard library and compiler introspection.
-
-> Note: the standard library ships as packages under `lib/std/` — `iter` (with its `linq` submodule at `std/iter/linq`), `seq`, `io`, `math`, `fn`, `js`, `core`, plus `llang` and `sys`. Each is a `package.yaml` compilation unit; import one by name, e.g. `(import "std/seq")`. `std/iter/linq` adds lazy, pipe-surfaced sequence operators (`(coll |> (map f) |> (filter p))`) built on the `std/iter` protocol.
-
----
-
-## 📦 Built-in Functions (Core)
-
-### Arithmetic & Math
-
-| Function | Signature | Returns | Example |
-|----------|-----------|---------|---------|
-| `+` | `(+ ...nums)` | Sum of numbers | `(+ 1 2 3)` → `6` |
-| `-` | `(- ...nums)` | Difference or negation | `(- 10 3)` → `7` |
-| `*` | `(* ...nums)` | Product of numbers | `(* 2 3 4)` → `24` |
-| `/` | `(/ ...nums)` | Quotient | `(/ 10 2)` → `5` |
-| `%` | `(% a b)` | Modulo | `(% 10 3)` → `1` |
-| `^` | `(^ a b)` | Power/exponent | `(^ 2 3)` → `8` |
-| `inc` | `(inc n)` | Increment by 1 | `(inc 5)` → `6` |
-| `dec` | `(dec n)` | Decrement by 1 | `(dec 5)` → `4` |
-| `abs` | `(abs n)` | Absolute value | `(abs -5)` → `5` |
-| `floor` | `(floor n)` | Round down | `(floor 3.7)` → `3` |
-| `ceil` | `(ceil n)` | Round up | `(ceil 3.2)` → `4` |
-| `round` | `(round n)` | Round nearest | `(round 3.5)` → `4` |
-| `sqrt` | `(sqrt n)` | Square root | `(sqrt 9)` → `3` |
-| `min` | `(min ...nums)` | Minimum value | `(min 5 2 8)` → `2` |
-| `max` | `(max ...nums)` | Maximum value | `(max 5 2 8)` → `8` |
-
-### Comparison & Logic
-
-| Function | Signature | Returns | Example |
-|----------|-----------|---------|---------|
-| `=` | `(= a b)` | Equality check | `(= 5 5)` → `true` |
-| `!=` | `(!= a b)` | Inequality | `(!= 5 3)` → `true` |
-| `<` | `(< a b)` | Less than | `(< 3 5)` → `true` |
-| `<=` | `(<= a b)` | Less or equal | `(<= 5 5)` → `true` |
-| `>` | `(> a b)` | Greater than | `(> 5 3)` → `true` |
-| `>=` | `(>= a b)` | Greater or equal | `(>= 5 5)` → `true` |
-| `!` | `(! b)` | Logical NOT | `(! false)` → `true` |
-| `&&` | `(&& ...bs)` | Logical AND | `(&& true true)` → `true` |
-| `\|\|` | `(\|\| ...bs)` | Logical OR | `(\|\| true false)` → `true` |
-
-### String Operations
-
-| Function | Signature | Returns | Example |
-|----------|-----------|---------|---------|
-| `+` | `(+ str1 str2)` | String concatenation | `(+ "Hello" " World")` → `"Hello World"` |
-| `strlen` | `(strlen s)` | String length | `(strlen "Hello")` → `5` |
-| `substr` | `(substr s start end)` | Substring | `(substr "Hello" 1 3)` → `"el"` |
-| `upcase` | `(upcase s)` | Uppercase | `(upcase "hello")` → `"HELLO"` |
-| `downcase` | `(downcase s)` | Lowercase | `(downcase "HELLO")` → `"hello"` |
-| `trim` | `(trim s)` | Remove whitespace | `(trim "  hello  ")` → `"hello"` |
-| `split` | `(split s sep)` | Split into array | `(split "a,b,c" ",")` → `["a" "b" "c"]` |
-| `join` | `(join arr sep)` | Join array to string | `(join ["a" "b"] ",")` → `"a,b"` |
-| `contains` | `(contains s sub)` | Check if contains | `(contains "hello" "ell")` → `true` |
-| `starts-with` | `(starts-with s prefix)` | Check prefix | `(starts-with "hello" "he")` → `true` |
-| `ends-with` | `(ends-with s suffix)` | Check suffix | `(ends-with "hello" "lo")` → `true` |
-| `char-at` | `(char-at s i)` | Character at index | `(char-at "hello" 1)` → `"e"` |
-| `pad-start` | `(pad-start s width pad)` | Pad on the left | `(pad-start "7" 3 "0")` → `"007"` |
-| `pad-end` | `(pad-end s width pad)` | Pad on the right | `(pad-end "7" 3 "0")` → `"700"` |
-| `repeat` | `(repeat s n)` | Repeat a string | `(repeat "ab" 3)` → `"ababab"` |
-
-A `String` is a sequence of **Unicode codepoints** — not bytes, not UTF-16 code units. `(strlen
-"café")` is 4 and `(strlen "a😀b")` is 3, and every index and width above counts characters. The
-native `.length` / `.charAt` / `.slice` members answer in the *host's* units and are interop, not the
-language's answer.
-
-`upcase`, `downcase` and `trim` are **ASCII-only, deliberately** — `(upcase "café")` is `"CAFé"`, and
-`trim` removes only space, tab, CR and LF. A host case-mapper is locale- and ICU-version-dependent,
-which is precisely the divergence the floor exists to prevent; ASCII is a rule both backends can
-state exactly. See [D52](./spec/DECISIONS.md#d52--string-is-unicode-codepoints).
-
-### Collection Operations
-
-| Function | Signature | Returns | Example |
-|----------|-----------|---------|---------|
-| `length` | `(length coll)` | Length/size | `(length [1 2 3])` → `3` |
-| `first` | `(first coll)` | First element | `(first [1 2 3])` → `1` |
-| `last` | `(last coll)` | Last element | `(last [1 2 3])` → `3` |
-| `rest` | `(rest coll)` | All but first | `(rest [1 2 3])` → `[2 3]` |
-| `push` | `(push coll ...items)` | Append items | `(push [1 2] 3)` → `[1 2 3]` |
-| `pop` | `(pop coll)` | Remove last | `(pop [1 2 3])` → `[1 2]` |
-| `at` | `(at coll index)` | Get by index | `(at [1 2 3] 1)` → `2` |
-| `get` | `(get map key)` | Get from map | `(get {:a 1} :a)` → `1` |
-| `has` | `(has coll key)` | Check if exists | `(has {:a 1} :a)` → `true` |
-| `keys` | `(keys map)` | Get all keys | `(keys {:a 1 :b 2})` → `[:a :b]` |
-| `values` | `(values map)` | Get all values | `(values {:a 1 :b 2})` → `[1 2]` |
-| `map` | `(map fn coll)` | Transform each | `(map inc [1 2 3])` → `[2 3 4]` |
-| `filter` | `(filter pred coll)` | Keep matching | `(filter (fn [x] (> x 2)) [1 2 3])` → `[3]` |
-| `reduce` | `(reduce fn init coll)` | Aggregate | `(reduce + 0 [1 2 3])` → `6` |
-| `flatten` | `(flatten coll)` | Flatten nested | `(flatten [[1 2] [3 4]])` → `[1 2 3 4]` |
-| `reverse` | `(reverse coll)` | Reverse | `(reverse [1 2 3])` → `[3 2 1]` |
-| `sort` | `(sort coll)` | Sort items | `(sort [3 1 2])` → `[1 2 3]` |
-| `sort-by` | `(sort-by fn coll)` | Custom sort | `(sort-by length ["aaa" "a" "aa"])` → `["a" "aa" "aaa"]` |
-| `index-of` | `(index-of x coll)` | Index, or `nil` | `(index-of [3 4] [[1 2] [3 4]])` → `1` |
-| `includes` | `(includes x coll)` | Is it present? | `(includes [1 2] [[1 2]])` → `true` |
-
-`index-of` and `includes` search by **structural** equality — the same `==` the language uses — so a
-freshly written `[1 2]` is found in a list of vectors. The native `.indexOf` / `.includes` members
-compare containers by *reference* and are host interop, not the language's answer. A miss is `nil`,
-not `-1`, matching `first`/`last`/`at`.
-
-The `std/seq` operations above **return new sequences and never mutate their argument** — `(reverse
-xs)` leaves `xs` alone. `sort` and `sort-by` order by the language's own `<` (numbers numerically,
-strings lexicographically) and are **stable**: elements that compare equal keep their input order.
-See [D53](./spec/DECISIONS.md#d53--primitive-vecmap-structural-equals).
-
-### Type Operations
-
-| Function | Signature | Returns | Example |
-|----------|-----------|---------|---------|
-| `type` | `(type x)` | Type of value | `(type 5)` → `Int` |
-| `type-name` | `(type-name x)` | Type name as string | `(type-name [])` → `"Array"` |
-| `is-int` | `(is-int x)` | Is integer? | `(is-int 5)` → `true` |
-| `is-string` | `(is-string x)` | Is string? | `(is-string "hi")` → `true` |
-| `is-array` | `(is-array x)` | Is array? | `(is-array [1 2])` → `true` |
-| `is-map` | `(is-map x)` | Is map? | `(is-map {:a 1})` → `true` |
-| `is-nil` | `(is-nil x)` | Is nil? | `(is-nil nil)` → `true` |
-| `is-bool` | `(is-bool x)` | Is boolean? | `(is-bool true)` → `true` |
-
-### I/O & Output
-
-| Function | Signature | Returns | Example |
-|----------|-----------|---------|---------|
-| `print` | `(print ...items)` | Print to stdout | `(print "Hello")` → outputs `Hello` |
-| `console.log` | `(console.log ...items)` | Print with newline | `(console.log "Hi")` → outputs `Hi\n` |
-| `prn` | `(prn x)` | Print debug repr | `(prn [1 2 3])` → outputs `[1 2 3]` |
-| `alert` | `(alert msg)` | Browser alert | `(alert "Warning!")` |
-| `console.log` | `(console.log ...items)` | Console output | `(console.log "Debug")` |
-
-### Misc
-
-| Function | Signature | Returns | Example |
-|----------|-----------|---------|---------|
-| `identity` | `(identity x)` | Return unchanged | `(identity 5)` → `5` |
-| `constantly` | `(constantly x)` | Return function | `((constantly 5))` → `5` |
-| `partial` | `(partial fn ...args)` | Partial application | `(partial + 5)` → function |
-| `compose` | `(compose ...fns)` | Function composition | `(compose inc (* 2))` |
-| `apply` | `(apply fn args)` | Call with arg list | `(apply + [1 2 3])` → `6` |
+> **There are three layers, and the difference matters.** Almost every question of the form *"where
+> does `map` come from?"* is really a question about which of these it lives in.
+>
+> | layer | what it is | where it is defined | do you import it? |
+> |---|---|---|---|
+> | **1. The intrinsic floor** | 72 runtime primitives both backends must implement **identically**, specified once so they cannot drift | `src/compiler/floor/floor.ts`, specified in [`spec/FLOOR.md`](spec/FLOOR.md) | no — always there |
+> | **2. Ambient names** | forms and types the language itself provides | the compiler | no |
+> | **3. The standard library** | 17 packages / 38 modules of **l-lang source** | `lib/std/`, ruled in [`spec/STDLIB.md`](spec/STDLIB.md) | **yes** — `(import "std/…")` |
+>
+> A library module is written in l-lang and compiled like your code, so it runs on **both backends**
+> by construction. Layer 1 is where a backend *can* diverge, which is exactly why it is specified.
 
 ---
 
-## 📝 Control Flow
+## 1. The intrinsic floor
 
-### Conditionals
+Not importable, not shadowable. If a primitive is here, both backends implement it and the
+[floor spec](spec/FLOOR.md) says what it must return — including the awkward cases (codepoints vs
+bytes, `Int` wrap, `Real` formatting).
 
-```lisp
-;; if/else
-(if (> x 5)
-    "greater"
-    "less-or-equal")
+| group | entries |
+|---|---|
+| output | `console.log` `console.error` `display` `write-string` `write-string-err` |
+| numbers | `Number` `parseInt` `parseFloat` `isNaN` `isFinite` |
+| math | `Math.sqrt` `.log` `.exp` `.sin` `.cos` `.tan` `.asin` `.acos` `.atan` `.atan2` `.hypot` `.abs` `.floor` `.ceil` `.round` `.pow` `.min` `.max` `.random` `.sign` `.trunc` |
+| sequences | `get` `head` `tail` `empty` `elem` `list` `call` |
+| maps | `map-get` `map-set` `map-has` `map-delete` `map-keys` |
+| text (codepoints, not bytes) | `codepoint-length` `codepoint-at` `string-from-codepoints` `string-to-codepoints` |
+| bits (D61) | `band` `bor` `bxor` `bnot` `shl` `shr` `ushr` |
+| iteration | `iter` `next` `dispose` |
+| reflection | `type` `type-by-name` |
+| system | `sys-arg` `sys-env` `sys-exit` `clock-ns` `sleep-ns` |
+| files | `file-open` `file-close` `file-read` `file-write` `file-exists` |
+| internal | `deep-copy` `__refine_check_int` `__refine_check_real` |
 
-;; when (no else)
-(when (> x 5)
-    (console.log "Greater!"))
+The live list is `src/compiler/floor/floor.ts`, and a conformance check keeps the backends against it.
 
-;; cond (multiple branches)
-(cond
-    ((> x 10) "very high")
-    ((> x 5)  "high")
-    (else     "low"))
-```
+## 2. Ambient names
 
-### Loops
+Available with no import: the special forms (`let` `mut` `fn` `if` `when` `cond` `for` `while`
+`match` `try` `return` `import` `export` …), the declaration forms (`defclass` `defstruct`
+`definterface` `deftype` `defcast` `defmodifier` `defattribute` `defenum`), the condition system
+(`restart-case` `handle` `signal` `invoke-restart`), and the built-in types:
 
-```lisp
-;; for loop
-(for :init (mut i 0) :cond (< i 10) :step (inc i)
-    (console.log i))
+`Int` `Real` `String` `Char` `Boolean` `Void` `Any` `Nil` — plus the constructed forms `T?`,
+`A | B`, `A & B`, `[A B]` (tuple), `{:f <- T}` (record), `T[]`, `T<U>`.
 
-;; while loop
-(while (< count 10) (
-    (console.log count)
-    (mut count (inc count))
-))
-
-```
-
-### Pattern Matching
-
-```lisp
-(match value {
-    0           => "zero"
-    1           => "one"
-    [1 2 3]     => "specific vector"
-    [1 _ _]     => "vector starting with 1"
-    [_ ...]     => "any vector"
-    {:type Dog} => "dog object"
-    _           => "anything else"
-})
-```
-
----
-
-## 🏛️ Type System
-
-### Primitive Types
-
-```lisp
-;; Numbers
-(let x 42)              ;; Int
-(let y 3.14)            ;; Float
-
-;; Strings
-(let msg "hello")       ;; String
-(let interpolated '"value: {(x)}")
-
-;; Booleans
-(let flag true)         ;; Bool
-
-;; Collections
-(let vec [1 2 3])       ;; Array<Int>
-(let map {:a 1 :b 2})   ;; Map<String, Int>
-```
-
-### Type Annotations
-
-```lisp
-;; Explicit type annotation
-(let x <- Int 5)
-(let name <- String "Alice")
-(let nums <- Int[] [1 2 3])
-
-;; Function parameter types
-(fn add [x y] -> Int
-    (+ x y))
-
-;; Generics
-(let names <- String[] ["a" "b"])
-```
+The **error tower** is ambient (D62): `Error` → `ValueError` → `KeyError` / `IndexError` /
+`TypeError`, each carrying a `cause`.
 
 ### Optionals — `T?`
 
@@ -257,165 +76,6 @@ works on a field too, not only on a bare name:
         (return this.value))))
 ```
 
-An **unannotated** `nil` initializer is inferred as `T?` with an unknown payload — it can be assigned
-anything later, and it is still an optional, so it still has to be checked before use:
-
-```lisp
-(mut cache nil)        ;; inferred optional; accepts a value later
-(cache := "warm")
-```
-
-Annotate it when you know what it will hold — the annotation always wins:
-
-```lisp
-(mut cache <- String? nil)
-```
-
-### User-Defined Types
-
-```lisp
-;; Type alias
-(deftype UserId Int)
-(let uid (as UserId 123))
-
-;; Struct -- a VALUE type
-(defstruct Person
-    (let :ctor name <- String)
-    (let :ctor age <- Int)
-)
-
-;; Enum
-(defenum Status
-    Active
-    Inactive
-    Pending)
-```
-
-#### `defstruct` is a VALUE type; `defclass` is a REFERENCE type
-
-This is the whole difference between the two, and it is the only one that matters:
-
-```lisp
-(defstruct Point (mut :ctor x <- Int 0))
-(mut p1 (Point 1))
-(mut p2 p1)          ;; a COPY
-(p2.x := 99)         ;; p1.x is still 1
-
-(defclass Node (mut :ctor label <- String ""))
-(let n1 (Node "a"))
-(let n2 n1)          ;; the SAME object
-(n2.label := "b")    ;; n1.label is "b" too
-```
-
-A struct is copied wherever it moves into a new home: a binding, an assignment, a **function
-parameter** (so a struct is passed *by value* and a callee cannot reach back into its caller), a
-collection slot, and each iteration of a `for :each`.
-
-**What a copy copies.** Memberwise, recursing into struct-typed fields. A field holding a **reference
-type** — an array, a map, a class instance — copies the *reference*, exactly as in C# and exactly as a
-native struct holding a pointer would. The struct's own storage is copied; what it points *at* is not.
-
-```lisp
-(defstruct Line (let :ctor start <- Point) (let :ctor tags <- String[]))
-(mut b a)
-(b.start.x := 77)      ;; `start` is a STRUCT -> copied. `a` does not see it.
-(b.tags.push "blue")   ;; `tags` is an ARRAY  -> shared. `a` DOES see it.
-```
-
-**An operator on a struct must be pure.** It receives its operands by value, so it cannot mutate them.
-Assigning to `this` inside a struct `:operator` is an error (**LL0207**) rather than a mutation that
-silently escapes to the caller. Build a new value and return it.
-
-See `examples/06-value-semantics/02_value_semantics.lisp`.
-
-#### Operator overloads
-
-There are exactly **two** ways to declare one, and the difference is *where* it lives:
-
-```lisp
-;; INSIDE a type -- ONE parameter. `this` IS the left operand.
-(defstruct Complex
-    (let :ctor real <- Real 0.0)
-    (let :ctor imag <- Real 0.0)
-
-    (fn :operator + [other <- Complex] -> Complex
-        (return (Complex (+ this.real other.real) (+ this.imag other.imag))))
-
-    (fn :operator - [] -> Complex          ;; a UNARY operator takes NONE
-        (return (Complex (- 0 this.real) (- 0 this.imag)))))
-
-;; AT TOP LEVEL -- TWO parameters, one per operand.
-(fn :operator + [a <- Complex b <- Complex] -> Complex
-    (return (Complex (+ a.real b.real) (+ a.imag b.imag))))
-```
-
-An operator declared **inside** a type with two parameters is an error (**LL0208**): `this` is already
-the left operand, so a second one is ambiguous. Declare it at top level instead.
-
-`x += y` means `x = x + y`, so a compound assignment finds your overload too.
-
-**An operator is not a name.** It cannot be shadowed, imported or redefined — only overloaded. `+` at a
-call site always means the operator, even if a module you imported happens to define one.
-
----
-
-## 🏗️ Object-Oriented Programming
-
-### Classes
-
-```lisp
-(defclass Animal
-    ;; Constructor
-    (let :ctor name)
-    
-    ;; Instance variable
-    (let energy 100)
-    
-    ;; Method
-    (fn speak [msg] (
-        (+ this.name " says: " msg)
-    ))
-    
-    ;; Computed property
-    (fn :public is-tired [] (
-        (< this.energy 50)
-    ))
-)
-
-;; Create instance
-(let dog (new Animal "Rex"))
-
-;; Call method
-(dog.speak "Woof!")
-
-;; Access property
-(console.log dog.energy)
-```
-
-### Inheritance
-
-Inheritance is spelled `:extends`. There is no `:inherits` synonym (D11) — the compiler has never
-accepted one, and `(defclass Dog :inherits Animal ...)` is a parse error. The only place `:inherits`
-is even *intended* is a generic *constraint* (`:where T :inherits Base`) — but generic constraints do
-**not parse yet** (planned; see the syntax guide), so that form is aspirational, not usable today.
-
-```lisp
-(defclass Dog :extends Animal
-    ;; Override method
-    (fn speak [msg] (
-        (+ this.name " barks: " msg)
-    ))
-    
-    ;; Call parent method
-    (fn full-speak [msg] (
-        (super.speak msg)
-    ))
-)
-
-(let dog (new Dog "Buddy"))
-(dog.speak "Bark!")  ;; Uses Dog's speak
-```
-
 ### Visibility
 
 The three levels are package-scoped (a package is a `package.yaml` compilation unit):
@@ -435,291 +95,95 @@ The three levels are package-scoped (a package is a `package.yaml` compilation u
 `protected` was **removed** from the language (it was a no-op, and the implementation-inheritance leak
 Go/Rust drop) — `:protected` is now rejected as an unknown modifier (LL0015).
 
----
+## 3. The standard library
 
-## 🔌 Metaprogramming
+`(import "std/…")`. Written in l-lang, so it runs on both backends.
 
-### `comptime` (Compile-time Execution)
+### std/core
 
-```lisp
-;; Evaluated at compile time
-(fn :comptime max [a b]
-    (if (> a b) a b))
+| module | exports |
+|---|---|
+| `std/core/protocols` | `Comparable` `Hashable` `Formattable` `Ring`, `compare` `hash-of` |
+| `std/core/errors` | the typed error tower (D62) |
+| `std/core/builder` | `StringBuilder` — because `+` in a loop is quadratic (D76) |
+| `std/core/string` | ASCII classes, search, split/join, trim, case, parsing |
+| `std/core/types` | type predicates |
+| `std/core/async` | `Awaitable` `Task` |
 
-;; Used in types
-(let array <- Int[(max 10 20)] [])
-```
+### Collections & iteration
 
-### `defmacro` (Simple Rewrites)
+| module | exports |
+|---|---|
+| `std/seq` | eager, collection-**last**, array in/array out: `range` `zip` `map` `filter` `reduce` `flatten` `reverse` `sort` `sort-by` `min-by` `max-by` `index-of` `includes` `first` `last` `at` `length` |
+| `std/iter` | `Iterable` `Iterator` `Disposable` `Range` — the protocol (D30) |
+| `std/iter/linq` | lazy, collection-**first**, pipe-surfaced: `map` `filter` `enumerate` `concat` `skip` `skip-while` `flat-map` `take` `take-while` `zip` `to-list` `reduce` `count` `for-each` |
 
-```lisp
-(defmacro when [test body]
-    (list 'if test body nil))
+> **Two `map`s with different argument orders is deliberate** (D33), not a smell. `std/seq`'s runs
+> now and hands back an array; `std/iter/linq`'s builds a generator that does nothing until pulled,
+> so a chain over an infinite sequence still terminates.
 
-(when (> x 5)
-    (console.log "Greater!"))
-;; Expands to: (if (> x 5) (console.log "Greater!") nil)
-```
+`index-of` and `includes` search by **structural** equality — the same `==` the language uses — so a
+freshly written `[1 2]` is found in a list of vectors. The native `.indexOf` / `.includes` members
+compare containers by *reference* and are host interop, not the language's answer. A miss is `nil`,
+not `-1`, matching `first`/`last`/`at`.
 
-### `defsyntax` (DSL Building)
+The `std/seq` operations **return new sequences and never mutate their argument** — `(reverse xs)`
+leaves `xs` alone. `sort` and `sort-by` order by the language's own `<` (numbers numerically,
+strings lexicographically) and are **stable**: elements that compare equal keep their input order.
 
-```lisp
-(defsyntax my-dsl
-    ;; Pattern matching on syntax
-    (rule (my-rule x y) (do-something x y))
-)
+### Math
 
-(my-dsl
-    (my-rule 1 2)
-)
-```
+| module | exports |
+|---|---|
+| `std/math` | the scalar umbrella — `Math.*` wrappers, `E` `PI` `TAU` |
+| `std/math/complex` | `Complex`, `rect` `polar` `scale` `I` |
+| `std/math/rational` | `Rational`, `from-int` `from-real` |
+| `std/math/vector` | `Vec2` `Vec3` `Vec` |
+| `std/math/stats`, `elementary`, `special`, `integrate`, `constants` | statistics, elementary and special functions, quadrature and root-finding |
+| `std/math/random` | `Random` `default-random` — seeded xoshiro256\*\*/SplitMix64; **determinism is the API** (D65) |
+| `std/math/symbolic/expr` | symbolic expressions |
 
----
+### Text, time, system
 
-## 🎯 Pipeline Operator
+| module | exports |
+|---|---|
+| `std/text/json` | `to-json` `to-json-pretty` `parse-json` `try-parse-json` `JsonParser` (D77) |
+| `std/text/regex` | `first-match` `is-match` `find-all` `count-matches` `RegexMatch` — an l-lang engine (D67) |
+| `std/time/calendar` | proleptic Gregorian civil time, UTC (D78) |
+| `std/sys/path` | `Path` `PathLike` — a value type, `/` canonical (D64) |
+| `std/sys/process` | `args` `env` `is-env-set` `env-or` `exit` |
+| `std/io` | `print` `prn` `alert`; plus `std/io/console`, `std/io/files`, `std/io/stream` |
+| `std/log` | a logger takes a `Clock`; an event is a name plus properties (D79) |
+| `std/cli` | `Opt` `Command` `Cli` `ParseResult` `new-result` `parse` `help-text` `run` (D80) |
+| `std/test` | `assert` `assert-eq` `assert-ne` `test` `run-tests` |
+| `std/fn` | `identity` `constantly` `partial` `compose` |
+| `std/debug` | `dbg` `inspect` `dump` `panic` `assert` `unreachable` `todo` |
+| `std/llang/reflect` | the typed surface over the RTTI graph |
 
-The `|>` operator chains function calls left-to-right:
+### Backend availability
 
-```lisp
-;; Traditional (right-to-left nesting)
-(double (add 5 (double 3)))
+Two things are **not portable**, by construction:
 
-;; Pipeline (left-to-right)
-(3 |> double |> (add 5) |> double)
+- **`std/js`** — the `:extern` escape hatch to host JavaScript. JS backend only, by definition.
+- **`std/fn`**'s `partial` / `apply` are still host calls (`func.apply`, `funcs.reduceRight`), so
+  they do not lower on C. Tracked in [`roadmap.md`](roadmap.md).
 
-;; With method calls
-(let data [1 2 3 4 5])
-(data
-    |> (map inc)
-    |> (filter (fn [x] (> x 2))) 
-    |> (reduce + 0))
-```
-
-**Translation**:
-```lisp
-(x |> f1 |> (f2 arg) |> f3)
-;; → (f3 (f2 (f1 x) arg))
-```
-
----
-
-## 🔄 Async/Await
-
-```lisp
-;; Async function
-(fn :async fetch-data []
-    (let result (await (fetch-from-api)))
-    (return result))
-
-;; Promise handling
-(fn async-op []
-    (Promise.resolve 42))
-
-(fn :async test []
-    (let val (await (async-op)))
-    (console.log val))
-```
+Everything else above compiles on both. Five corpus files are refused by the C backend on purpose;
+`src/test/c-status.ts` is the live list, and a refusal is always an `LL0105`–`LL0107` that says what
+it cannot do rather than emitting something wrong.
 
 ---
 
-## 📦 Module System & Packages
+## Where this table comes from
 
-A **module** is a file; a **package** is a compilation unit — a directory with a `package.yaml`
-(`name` + `sources`) — that groups one or more files. The stdlib is ten such packages under `lib/std/`.
-Files of one package see each other's names with no export/import between them; a name crosses the
-package boundary only when exported.
-
-### Define a module / package
-
-```lisp
-;; math-utils.lisp
-(fn add [a b] (+ a b))
-(fn multiply [a b] (* a b))
-
-(export add multiply)   ;; the public surface
-```
-
-```yaml
-# package.yaml -- makes a directory a package
-name: my/math
-sources: ["*.lisp"]
-```
-
-### Import
-
-```lisp
-;; main.lisp
-(import "std/seq")                 ;; a whole package, resolved by NAME
-(import "./math-utils.lisp")       ;; a sibling file, by relative path
-(import { add, multiply :as mul } from "./math-utils.lisp")  ;; selected names; alias with :as
-
-(add 5 3)
-(mul 4 2)
-```
-
----
-
-## 🛡️ Error Handling
-
-### Try/Catch
-
-```lisp
-(try
-    (do-something-risky)
-catch e :of Error
-    (console.log "Error:" (. e message))
-finally
-    (cleanup)
-)
-```
-
-### Custom Errors
-
-```lisp
-(defclass Error CustomError
-    (let :ctor message <- String)
-    (let :ctor code <- Int))
-
-(throw (new CustomError "Something failed" 500))
-```
-
----
-
-## 🎨 String Interpolation
-
-```lisp
-(let name "World")
-(let msg "Hello, {name}!")
-;; → "Hello, World!"
-
-;; Expression interpolation
-(let x 5)
-(let result "Value: {(+ x 10)}")
-;; → "Value: 15"
-```
-
----
-
-## 📊 JSON & Serialization
-
-```lisp
-;; Parse JSON
-(let data (JSON.parse "{\"name\": \"Alice\"}"))
-
-;; Stringify JSON
-(let json (JSON.stringify {:name "Bob"}))
-;; → "{\"name\": \"Bob\"}"
-```
-
----
-
-## ⚙️ Compiler Introspection
-
-### At Runtime
-
-```lisp
-;; Get type info
-(type 42)               ;; → "Int"
-(type-name [1 2 3])     ;; → "Array"
-
-;; Check type
-(is-int 42)             ;; → true
-(is-array [1 2 3])      ;; → true
-```
-
-### Compilation Artifacts
-
-Inspect intermediate compilation stages:
+Read off each module's `(export …)` form. **It is hand-transcribed, and that is a known weakness** —
+the export lists are machine-readable and this page is not generated from them, so it can drift. If
+you need certainty, the module source is one command away:
 
 ```bash
-# View parsed AST
-cat FILE.parsed.json
-
-# View symbol table
-cat FILE.symbols.json
-
-# View inferred types
-cat FILE.types.json
-
-# View generated JavaScript
-cat FILE.js
+grep -h '(export' lib/std/text/json.lisp
 ```
 
----
-
-## 🔗 Interop with JavaScript
-
-l-lang compiles to JavaScript, enabling direct interop:
-
-```lisp
-;; Access global objects
-(. window.location.href "https://example.com")
-(console.log "Hello from JS!")
-
-;; Call JS functions
-(let result (Math.floor 3.7))
-
-;; Create JS objects
-(let obj {:name "test" :value 42})
-
-;; Eval JavaScript (not recommended)
-(let x (js-eval "34 + Math.cos(1)"))
-```
-
----
-
-## 📚 Related Resources
-
-- **Language Syntax**: [language-syntax.md](language-syntax.md)
-- **Type System Details**: [compiler/TYPE_SYSTEM.md](spec/DECISIONS.md)
-- **Examples**: [examples/](../examples/)
-- **Test Suite**: Tests for all APIs in `src/test/`
-
----
-
-## ⚡ Cheat Sheet
-
-```lisp
-;; Variables
-(let x 5)               ;; Immutable
-(mut y 10)              ;; Mutable
-(mut y (+ y 5))         ;; Update
-
-;; Functions
-(fn add [a b] (+ a b))
-(fn no-args [] 42)
-
-;; Collections
-(let arr [1 2 3])
-(let map {:key "value"})
-(arr[0])               ;; Get by index
-(map["key"])            ;; Get by key
-
-;; Control flow
-(if cond true-val false-val)
-(when cond body)
-(match x {...})
-
-;; Pipelines
-(val |> f1 |> (f2 arg) |> f3)
-
-;; Classes
-(defclass Name
-    (let :ctor field)
-    (fn method [] ...))
-(let obj (new Name val))
-(obj.method)
-
-;; Pattern matching
-(match vec {
-    [1 2 3] => "exact"
-    [1 _ _] => "starts with 1"
-    _ => "anything"
-})
-```
-
----
-
-**Last Updated**: July 2026
-
-For more details, see [language-syntax.md](language-syntax.md) and [quick-start.md](quick-start.md).
+Generating this page is recorded in [`roadmap.md`](roadmap.md)'s Known gaps, alongside the
+diagnostics index, for the same reason: the loop that produces contracts should produce their
+documentation too.

@@ -1,764 +1,282 @@
-# 🦥 l-lang Language Reference
+# 🦥 l-lang syntax
 
-*Note: This language is in active development. Syntax is subject to change when better ideas materialize.*
+*Active development. Syntax changes when a better idea materializes — and when it does, it is
+[ruled](spec/DECISIONS.md) first.*
 
----
-
-## 0. Core Philosophy
-
-**Everything is an expression. Every expression is data.**
-
-l-lang steals from Lisp, TypeScript, C#, Zig, and Go, because they are good at solving their problems.
-
-### Design Principles
-
-- **Homoiconicity First:** goal is to have every language construct to be a S-expressions.
-- **Static Types, Dynamic Spirit:** TypeScript-style structural typing with union types.
-- **Metaprogramming in Layers:** Choose your tool—comptime for generics, defmacro for rewrites, defsyntax for DSLs.
+> **How to read this.** Every section names a program in `examples/` that uses the form. Those
+> programs are the end-to-end suite: compiled and run by **both backends**, diffed against one
+> golden. So the citation is not decoration — it is the reason the claim can be trusted, and if a
+> form here stopped working the build would be red before this page was wrong.
+>
+> **The authority is [`spec/GRAMMAR.ebnf`](spec/GRAMMAR.ebnf)**, generated straight off the parser
+> by `npm run grammar:ebnf`. This page is prose about that grammar; where they disagree, it wins.
 
 ---
 
-## 1. Basics & Comments
+## 0. What kind of language this is
 
-l-lang uses S-expressions (Lisp-style parenthesized lists).
+Everything is an S-expression, and everything is an expression — `if`, `match`, `for`, a block all
+yield values.
 
-### Comments
+But **l-lang is not a Lisp with types bolted on**, and it is worth being honest about that up front.
+A Lisp decides what a list means by looking up its head; l-lang decides by **parsing**. The grammar
+declares 98 productions and 51 keyword tokens, and **23 of those productions are pure type
+machinery** — `deftype`, `defcast`, refinements, dimensions, unions, intersections, tuples,
+generics, variance. Remove the parentheses and what is left reads closer to Kotlin or Rust than to
+Scheme.
 
-```lisp
-;; Standard comment - immutable variable x set to 10
-(let x 10) 
-```
-
-### Literals
-
-```lisp
-10          ;; Integer
-3.14        ;; Float
-1/3         ;; Fraction (exact rational)
-10+2i       ;; Complex number (because math people exist)
-0xFF        ;; Hexadecimal
-"Hello"     ;; String
-'"Count: {(x)}" ;; Formatted string (interpolation)
-true / false    ;; Booleans (not truthy/falsy nonsense)
-nil             ;; The void
-```
+The corollary matters when you write l-lang: reach for the type system, not for macros. There are no
+macros — `defmacro` and `defsyntax` are reserved and refused (**LL0023**), the tiers are designed
+(D69) and the grammar is not built.
 
 ---
 
-## 2. Variables & State
-
-Variables are **immutable by default** (`let`). Mutation must be explicit (`mut`).
-
-### Immutable
+## 1. Basics & comments
 
 ```lisp
-(let pi 3.14159)
-(let name "Sloth")
-```
+;; A line comment.
 
-### Mutable
-
-```lisp
-(mut counter 0)
-(counter := (+ counter 1)) ;; := for reassignment (not =)
-(counter *= (+ counter 2)) ;; *= same as counter = counter * (counter + 2)
-;; etc
-```
-
-### Type Annotations
-
-Use `<-` to annotate types. The compiler will infer when it can, but explicit is better.
-
-```lisp
-(let x <- Number 10)
-(mut list <- List<String> ["a" "b"])
-```
-
-**Union Types:** When you need "this OR that":
-
-```lisp
-(let status <- String | Int "loading")
-(status := 200) ;; Valid - Int is in the union
-```
-
----
-
-## 3. Data Structures
-
-### Vectors & Lists
-
-```lisp
-(let v [1 2 3])      ;; Vector (contiguous array)
-(let l (1 2 3))      ;; List (linked list / AST node)
-(let item v[0])      ;; Zero-indexed access
-```
-
-### Maps (Dictionaries)
-
-Keys can be keywords (`:name`) or strings. Keyword keys are preferred.
-
-```lisp
-(let user { 
-    :name "Sid" 
-    :age 30 
-    :"is-admin" false 
-})
-(std.console.log user.name)          ;; Dot access for keywords
-(std.console.log user["is-admin"])   ;; Bracket access for strings
-```
-
-### Matrices
-
-Native type for 2D math operations. Rows separated by `|`.
-
-```lisp
-(let identity 
-    [ 1, 0, 0 
-    | 0, 1, 0 
-    | 0, 0, 1 ])
-
-(let val identity[1, 2]) ;; 2D indexing: row, column
-```
-
----
-
-## 4. Functions & Pipelines
-
-### Definition
-
-Functions use `fn`. Return types with `->` are optional but recommended.
-
-```lisp
-(fn add [a <- Number b <- Number] -> Number (
-    (return (+ a b))
-))
-
-;; Implicit return (last expression)
-(fn add [a <- Number b <- Number] (
-    (+ a b)
-))
-```
-
-### Spread Parameters
-
-Functions can accept variable numbers of arguments using spread syntax:
-
-```lisp
-(fn print [msg <- String ...args <- Any[]] -> Void (
-    ;; args is an array containing all additional arguments
-    (for :each arg :from args :then (
-        (console.log arg)
-    ))
-))
-
-;; Usage
-(print "Hello" "world" 42 true)  ;; msg="Hello", args=["world", 42, true]
-```
-
-**Key Features**:
-- Use `...paramName` to collect remaining arguments into an array
-- Type annotation follows normal pattern: `...args <- Type[]`  
-- Generates efficient JavaScript rest parameters: `function print(msg, ...args)`
-- Can be combined with regular parameters (spread parameter must be last)
-
-### Async / Await
-
-```lisp
-(fn :async fetch-data [id] (
-    (let result (await (db.get id)))
-    (return result)
-))
-```
-
-### Pipelines (`|>`)
-
-Pass results forward. First argument by default.
-
-```lisp
-;; Instead of: square(add(5, 10))
-(5 
- |> (add 10) 
- |> square)
-
-;; Method chaining
-(query
- |> .Skip 10
- |> .Take 5)
-```
-
----
-
-## 4.5. Function Modifiers
-
-### Built-in Modifiers
-
-l-lang includes several built-in modifiers for functions:
-
-```lisp
-(fn :operator + [a <- Int, b <- Int] -> Int ...)  ;; Operator overloading (dispatch modifier)
-(fn :async fetch-data [url] ...)                  ;; Async function (body modifier)
-(fn :gen count-up [n <- Int] -> Iterator<Int> ...) ;; Generator: function*, produces via (yield x)
-(fn :extension area [self <- Rectangle] -> Int ...) ;; Extension method: (rect.area) -> area(rect)
-```
-
-Modifiers split into **dispatch** (`:operator`, `:extension` — govern the call site) and **body**
-(`:gen`, `:async` — govern the emitted function); one of each composes, e.g. `:extension :gen` is a lazy
-extension method. `:extension` dispatch is compile-time and nominal: `(x.m a)` lowers to the free call
-`m(x, a)` when `x`'s type conforms to the extension's receiver and has no native `m`.
-
-### Custom Modifiers with `defmodifier`
-
-Define custom function modifiers that transform functions at compile time:
-
-```lisp
-;; Define a memoization modifier
-(defmodifier memoized [])
-
-;; Apply to functions with :modifier syntax
-(fn :memoized fibonacci [n <- Int] -> Int
-    (match n {
-        0 => 1
-        1 => 1
-        _ => (+ (fibonacci (- n 1)) (fibonacci (- n 2)))
-    })
+(
+    ;; A program is a list of forms.
+    (console.log "hello")
 )
 ```
 
-The memoized modifier automatically adds caching to functions, dramatically improving performance for recursive algorithms.
+A comment **occupies no slot** — it is not a value, and it cannot be an argument (D83). That sounds
+obvious and was not: it was ruled after a comment in an argument position shifted everything after
+it.
 
-### Multiple Modifiers
+> `examples/00-basics/`, `80-adversarial/comment_in_value_position.lisp`
 
-Functions can have multiple modifiers applied:
-
-```lisp
-(defmodifier logged [])
-(defmodifier timed [])
-
-;; Function with logging, timing, and memoization
-(fn :logged :timed :memoized complex-calculation [x] -> Int
-    ;; Expensive computation here
-    (fibonacci (+ x 10))
-)
-```
-
-Modifiers are applied in order, creating nested transformations.
-
-### How Modifiers Work
-
-- `defmodifier` creates a higher-order function that transforms other functions
-- Currently generates memoization logic (extensible in future versions)
-- Applied at compile time, not runtime
-- Zero performance overhead for the transformation itself
-
-### Examples
-
-See `examples/10-modifiers/` for comprehensive examples including:
-- Basic modifier usage
-- Logging and timing modifiers  
-- Retry logic modifiers
-- Multiple modifier combinations
-
----
-
-## 5. Flow Control
-
-### If / Else
+## 2. Variables & mutability
 
 ```lisp
-(if (> x 10)
-    (print "Big")
-    (print "Small"))
+(let x 10)                  ;; bound once
+(mut counter 0)             ;; rebindable
+(counter := (+ counter 1))  ;; `:=` assigns; `+= -= *= /= %=` compound
+
+(let name <- String "Ada")  ;; with an annotation
 ```
 
-### When (Guard Syntax)
+`let` is **binding-immutable** (D10, the Rust reading): the name cannot be rebound. Assigning to one
+is **LL0233**. It says nothing about the interior of what it points at.
+
+> `examples/00-basics/00_vars.lisp`, `00-basics/03_optional_and_mutability.lisp`
+
+## 3. Data structures
 
 ```lisp
-(when is-loading :then "Please wait...")
+(let v [1 2 3])                       ;; vector
+(let m [1 2 | 3 4])                   ;; matrix — `|` separates rows
+(let map { :name "Ada" :age 36 })     ;; map; keys are strings, never mangled (D13)
+(let t [1 "two"])                     ;; tuple type [Int String]
+(let r {:name <- String})             ;; record type
 ```
 
-### Cond (Multi-Branch)
+A matrix literal has a type, and its cells must share a **`Ring`** — a type answering `+` and `*`
+(D89). `[1 "a" | 2 3]` is **LL0246**.
+
+> `examples/05-data-structures/`, `40-math/`
+
+## 4. Functions & pipelines
 
 ```lisp
-(cond
-    ((>= score 90) "A")
-    ((>= score 80) "B")
-    (true "F")) ;; Default case
+(fn add [x <- Real y <- Real] -> Real (return (+ x y)))
+
+(let result-a
+    (5
+     |> (sub 7)
+     |> (add 1)
+     |> square))
 ```
 
-### Loops
+`|>` carries left, `<|` carries right. A bare `|> .length` selects a member.
 
-**While:**
+> `examples/01-functions/04_pipelines.lisp`
+
+## 5. Modifiers
+
+`:name` before a declaration. **The same sigil is three different roles** (D68), which is worth
+knowing because the spelling does not tell you which:
+
+| role | what it is | example |
+|---|---|---|
+| **modifier** | a built-in property of the declaration | `:async`, `:gen`, `:public`, `:extension`, `:comptime` |
+| **decorator** | a user-defined transform, declared with `defmodifier` | `:memoized`, `:logged` |
+| **attribute** | inert data, declared with `defattribute` | `:docstring["…"]` |
+
+A decorator's contract is **flat** with a setup slot (D75), and its arguments must be compile-time
+constants (**LL0036**).
+
+> `examples/10-modifiers/`, `07-types/08_attributes.lisp`
+
+## 6. Control flow
 
 ```lisp
-(while (> i 0) (
-    (i := (- i 1))
-))
+(if cond then-expr else-expr)
+(when cond body)
+(cond (test-1 result-1) (test-2 result-2) (:else fallback))
+(for :each x :from xs :then body)
+(while cond body)
 ```
 
-**For (C-Style):**
-Optional named arguments: `:init`, `:cond`, `:step`, `:then`. If skipped C-style `for` is inferred.
+All of them are expressions. `return` returns from the **function**, not from the form (D40).
 
-```lisp
-(for 
-    :init (mut i 0)
-    :cond (< i 5)
-    :step (i := (+ i 1))
-    :then (print i))
-```
+> `examples/02-control-flow/`, `03-loops/`
 
-**For-Each:**
-
-```lisp
-(for :each item :from list :then (
-    (print item)
-))
-```
-
----
-
-## 6. Pattern Matching
-
-`match` handles constants, types, destructuring, and guards.
+## 7. Pattern matching
 
 ```lisp
 (match value {
-    0              => "Literal zero"
-    x :of Int      => "Some integer"
-    [1 2 _]        => "Vector: [1, 2, anything]"
-    { :type "A" }  => "Map with key :type = 'A'"
-    _              => "Default case (matches everything)"
+    0                    => "zero"
+    n :when (< n 0)      => "negative"      ;; guard (D26)
+    x :of String         => "a string"      ;; type pattern (D27)
+    [a ...rest]          => "a vector"      ;; rest pattern (D28)
+    r"ca+t"              => "a regex arm"   ;; (D67)
+    _                    => "anything"
 })
 ```
 
-### Type Matching with RTTI
+> `examples/04-pattern-matching/`
 
-Runtime type introspection via `type`:
+## 8. Types
 
 ```lisp
-(fn describe [obj] (
-    (match (type obj) {
-        Int      => "An integer"
-        String   => "Text"
-        Dog      => "A dog instance"
-        _        => "Something else"
-    })
-))
+(deftype Name <- String)                        ;; a nominal newtype
+(deftype uint8 <- Int :satisfies (0..255))      ;; a refinement — bounds the compiler checks
+(deftype :unit Meter <- Real)                   ;; a unit of measure
+(deftype Speed <- Real :satisfies (/ Meter Second))
+
+(defcast :implicit [c <- Complex] -> Real ...)  ;; a declared conversion
+(cast<Real> c)                                  ;; the explicit use site
 ```
 
----
+**Types are nominal; interfaces are structural** — the Go model (D42). A refinement is checked at
+every boundary. A `:unit` composes through `*` and `/`, refuses to cross under `+`/`-`, and
+**erases** — no runtime check is emitted from a dimension.
 
-## 7. Object-Oriented Programming
+Note `..` **binds by adjacency**: `(0..255)` is a range, `(0 .. 255)` is three things and a
+standalone `..` is **LL0034** (D88).
 
-### Classes
+> `examples/07-types/`, `16-stdlib/26_units.lisp`, `80-adversarial/unit_dimensions.lisp`
+
+## 9. Classes, structs & interfaces
 
 ```lisp
-(defclass Dog :extends Animal
-    (let :public :ctor name)  ;; Constructor param + public field
-    (let :private age 0)      ;; Private field, default value
-
-    (fn :public speak [] (
-        (print '"(this.name) says Woof!")
-    ))
+(definterface Node
+    (fn eval [] -> Real)
+    (fn show [] -> String)
 )
 
-(let d (new Dog "Buddy"))
-(d.speak)
-```
-
-**Memory Management Hints:**
-
-```lisp
-(defclass :gc Texture      ;; GC-managed (default)
-    (let buffer <- Buffer))
-
-(defclass :stack Point     ;; Stack-allocated (opt-in)
-    (let x <- Float)
-    (let y <- Float))
-```
-
-### Structs
-
-Value types. Passed by copy. Stack-allocated by default.
-
-```lisp
-(defstruct Point
-    (let :public x 0)
-    (let :public y 0))
-```
-
-### Operator Overloading
-
-You can define custom behavior for operators using the `:operator` modifier. The function name must be the operator symbol.
-
-```lisp
-(defstruct Vector2
-    (let :ctor x <- Real)
-    (let :ctor y <- Real)
-
-    ;; Binary + operator
-    (fn :operator + [other <- Vector2] -> Vector2
-        (return (new Vector2 (+ this.x other.x) (+ this.y other.y)))
-    )
-
-    ;; Unary - operator (negation)
-    (fn :operator - [] -> Vector2
-        (return (new Vector2 (- 0 this.x) (- 0 this.y)))
-    )
+(defclass Num :implements Node
+    (let :ctor value <- Real)
+    (fn eval [] -> Real (return this.value))
 )
 
-(let v1 (new Vector2 1 2))
-(let v2 (new Vector2 3 4))
-(let v3 (+ v1 v2))  ;; Vector2(4, 6)
-(let v4 (- v1))     ;; Vector2(-1, -2)
+(defstruct Point (let :ctor x <- Real) (let :ctor y <- Real))   ;; value semantics (D11)
 ```
 
-Supported operators: `+`, `-`, `*`, `/`, `==`, `!=` etc.
+There is **no `protected`** — the implementation-inheritance leak Go and Rust both drop. Visibility
+is `public` / `internal` / `private`, scoped to the **package** (D35). A struct is copied into a
+collection slot; a *native* member call like `.slice` is an escape hatch and aliases (D50).
 
-### Interfaces
+> `examples/09-oop/`, `06-value-semantics/`
+
+## 10. Generics
 
 ```lisp
-(definterface IRepository<T>
-    (fn :async GetAll [] -> List<T>)
-    (fn :async GetById [id] -> T))
+(fn :comptime max<T> [a <- T b <- T] -> T (if (> a b) a b))
+(defclass Box<T> (let :ctor value <- T))
 ```
 
-### Generics
+Generics are **real, not erased** — they are inferred by solving, then checked against the solution.
 
-Generics enable type-safe parameterization of classes, interfaces, and functions. Function generics
-work via **call-site inference**: `(fn first<T> [coll <- T[]] -> T? ...)` and `(first [1 2 3])` infers
-`Int?`, solving `T` from the argument and substituting into the return (optional flag and all).
+> `examples/08-generics/`
 
-**Generic Classes:**
+## 11. Strings
 
 ```lisp
-;; Single type parameter
-(defclass Box<T>
-    (let :ctor value <- T)
-    (fn get [] -> T (return this.value))
-    (fn set [val <- T] -> Void (this.value := val)))
-
-;; Multiple type parameters
-(defclass Pair<T U>
-    (let :ctor first <- T)
-    (let :ctor second <- U)
-    (fn getFirst [] -> T (return this.first))
-    (fn getSecond [] -> U (return this.second)))
-
-;; Usage
-(let box (new Box<Int> 42))
-(let pair (new Pair<String Int> "age" 25))
+"plain"
+'"interpolated {(name)}"      ;; alias for f"…"
+f"interpolated {(name)}"
+r"a raw\string"               ;; no escape processing — the regex spelling (D67)
 ```
 
-**Generic Interfaces:**
+Escapes decode identically everywhere, including inside a match pattern (D74).
+
+> `examples/17-strings/`, `16-stdlib/20_regex.lisp`
+
+## 12. Errors, and conditions
 
 ```lisp
-(definterface Container<T>
-    (fn get [] -> T)
-    (fn set [val <- T] -> Void))
+(try body (catch e handler) (finally cleanup))
 
-;; Implementation
-(defclass Box<T> :implements Container<T>
-    (let :ctor value <- T)
-    (fn get [] -> T (return this.value))
-    (fn set [val <- T] -> Void (this.value := val)))
+(restart-case
+    (if (== k 1) 100 (invoke-restart :use-default 0))
+    (:use-default [v] v))               ;; a resumable second mechanism (D47)
 ```
 
-**Runtime Type Information (RTTI):**
+A **data** error is catchable; a **contract** violation is not (D82, D87). Conditions and restarts
+are native on C and refused on JS with **LL0108**.
 
-Generic types expose metadata at runtime via the `type()` function:
+> `examples/18-error-handling/`, `19-conditions/` (21 programs)
+
+## 13. Modules
 
 ```lisp
-(let box (new Box<Int> 42))
-(console.log (type box))
-;; Output: { name: "Box", generics: ["T"], implements: ["Container"], ... }
+(import "std/io")
+(import "std/math" :as m)
+(export foo bar)
 ```
 
-**Covariance/Contravariance (Syntax-Only, Future Feature):**
+The compilation unit is a **package** — a `package.yaml` — and visibility is package-scoped (D35).
+`:as` binds on both sides.
+
+> `examples/15-modules/`, `80-adversarial/import_export_aliases/`
+
+## 14. Generators & async
 
 ```lisp
-;; Covariant type parameter (output positions only)
-(definterface Producer<:out T>
-    (fn produce [] -> T))
-
-;; Contravariant type parameter (input positions only)
-(definterface Consumer<:in T>
-    (fn consume [item <- T] -> Void))
+(fn :gen counter [] -> Iterator<Int> (while true (yield 1)))
+(fn :async fetch [] -> Task<String> ...)
 ```
 
-**Generic Constraints (Planned):**
+`:gen` lowers natively on C. **`:async` is refused on C by ruling** (D60) — it is not an oversight.
+
+> `examples/13-generators/`, `14-async/`
+
+## 15. Compile-time evaluation
 
 ```lisp
-;; Future syntax for bounded type parameters
-(defclass SortedList<T> :where T :extends Comparable
-    (fn add [item <- T] -> Void ...))
+(fn :comptime square [x] (* x x))
 ```
 
-### Enums
+Folded before codegen by an **in-house interpreter** (D73) — not by the host, and not by `node:vm`.
+Nondeterminism and runaway folds are refused with locations.
 
-```lisp
-;; With auto values 0..3
-(defenum HttpMethod
-    :GET
-    :POST
-    :PUT
-    :DELETE)
+> `examples/11-comptime/`
 
-;; Inferred values 200..204
-(defenum HttpStatusCode
-    :OK => 200
-    :Created
-    :Accepted
-    :Non-Authoritative-Information
-    :No-Content)
-```
+## 16. Conventions
+
+- **kebab-case** for names; `is-x` for predicates. Scheme spellings (`nil?`, `set!`) are rejected (D21).
+- A `.expect` golden is **authored from intent**, never captured from output.
+- Adversarial examples land with every change — `examples/80-adversarial/` is 90 programs and the
+  reason most of this page can be trusted.
 
 ---
 
-## 8. Metaprogramming: The Three Tiers
-
-l-lang gives you three levels of code manipulation.
-
-### Level 1: Comptime (Zig-Style)
-
-**Status**: ✅ Implemented (January 16, 2026)
-
-Evaluate code at compile-time. Functions marked with `:comptime` are executed during compilation and their results are inlined as constants.
-
-```lisp
-;; Comptime function - evaluated at compile time
-(fn :comptime factorial [n]
-  (if (<= n 1) 1 (* n (factorial (- n 1)))))
-
-;; Usage - compiler evaluates and inlines result
-(let fact5 (factorial 5))  ;; Compiles to: const fact5 = 120;
-;; The factorial function definition does NOT appear in compiled output
-```
-
-**Key Features**:
-- **VM-Based Execution**: Comptime functions are transpiled to JavaScript and executed in a Node.js `vm` sandbox
-- **Recursive Support**: Handles recursive functions (factorial, Fibonacci, etc.)
-- **Dead Code Elimination**: Function definitions marked `:comptime` are removed from output after evaluation
-- **Constant Propagation**: All comptime calls are replaced with their computed literal values
-
-**Example with Multiple Comptime Functions**:
-```lisp
-(fn :comptime add [a b] (+ a b))
-(fn :comptime multiply [a b] (* a b))
-
-(let x (multiply 5 6))     ;; const x = 30;
-(let y (add 7 3))          ;; const y = 10;
-;; add and multiply functions not in output
-```
-
-**Comptime Parameters** (Planned):
-
-```lisp
-(fn create-array [comptime T, size <- Int] -> Array<T> (
-    ;; T is known at compile time, size at runtime
-    (Array<T>.new size)
-))
-```
-
-*Note: Type-level comptime parameters are planned for future implementation. Currently supported for function execution only.*
-
-### Level 2: Defmacro (Simple Rewrites)
-
-Pattern-match and template-substitute. Auto-gensym prevents variable capture.
-
-```lisp
-;; Macro definition
-(defmacro unless [condition body] `(
-    (if (not ,condition) ,body)
-))
-
-;; Usage
-(unless (> x 10) (print "Small"))
-;; Expands to: (if (not (> x 10)) (print "Small"))
-```
-
-**Auto-Gensym:** Variables defined in macros are automatically renamed to avoid shadowing.
-
-```lisp
-(defmacro swap [a b] `(
-    (let temp ,a)  ;; Becomes temp_G1234 internally
-    (,a := ,b)
-    (,b := temp)
-))
-```
-
-### Level 3: Defsyntax (Full Power)
-
-Racket-style hygienic macros for building DSLs.
-
-```lisp
-(defsyntax for-each [pattern] (
-    ;; Pattern match on input syntax
-    ;; Manipulate AST nodes
-    ;; Return transformed syntax
-))
-```
-
----
-
-## 9. Type System
-
-### Structural Typing
-
-Like TypeScript: types are defined by their shape, not their name.
-
-```lisp
-(definterface Nameable
-    (fn get-name [] -> String))
-
-(defclass Dog
-    (let :public name <- String)
-    (fn :public get-name [] -> String (return this.name)))
-
-;; Dog satisfies Nameable implicitly (duck typing)
-```
-
-### Generics
-
-```lisp
-(defclass List<T>
-    (let :private items <- Array<T>)
-    
-    (fn :public add [item <- T] (
-        (items.push item)
-    )))
-```
-
-### Union Types
-
-Explicit "or" relationships:
-
-```lisp
-(fn process [input <- String | Int] (
-    (match (type input) {
-        String => (print "Got text")
-        Int    => (print "Got number")
-    })
-))
-```
-
-### Type Guards
-
-Runtime type checks with `is` and `as`:
-
-```lisp
-(if (obj is Dog) (
-    (let d (obj as Dog))
-    (d.bark)
-))
-```
-
----
-
-## 10. Operator Overloading
-
-L-lang supports operator overloading for both standalone functions and class/struct methods using the `:operator` modifier.
-
-### Standalone Operators
-
-Define overloads for specific types at the module level:
-
-```lisp
-(fn :operator + [a <- Complex b <- Complex] -> Complex (
-    (new Complex (+ a.real b.real) (+ a.imag b.imag))
-))
-```
-
-### Method-Style Operators
-
-Implement operators directly inside a struct or class:
-
-```lisp
-(defstruct Vector2
-    (let :ctor x <- Real 0)
-    (let :ctor y <- Real 0)
-
-    (fn :operator + [other <- Vector2] (
-        (new Vector2 (+ x other.x) (+ y other.y))
-    ))
-
-    ;; Unary negation
-    (fn :operator - [] (
-        (new Vector2 (- x) (- y))
-    ))
-)
-```
-
-Operators supported: `+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`, `<=`, `>=`.
-
----
-
-## 11. Modules & Imports
-
-### Exporting
-
-```lisp
-(fn calculate [] (...))
-(export calculate)
-```
-
-### Importing
-
-```lisp
-(import "math-lib.lisp")               ;; Import all
-(import { sin, cos } from "math.lisp") ;; Import specific
-```
-
----
-
-## 11. Runtime Type Information (RTTI)
-
-Trimmed reflection—enough to inspect, not enough to break encapsulation.
-
-### Type Introspection
-
-```lisp
-(let t (type obj))
-(print t.name)           ;; "Dog"
-(print t.parent)         ;; Animal (if exists)
-(print t.fields)         ;; [{ name: "name", type: String }]
-(print t.methods)        ;; ["bark", "speak"]
-```
-
-### Runtime Type Checks
-
-```lisp
-(if (obj is Dog) ...)         ;; Type check
-(let d (obj as Dog))          ;; Downcast
-(let maybe (obj as? Dog))     ;; Safe cast (returns nil if fails)
-```
-
----
-
-## 12. Memory Management
-
-**Default:** Garbage collected (Go-style tracing GC with escape analysis).
-
-**Opt-in Fine Control:**
-
-```lisp
-(defclass :gc User ...)      ;; GC-managed (default)
-(defclass :stack Point ...)  ;; Stack-allocated
-(defclass :manual Buffer     ;; Manually allocated and freed memory
-    (fn :destructor cleanup [] (
-        ;; Called on explicit free
-    )))
-```
-
----
-
-## 13. Conventions
-
-### Preferred Naming
-
-- **Functions:** `kebab-case` (e.g., `get-user-by-id`)
-- **Classes:** `PascalCase` (e.g., `UserController`)
-- **Constants:** `CAPS_SNAKE_CASE` (e.g., `MAX_CONNECTIONS`)
-
----
-
-*Last Updated: January 2026*
+## What is not here
+
+Documented so you do not go looking:
+
+| | |
+|---|---|
+| `defmacro` / `defsyntax` | reserved, refused (**LL0023**). D69 rules the tiers; the grammar is unbuilt. |
+| `eval` | **LL0236** — it needs a runtime AST interpreter, which is a phase of its own. |
+| quasiquote / unquote | do not exist. |
+| `:where` bounds | the token lexes; no parser rule consumes it. Phase Bg. |
+| `array[1 .. 2]` spans | does not parse — a syntax error in indexer position, not a diagnostic. |
+| `fn` parameter defaults | unbuilt. |
+| boolean match patterns, `:is` patterns, sized array types | unbuilt. |
+
+The live list is [`roadmap.md`](roadmap.md)'s Known gaps.
