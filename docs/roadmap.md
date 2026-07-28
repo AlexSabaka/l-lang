@@ -4,6 +4,16 @@
 
 This document outlines the high-level milestones for the `l-lang` compiler, merging strategic goals with tactical implementation tasks.
 
+> **Before reading any phase below: there are two backends, and C is the reference one.** D66
+> deprecated the JavaScript backend to a differential-testing oracle; **D86** made C the
+> specification where the two disagree. Phases 1 through 6 were written when JavaScript was the only
+> target, and they read that way. See **Phase C** for the backend that document does not mention.
+>
+> **Status lives in the ledgers, not here.** `src/test/manifest.ts` (what every corpus file is),
+> `c-status.ts` (what C must pass — an allowlist that grows) and `js-status.ts` (what JS is known to
+> fail — a list that shrinks) are read by the suite and cannot get out of step with it. Numbers
+> transcribed into this file can, and have.
+
 **Status Legend:**
 *   ✅ Complete
 *   ⚠️ Claimed complete, and is not — see the note
@@ -98,10 +108,14 @@ register; the short version:
   symbols were all blind. Its scorecard is the phase's real lesson: the 16 diagnostics filed as
   *"false positives blocked on P6"* turned out to be **sixteen real bugs**.
 
-**Where the tree stands** (measured, both frontends): **71 pass / 0 fail / 0 error** (91 total) ·
-codegen **103/103** · imports **10/10** · repl **24/24** · smoke **11/11** · **0** corpus type
-diagnostics on passing tests · **0** lexical misses · 3 gates `pending`, each tracked to the phase
-that owes it.
+**Where the tree stood at v0.3.6** (measured, both frontends — a dated snapshot, kept because the
+phase's argument rests on it): **71 pass / 0 fail / 0 error** (91 total) · codegen **103/103** ·
+imports **10/10** · repl **24/24** · smoke **11/11** · **0** corpus type diagnostics on passing
+tests · **0** lexical misses · 3 gates `pending`.
+
+> There is only one frontend now (D39), and the corpus is 326 files. **The live numbers are not
+> transcribed into this document** — they are in `src/test/manifest.ts`, `c-status.ts` and
+> `js-status.ts`, which the suite reads and this file cannot get out of step with.
 
 ---
 
@@ -172,8 +186,13 @@ itself. Enforcing the boundary costs **one export list**.
         `(pow 2 3)` was `NaN` because an inlined function's *parameter* was replaced by a same-named
         top-level symbol.
 
+*   [ ] **Sg — retire what remains; close D7.** The one box that keeps this phase 🚧, and it had no
+        box at all. `RuntimeProvider.SYMBOL_MAP` is the thermometer: every name still injected as text
+        rather than imported is D7 debt, and `definedSymbols()` now exposes the count.
+
 Deferred, and *not* stdlib modules: **`eval`** (needs a runtime AST interpreter — a phase of its
-own) and **quasiquote/unquote** (do not exist).
+own; it is **LL0236** on both backends now, not the host's `eval`) and **quasiquote/unquote** (do
+not exist).
 
 ## ✅ Phase 5: Advanced Type System (v0.5.0) — CLOSED
 **Theme:** "Type Safety First."
@@ -207,7 +226,7 @@ quietly dropped:
 *   **Abstract classes** — `:abstract` is not a modifier (`LL0015`). Additive; belongs with the class
     surface (D11), not with the type system.
 
-## 🚧 Phase It: Protocols back the syntax (D29) — iteration first (D30)
+## ✅ Phase It: Protocols back the syntax (D29) — iteration first (D30)
 
 **Theme:** "A construct is an interface, lowered per backend."
 
@@ -432,7 +451,7 @@ proven by a characterization snapshot (`test:diagnostics`, 42 probes, byte-for-b
         BINDS (it suppresses the implicit return, as `:gen` does), and `Int / Int` is integer division
         (D43 applied literally, once its "JS has one number type" premise was seen to be false on a
         native target). Implementation follows; see D49.
-*   [ ] **The core tail (D48).** The readiness report's remaining dips resolved *onto* nodes. Step 1,
+*   [x] **The core tail (D48).** The readiness report's remaining dips resolved *onto* nodes. Step 1,
         the cheap drains, is **done** — the A5 copy-decision (as `copies` fields on `HReturn`/`HVarDecl`
         rather than a distinct `HCopyStore`), the field-get slot on `HMemberRead`, and callee-identity
         on the call nodes. **The core tail is DONE.** `HMatchTest` landed (A7 drained
@@ -450,15 +469,15 @@ features on the now-solid HIR / coercion substrate. **Post-design-round sequenci
 restarts (Cr). All of it is JS-safe (degrades, no-ops, or refuses honestly), so none *depends* on native
 surviving — it pays *extra* if native does.
 
-### 🔮 Phase Cv — the conversion substrate (D46)
+### 🟡 Phase Cv — the conversion substrate (D46) — B-0/B-1/B-3 SHIPPED, B-2 open
 The coercion pass reframed as the type system's checked-conversion layer. In order:
-*   [ ] **B-0 tokens:** `deftype`'s required `<-` binder, the `..` `Range` token, the `:where` modkw.
+*   [x] **B-0 tokens:** `deftype`'s required `<-` binder, the `..` `Range` token, and the **`:satisfies`** modkw — *not* `:where`, which is still an unconsumed token claimed by Phase Bg.
 *   [ ] **Native fixed-width ints (B-2):** `uint8`/`int32`/… → `uint8_t` etc. — a fixed-range refinement
         materialised as a native width. No-op-to-`Int` on JS.
-*   [ ] **Refinements (B-1):** `T :where (pred)` — a predicate over the value (total); `(lo .. hi)` range
-        sugar desugaring to a predicate; regex via a stdlib `matches?` predicate, never grammar (B-1a);
-        record-field refinements on the field (B-1b).
-*   [ ] **`defcast` (B-3):** `:implicit` (one-hop, lossless-widening, at coercion sites) / `:explicit`
+*   [x] **Refinements (B-1), range half:** `T :satisfies (lo..hi)`, checked at every boundary
+        (`cacc912`, `38d1c79`), plus D90's dimension half. **Open:** a general predicate, regex via a
+        stdlib `matches?` predicate (B-1a), and record-field refinements on the field (B-1b).
+*   [x] **`defcast` (B-3):** `:implicit` (one-hop, lossless-widening, at coercion sites) / `:explicit`
         (`(cast<T> x)`), keyed by type-pair on the operator devirt path.
 
 ### 🔮 Phase Tn — tensors: the last rung of the numeric tower
@@ -473,9 +492,14 @@ element rule carries over to a tensor unchanged. What is not:
 *   **Notation.** `|` is spent on rank 2. Rank 3+ is either a new separator or **nesting** —
     `[[1 2 | 3 4] [5 6 | 7 8]]` parses *today* as a vector of matrices, so the shape exists and only
     the meaning is missing.
-*   **Slicing is already on the critical path.** `t[1 .. 2, *, 0]` is precisely the SPAN D88/N4
-    reserved and refuses as LL0034. Tensors are what make spans worth building — and the multi-index
-    `t[i, j, k]` indexer already parses (`05-data-structures/03_matrices` uses `m[0, 0]`).
+*   **Slicing is already on the critical path, and it does not parse at all.** Measured 2026-07-28:
+    `t[1 .. 2]` dies with `Expecting token of type --> RBracket <-- but found --> '..'`, thrown as a
+    raw Node stack from `AstProvider`, not as a diagnostic. **LL0034 fires only for a standalone
+    `(a .. b)` list** — the span element is built solely by the LIST rule's fall-through, and
+    `indexerSuffix` consumes plain expressions, so the spelling D88/N4 reserved is currently a syntax
+    error in indexer position. Making the indexer reach the span is part of the work, not a
+    precondition already met. The multi-index `t[i, j, k]` *does* parse
+    (`05-data-structures/03_matrices.lisp` uses `m[0, 0]`).
 *   **Shape in the type.** `Tensor<Real, [2 3 4]>` needs value-level generic arguments. Unchecked
     shape is the tractable alternative and probably the right first cut, the same way declaring
     derived units was the tractable cut of D90.
@@ -489,8 +513,9 @@ Sabaka has notes on the notation; nothing here should be settled before they lan
 *   [ ] **The three `:where` relations** (`:is` / `:extends` / `:implements`, type-variable subject only)
         — reuse the existing `typesEqual` / `isSubtype` / `conformsStructurally` predicates.
 *   [ ] **Small greenlit ergonomics:** `|> .method` selectors (desugar over the pipe), flags enums
-        (`:with Flags`), `with`-copy (`(with s :field v)`), `:readonly` fields, attributes → reflection
-        (`:with Attr`, wired into `type`), `:stack` allocation (needs escape analysis).
+        (`:with Flags`), `with`-copy (`(with s :field v)`), `:readonly` fields, `:stack` allocation
+        (needs escape analysis). *(Attributes → reflection LANDED as D68/D72 — spelled `defattribute`
+        + `:name[args]`, not `:with Attr`.)*
 
 ### ✅ Phase Cr — conditions / restarts (D47) — DONE
 *   [x] **The resumable kernel** — `restart-case` / `handle` / `signal` / `invoke-restart`: a second,
@@ -560,6 +585,87 @@ refused by ruling (D60), and the collector (D59) is a separate lane.
         probes had been blessing.
 *   [ ] **G6 — the collector (D59).** Separate lane. The bounded-RSS acceptance test lands **RED
         first** — nothing in the corpus measures memory today.
+
+## ✅ Phase C — the native backend, and the polarity flip (D49, D81–D87)
+
+**Theme:** "Stop calling it a probe."
+
+The C backend has no phase in this document and is 7,204 TypeScript lines across
+`src/compiler/codegen/c/` plus a 2,751-line `runtime.c`. It began as an adversarial probe of the HIR
+contract — the instrument that measured whether the IR carried enough to feed a typed backend — and
+it finished as the reference implementation.
+
+- [x] **The pipeline.** HIR → `ResolveHirToCir` (P1) → `InsertCoercions` (P2) → `EmitCirToC`, with
+      every reach below the HIR recorded through `dipAst` / `dipNodeTypes` / `dipSymbols` and an
+      `(assumption, construct, note)` triple. That instrument is what made the readiness question
+      answerable instead of arguable; its taxonomy is `docs/inbox/hir-llvm-consumption-spec.md`.
+- [x] **Fail-closed refusal, not wrong code.** `LL0105`–`LL0107` are the refusal band: the emitter
+      says what it cannot do and stops. A green C file is therefore a *true* positive.
+- [x] **The ratchet.** `src/test/c-status.ts` — an allowlist that GROWS. Unlisted-and-passing turns
+      the build red demanding promotion, which is how the backend advanced without anyone tracking
+      it by hand.
+- [x] **The `-O2` fence.** C11 7.13.2.1p3: a local clobbered across a `setjmp` landing is
+      indeterminate unless `volatile`. At `-O0` the reads happen to work, so only `test:c:o2` can
+      falsify the emission — and it caught a live bug in plain `try`/`catch`, not just in D47's
+      restarts.
+- [x] **D86/D87 — the polarity flip.** C is the specification where the backends disagree; JS is a
+      frozen second implementation whose value is that a disagreement is worth *looking at*. The
+      `oracleDivergent` manifest field is what let a file be graded on C while the frozen oracle is
+      measurably wrong.
+- [ ] **The refusals that remain:** `:async` (D60, by ruling), nested and lambda generators, and
+      decoration-time setup hoisting. Five files, listed in `c-status.ts`.
+
+## ✅ Phase Lx — the language-surface round (D61–D75)
+
+**Theme:** "The `:foo` sigil meant three things and nobody had said which."
+
+Rulings D61 through D75 have **no box anywhere in this document**, which is how twenty-two of the
+thirty most recent rulings came to be invisible here. They are one coherent round.
+
+- [x] **D61** bit operators — Int only, 64-bit wrap, masked shifts, arithmetic `shr`
+- [x] **D62** `std/core/errors` — a typed error tower on the ambient `Error`, with `cause`
+- [x] **D63** the protocol family — `Comparable` / `Hashable` / `Formattable`
+- [x] **D64/D65** `std/sys/path` (paths are a value type) and `std/math/random` (seeded determinism)
+- [x] **D67** regex — the engine is **l-lang**, `r"…"` is a raw string, `f"…"` the formatted one,
+      and match arms take a pattern. One program, two backends.
+- [x] **D68/D72** `:foo` is **three roles** — modifier, decorator, attribute — and the third gets
+      `defattribute` plus an adjacency-gated `:name[args]` argument form
+- [x] **D69** the metaprogramming tiers, distinguished by what the handler *receives*
+- [x] **D70/D71** enum RTTI; numeric lexis (`_` separators, `0o`, and the octal contradiction)
+- [x] **D73** `:comptime` runs on an **in-house interpreter** — `node:vm` left the compiler, which
+      also removed D69's stated blocker on ever deleting the JS backend
+- [x] **D74** a match pattern's string decodes like every other string
+- [x] **D75** `defmodifier`'s contract is **flat**, with a setup slot — a breaking change, migrated
+      across the corpus, the games repo and `src/test/codegen.ts`
+
+## ✅ Phase Sl — the stdlib build-out (D76–D80)
+
+Six modules in one round, each ruled before it was written.
+
+- [x] **D76** `std/core/builder` — because `+` in a loop is quadratic
+- [x] **D77** `std/text/json` — the engine is l-lang; the escape table is pinned by the host
+- [x] **D78** `std/time/calendar` — proleptic Gregorian civil time, UTC, **zero** floor entries
+- [x] **D79** `std/log` — a logger takes a `Clock`; an event is a name plus properties
+- [x] **D80** `std/cli` — parse answers a value, dispatch is a thin layer over it
+- [x] **D82** a data error is CATCHABLE, a contract violation is not — the rule that makes the tower
+      usable rather than decorative
+
+## ✅ Phase Nm — the numeric tower (D88–D90)
+
+**Theme:** Int – Rational – Real – Complex – Vector – Matrix – … – Tensor.
+
+- [x] **D88** the tower's scalar floor: `1/2`, `3+4i`, `0xFF`/`0o17`/`0b1010`, promotion through an
+      `:implicit` defcast at operand positions, and `..` binding by **adjacency** (a standalone `..`
+      is LL0034; 16 corpus files migrated off the spaced form)
+- [x] **D89** `Ring` is the fourth protocol, a **primitive** can answer one, and a matrix's cells
+      must share it — which also found that **no desugar had ever reached a matrix cell**, because
+      `MatrixNode.rows` is the only array-of-arrays field and every rewriting visitor mapped one level
+- [x] **D90** units of measure — a `:satisfies` refinement can be a **dimension**; `*`/`/` compose
+      exponents, `+`/`-` require equality, assignability compares dimensions rather than names, and
+      the whole thing erases (no `ll_refine_check_*` call site)
+- [ ] **Arity.** Both rules live in the two-operand branch — see Known gaps.
+
+---
 
 ## 🚀 Phase 7: The Speed of Light (v1.0.0)
 **Theme:** "The Sloth becomes a Cheetah."
@@ -803,9 +909,9 @@ Eight of the ten Tier-1 modules shipped as D76–D80, D65, D67 and `std/test`. S
     the positional `visitExpr`/`asExpression` scheme: each form emits one canonical shape and the consumer,
     which owns the slot, coerces. So `(console.log (when false 1))` emits `console.log(false ? 1 : null)`.
     The last shape, `((D).hi)` — a member on a COMPUTED object — is fixed by **Xg** (a desugar rewrite to
-    the `MemberNode`/`CallNode` core nodes). The same disease Phase F cured in the call decision; only the
-    deprecated `legacy-js` backend still carries `isExpressionContext`. (A trailing `if` keeping its value
-    is **D18**.)
+    the `MemberNode`/`CallNode` core nodes). The same disease Phase F cured in the call decision, and
+    `isExpressionContext` is now gone from the tree entirely — the `legacy-js` backend that still
+    carried it was retired in `f1f2c5c`. (A trailing `if` keeping its value is **D18**.)
 *   **The type checker does not infer every expression** (improving). 114 `list` nodes once had no
     entry in the type channel; the three mechanical gaps are fixed (thermometer 50 → 23), and Phase T
     then typed the String/Array native members. What remains uninferred is a harder class — collection
@@ -815,7 +921,7 @@ Eight of the ten Tier-1 modules shipped as D76–D80, D65, D67 and `std/test`. S
 *   ~~**The call-vs-block rule is implemented three times.**~~ — **FIXED (D25).** All three live passes —
     codegen's `visitList`, the checker, and the desugarer — now read the single source, `listForm.ts`
     (`classifyList`/`isCallList`/`valueIsTail`), instead of each guessing from `head._type ===
-    "simple-identifier"`. Only the deprecated `legacy-js` backend keeps an independent copy.
+    "simple-identifier"`. The `legacy-js` backend that kept an independent copy was retired in `f1f2c5c`.
 *   ~~**`03_matching.lisp`'s golden asserts a bug**~~ — **FIXED (D26).** `(< _ 0)` was never a guard;
     it parsed as a 3-element list-pattern `[<, _, 0]` and every arm fell through, and the golden recorded
     the fall-through as the answer. Guards are now a real clause (`n :when (< n 0)`), and the golden is
@@ -835,13 +941,14 @@ Eight of the ten Tier-1 modules shipped as D76–D80, D65, D67 and `std/test`. S
     ? f(...args) : f()`, whose second parameter is an argument ARRAY — so `(call g 2)` **silently drops
     the argument** and returns `NaN`. `(call f a b)` is now desugared to the `CallNode` that codegen
     could always emit and no source syntax ever built.
-*   **Missing diagnostics.** Assigning to a `let` (a *constant*) is not checked. `(new)` with no class
+*   **Missing diagnostics.** ~~Assigning to a `let` is not checked~~ — **CLOSED**, LL0233
+    `ImmutableAssignment`, wired through `checkImmutableAssignment`. `(new)` with no class
     name emits a bottom value. `LL0212` is a syntactic hack that can now be done properly. (`LL0211`
     *does* know required-vs-total arity now — a defaulted `:ctor` member is optional, and an inherited
     one counts. `fn` parameter defaults still do not exist.)
-*   **`visitExport` throws instead of diagnosing.** An export list naming an undefined symbol crashes
-    the compiler with a Node stack trace, not an `LLxxxx`. And **re-exporting an imported symbol is not
-    supported** — which may well be right, but it is unstated.
+*   ~~**`visitExport` throws instead of diagnosing.**~~ — **CLOSED.** It reports **LL0232**
+    (`CannotExportUndefined`) and continues; the re-export stance is now stated in the diagnostic's own
+    text rather than left unsaid.
 *   **A second erasure hole.** `typeArgumentsAssignable` returns `true` when *either* side has no type
     arguments, so a bare `Producer` still satisfies a `Producer<Animal>`. Smaller than the rule Phase 5
     deleted, and the same shape.
@@ -865,17 +972,22 @@ Eight of the ten Tier-1 modules shipped as D76–D80, D65, D67 and `std/test`. S
     `fromCharCode(parseInt("", 16))` = `fromCharCode(NaN)` = **NUL**. Both now key on LENGTH (`u`+4,
     `x`+2). Fixing `\x` on the old `esc[0]` test would have duplicated that bug rather than exposed
     it — the malformed-escape guard is what caught it.
-*   **Parse/lex gaps.** Boolean match patterns; `:is` type patterns; the `..` range operator (now
-    specced as the `Range` token in D46 / Phase Cv); sized array types; `fn` parameter defaults; the
-    numeric tower (octal/binary/hex/fraction/complex all lex, none emit). (`__bar` **now lexes** — fixed
-    via `longer_alt`, inbox #1.)
+*   **Parse/lex gaps.** Boolean match patterns; `:is` type patterns; sized array types; `fn` parameter
+    defaults. ~~the `..` range operator~~ — shipped in D88 (the `Range` token, adjacency-bound; the
+    remaining half is the separate "`..` is a LIST form" entry below). ~~the numeric tower
+    (octal/binary/hex/fraction/complex all lex, none emit)~~ — **emits on C** (D88/N1–N3), pinned by
+    `80-adversarial/numeric_radix_literals.lisp` and `numeric_promotion.lisp`; it is the **JS oracle**
+    that cannot emit radix literals (`ELL0100 visitHexNumber`) or promote, which is why both are
+    `oracleDivergent`. (`__bar` **now lexes** — fixed via `longer_alt`, inbox #1.)
 *   **A module boundary is not transitive.** If A imports B and B imports C, A can still name C's
     exports — `SymbolTable.join` splices every module's scopes in, and the import check declines to
     invent a diagnostic where no *direct* import was recorded. Whether a boundary *should* be
     transitive is a real question, and **D20 does not answer it**.
-*   **`:as` aliasing is unimplemented.** It parses in both frontends, on both the import and the
-    export side, and nothing honours it. (D46 keeps `:as` import/export-alias-only; value conversion is
-    the separate `(cast<T> x)` form, not `:as`.)
+*   ~~**`:as` aliasing is unimplemented.**~~ — **CLOSED.** It binds on BOTH sides of the boundary on
+    BOTH backends, pinned by `examples/80-adversarial/import_export_aliases/main.lisp` (import alias,
+    export alias, and a class aliased through both), which is listed in `src/test/c-status.ts`. The
+    surviving half of the entry is D46's scope: `:as` stays alias-only, and value conversion is the
+    separate `(cast<T> x)` form.
 *   **Identifier encoding escapes into DATA.** D13 ruled map keys are never mangled, but *class members*
     still are: `player-pos` is emitted as `player2dpos` (`-` → its hex `2d`). This is invisible while the
     program only talks to itself, and wrong the moment the data leaves — `JSON.stringify` of an instance
