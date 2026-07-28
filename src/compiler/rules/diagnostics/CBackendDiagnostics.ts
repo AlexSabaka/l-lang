@@ -30,7 +30,11 @@ export const CBackendDiagnostics = {
     "LL0106",
     Error,
     (p) =>
-      `Cannot generate C for '${p.type}': no CIR lowering exists (${p.where}). The construct ` +
+      // "no lowering exists", not "no CIR lowering exists": this code is now filed from BOTH ends of
+      // the pipeline. P1 (`ResolveHirToCir.refuse`) means there is no CIR for the construct; P3
+      // (`EmitCirToC`, via `EmitRefusal`) means the CIR exists and cannot be PRINTED. `where` says
+      // which, and the message must not assert the P1 story for a P3 refusal.
+      `Cannot generate C for '${p.type}': no lowering exists (${p.where}). The construct ` +
       `parses, but the C backend has no code generator for it.`
   ),
 

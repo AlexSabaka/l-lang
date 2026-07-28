@@ -2,6 +2,7 @@
 // default. Consumes ONLY the CIR -- no AST, no nodeTypes, no symbol table. If a case here would need
 // a judgment call, that judgment belongs in P1/P2.
 
+import type * as ast from "../../frontend/ast";
 import { CBlock, CExpr, CStmt, CFunction, CModule, CLValue, CLifted, CParam, CForEach } from "./cir";
 import { CType } from "./ctype";
 import { computeVolatileLocals } from "./volatiles";
@@ -91,6 +92,25 @@ const UNBOX_FN: Record<string, string> = {
   obj: "ll_unbox_obj",
   closure: "ll_unbox_closure",
 };
+
+/**
+ * A construct P3 cannot PRINT -- the emitter's twin of `ResolveHirToCir.refuse`.
+ *
+ * These were six bare `throw new Error("C emit: ...")`, which reached the user as an uncaught
+ * TypeScript stack trace pointing into the compiler rather than an LL-coded diagnostic pointing at
+ * their source. Two of them are reachable from ordinary programs -- binding a method to a value
+ * (`no cast int -> closure`) and an `:implicit` defcast at an arg-coercion site (`no cast obj -> real`)
+ * -- so "the compiler crashed" was the reported behaviour for a plain unimplemented lowering.
+ *
+ * Carrying the CIR node's `src` out rather than reporting in place keeps `EmitCirToC` a pure printer
+ * with no `Context`: `CTransformer` catches this and files the same LL0106 that P1 files, with the
+ * location the node already knows.
+ */
+export class EmitRefusal extends Error {
+  constructor(readonly node: ast.ASTNode | undefined, readonly what: string) {
+    super(`C emit: ${what}`);
+  }
+}
 
 export class EmitCirToC {
   private out: string[] = [];
@@ -754,7 +774,7 @@ export class EmitCirToC {
 
       default: {
         const never: never = s;
-        throw new Error(`C emit: unhandled statement kind '${(never as any).kind}'`);
+        throw new EmitRefusal((never as any)?.src, `statement:${(never as any).kind}`);
       }
     }
   }
@@ -896,7 +916,7 @@ export class EmitCirToC {
               "<": "ll_op_lt", ">": "ll_op_gt", "<=": "ll_op_le", ">=": "ll_op_ge",
             };
             const name = fn[e.op];
-            if (!name) throw new Error(`C emit: no boxed runtime op for '${e.op}'`);
+            if (!name) throw new EmitRefusal(e.src, `boxed-op:${e.op}`);
             return `${name}(${l}, ${r})`;
           }
         }
@@ -947,13 +967,13 @@ export class EmitCirToC {
       case "c-box": {
         if (e.from.k === "value") return this.expr(e.inner);
         const fn = BOX_FN[e.from.k];
-        if (!fn) throw new Error(`C emit: no box for ${e.from.k}`);
+        if (!fn) throw new EmitRefusal(e.src, `box:${e.from.k}`);
         return `${fn}(${this.expr(e.inner)})`;
       }
       case "c-unbox": {
         if (e.to.k === "value") return this.expr(e.inner);
         const fn = UNBOX_FN[e.to.k];
-        if (!fn) throw new Error(`C emit: no unbox for ${e.to.k}`);
+        if (!fn) throw new EmitRefusal(e.src, `unbox:${e.to.k}`);
         return `${fn}(${this.expr(e.inner)})`;
       }
       case "c-cast": {
@@ -974,7 +994,7 @@ export class EmitCirToC {
           if (e.from.k === "bool") return `ll_bool_to_str(${inner})`;
         }
         if (e.to.k === "bool" && e.from.k === "int") return `((${inner}) != 0)`;
-        throw new Error(`C emit: no cast ${e.from.k} -> ${e.to.k}`);
+        throw new EmitRefusal(e.src, `cast:${e.from.k}->${e.to.k}`);
       }
       case "c-construct": {
         const args = e.args.map((a) => this.expr(a));
@@ -1014,7 +1034,7 @@ export class EmitCirToC {
         return `(${e.cName} = ${this.expr(e.value)})`;
       default: {
         const never: never = e;
-        throw new Error(`C emit: unhandled expression kind '${(never as any).kind}'`);
+        throw new EmitRefusal((never as any)?.src, `expression:${(never as any).kind}`);
       }
     }
     throw new Error("C emit: unreachable");

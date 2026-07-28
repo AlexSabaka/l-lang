@@ -14,10 +14,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Context } from "../../Context";
 import type * as ast from "../../frontend/ast";
+import { report, CBackendDiagnostics } from "../../rules/diagnostics";
 import { GapLedger } from "./GapLedger";
 import { ResolveHirToCir } from "./ResolveHirToCir";
 import { InsertCoercions } from "./InsertCoercions";
-import { EmitCirToC } from "./EmitCirToC";
+import { EmitCirToC, EmitRefusal } from "./EmitCirToC";
 import { CRuntimeProvider } from "./CRuntimeProvider";
 
 export class CTransformer {
@@ -38,7 +39,24 @@ export class CTransformer {
     }
 
     const coerced = new InsertCoercions(this.ledger).run(cir);
-    const body = new EmitCirToC().emitModule(coerced);
+
+    // P3 can still meet a construct it cannot PRINT. Reported as the same LL0106 P1 reports, rather
+    // than escaping as an uncaught exception: a user who writes an unimplemented shape gets a
+    // diagnostic naming it and pointing at their source, not a TypeScript stack trace naming
+    // `EmitCirToC.ts:977`.
+    let body: string;
+    try {
+      body = new EmitCirToC().emitModule(coerced);
+    } catch (e) {
+      if (!(e instanceof EmitRefusal)) throw e;
+      report(this.context, CBackendDiagnostics.Unhandled, (e.node ?? root) as ast.ASTNode, {
+        type: e.what,
+        where: "EmitCirToC",
+      });
+      this.ledger.record("new", `unhandled:${e.what}`, (e.node ?? root) as ast.ASTNode, "no C emission (EmitCirToC)");
+      this.dumpLedger();
+      return { code: "", map: null };
+    }
     this.dumpLedger();
 
     return { code: CRuntimeProvider.runtimeText() + "\n" + body, map: null };

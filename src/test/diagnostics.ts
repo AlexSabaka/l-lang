@@ -354,6 +354,26 @@ const PROBES: Probe[] = [
     source: "(console.log (Symbol))",
     stage: "codegen", language: "c",
   },
+  // LL0106 from P3 rather than P1 -- the EMITTER's refusals. Both of these used to escape as an
+  // uncaught `throw new Error("C emit: no cast ...")`, i.e. a TypeScript stack trace pointing at
+  // `EmitCirToC.ts:977` instead of a diagnostic pointing at the user's source. They are pinned HERE
+  // and not in the corpus because both COMPILE AND RUN on JS, so there is no manifest status that
+  // fits: `negative` asserts failure on both backends, `xfail` asserts nothing at all.
+  {
+    name: "LL0106 C emitter refuses a method bound as a value",
+    source:
+      "(defclass Doubler (fn apply [x <- Int] -> Int (return (* x 2))))\n" +
+      "(let d (new Doubler))\n(let f d.apply)\n(console.log (f 5))",
+    stage: "codegen", language: "c",
+  },
+  {
+    name: "LL0106 C emitter refuses an :implicit defcast at an arg-coercion site",
+    source:
+      "(defclass Celsius (let :ctor degrees <- Real))\n" +
+      "(defcast :implicit [c <- Celsius] -> Real c.degrees)\n" +
+      "(fn ident [x <- Real] -> Real x)\n(let t (Celsius 21.0))\n(console.log \"arg:\" (ident t))",
+    stage: "codegen", language: "c",
+  },
 ];
 
 function baseOptions(stage: "types" | "codegen", language: CompilationLanguage = "js"): CompilerOptions {
