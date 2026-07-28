@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import { RuleSeverity, RuleValidationResultsCollection } from "./rules";
-import { report, ModuleDiagnostics } from "./rules/diagnostics";
+import { report, ModuleDiagnostics, TypeDiagnostics } from "./rules/diagnostics";
 
 import {
   BaseAstTreeWalker,
@@ -223,6 +223,111 @@ export class Context {
       this.recordImport(file, prelude, null);
       this.process(prelude, "types");
     }
+  }
+
+  /**
+   * Modules a file needs because of SYNTAX it used, injected only when that syntax is present (D88).
+   *
+   * The unconditional `PRELUDES` above are the language's floor -- host interop and the ambient Error
+   * tower. These are different: a numeric-tower literal DESUGARS into a construction of a stdlib type,
+   * so `1/2` is a request for `std/math` in the same way `(throw (Error …))` is a request for the
+   * tower. The user never writes the name, so there is nothing to warn about and nothing to remedy;
+   * the literal IS the import (Sabaka's ruling). Writing the bare name `Rational` still warns.
+   *
+   * DEMAND-DRIVEN rather than a plain prelude, because the stdlib does not go ambient. It costs
+   * nothing when unused anyway -- measured, an unused `import "std/math/rational"` emits a
+   * byte-identical translation unit, because C lowers imported bodies on demand -- but the point is
+   * the rule, not the bytes.
+   *
+   * ONE entry covers `Rational` AND `Complex`: importing a module co-processes its package siblings,
+   * and both live in `std/math`.
+   */
+  private static readonly SYNTAX_MODULES: { module: string; nodeTypes: string[]; names: string[] }[] = [
+    { module: "std/math/rational", nodeTypes: ["fraction-number", "complex-number"], names: ["Rational", "Complex"] },
+  ];
+
+  private injectSyntaxModules(file: string, ast: ASTNode): void {
+    const here = path.resolve(file);
+    for (const { module, nodeTypes, names } of Context.SYNTAX_MODULES) {
+      if (!Context.astUsesAny(ast, nodeTypes)) continue;
+      const resolved = ModuleResolver.resolve(module, file, this.libPaths);
+      // A missing lib/ is not a compiler error -- same rule as the prelude. The literal then fails as
+      // an ordinary undefined-name, which is the honest answer when the library is genuinely absent.
+      if (!resolved || path.resolve(resolved) === here) continue;
+      this.recordImport(file, resolved, null);
+      this.process(resolved, "types");
+      this.warnOnUnimportedSyntaxName(file, ast, module, names);
+    }
+  }
+
+  /**
+   * LL0245: the file wrote a syntax module's TYPE NAME, and did not import it.
+   *
+   * The literal implies its own import and warns about nothing -- that is the ruling. But a bare
+   * `(Rational 3 4)` is a different act: it resolves ONLY because some literal elsewhere in the file
+   * pulled the module in, so deleting that literal breaks a line that never mentioned it. Without a
+   * literal anywhere the name does not resolve at all (`LL0210`), which is what keeps the stdlib from
+   * going ambient -- so this warning covers the one genuinely fragile case and nothing else.
+   *
+   * Asked SYNTACTICALLY, against the parsed tree, because this runs before the symbols stage: an
+   * `(import "std/math/…")` written by the author is right there in the AST.
+   */
+  private warnOnUnimportedSyntaxName(file: string, ast: ASTNode, module: string, names: string[]): void {
+    const pkg = module.split("/").slice(0, -1).join("/");
+    if (Context.astImportsFrom(ast, pkg)) return;
+    for (const name of names) {
+      const site = Context.findIdentifier(ast, name);
+      if (site) report(this, TypeDiagnostics.SyntaxModuleNameUnimported, site, { name, module });
+    }
+  }
+
+  /** Does the tree contain an `(import "<pkg>/…")`? */
+  private static astImportsFrom(root: ASTNode, pkg: string): boolean {
+    let found = false;
+    const walk = (n: any): void => {
+      if (found || !n || typeof n !== "object") return;
+      if (Array.isArray(n)) { for (const c of n) walk(c); return; }
+      if (n._type === "import" && typeof n.source === "string" && n.source.startsWith(pkg)) { found = true; return; }
+      for (const k of Object.keys(n)) {
+        if (k === "_parent" || k === "_location") continue;
+        walk(n[k]);
+      }
+    };
+    walk(root);
+    return found;
+  }
+
+  /** The first `simple-identifier` in the tree spelled `name`, for the diagnostic's location. */
+  private static findIdentifier(root: ASTNode, name: string): ASTNode | undefined {
+    let hit: ASTNode | undefined;
+    const walk = (n: any): void => {
+      if (hit || !n || typeof n !== "object") return;
+      if (Array.isArray(n)) { for (const c of n) walk(c); return; }
+      if (n._type === "simple-identifier" && n.id === name) { hit = n as ASTNode; return; }
+      for (const k of Object.keys(n)) {
+        if (k === "_parent" || k === "_location") continue;
+        walk(n[k]);
+      }
+    };
+    walk(root);
+    return hit;
+  }
+
+  /** Does the tree contain any node of these types? Walks the raw AST -- this runs before the HIR. */
+  private static astUsesAny(root: ASTNode, types: string[]): boolean {
+    const want = new Set(types);
+    let found = false;
+    const walk = (n: any): void => {
+      if (found || !n || typeof n !== "object") return;
+      if (Array.isArray(n)) { for (const c of n) walk(c); return; }
+      if (typeof n._type === "string" && want.has(n._type)) { found = true; return; }
+      for (const k of Object.keys(n)) {
+        if (k === "_parent" || k === "_location") continue; // `_parent` would walk back up forever
+        walk(n[k]);
+      }
+    };
+    walk(root);
+    return found;
   }
 
   /**
@@ -551,6 +656,7 @@ export class Context {
     // Injected here, before the symbols stage, so the prelude's symbols are joined before this module
     // resolves anything.
     this.injectPrelude(fullPath);
+    this.injectSyntaxModules(fullPath, ast as ASTNode);
 
     // SYMBOLS STAGE
     this.performanceMetrics.startTimer("symbols");

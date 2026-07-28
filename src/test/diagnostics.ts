@@ -359,6 +359,21 @@ const PROBES: Probe[] = [
   // `EmitCirToC.ts:977` instead of a diagnostic pointing at the user's source. They are pinned HERE
   // and not in the corpus because both COMPILE AND RUN on JS, so there is no manifest status that
   // fits: `negative` asserts failure on both backends, `xfail` asserts nothing at all.
+  // LL0245 (D88): the name resolved only because a literal elsewhere pulled its module in. Pinned
+  // HERE and not in the corpus because it is a WARNING -- the program compiles and runs, so no corpus
+  // status asserts it. (It is also invisible through `run` today, which prints diagnostics only when
+  // `hasErrors`; noted in the roadmap, and not fixed here because that file has uncommitted work.)
+  {
+    name: "LL0245 a syntax module's name used without importing it",
+    source: '(console.log 1/2)\n(console.log (Rational 3 4))',
+    stage: "types",
+  },
+  // The GUARD on the ruling: a literal alone implies its import and must warn about NOTHING.
+  {
+    name: "LL0245 does not fire for a literal alone",
+    source: '(console.log 1/2)',
+    stage: "types",
+  },
   // LL0244 (D85): a zero divisor the compiler can SEE. Reported by the type stage, so it fires on
   // both backends -- the probe runs the default js.
   {

@@ -481,6 +481,20 @@
     ]
   },
   {
+    "probe": "LL0245 a syntax module's name used without importing it",
+    "diagnostics": [
+      {
+        "code": "LL0245",
+        "severity": "warning",
+        "text": "'Rational' resolved only because a numeric literal in this file pulled in 'std/math/rational'. A literal implies its own import, but a NAME does not -- delete the literal and this line stops compiling. Write '(import \"std/math/rational\")' to say what you are using."
+      }
+    ]
+  },
+  {
+    "probe": "LL0245 does not fire for a literal alone",
+    "diagnostics": []
+  },
+  {
     "probe": "LL0244 integer division by a literal zero",
     "diagnostics": [
       {

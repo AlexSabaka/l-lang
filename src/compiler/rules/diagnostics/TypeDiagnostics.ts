@@ -432,6 +432,18 @@ export const TypeDiagnostics = {
       `(Int, Real, String, Char, Boolean, Void).`
   ),
 
+  // LL0245 -- D88. The name resolved only because a numeric literal elsewhere in the file pulled its
+  // module in. Warning, not error: the program works today, and the point is that it works by
+  // accident -- deleting the literal breaks a line that never mentioned it.
+  SyntaxModuleNameUnimported: def<{ name: string; module: string }>(
+    "LL0245",
+    Warning,
+    (p) =>
+      `'${p.name}' resolved only because a numeric literal in this file pulled in '${p.module}'. ` +
+      `A literal implies its own import, but a NAME does not -- delete the literal and this line ` +
+      `stops compiling. Write '(import "${p.module}")' to say what you are using.`
+  ),
+
   // LL0244 -- a zero divisor the compiler can see (D85). Int only: `(/ 1.0 0.0)` is Infinity by
   // IEEE 754 and legal on both backends, so only the INTEGER operators are wrong at zero.
   DivisionByZeroLiteral: def<{ op: string }>(

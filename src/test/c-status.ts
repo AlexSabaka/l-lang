@@ -359,6 +359,11 @@ export const C_PASSING: readonly string[] = [
   // graded HERE and skipped on the JS run. They were parked as xfail for want of exactly that status.
   "80-adversarial/hyphen_field_encoding.lisp",
   "80-adversarial/mangle_hex_terminator.lisp",
+  // D88. `1/2` and `3+4i` lexed and parsed for years and dead-ended at both backends. They desugar to
+  // `(Rational 1 2)` / `(Complex 3.0 4.0)` now -- the `..`->`Range` shape -- so there is no backend
+  // work, and the module is injected because the LITERAL is present, which is why this file imports
+  // nothing. Values hand-derived; the complex multiply is where a sign error would hide.
+  "80-adversarial/numeric_tower_literals.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

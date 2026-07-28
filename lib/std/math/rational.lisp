@@ -69,6 +69,7 @@
 ;; rational form is written explicitly.
 (
     (import "std/core/errors")
+    (import "std/core/protocols")
 
     ;; -- private Int helpers (see header: self-contained by rule) -----------------------------------
 
@@ -109,7 +110,7 @@
 
     ;; -- the value type ----------------------------------------------------------------------------
 
-    (defclass Rational
+    (defclass Rational :implements Formattable
         ;; `num`/`den` are ctor params AND the storage. `mut` because the ctor REWRITES them in place
         ;; while establishing the invariant (sign flip, then divide through by the gcd); after
         ;; construction they are never mutated again -- a Rational is a value.
@@ -167,6 +168,14 @@
             (if (== this.den 1)
                 (return '"{this.num}")
                 (return '"{this.num}/{this.den}")))
+
+        ;; D88: `format` is what the floor's display path calls, so `1/2` PRINTS as `1/2` rather than
+        ;; as `Rational{:num 1 :den 2}`. That matters more than it looks: a numeric LITERAL that does
+        ;; not render as itself reads like a leaked implementation detail. Declared as a bare method
+        ;; rather than `:implements Formattable` for the reason `std/time/calendar` gives at its own
+        ;; `format` -- `(x :of SomeInterface)` answers false on both backends today, so the interface
+        ;; declaration would buy nothing and would cost this module its "no import" property.
+        (fn format [] -> String (return (this.str)))
 
         ;; -- field operators: + - * / and unary - (D57's admitted set) -----------------------------
 

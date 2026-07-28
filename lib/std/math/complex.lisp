@@ -60,7 +60,10 @@
 ;;     naive form -- worth the extra branch.
 ;;
 ;; -----------------------------------------------------------------------------------------------
-;; SELF-CONTAINED ON PURPOSE. This module imports NOTHING: its listed dependency set is empty, and the
+;; SELF-CONTAINED ON PURPOSE. Its only import is `std/core/protocols` -- a genuine leaf, added by D88
+;; so a Complex renders through `Formattable` and `3+4i` prints as itself rather than as
+;; `Complex{:re 3 :im 4}`; a numeric literal that does not print like a number reads as a leaked
+;; implementation detail. Beyond that the module leans on nothing, and the
 ;; std/math foundation it would otherwise lean on (`core`'s `fmt-fixed`, `elementary`'s `hypot2`/`sinh`)
 ;; is being written in parallel. So the hypot, the fixed-decimal formatter, and `sinh`/`cosh` are
 ;; INLINED below as small private shims; when `core` and `elementary` land they move there and this file
@@ -69,6 +72,8 @@
 ;; so a float golden cannot go through it. It is `core.fmt-fixed` in miniature, named apart so the two
 ;; can coexist when both are compiled as siblings of this package.
 (
+    (import "std/core/protocols")
+
     ;; -- private float shims (destined for core/elementary) ----------------------------------------
 
     ;; A single decimal digit's glyph, chosen by half-open band. `d` is always an EXACT integer-valued
@@ -163,7 +168,7 @@
 
     ;; -- the type ----------------------------------------------------------------------------------
 
-    (defstruct Complex
+    (defstruct Complex :implements Formattable
         (let :ctor re <- Real 0.0)
         (let :ctor im <- Real 0.0)
 
@@ -383,6 +388,12 @@
         ;; The default rendering: four decimals, enough to read a phase without pretending at precision
         ;; the value does not have.
         (fn str [] -> String (return (this.show 4)))
+
+        ;; D88: the floor's display path calls `format`, so `3+4i` prints as `3.0000+4.0000i` instead
+        ;; of `Complex{:re 3 :im 4}`. A bare method, not `:implements Formattable` -- this module
+        ;; imports NOTHING by design (see the header), and the interface declaration would buy nothing
+        ;; while `(x :of SomeInterface)` answers false on both backends.
+        (fn format [] -> String (return (this.str)))
 
         ;; -- notation (OPTIONAL glyph synonyms, U+2000+; delete this block freely) -------------------
         ;;   ‖ U+2016  norm  -> abs        ∠ U+2220  arg   -> arg

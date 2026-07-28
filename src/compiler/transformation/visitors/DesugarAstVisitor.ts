@@ -761,6 +761,76 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
   }
 
   /**
+   * D88 -- a numeric-tower LITERAL becomes an ordinary CONSTRUCTION.
+   *
+   *     1/2      ->  (Rational 1 2)
+   *     3+4i     ->  (Complex 3.0 4.0)
+   *
+   * Exactly the shape `AstBuilder` already uses for `(lo .. hi)` -> `(Range lo hi nil true)`: pure
+   * desugar, no dedicated node and no new lowering, so type inference and BOTH backends treat these as
+   * the constructions they are. It is what lets the frozen JS backend gain the feature for free.
+   *
+   * HERE AND NOT IN `AstBuilder`, and the ordering is the whole reason. `Context.injectPrelude` runs
+   * AFTER parse and BEFORE the symbols stage, and it decides whether to pull in `std/math` by looking
+   * for these literal node types. Rewriting them at parse time would erase the very evidence the
+   * injector reads, and `Rational` would then be an undefined name.
+   *
+   * A user who defines their own `Rational` captures the name, exactly as they would for `Range`. That
+   * is the existing precedent's behaviour, not a new hazard.
+   */
+  visitFractionNumber(node: ast.FractionNumberNode): ast.ASTNode {
+    return this.construct(node, "Rational", [
+      this.intLit(node, node.numerator),
+      this.intLit(node, node.denominator),
+    ]);
+  }
+
+  visitComplexNumber(node: ast.ComplexNumberNode): ast.ASTNode {
+    return this.construct(node, "Complex", [
+      this.realLit(node, node.real),
+      this.realLit(node, node.imaginary),
+    ]);
+  }
+
+  /** `(Name a b)` -- a construction carrying the literal's own location and parent. */
+  private construct(src: ast.ASTNode, name: string, args: ast.ASTNode[]): ast.ListNode {
+    const head: ast.SimpleIdentifierNode = {
+      _type: "simple-identifier",
+      id: name,
+      _location: { ...src._location },
+      _parent: src._parent,
+    } as ast.SimpleIdentifierNode;
+    return {
+      _type: "list",
+      _location: { ...src._location },
+      _parent: src._parent,
+      nodes: [head, ...args],
+    } as ast.ListNode;
+  }
+
+  private intLit(src: ast.ASTNode, value: number): ast.ASTNode {
+    // `match` is the lossless copy `ResolveHirToCir` prefers over `value` (a JS f64 has already
+    // rounded past 2^53). A fraction's parts come from `parseInt`, so this is the honest spelling.
+    return {
+      _type: "integer-number",
+      value,
+      match: String(value),
+      _location: { ...src._location },
+      _parent: src._parent,
+    } as any;
+  }
+
+  private realLit(src: ast.ASTNode, value: number): ast.ASTNode {
+    return {
+      _type: "float-number",
+      value,
+      match: Number.isInteger(value) ? `${value}.0` : String(value),
+      _location: { ...src._location },
+      _parent: src._parent,
+    } as any;
+  }
+
+  /**
    * `e`  ->  `(return e)`.
    *
    * The synthesized nodes keep the ORIGINAL `_parent` object -- never `undefined`, never rebuilt. A
