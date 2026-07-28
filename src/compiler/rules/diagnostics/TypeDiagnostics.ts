@@ -478,6 +478,19 @@ export const TypeDiagnostics = {
       `no '*'). Use a vector of vectors '[[a b] [c d]]' for a grid of values that is not a matrix.`
   ),
 
+  // LL0247 -- D90. `+`/`-` across two different dimensions. The one class of bug units exist to catch,
+  // and the reason a plain `Real` is DIMENSIONLESS rather than "unknown": `(+ metres 2.0)` is the Mars
+  // Climate Orbiter shape, and waving it through would leave the feature catching nothing.
+  OperandDimensionMismatch: def<{ operator: string; left: string; right: string }>(
+    "LL0247",
+    Error,
+    (p) =>
+      `Operator '${p.operator}' needs both operands in the SAME dimension, and these are '${p.left}' ` +
+      `and '${p.right}'. Adding two quantities of different kinds has no meaning. Multiply or divide ` +
+      `them instead -- '*' and '/' COMPOSE dimensions -- or give the dimensionless side its unit at a ` +
+      `declared boundary: a typed binding '(let x <- Meter 2.0)' or a typed parameter both coerce there.`
+  ),
+
   // LL0248 -- D90. A `:satisfies` DIMENSION that does not resolve to a set of base units. Reported at
   // the DECLARATION and in the second pass, so a derived unit may name a type declared later in the
   // file -- resolving at declaration time would make the answer depend on source order.
@@ -489,9 +502,9 @@ export const TypeDiagnostics = {
         ? `The dimension of '${p.type}' is CIRCULAR: normalizing it reaches '${p.name}' again. A ` +
           `derived unit must reduce to base units, and one defined in terms of itself never does.`
         : `The dimension of '${p.type}' names '${p.name}', which is not a unit. A dimension's operands ` +
-          `must be refined newtypes -- '(deftype ${p.name} <- Real :satisfies (..))' declares a base ` +
-          `unit. A plain alias or an undeclared name would make the dimension silently wrong, which is ` +
-          `the failure units exist to remove.`
+          `must be units -- '(deftype :unit ${p.name} <- Real)' declares a base one. A plain alias, a ` +
+          `merely refined newtype or an undeclared name would make the dimension silently wrong, which ` +
+          `is the failure units exist to remove.`
   ),
 
   // LL0230

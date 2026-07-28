@@ -1073,12 +1073,24 @@ class CollectTypesPass extends BaseAstTreeWalker {
     // is stored UNNORMALIZED: a derived unit may name a type declared later in the file, so resolving it
     // here would make the answer depend on declaration order. `TypeChecker.dimensionOf` normalizes on
     // demand instead.
+    //
+    // `:unit` is what makes a newtype a BASE dimension, and it is a declaration rather than an inference
+    // for a measured reason: ruling it from the refinement's SHAPE made every `uint8`/`Ratio`/`Level` a
+    // dimension and broke five corpus files, three of them on lines labelled "widened:". A range bounds
+    // a VALUE; a unit names a MEASUREMENT; only the author knows which was meant.
+    const isUnit = (node.modifiers ?? []).some((m: any) => {
+      const name = String(m.modifier ?? "").replace(/^:/, "").toLowerCase();
+      return name === "unit";
+    });
     const refined = !node.refinement
-      ? {}
+      ? // `:unit` alone is enough to make a newtype nominal -- `(deftype :unit Meter <- Real)` needs no
+        // dummy `:satisfies (..)` to be a distinct type.
+        (isUnit ? { nominal: true, isUnit: true } : {})
       : node.refinement._type === "dimension-refinement"
-        ? { nominal: true, dimensionExpr: node.refinement as ast.DimensionRefinementNode }
+        ? { nominal: true, isUnit: true, dimensionExpr: node.refinement as ast.DimensionRefinementNode }
         : {
             nominal: true,
+            ...(isUnit ? { isUnit: true } : {}),
             refinement: {
               lo: staticBound((node.refinement as ast.RangeRefinementNode).lo),
               hi: staticBound((node.refinement as ast.RangeRefinementNode).hi),
@@ -5150,6 +5162,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         this.checkNotNil(rightType, args[1], `the right operand of '${op}'`);
       }
 
+      // D90/R4 -- DIMENSIONS. Before the operator tables, because a dimensioned newtype unwraps to its
+      // base and would otherwise be judged as an ordinary Real: that unwrap is exactly why
+      // `(+ metres seconds)` printed 12.
+      const dimensioned = this.dimensionalResult(op, leftType, rightType, args);
+      if (dimensioned) return dimensioned;
+
       // Check for user-defined operator first on the left operand
       const userOpType = TypeChecker.findOperator(leftType, op, 1, this.symbolTable);
       if (userOpType && userOpType.kind === "function") {
@@ -5219,6 +5237,74 @@ class InferAndCheckPass extends BaseAstTreeWalker {
     if (!param || !TypeChecker.isAssignable(rightType, param, this.symbolTable)) return undefined;
     if (!TypeChecker.isAssignable(leftType, rightType, this.symbolTable)) return undefined;
     return rightOp.returns || TypeEnvironment.unknown();
+  }
+
+  /**
+   * The result of a binary operator when a DIMENSION is involved, or undefined when none is (D90/R4).
+   *
+   * TWO RULES, AND ONLY TWO:
+   *
+   *   `+` `-`  the dimensions must be EQUAL. `(+ metres seconds)` is the bug units exist to catch, and
+   *            `(+ metres 2.0)` is the same bug with the unit left off -- a plain Real is DIMENSIONLESS,
+   *            not "unknown", which is Sabaka's ruling 3. Construction is untouched: `(let d <- Meter
+   *            10.0)` is the author DECLARING the unit at a boundary, and arithmetic is not.
+   *
+   *   `*` `/`  COMPOSE. A dimensionless operand contributes the empty map, which is the identity -- so
+   *            `(* d 2.0)` is still a Meter and `(/ d t)` is a Meter/Second. The result is a synthetic
+   *            nominal type carrying the composed map and no user-facing name; it never needs one,
+   *            because assignability compares maps.
+   *
+   * EVERYTHING ELSE IS UNTOUCHED, deliberately. `<`/`==` across two units is the same category error and
+   * `%` arguably is too, but D88 ruled `+`/`-`, and both of the others would refuse code the corpus
+   * already contains (`(< brightness 255)`). They are their own ruling, noted in the roadmap rather than
+   * smuggled in here.
+   */
+  private dimensionalResult(
+    op: string,
+    leftType: InferredType,
+    rightType: InferredType,
+    args: ast.ASTNode[]
+  ): InferredType | undefined {
+    const additive = op === "+" || op === "-";
+    const scaling = op === "*" || op === "/";
+    if (!additive && !scaling) return undefined;
+
+    const ld = TypeChecker.dimensionOf(leftType, this.symbolTable);
+    const rd = TypeChecker.dimensionOf(rightType, this.symbolTable);
+    if (!ld && !rd) return undefined;
+
+    const describe = (d: ReadonlyMap<string, number> | null) =>
+      d ? TypeChecker.formatDimension(d) : "dimensionless";
+
+    if (additive) {
+      if (ld && rd && TypeChecker.dimensionsEqual(ld, rd)) return leftType;
+      this.report(TD.OperandDimensionMismatch, args[0], {
+        operator: op,
+        left: describe(ld),
+        right: describe(rd),
+      });
+      return TypeEnvironment.unknown();
+    }
+
+    const composed = new Map<string, number>(ld ?? []);
+    for (const [base, exponent] of rd ?? []) {
+      const next = (composed.get(base) ?? 0) + (op === "/" ? -exponent : exponent);
+      if (next === 0) composed.delete(base);
+      else composed.set(base, next);
+    }
+
+    // Everything cancelled -- `(/ d d)` is a plain number, and saying so is more useful than minting a
+    // nominal type whose dimension is empty.
+    const base = TypeChecker.unwrapType(ld ? leftType : rightType, this.symbolTable);
+    if (composed.size === 0) return base;
+
+    return {
+      kind: "type-alias",
+      name: `${base.name}{${TypeChecker.formatDimension(composed)}}`,
+      aliasedType: base,
+      nominal: true,
+      dimension: composed,
+    };
   }
 
   /**

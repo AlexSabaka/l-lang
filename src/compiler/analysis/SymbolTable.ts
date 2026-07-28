@@ -109,6 +109,13 @@ export interface InferredType {
    */
   dimensionExpr?: ast.DimensionRefinementNode;
   dimension?: ReadonlyMap<string, number>;
+  /**
+   * D90 -- `(deftype :unit Meter <- Real)`: this newtype is a UNIT OF MEASURE, not merely a nominal
+   * one. Only a unit participates in the dimension rules, which is why `(+ metres 2.0)` is an error
+   * and `(+ brightness 1)` -- a `uint8`, a bounded VALUE -- is ordinary widening. A dimension
+   * refinement implies it; a range refinement does not.
+   */
+  isUnit?: boolean;
   // Type reference support (forward references to types)
   refName?: string;  // Name of the type being referenced
   resolved?: boolean;  // Whether this type-ref has been resolved

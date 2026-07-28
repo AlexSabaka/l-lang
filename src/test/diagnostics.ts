@@ -351,17 +351,35 @@ const PROBES: Probe[] = [
   {
     name: "silent: same dimension, different name",
     source:
-      "(deftype Meter <- Real :satisfies (..))\n(deftype Second <- Real :satisfies (..))\n" +
+      "(deftype :unit Meter <- Real)\n(deftype :unit Second <- Real)\n" +
       "(deftype Speed <- Real :satisfies (/ Meter Second))\n" +
       "(deftype Velocity <- Real :satisfies (/ Meter Second))\n" +
       "(let v <- Speed 5.0)\n(let u <- Velocity v)\n(console.log u)",
+  },
+  // D90/R4: a DIMENSIONLESS factor is the identity for `*`/`/`. Without it a measurement could not be
+  // scaled at all, since `2.0` has no unit and never could.
+  {
+    name: "silent: scaling a unit by a plain number",
+    source:
+      "(deftype :unit Meter <- Real)\n(let d <- Meter 10.0)\n" +
+      "(let a <- Meter (* d 2.0))\n(let b <- Meter (/ d 2.0))\n(console.log a b)",
+  },
+  // The SCOPE of the whole dimension system: a merely REFINED newtype is a bounded VALUE, not a
+  // measurement, and arithmetic on it is untouched. This probe is the reduced form of the five corpus
+  // files that the first (shape-based) ruling broke -- three of them on lines labelled "widened:".
+  {
+    name: "silent: arithmetic on a refined newtype is not dimensional",
+    source:
+      "(deftype uint8 <- Int :satisfies (0..255))\n(deftype Level <- Int :satisfies (1 ..))\n" +
+      "(let b <- uint8 200)\n(let w <- uint8 (+ b 55))\n(let l <- Level 3)\n" +
+      "(console.log w (+ l 1) (+ b l))",
   },
   // And the algebra REDUCES: `(/ (* Meter Second) Second)` is `Meter`, so a unit is its normal form
   // rather than its source text.
   {
     name: "silent: a dimension that reduces to a base unit",
     source:
-      "(deftype Meter <- Real :satisfies (..))\n(deftype Second <- Real :satisfies (..))\n" +
+      "(deftype :unit Meter <- Real)\n(deftype :unit Second <- Real)\n" +
       "(deftype M2 <- Real :satisfies (/ (* Meter Second) Second))\n" +
       "(let d <- Meter 3.0)\n(let m <- M2 d)\n(console.log m)",
   },
@@ -500,14 +518,14 @@ const PROBES: Probe[] = [
   {
     name: "LL0248 a dimension names something that is not a unit",
     source:
-      "(deftype Meter <- Real :satisfies (..))\n" +
+      "(deftype :unit Meter <- Real)\n" +
       "(deftype Speed <- Real :satisfies (/ Meter Metre))\n(console.log 1)",
     stage: "types",
   },
   {
     name: "LL0248 a circular dimension",
     source:
-      "(deftype Meter <- Real :satisfies (..))\n" +
+      "(deftype :unit Meter <- Real)\n" +
       "(deftype Loopy <- Real :satisfies (/ Loopy Meter))\n(console.log 1)",
     stage: "types",
   },
@@ -515,9 +533,33 @@ const PROBES: Probe[] = [
   {
     name: "LL0200 a Meter is not a Speed",
     source:
-      "(deftype Meter <- Real :satisfies (..))\n(deftype Second <- Real :satisfies (..))\n" +
+      "(deftype :unit Meter <- Real)\n(deftype :unit Second <- Real)\n" +
       "(deftype Speed <- Real :satisfies (/ Meter Second))\n" +
       "(let d <- Meter 10.0)\n(let bad <- Speed d)\n(console.log bad)",
+    stage: "types",
+  },
+  // D90/R4: `+`/`-` may not cross dimensions, and a plain Real is DIMENSIONLESS rather than unknown.
+  {
+    name: "LL0247 adding two different dimensions",
+    source:
+      "(deftype :unit Meter <- Real)\n(deftype :unit Second <- Real)\n" +
+      "(let d <- Meter 10.0)\n(let t <- Second 2.0)\n(console.log (+ d t))",
+    stage: "types",
+  },
+  {
+    name: "LL0247 adding a dimensionless literal to a unit",
+    source:
+      "(deftype :unit Meter <- Real)\n" +
+      "(let d <- Meter 10.0)\n(console.log (+ d 2.0))",
+    stage: "types",
+  },
+  // Composition is CHECKED, not merely permitted: `(* d t)` is Meter*Second and a Speed is Meter/Second.
+  {
+    name: "LL0200 a composed dimension must still match",
+    source:
+      "(deftype :unit Meter <- Real)\n(deftype :unit Second <- Real)\n" +
+      "(deftype Speed <- Real :satisfies (/ Meter Second))\n" +
+      "(let d <- Meter 10.0)\n(let t <- Second 2.0)\n(let bad <- Speed (* d t))\n(console.log bad)",
     stage: "types",
   },
   {

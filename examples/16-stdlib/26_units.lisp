@@ -5,12 +5,13 @@
 ;; -- adding two quantities that are not the same kind of thing -- was silent. D88 recorded the ruling
 ;; and left it unbuilt; this is the declaration half.
 ;;
-;; EVERY REFINED NEWTYPE IS A BASE DIMENSION. No `:unit` modifier, no new syntax: `(deftype Meter <- Real
-;; :satisfies (..))` already declared a distinct nominal type (D46 amend), and that IS a base unit.
-;; `Byte` and `Nibble` are dimensions too, which is the point rather than a side effect -- adding a Byte
-;; to a Nibble is the same category error as adding a metre to a second. Measured before ruling it: the
-;; corpus has 16 files with refined newtypes and NOT ONE `+`/`-` between two of them, so this costs
-;; nothing today.
+;; A UNIT IS DECLARED, AND THAT WAS RULED THE OTHER WAY FIRST. The cheaper rule -- "every refined
+;; newtype is a base dimension", no new syntax -- was tried and MEASURED WRONG: it broke five corpus
+;; files, three of them on lines labelled `"widened:"`. `(+ brightness 1)` where `brightness` is a
+;; `uint8` is ordinary arithmetic on a bounded integer, not a category error, and a refinement's SHAPE
+;; cannot tell that apart from `(+ metres 2.0)`. Both are nominal newtypes; only the author knows which
+;; one names a MEASUREMENT. So `:unit` says it, and `uint8`/`Kelvin`/`Level` are untouched by every rule
+;; on this page.
 ;;
 ;; A DIMENSION IS A TYPE-LEVEL TERM, not an expression, and the grammar says so. Parsing `(/ Meter
 ;; Second)` as an ordinary list would put `Meter` in the VALUE namespace for every pass that walks
@@ -25,11 +26,13 @@
 (
     ;; -- base units --------------------------------------------------------------------------------
     ;;
-    ;; `(..)` is the fully-unbounded refinement: no bounds to check, and still a distinct nominal type.
+    ;; `:unit` makes the newtype NOMINAL on its own, so no `:satisfies` is needed to make it distinct.
+    ;; A unit MAY still carry a range -- `(deftype :unit Kelvin <- Real :satisfies (0.0 ..))` is a
+    ;; measurement with a floor, and gets both the dimension rules and the runtime bounds check.
 
-    (deftype Meter  <- Real :satisfies (..))
-    (deftype Second <- Real :satisfies (..))
-    (deftype Kg     <- Real :satisfies (..))
+    (deftype :unit Meter  <- Real)
+    (deftype :unit Second <- Real)
+    (deftype :unit Kg     <- Real)
 
     ;; -- derived units -----------------------------------------------------------------------------
     ;;

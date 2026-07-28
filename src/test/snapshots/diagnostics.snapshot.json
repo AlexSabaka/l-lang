@@ -477,6 +477,14 @@
     "diagnostics": []
   },
   {
+    "probe": "silent: scaling a unit by a plain number",
+    "diagnostics": []
+  },
+  {
+    "probe": "silent: arithmetic on a refined newtype is not dimensional",
+    "diagnostics": []
+  },
+  {
     "probe": "silent: a dimension that reduces to a base unit",
     "diagnostics": []
   },
@@ -640,7 +648,7 @@
       {
         "code": "LL0248",
         "severity": "error",
-        "text": "The dimension of 'Speed' names 'Metre', which is not a unit. A dimension's operands must be refined newtypes -- '(deftype Metre <- Real :satisfies (..))' declares a base unit. A plain alias or an undeclared name would make the dimension silently wrong, which is the failure units exist to remove."
+        "text": "The dimension of 'Speed' names 'Metre', which is not a unit. A dimension's operands must be units -- '(deftype :unit Metre <- Real)' declares a base one. A plain alias, a merely refined newtype or an undeclared name would make the dimension silently wrong, which is the failure units exist to remove."
       }
     ]
   },
@@ -661,6 +669,36 @@
         "code": "LL0200",
         "severity": "error",
         "text": "Type mismatch: cannot assign Meter to Speed for variable 'bad'."
+      }
+    ]
+  },
+  {
+    "probe": "LL0247 adding two different dimensions",
+    "diagnostics": [
+      {
+        "code": "LL0247",
+        "severity": "error",
+        "text": "Operator '+' needs both operands in the SAME dimension, and these are 'Meter' and 'Second'. Adding two quantities of different kinds has no meaning. Multiply or divide them instead -- '*' and '/' COMPOSE dimensions -- or give the dimensionless side its unit at a declared boundary: a typed binding '(let x <- Meter 2.0)' or a typed parameter both coerce there."
+      }
+    ]
+  },
+  {
+    "probe": "LL0247 adding a dimensionless literal to a unit",
+    "diagnostics": [
+      {
+        "code": "LL0247",
+        "severity": "error",
+        "text": "Operator '+' needs both operands in the SAME dimension, and these are 'Meter' and 'dimensionless'. Adding two quantities of different kinds has no meaning. Multiply or divide them instead -- '*' and '/' COMPOSE dimensions -- or give the dimensionless side its unit at a declared boundary: a typed binding '(let x <- Meter 2.0)' or a typed parameter both coerce there."
+      }
+    ]
+  },
+  {
+    "probe": "LL0200 a composed dimension must still match",
+    "diagnostics": [
+      {
+        "code": "LL0200",
+        "severity": "error",
+        "text": "Type mismatch: cannot assign Real{Meter*Second} (alias for Real) to Speed for variable 'bad'."
       }
     ]
   },

@@ -392,6 +392,11 @@ export const C_PASSING: readonly string[] = [
   // Complex matrices here also pin the desugar fix: `MatrixNode.rows` is an array OF arrays, and every
   // rewriting visitor mapped one level, so NO desugar had ever reached a matrix cell.
   "80-adversarial/matrix_ring_elements.lisp",
+  // D90 R4. `*` and `/` compose dimension exponents; `+` and `-` refuse to cross them. A dimensionless
+  // operand is the IDENTITY for composition and a MISMATCH for addition, which is what makes
+  // `(* d 2.0)` a Meter and `(+ d 2.0)` an error. Values hand-derived: F = m*a is where a sign or
+  // exponent slip would be invisible in the number and caught only by the annotation.
+  "80-adversarial/unit_dimensions.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

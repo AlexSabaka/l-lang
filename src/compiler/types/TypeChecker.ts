@@ -180,11 +180,10 @@ export class TypeChecker {
     if (sN || tN) {
       if (source.optional && !target.optional) return false;                     // forced-unwrap still holds
       if (sN && tN) {
-        // D90: two dimensioned newtypes are interchangeable when their DIMENSIONS match, whatever they
-        // are called -- `Speed` and `Velocity`, both `(/ Meter Second)`, measure the same thing and a
-        // name is not what makes them different. This SUBSUMES the name rule rather than replacing it:
-        // every refined newtype is a base dimension, so `Byte` is `{Byte:1}` and `Nibble` is
-        // `{Nibble:1}`, which compare exactly as their names did.
+        // D90: two UNITS are interchangeable when their DIMENSIONS match, whatever they are called --
+        // `Speed` and `Velocity`, both `(/ Meter Second)`, measure the same thing and a name is not
+        // what makes them different. Non-units (`uint8`, `Kelvin`) answer null and fall straight
+        // through to the name rule they always used, so nothing about refinements changes.
         const sd = this.dimensionOf(sN, symbolTable);
         const td = this.dimensionOf(tN, symbolTable);
         if (sd && td) return this.dimensionsEqual(sd, td);
@@ -582,14 +581,18 @@ export class TypeChecker {
   /**
    * The NORMALIZED dimension of a type -- base-type name to exponent -- or null if it has none (D90).
    *
-   * EVERY REFINED NEWTYPE IS A BASE DIMENSION (Sabaka's ruling). `(deftype Meter <- Real :satisfies (..))`
-   * is `{Meter: 1}` with no extra syntax, and a `:satisfies (/ Meter Second)` substitutes its operands
-   * to `{Meter: 1, Second: -1}`. `Byte` and `Nibble` are dimensions too, which is why `(+ aByte aNibble)`
-   * becomes an error -- measured to break nothing: the corpus has no `+`/`-` between two refined types.
+   * A UNIT IS DECLARED, NOT INFERRED. `(deftype :unit Meter <- Real)` is `{Meter: 1}`; a `:satisfies
+   * (/ Meter Second)` is a derived unit and substitutes its operands to `{Meter: 1, Second: -1}`.
    *
-   * A PLAIN `Int`/`Real` returns null: it is DIMENSIONLESS, not "unknown". That distinction is the whole
-   * of ruling 3 -- `(+ metres 2.0)` is an error because 2.0 has no dimension, while `(* metres 2.0)` is
-   * fine because a dimensionless factor is the identity of dimension multiplication.
+   * A merely REFINED newtype is NOT a dimension -- `uint8 <- Int :satisfies (0..255)` bounds a VALUE.
+   * That was ruled the other way first ("every refined newtype is a base dimension") and MEASURED
+   * WRONG: it broke five corpus files, three of them on lines labelled "widened:", because
+   * `(+ brightness 1)` on a bounded integer is ordinary arithmetic and not a category error. Only the
+   * author knows which kind of newtype was meant, so the author says.
+   *
+   * A PLAIN `Int`/`Real` returns null: it is DIMENSIONLESS, not "unknown". That distinction is what
+   * makes `(+ metres 2.0)` an error, while `(* metres 2.0)` is fine because a dimensionless factor is
+   * the identity of dimension multiplication.
    *
    * NOT MEMOIZED, deliberately. A static cache keyed by type NAME is wrong the moment two modules each
    * declare a `Meter`, and the expressions are a handful of names -- recomputing is cheaper than being
@@ -606,7 +609,9 @@ export class TypeChecker {
     if (t.dimension) return t.dimension;
 
     const n = this.nominalOf(t, symbolTable);
-    if (!n?.name) return null;
+    // A nominal newtype that is not a UNIT is dimensionless. This is the whole of the `:unit` ruling:
+    // `Kelvin` and `uint8` are both nominal, and only one of them is a measurement.
+    if (!n?.name || !n.isUnit) return null;
 
     const seen = opts?.seen ?? new Set<string>();
     if (seen.has(n.name)) {

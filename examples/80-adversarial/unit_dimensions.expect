@@ -1,0 +1,9 @@
+speed:       25
+accel:       6.25
+force:       18.75
+scaled:      200
+halved:      50
+sum:         300
+cancelled:   1
+ratio + 1:   2
+done

@@ -28,6 +28,15 @@ export const MEMBER_MODIFIERS = ["ctor"] as const;
 // have never had a consumer -- these are the ratified spelling and they ride the function a defcast
 // rewrites into.
 export const CAST_MODIFIERS = ["implicit", "explicit"] as const;
+// D90: `(deftype :unit Meter <- Real)` -- this newtype is a UNIT OF MEASURE, a base dimension.
+//
+// It exists because a refinement alone cannot say which kind of newtype this is. `uint8 <- Int
+// :satisfies (0..255)` bounds a VALUE and `(+ brightness 1)` is ordinary widening; `Meter` names a
+// MEASUREMENT and `(+ metres 2.0)` is the bug units exist to catch. Both are nominal newtypes, and
+// ruling one from the other by refinement SHAPE broke five corpus files -- three of whose offending
+// lines are labelled "widened:", i.e. the idiom was demonstrated, not incidental. So the distinction
+// is DECLARED, which is the same stance D90 takes on dimensions themselves.
+export const UNIT_MODIFIERS = ["unit"] as const;
 
 export const BUILTIN_MODIFIERS = [
   ...VISIBILITY_MODIFIERS,
@@ -37,6 +46,7 @@ export const BUILTIN_MODIFIERS = [
   ...FUNCTION_MODIFIERS,
   ...MEMBER_MODIFIERS,
   ...CAST_MODIFIERS,
+  ...UNIT_MODIFIERS,
 ] as const;
 
 /**
@@ -77,6 +87,10 @@ const VARIABLE_CONSTRUCT = [
 
 const TYPE_CONSTRUCT = [...VISIBILITY_MODIFIERS, ...CLASS_MODIFIERS];
 
+// `deftype` is the only construct that may carry `:unit` (D90) -- it marks a NEWTYPE as a base unit of
+// measure, and there is no other declaration a dimension can hang on.
+const TYPE_DEF_CONSTRUCT = [...TYPE_CONSTRUCT, ...UNIT_MODIFIERS];
+
 const BY_CONSTRUCT: Record<string, readonly string[]> = {
   function: FUNCTION_CONSTRUCT,
   variable: VARIABLE_CONSTRUCT,
@@ -85,7 +99,7 @@ const BY_CONSTRUCT: Record<string, readonly string[]> = {
   struct: TYPE_CONSTRUCT,
   enum: TYPE_CONSTRUCT,
   interface: TYPE_CONSTRUCT,
-  "type-def": TYPE_CONSTRUCT,
+  "type-def": TYPE_DEF_CONSTRUCT,
 };
 
 /**
