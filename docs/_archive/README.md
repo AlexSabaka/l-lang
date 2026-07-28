@@ -33,3 +33,10 @@ inverted relative to the project today.
 | `hir-llvm-readiness-report.md` | how far `HirModule` stood from the separation bar, and five open questions | all five answered in D46/D48 |
 | `hir-gaps-and-seams.md` | an adversarial multi-agent review of the JS/LLVM split (31 findings, 22 confirmed) | absorbed into D45/D48; the type channel it called write-only is now load-bearing on both backends |
 | `coroutines-and-memory-brief.md` | the measurements behind coroutines, the memory model, and async posture | D58, D59, D60 |
+| `adversarial-probe-2026-07-27.md` | 29 C-backend defects + 20 RFC critiques | its own triage adjudicated these to 11 distinct defects; **its premise (JS is the oracle) is reversed by D86** |
+| `adversarial-corpus-integration.md` | folding three external directories into `examples/` | superseded by `src/test/manifest.ts`; every path in it was renamed by the decade-block reorg |
+| `dove-stdlib-roadmap.md` | an audit of `lib/std` and a ten-module Tier-1 build order | eight shipped as D64–D65, D67, D76–D80; the remainder is in `roadmap.md` |
+| `stdlib-games-recon.md` | Dove's stdlib roadmap × the games findings, merged and re-measured | phases S1–S3 executed; §2.6 extracted to `STDLIB.md` §3.1 |
+| `std-math-numerics-blockers.md` | the two blocked `std/math` numerics modules | `random` shipped (D65); `fft` is in `roadmap.md`, and its draft is lost |
+| `regex-literals-recon.md` | the `/pattern/flags` literal, and why it cannot work | D67 — `r"…"` raw strings, an l-lang engine, `std/text/regex` |
+| `rtti-and-cast-brief.md` | five research lenses on RTTI and whether a cast form should exist | D41 (`:of` narrows) and D46/B-3 (`defcast` converts) |

@@ -94,7 +94,9 @@ Because nothing ever ran it, nothing ever found out that:
     `E`/`PI`/`TAU`). The old `Vector3` carried `(fn :operator ·)`, the U+00B7 head operator D57 bans;
     it and the placeholder `Complex` are retired, and their three consumers migrated to `Vec3` /
     `std/math/complex`. Everything is still reachable through one `(import "std/math")` (siblings).
-    `random` and `fft` are held back — see `docs/inbox/std-math-numerics-blockers.md`.
+    **`random` has since shipped** — `lib/std/math/random.lisp`, seeded xoshiro256\*\* / SplitMix64
+    (D65), pinned by `examples/16-stdlib/11_random.lisp`. **`fft` is still blocked**; the reason and
+    its status live in [`docs/roadmap.md`](../roadmap.md)'s Known gaps.
 - `functional.lisp` exports **`apply`** — colliding with the `.apply` method call of **D17**. This
   is the exact collision `05_matching.lisp` had to hand-roll a workaround for.
 
@@ -225,6 +227,25 @@ toward cstd on its own, without anyone deciding to:
 
 The two modules with no C counterpart (`seq`, `fn`) are the honest exceptions, and are marked as
 such: they are the higher-order layer, written in l-lang, on top of everything else.
+
+### 3.1 House rule — a library never divides two `Int`s and keeps the result
+
+**Every division site in `lib/std` forces the operands Real or truncates the result.** Measured
+2026-07-23 across 120 sites: each is either `(/ (sum-n xs n) (* 1.0 n))`, `(/ … 2.0)`, `(/ p 100.0)`,
+or wrapped — `(Math.trunc (/ coll.length 2))`, `(truncate …)`. Nowhere does the stdlib divide two
+`Int`s and keep an `Int`.
+
+That is not style. **An imported body loses its static types**, so `(/ Int Int)` inside a library
+becomes Real division at the call site — `3.5` on JS against `3` on C, from a function declared
+`-> Int`, with no diagnostic from either backend. The stdlib is correct today only because every
+author so far happened to write around it.
+
+So it is written down here, because a convention that is nowhere stated is a trap for the next module
+rather than a discipline. The games repo hit the same wall independently and formalized it as
+`common/num.lisp`'s `int-div`.
+
+*(Extracted from `stdlib-games-recon.md` §2.6 before that file was archived — it was the only place
+this was recorded.)*
 
 ---
 

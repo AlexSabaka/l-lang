@@ -1,3 +1,21 @@
+> **ARCHIVED 2026-07-28 — read the triage instead.**
+>
+> **Its stated premise is inverted.** The method section says *"The JS backend is the oracle (decision
+> D66): where the two disagree, JS defines the intended behavior and the C result is the defect."*
+> D66 says no such thing, and **D86 says the opposite by name** — *"where the backends disagree, C is
+> the specification unless C is shown wrong on its own terms"* — quoting this exact sentence as the
+> misfiling it exists to close. Part I scores as C defects several divergences where C is right.
+>
+> Its own triage, [`adversarial-probe-2026-07-27-triage.md`](../inbox/adversarial-probe-2026-07-27-triage.md),
+> re-ran all 29 probes and adjudicated them to 11 distinct defects; five have since closed (D84, D85,
+> commit `b466f71`) and the six that remain are now in [`roadmap.md`](../roadmap.md)'s Known gaps.
+> The division findings in particular were **re-measured and found wrong**: no SIGFPE, no poison
+> value, and `INT_MIN / -1` gives D51's wrap value on both backends. D85 carries the corrected record.
+>
+> Its line-pinned citations (`EmitCirToC.ts:880`, `ResolveHirToCir.ts:52-58`) no longer point at the
+> code they quote — D84 rewrote the mangler and the integer-binop guard moved. That is why this file
+> is archived rather than refreshed: line numbers into a moving emitter cannot be maintained.
+
 # l-lang Adversarial Audit — C backend defects & RFC design critique (2026-07-27)
 
 **Method.** Every probe is a minimal, self-contained l-lang program run on both backends via `npx ts-node index.ts run --backend {js,c}` from `src/`. The JS backend is the **oracle** (decision D66): where the two disagree, JS defines the intended behavior and the C result is the defect. Each finding below was independently re-run by a second agent to confirm it reproduces on the pinned tree and is **not** already covered by an existing gap-ledger / dedup entry (D49d int-division, D51 int-wrap-int64, D52 codepoint counting, D82 catchable data-traps, etc.); where a finding sits near such a ruling, the "Why" states precisely why it is out of that ruling's scope. Severities are taken as verified and not inflated: **crash** = process death or emitter/cc abort; **miscompile** = wrong value or wrong control flow silently produced; **divergence** = both backends "work" but observably differ; nothing here is dressed up beyond what the repro shows.

@@ -574,6 +574,77 @@ refused by ruling (D60), and the collector (D59) is a separate lane.
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
+### The six surviving C defects from the 2026-07-27 adversarial audit
+
+The audit reported 29 findings; its triage adjudicated them to **11 distinct defects** behind a
+premise the audit had inverted (it named JS the oracle; D86 says C is the specification). **Five are
+closed** — #1/#2 by D84's injective mangling, #3 by D85's division ruling, #4/#5 by commit `b466f71`
+turning six bare emitter throws into located LL0106s. These six are open, verified in source on
+2026-07-28, and were recorded nowhere but the triage until now:
+
+*   **Embedded NUL truncates a string literal, and two strings sharing a NUL prefix compare EQUAL.**
+    `ll_str_lit` measures with `strlen` (`EmitCirToC.ts`, `runtime.c`'s `ll_str_from(cstr,
+    strlen(cstr))`). `true` on C where JS answers `false`. **The equality half is security-relevant**
+    and is the one to fix first of these six.
+*   **An under-applied closure reads past `argv`.** The emitter unpacks `__argv[i]` unconditionally,
+    so a call with too few arguments prints `#<object>` where JS binds nil.
+*   **Deep structural equality has no cycle guard and no pointer-identity short-circuit.** A
+    self-referential vector crashes C (no output, rc=1); JS answers `true`.
+*   **Stacked `...args` decorators trap** — `TypeError: expected a Vector` on C, correct on JS. Not
+    stale against D75: the flat contract landed and two layers still break.
+*   **A boxed int `/0` yields `Infinity`** instead of trapping, so the `catch` never fires. A
+    distinct code path from D85's static Int/Int guard.
+*   **Deep non-tail recursion SIGSEGVs** where JS raises a catchable stack overflow.
+
+**And four divergences that need a RULING, not a fix** — in each, C is at least as defensible as JS,
+so none should be "corrected" before it is decided:
+
+*   **Non-exhaustive match fall-through.** C traps a typed error; JS propagates **nil** into an
+    `Int`- or `String`-typed slot. D9 exists to forbid exactly that in-band lie, so C looks right.
+*   **Closure capture of a loop-mutated `mut`.** JS gives `3 3 3` (one shared cell), C gives `0 1 2`
+    (per-iteration snapshot). Undecided, and most languages moved toward C's answer.
+*   **`Number("")`** — `NaN` on C, `0` on JS. JS's `0` is a known wart, not a specification.
+*   **Module initialisation order**, and whether `T | Nil` and `T?` are the same type.
+
+### Arithmetic is only checked at arity two
+
+**`(+ d t x)` with `d`/`x` in Meters and `t` in Seconds prints `114`.** Measured 2026-07-28 on C:
+100 metres + 4 seconds + 10 metres, silently, with no diagnostic — the exact Mars Climate Orbiter
+shape D90 exists to refuse, and *does* refuse at arity two (`(+ d t)` is LL0247).
+
+`inferOperatorType` branches on `args.length === 1` and `args.length === 2` and then falls through to
+`return TypeEnvironment.unknown()`. **Both D90's dimension rule and D88's promotion live inside the
+two-operand branch**, so an n-ary operator application is typed `Unknown` and checked by nothing —
+not the dimension rule, not the operator-not-defined diagnostic. N-ary arithmetic is ordinary l-lang
+(`(- 10 1 2)` is the reading D90's own examples cite), so this is reachable, not theoretical.
+
+Promotion's *value* survives — `(+ 1 1/2 1)` still prints `5/2`, because operator dispatch resolves
+it at run time — so the observable damage is the dimension check alone. The fix is a ruling on shape:
+fold n-ary operators pairwise before `inferOperatorType` and one rule covers every arity, or state
+the arity scope honestly in D88/D90. **Found by the documentation audit, not by the corpus** — no
+example exercises a three-operand `+` over dimensioned values.
+
+### `std/math/fft` is blocked, and its draft is gone
+
+Blocked on the C `computed-callee` refusal (`ResolveHirToCir.ts`) plus an unpinned JS index bug. Its
+sibling `random` shipped by redesign (D65, seeded xoshiro256\*\*, using D61's bit operators) rather
+than by waiting for the blocker to lift, which is the available route here too. **The drafted module
+is lost** — it was held in a scratchpad that no longer exists — so this is a rewrite, not a recovery.
+
+### The stdlib remainder Dove's build order did not reach
+
+Eight of the ten Tier-1 modules shipped as D76–D80, D65, D67 and `std/test`. Still unbuilt:
+
+*   [ ] `std/collections`, `std/math/fft`, `std/os/fs`, and seven Tier-2 floor entries
+*   [ ] the 12-operator LINQ shelf, and `std/seq`'s seven mirror holes
+*   [ ] **`std/fn` is a JS module wearing a portable module's clothes** — `partial`/`apply` are still
+      `func.apply` and `funcs.reduceRight` host calls. The spread-call blocker that justified this
+      has since been removed (`dc4df1a`, `c1bccb9`, `ff95b4f`), and `apply` still has no `runtime.c`
+      entry, so the module was never rewritten.
+*   [ ] the `--portable` advisory, and the Bytes / text-only-I/O ruling
+
+### Older entries
+
 *   **PARKED (2026-07-27): a nested `if` with `when` leaves ran BOTH branches.** Found building
     `std/cli` (D80). Written as a three-argument `if` nested in the THEN branch of another, with `when`
     in the leaves, `--lib=/opt/l` BOTH consumed the following token as its value AND reported

@@ -451,7 +451,7 @@ being spent, on both backends.
 
 Phase S1 exists because two independent audits converged: Dove's stdlib roadmap wanted to roughly
 double the module count, and `../l-lang-games` — the project's first multi-file programs — measured
-nine distinct failures crossing a file boundary. See `docs/inbox/stdlib-games-recon.md`.
+nine distinct failures crossing a file boundary. See `docs/_archive/stdlib-games-recon.md`.
 
 ### 15.1 N14 — an imported body lost its static types **[CLOSED 2026-07-23, JS]**
 

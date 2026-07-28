@@ -1,3 +1,12 @@
+> **ARCHIVED 2026-07-28 — every path in it is dead and its framing describes a project that does not
+> exist.** It calls the corpus *"the regression net for the JS→LLVM backend split"*; the split that
+> happened was **JS→C** (D66, D86), and there is still no LLVM backend. It counts 138 files against
+> today's 326, and every example path it names was renamed by the decade-block reorg.
+>
+> Both xfails it quarantines are closed, and `src/test/manifest.ts` — which walks the tree and hard-
+> errors on an undeclared file — is the authority on all of it now. Kept only for the record of how
+> three external directories were folded in.
+
 # Adversarial corpus integration
 
 > **Note (post-integration reorg):** the paths in this writeup are as they were at

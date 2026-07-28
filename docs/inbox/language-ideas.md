@@ -1,7 +1,8 @@
 # Language ideas — parked & deferred
 
 **Status: TRIAGED in the 2026-07 Sabaka⇄Dove design round.** The wishlist rescued from
-`examples/W99_L_sloth_design_v1.lisp` has been sorted into decisions and roadmap — the rulings now live
+the since-removed corpus file *W99_L_sloth_design_v1.lisp* has been sorted into decisions
+and roadmap — the rulings now live
 in `docs/spec/DECISIONS.md` (**D46–D48**) and `docs/roadmap.md` (**Phases Cv / Bg / Cr**). Long-form
 reasoning: `docs/_archive/hir-design-round-brief.md` §C. **This file now tracks only the ideas still open —
 parked or deferred.** Everything resolved is in the table below for the record, then closed there.
@@ -12,12 +13,12 @@ parked or deferred.** Everything resolved is in the table below for the record, 
 
 | idea | disposition | where |
 |---|---|---|
-| Refinement / range types | **Greenlit** | D46 / Phase Cv (B-1) |
-| Native fixed-width ints (`uint8`…) | **Greenlit** | D46 / Phase Cv (B-2) |
-| `implicit` / `explicit` cast operators | **Greenlit** as `defcast` | D46 / Phase Cv (B-3) |
+| Refinement / range types | **DONE** — `<- Int :satisfies (0..255)`, checked at every boundary | D46 / Phase Cv (B-1); `cacc912`, `38d1c79` |
+| Native fixed-width ints (`uint8`…) | **Greenlit, still unbuilt** — the refinement landed, the native WIDTH did not | D46 / Phase Cv (B-2) |
+| `implicit` / `explicit` cast operators | **DONE** as `defcast` + `(cast<T> x)` | D46 / Phase Cv (B-3); `ab92b9f`, `3985492` |
 | `:where` relations (`:is` / `:extends` / `:implements`) | **Greenlit** — type-variable bounds only | Phase Bg; *not* for value refinements (D46 B-1b) |
 | Generic `new()` / ctor constraints | **Greenlit** (low priority) | Phase Bg |
-| C#-style attributes | **Greenlit** as `:with Attr` + reflection; bracket `[Attr]` **rejected** | Phase Bg |
+| C#-style attributes | **DONE**, with a different spelling and no `:with` — `(defattribute docstring [text <- String])` applied as `:docstring["…"]` via D68-a's adjacency gate | D72; `2ab30a5`, `e1455ba`, `6f2d24b`; `examples/07-types/08_attributes.lisp` |
 | Flags enums (`:with Flags`) | **Greenlit** | Phase Bg |
 | `\|> .method` selectors | **Greenlit** (desugar over the pipe) | Phase Bg |
 | `with`-copy (`(with s :field v)`) | **Greenlit** | Phase Bg |
@@ -44,9 +45,13 @@ TS-style type-*computation* in a C#-semantics language — the worst fit of the 
 ### Quoted-AST DSL / runtime `eval`
 The LINQ-to-SQL-shaped `sql<T> '(SELECT …)` idea. Runtime `eval` fights the native endgame (it ships an
 interpreter). The l-lang-native path is a **comptime macro** reading the quoted AST at compile time —
-**blocked on the metaprogramming tier** (`defmacro` / `defsyntax`, still zero grammar). Parked, reframed
-to compile-time. Independent of that path: the **homoiconicity question** — is a quote a cons-list or an
-AST datum? — must be settled regardless (open in `04-data-types/01_quoting.lisp`).
+**blocked on the metaprogramming tier** (`defmacro` / `defsyntax`, still zero grammar — though **D69**
+now RULES the three tiers by what each handler receives, so the design question is settled and only the
+grammar is missing). Parked, reframed to compile-time. Independent of that path: the **homoiconicity
+question** — is a quote a cons-list or an AST datum? — must be settled regardless. It is open in
+`examples/12-quote-macros/00_quoting.lisp`, which is `xfail`; the answer taken 2026-07-22 is *both*,
+with the AST datum as the source of truth and cons/list a derived layer, but **that ruling has no
+D-number and lives only in `src/test/manifest.ts`'s xfail reason.**
 
 ### Provable refinements
 The static-verification version of B-1: the checker discharges `0 .. 255` / a predicate at *compile*

@@ -1,5 +1,27 @@
 # Triage — adversarial audit of 2026-07-27
 
+> **STATUS 2026-07-28 — five of the eleven are closed; this file is kept for the other six.**
+>
+> | # | defect | status |
+> |---|---|---|
+> | 1 | `mangleC` / `mangleBare` not self-delimiting | **CLOSED — D84** (injective mangling) |
+> | 2 | method C-name join not injective | **CLOSED — D84** |
+> | 3 | unguarded native int `/` and `%` | **CLOSED — D85** (divide by zero PANICS; a literal zero is a compile error) |
+> | 4 | emitter throws `no cast int -> closure` | **CLOSED — `b466f71`** (six bare throws became located LL0106s) |
+> | 5 | emitter throws `no cast obj -> real` | **CLOSED — `b466f71`** |
+> | 6–11 | NUL truncation · under-applied closure · deep-eq cycle guard · stacked `...args` decorators · boxed `/0` → Infinity · deep-recursion SIGSEGV | **OPEN**, re-verified in source 2026-07-28 |
+>
+> The six open defects are now also recorded in [`docs/roadmap.md`](../roadmap.md)'s Known gaps, so
+> they are visible without reading this file. The four **"Needs a ruling"** divergences below
+> (non-exhaustive match fall-through, loop-`mut` capture, `Number("")`, plus module-init order) are
+> still unruled and have no D-numbers.
+>
+> This file becomes an archive candidate when those six are pinned by files in
+> `examples/80-adversarial/` and the four divergences are ruled. Not before: it is the adjudication,
+> and the audit it adjudicates is at
+> [`docs/_archive/adversarial-probe-2026-07-27.md`](../_archive/adversarial-probe-2026-07-27.md)
+> with its premise inverted.
+
 Every one of the 29 Part I repros was extracted from the audit and re-run on both backends on the
 current tree (`f316d27`), arm64 Darwin, Apple clang 17, with the corpus flags. This file records what
 reproduced, what did not, and where the audit's *categorisation* differs from its own evidence.

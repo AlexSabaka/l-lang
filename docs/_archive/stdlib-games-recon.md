@@ -1,3 +1,12 @@
+> **ARCHIVED 2026-07-28.** All three phases it proposed executed — S1 (LL0240 is live), S2 (D61's bit
+> operators, which `lib/std/math/random.lisp` now uses), and S3 as D76–D80 + D65 + D67. Its residual
+> open items are duplicated in the live ledgers.
+>
+> **§2.6 is extracted** — the finding that every division site in `lib/std` is defensively written
+> against `(/ Int Int)` losing its static types across a module boundary, a discipline that was
+> nowhere stated. It is now a house rule in [`STDLIB.md`](../spec/STDLIB.md) §3.1, which is where a
+> new module's author will actually meet it.
+
 # Side-quest recon — Dove's stdlib roadmap × the games findings, sorted
 
 **What this is.** Two intel sources landed at once: `dove-stdlib-roadmap.md` (an audit of `lib/std`

@@ -1,3 +1,11 @@
+> **ARCHIVED 2026-07-28.** The model case: it bannered itself SUPERSEDED by **D67** when the ruling
+> landed, and every fork it opened is now ruled *and* built — the engine is l-lang
+> (`lib/std/text/regex.lisp`), the literal is `r"…"` (so `/` is untouched), and it is not ambient.
+>
+> Kept for its measurements: the `/…/`-versus-division ambiguity demo, where the literal's own pattern
+> spans two `(/ a b)` forms and no token ordering rescues it. That is the argument, and it is not
+> restated at length in D67.
+
 # Regex literals — recon on the parked frontend stub (2026-07-26)
 
 > **SUPERSEDED by D67 (2026-07-26).** All three forks below are ruled: the engine is written in

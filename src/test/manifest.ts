@@ -260,7 +260,7 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   // additions carry their own .expect and need no entry here; everything below
   // is quarantined with a reason (xfail), pinned to codes (negative), or is an
   // imported unit (library) / non-node program (fixture). See
-  // docs/inbox/adversarial-corpus-integration.md for the full writeup.
+  // docs/_archive/adversarial-corpus-integration.md for the full writeup.
   // ===========================================================================
 
   // --- proposed-examples: multi-file package, imported units (compiled via main) ---
@@ -281,7 +281,7 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   // Inventory<T>, Vec2 operator overloading, interface conformance, the :undoable modifier + snapshot,
   // minesweeper flood-fill, snake tick, tetromino rotation, line-clear, boids vector toolkit). The
   // full games live on in the separate l-lang-ex repo; the bug repros they exposed live in
-  // 90-adversarial/. See docs/inbox/adversarial-corpus-integration.md.
+  // 90-adversarial/. See docs/_archive/adversarial-corpus-integration.md.
 
   // --- 90-adversarial: minimal repros extracted from the audit's p5-friction probes ---
   // The four GREEN siblings (spread_in_literals, return_in_logical_operand, hex_string_escape,

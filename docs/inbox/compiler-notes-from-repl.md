@@ -51,8 +51,11 @@ semantics. That is exactly how the wrong one ended up on the hot path.
 This is what stood between the REPL and a live `Context`. It has *not* been cashed in — the REPL still
 replays its history — but the obstacle is now removed rather than merely documented.
 
-**Still open:** the two tails — `SYMBOL_MAP` enumeration (#9) and the five stale
-`docs/development/**` links (#6).
+**Still open (re-measured 2026-07-28):** #9 landed *half* — `RuntimeProvider.definedSymbols()` exists
+(`src/compiler/runtime/RuntimeProvider.ts`), but the consumer was never migrated:
+`src/cli/repl/ReplCompleter.ts:40` still reads `Object.keys((RuntimeProvider as any).SYMBOL_MAP ?? {})`,
+the exact `as any` this item asked to delete. #6 moved rather than closed — the stale links are now
+two genuinely broken relative paths in `docs/CONTRIBUTING.md`, not five in the README.
 
 **What the two seams cost to keep:** nothing, once found. #3 and #4 were each ~30 lines and *purely
 additive* — no caller changed. What they bought is that neither workaround can rot: the REPL had been

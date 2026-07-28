@@ -1,3 +1,10 @@
+> **ARCHIVED 2026-07-28.** Consumed. Its Q4/Q5 are answered by **D46/B-3**: a cast form exists but
+> narrowly — `(cast<T> x)` invokes a user-declared `defcast`, which is CONVERSION, while type
+> *narrowing* stays with `:of` (**D41**). Both shipped.
+>
+> Its distinctive contribution — the six-language survey on whether `5.5 :of Int` should answer true —
+> is absorbed into D41's reasoning. Nothing here is uncited elsewhere.
+
 # RTTI and cast — a brief for ruling
 
 > **Update (2026-07 design round):** Q4/Q5 are resolved — a cast form **does** exist, but narrowly:

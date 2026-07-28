@@ -5350,7 +5350,7 @@ feature stays JS-safe where that costs nothing; native is where the investment g
 
 Regex was on Dove's Tier-1 list as a module and was separately started as a `/pattern/flags` LITERAL in
 the frontend. The literal stub never worked (its tokens reached no token array, so the rule was
-unreachable) and `docs/inbox/regex-literals-recon.md` measured why: `/…/` is unfixably ambiguous with
+unreachable) and `docs/_archive/regex-literals-recon.md` measured why: `/…/` is unfixably ambiguous with
 division in a homoiconic reader — the literal's own pattern spans two `(/ a b)` forms — and no token
 ordering rescues it. That note left three forks open. All three are ruled here.
 

@@ -1,3 +1,15 @@
+> **ARCHIVED 2026-07-28 — eight of its ten Tier-1 modules shipped.** `std/test`, `std/cli` (D80),
+> `std/log` (D79), json as `std/text/json` (D77), path as `std/sys/path` (D64), `std/math/random`
+> (D65), date as `std/time/calendar` (D78), regex as `std/text/regex` (D67), plus `std/core/builder`
+> (D76) — a build order that was followed almost exactly.
+>
+> **The remainder is extracted** to [`roadmap.md`](../roadmap.md)'s Known gaps: `std/collections`,
+> `std/math/fft`, `std/os/fs`, the seven Tier-2 floor entries, the 12-operator LINQ shelf, `std/seq`'s
+> mirror holes, `std/fn`'s host dependency, the `--portable` advisory and the Bytes ruling.
+>
+> §10 ("the perfect-world stdlib") is deliberately NOT extracted: it is design prose, not work, and
+> moving it into the roadmap would turn the roadmap into a wishlist. It stays here.
+
 # The stdlib gap roadmap — from "the corpus runs" to "programs can be written"
 
 **What this is.** An audit of `lib/std` as of the 2026-07-23 merge (26 modules), a map of what is

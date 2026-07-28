@@ -1,3 +1,13 @@
+> **ARCHIVED 2026-07-28.** Of the two blocked modules it names, **`random` shipped** (D65, seeded
+> xoshiro256\*\*/SplitMix64 on D61's bit operators, `lib/std/math/random.lisp`) — by the redesign
+> route this document said was a call to make, rather than by the blocker lifting. **`fft` is still
+> blocked**, and that entry now lives in [`roadmap.md`](../roadmap.md)'s Known gaps.
+>
+> **The held drafts are gone.** This file points a successor at
+> `scratchpad/math-hold/examples/08_random.lisp`; that directory does not exist at HEAD, so the fft
+> module would be rewritten, not recovered. Its closing claim that STDLIB.md documents a
+> single-`math.lisp` layout is also stale — STDLIB.md documents the modular D57 package.
+
 # std/math — what landed, and the two numerics modules still blocked (2026-07-23)
 
 Picking up the math package after the dynamic workflow died on a spend limit. The foundation and
