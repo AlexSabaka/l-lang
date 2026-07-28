@@ -1,242 +1,107 @@
 # 🤝 Contributing to l-lang
 
-Thanks for being interested in contributing to l-lang! This guide explains how to get started, how the compiler works, and patterns for adding features.
+Sloths and turtle followers are welcome.
 
 ---
 
-## 📋 Before You Start
+## 📋 Before you start
 
-1. **Read the philosophy**: l-lang is about **static typing** + **Lisp elegance** + **pragmatism**. Not every feature request will fit.
-2. **Check [TODO.md](roadmap.md)** for planned work
-3. **Check [open issues](https://github.com/AlexSabaka/l-lang/issues)** for what's being worked on
-4. **Review [recent fixes](spec/DECISIONS.md)** to understand current state
+Two things decide most questions, and knowing them saves re-litigating:
+
+1. **C is the reference backend** (D86). JavaScript is a deprecated differential-testing oracle
+   (D66). A change that is green on JS and untested on C is untested.
+2. **Language decisions are D-numbered** in [`spec/DECISIONS.md`](spec/DECISIONS.md), with the
+   measurement that produced them. If your change touches a ruling, read it first — and if you
+   disagree with one, that is a conversation to have *before* the code, not a thing to work around.
+
+The machine-facing companion to this document is [`CLAUDE.md`](../CLAUDE.md) at the repo root: the
+same rules, stated for an agent, with the enforcing file named beside each one.
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Getting started
 
-### 1. Clone & Setup
+### 1. Clone & set up
+
+**`package.json` lives in `src/`, not at the repo root.**
 
 ```bash
 git clone https://github.com/AlexSabaka/l-lang.git
-cd l-lang
+cd l-lang/src
 
-# Install dependencies
-cd src && npm install
+npm install
+npm run build
 
-# Build compiler
-npm run parser    # Generate parser from grammar
-npm run build     # Compile TypeScript
-
-# Verify everything works
-npm test          # Should see: ✅ 36/39 passing
+npm test              # the corpus, on the JS oracle
+npm run test:c        # the corpus, on the C reference
 ```
 
-### 2. Understand the Pipeline
+Compiling to C shells out to `cc`, so you need a C compiler on your PATH.
 
-Read [docs/architecture/COMPILER_ARCHITECTURE.md](language-compiler.md) (15 min) to understand the **6-stage compilation pipeline**:
+### 2. Understand the pipeline
+
+[The compiler guide](language-compiler.md) walks it. The short version:
 
 ```
-Input (.lisp) → [Parse] → [Syntax] → [Symbols] → [Desugar] → [Types] → [Codegen] → Output (.js)
+.lisp → PARSE → SYNTAX → SYMBOLS → DESUGAR → TYPES → HIR ─┬─► C   (reference)
+                                                          └─► JS  (oracle)
 ```
 
-Each stage is a visitor that transforms the AST.
+The **HIR** is the neutral typed core: a decision *both* backends make belongs in it, so they cannot
+diverge; a pass leaves core only if it is genuinely single-backend (D45, D48).
 
-### 3. Learn the Codebase
+### 3. Learn the codebase
 
-- **Start**: [docs/QUICK_START.md](quick-start.md)
-- **Deep dive**: [docs/development/IMPLEMENTATION_GUIDE.md](spec/DECISIONS.md)
-- **Architecture details**: [docs/architecture/COMPILER_ARCHITECTURE.md](language-compiler.md)
-- **Type system**: [docs/compiler/TYPE_SYSTEM.md](spec/DECISIONS.md)
+| you want | read |
+|---|---|
+| how to run things | [quick-start.md](quick-start.md) |
+| what the language accepts | [spec/GRAMMAR.ebnf](spec/GRAMMAR.ebnf) — generated from the parser |
+| why anything is the way it is | [spec/DECISIONS.md](spec/DECISIONS.md) — start at its topic index |
+| the runtime contract | [spec/FLOOR.md](spec/FLOOR.md) |
+| how the suite works | [src/test/README.md](../src/test/README.md) |
+| how to add a diagnostic | [rules/diagnostics/README.md](../src/compiler/rules/diagnostics/README.md) |
+| what's broken on purpose | [roadmap.md](roadmap.md), Known gaps |
 
 ---
 
-## 📝 How to Contribute
+## 📝 How to contribute
 
-### Finding Work
+### Finding work
 
-**Easy starter issues** (good first contribution):
-- Bug fixes flagged in [BUG_FIXES_SUMMARY.md](spec/DECISIONS.md)
-- Grammar improvements in [l-lang.pegjs](src/compiler/frontend/grammar/l-lang.pegjs)
-- Test coverage in `examples/` directory
-- Documentation & examples
+- [`roadmap.md`](roadmap.md)'s **Known gaps** is live and reproduced — each entry has evidence.
+- `xfail` entries in `src/test/manifest.ts` each name what they are blocked on.
+- `src/test/c-status.ts` lists the C backend's remaining refusals.
 
-**Medium difficulty**:
-- Add new type kinds (see [TYPE_SYSTEM.md](docs/compiler/TYPE_SYSTEM.md#adding-new-type-kinds))
-- Implement syntax transformations (see [IMPLEMENTATION_GUIDE.md](docs/development/IMPLEMENTATION_GUIDE.md#pattern-adding-transformations-in-desugaring))
-- Add standard library functions
+### The gate
 
-**Hard / Ambitious**:
-- LLVM backend (Phase 4)
-- High-level IR (Phase 3)
-- Performance optimizations
-- Advanced metaprogramming features
-
-### Contributing Code
-
-#### 1. Create a Feature Branch
+**Green before every commit.** All of it, from `src/`:
 
 ```bash
-git checkout -b feature/your-feature-name
+npm test                      # JS backend — the oracle
+npm run test:c                # C backend — the reference
+npm run test:c:o2             # the same, at -O2
+npm run test:codegen
+npm run test:ast-invariants
+npm run test:type-errors
+npm run test:diagnostics
+npm run test:imports
+npm run test:memory
+npm run test:grammar-v2-smoke
+npx tsc --noEmit
 ```
 
-**Branch naming**:
-- `feature/...` - New feature
-- `fix/...` - Bug fix
-- `docs/...` - Documentation
-- `refactor/...` - Code refactoring
+**CI is not the gate.** `.github/workflows/ci.yml` runs `npm ci`, `npm run build`, `npm test` — the
+deprecated backend, and nothing else. Green CI proves very little.
 
-#### 2. Make Your Changes
-
-**Minimal changes**: Only modify what's necessary. See [code change instructions](CONTRIBUTING.md#code-changes-are-minimal).
-
-**Follow patterns**:
-- Study existing implementations in `docs/compiler/`
-- Follow the pattern from [IMPLEMENTATION_GUIDE.md](spec/DECISIONS.md)
-- Use the same style as existing code
-
-**Common patterns**:
-
-**Adding a new type kind**:
-```typescript
-// 1. Update InferredType in types/TypeChecker.ts
-export interface InferredType {
-  kind: "primitive" | "array" | "yourtype"; // ADD HERE
-  // ...
-}
-
-// 2. Add visitor method in InferTypesAstVisitor.ts
-visitYourConstruct(node) {
-  // Infer type logic
-  return { kind: "yourtype", ... };
-}
-
-// 3. Add type checking in TypeChecker.ts
-if (type1.kind === "yourtype") {
-  // Compatibility logic
-}
-
-// 4. Add test in examples/
-```
-
-**Adding a syntax transformation**:
-```typescript
-// In DesugarAstVisitor.ts
-visitYourSyntax(node) {
-  // Transform to simpler form
-  return transformedNode;
-}
-```
-
-#### 3. Test Your Changes
-
-```bash
-# Run full test suite
-npm test
-
-# Run specific test file
-npm test -- examples/YOUR_EXAMPLE.lisp
-
-# Verbose mode (see all output)
-npm test -- --verbose
-
-# Test compilation stages
-ts-node src/index.ts transform --stage types examples/YOUR_FILE.lisp
-cat examples/YOUR_FILE.types.json | jq '.'  # Inspect result
-```
-
-**Add tests**:
-- Add `.lisp` file to `examples/XX-category/`
-- Add `.expect` file with expected output
-- Run `npm test` to verify
-
-#### 4. Document Your Changes
-
-**In code**:
-- Add TSDoc comments for complex logic
-- Reference related issues/PRs
-- Update docstrings if changing APIs
-
-**In docs**:
-- Update [CHANGELOG.md](changelog.md) with your changes
-- Update [TODO.md](roadmap.md) to mark items complete
-- Update [ROADMAP.md](roadmap.md) if scope changed
-- Add implementation details if adding major feature (see [DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](spec/DECISIONS.md) as example)
-
-#### 5. Commit & Push
-
-```bash
-git add .
-git commit -m "feat: add your feature
-
-- What you did
-- Why it matters
-- Any gotchas or notes
-
-Fixes #123 (if fixing an issue)
-"
-git push origin feature/your-feature-name
-```
-
-**Commit message style**:
-- Use imperative mood: "add feature" not "added feature"
-- First line ~50 chars, then blank line, then details
-- Reference issues: "Fixes #123" or "Related to #456"
-
-#### 6. Create a Pull Request
-
-1. Go to GitHub and click "New Pull Request"
-2. Fill in the PR template (describe what, why, how)
-3. Link related issues
-4. Request reviewers if you know who to ask
-5. Wait for CI to pass and feedback
-
----
-
-## ✅ Code Quality Standards
-
-### TypeScript Style
-
-```typescript
-// ✅ Good
-export class SymbolTable {
-  private entries: Map<string, SymbolEntry> = new Map();
-  
-  addSymbol(name: string, entry: SymbolEntry): void {
-    this.entries.set(name, entry);
-  }
-}
-
-// ❌ Avoid
-export class SymbolTable {
-  entries = new Map();  // No type annotation
-  addSymbol(name, entry) { // No param types
-    this.entries.set(name, entry);
-  }
-}
-```
-
-### Comments
-
-**Only comment non-obvious logic**:
-
-```typescript
-// ✅ Good - explains WHY
-// We need to resolve symbols in two passes: first collect all top-level
-// declarations, then resolve references. This enables forward references.
-const buildSymbolTableVisitor = new BuildSymbolTableAstVisitor(this);
-
-// ❌ Bad - obvious what it does
-// Create build symbol table visitor
-const buildSymbolTableVisitor = new BuildSymbolTableAstVisitor(this);
-```
+**`test:c:o2` is not optional.** The C emitter marks locals `volatile` when they can be clobbered
+across a `setjmp` landing (C11 7.13.2.1p3). At `-O0` those reads happen to work whether or not the
+emission is correct, so only an optimized run can falsify it.
 
 ### Testing
 
-- **Must pass**: All existing tests
-- **Should add**: Tests for new functionality
-- **Coverage target**: 80%+ for new code
-- **Format**: Example-based (`.lisp` + `.expect` files)
+- **Must pass**: the gate above.
+- **Should add**: examples that attack the change.
+- **Format**: example-based (`.lisp` + `.expect`).
 
 > **`examples/` has two jobs — a feature showcase AND the end-to-end conformance
 > suite.** Unlike `test:codegen` / `test:grammar-v2-smoke` / `test:diagnostics`
@@ -258,180 +123,81 @@ const buildSymbolTableVisitor = new BuildSymbolTableAstVisitor(this);
 > `xfail` (with a reason) or `negative` (with codes) — never leave a bare failing
 > file; the runner hard-errors on any undeclared, goldenless `.lisp`. Examples
 > are grouped by domain under decade-block numbers (`00-basics` … `20-algorithms`,
-> `30-applications`, `80-adversarial`, `90-diagnostics`, `99-fixtures`).
-
-### Documentation
-
-- Update [docs/](docs/) if changing APIs
-- Add examples if adding new syntax
-- Update [INDEX.md](docs/INDEX.md) with new sections
-- Keep markdown well-formatted and readable
+> `30-applications`, `40-math`, `80-adversarial`, `90-diagnostics`, `99-fixtures`).
 
 ---
 
-## 🔍 Code Review Checklist
+## ✅ Standards
 
-When reviewing PRs, check:
+### A claim about the code is a claim about a measurement
 
-- [ ] Follows [code change rules](CONTRIBUTING.md#code-changes-are-minimal) (minimal, surgical changes)
-- [ ] All tests pass (`npm test`)
-- [ ] New code has tests
-- [ ] Documentation updated (if needed)
-- [ ] Commit messages are clear
-- [ ] No merge conflicts
-- [ ] No debug console.log statements left
-- [ ] No unnecessary dependencies added
+This is the house style and it is not decoration. If you write *"this costs the corpus nothing"*,
+run the sweep and paste the number. If you write *"the emitted C is identical"*, diff it. Predictions
+here have been falsified by measurement often enough that an unmeasured claim in a commit message is
+a defect in the commit.
 
----
+### Ask "who calls it?"
 
-## 🐛 Reporting Bugs
+The project's signature failure mode is code that exists, is correct, and is called by nobody — found
+**nine** times, tabulated in [`roadmap.md`](roadmap.md). Of a claimed feature, do not ask *"is it
+implemented?"*; `git grep` the identifier and count the call sites.
 
-Found a bug? Great! Please:
+### TypeScript
 
-1. **Check if it's already reported**: Search [issues](https://github.com/AlexSabaka/l-lang/issues)
-2. **Create a minimal example**: Small `.lisp` file that reproduces the bug
-3. **Include context**:
-   - l-lang version (`ts-node src/index.ts --version`)
-   - Node.js version (`node --version`)
-   - Operating system
-   - Expected vs actual output
-4. **Provide compilation artifacts**:
-   ```bash
-   # Run with --stage flag to see where it breaks
-   ts-node src/index.ts transform --stage types your_file.lisp
-   ```
+Match the surrounding code. Comments explain *why*, not *what* — and in this repo a comment that
+records a measurement or a rejected alternative is worth more than one that narrates the line below
+it.
 
-**Example bug report**:
-```markdown
-### Bug: String interpolation breaks with nested expressions
+### Diagnostics
 
-**Reproduction**:
-```lisp
-(let x 5)
-(let msg "Value: {(+ x 10)}")
-(println msg)
-```
+Every user-facing refusal gets an `LLxxxx` with a location. Never a bare `throw` — a compiler that
+hands a user a Node stack trace is a bug regardless of what it was refusing. See the
+[registry README](../src/compiler/rules/diagnostics/README.md); `npm run test:diagnostics` allocates
+the next free code and requires a probe for it.
 
-**Expected**: "Value: 15"
-**Actual**: Error: Unexpected token...
+### Commits
 
-**Environment**:
-- Node 20.18.0
-- l-lang 0.0.1
-- macOS
-```
+- One logical change per commit.
+- Stage explicit paths; never `git add -A` across the repo.
+- The subject line is a one-line ruling in the same register as the log:
+  `D85: integer division by zero PANICS; a literal zero is a compile error`.
 
 ---
 
-## 💡 Design Philosophy
+## 💡 Design philosophy
 
-When adding features, ask:
+When adding a feature, ask:
 
-1. **Does it fit l-lang's vision?**
-   - Marries Lisp elegance with static typing
-   - Pragmatic, not over-engineered
-   - Clear benefits over existing syntax
-
-2. **Is it orthogonal to existing features?**
-   - Doesn't duplicate functionality
-   - Composes well with other features
-   - Doesn't break existing code
-
-3. **Is it testable?**
-   - Can add example in `examples/`
-   - Can verify with tests
-   - Has clear expected behavior
-
-4. **Is it documented?**
-   - Added to grammar if syntax
-   - Documented in [SYNTAX.md](language-syntax.md)
-   - Examples provided
+1. **Does it fit?** Lisp elegance with static typing; pragmatic, not over-engineered.
+2. **Is it orthogonal?** It should compose with what exists rather than duplicate it.
+3. **Is it testable?** If you cannot write a corpus program that would fail without it, be suspicious.
+4. **Is it ruled?** A rule applied because it seemed consistent, rather than because it was decided,
+   is how a language grows a surface nobody agreed to. Record an open question instead.
+5. **Does it grow the surface, or the contract?** The recent history here is almost entirely
+   contract — rules over syntax that already exists. That is usually the better answer.
 
 ---
 
-## 📚 Key Documentation Files
+## 🐛 Reporting bugs
 
-**Must read**:
-- [docs/QUICK_START.md](quick-start.md) - Setup & overview
-- [docs/architecture/COMPILER_ARCHITECTURE.md](language-compiler.md) - Pipeline & design
-- [docs/development/IMPLEMENTATION_GUIDE.md](spec/DECISIONS.md) - How to add features
-- [docs/compiler/TYPE_SYSTEM.md](spec/DECISIONS.md) - Type system design
+A useful report has: a **minimal** program, what you expected and why, what each backend actually
+printed, and the command you ran. A divergence between backends is especially valuable — that is
+what the oracle is for.
 
-**Reference**:
-- [docs/API_REFERENCE.md](language-reference.md) - Built-in functions
-- [docs/language/SYNTAX.md](language-syntax.md) - Complete syntax
-- [docs/development/BUG_FIXES_SUMMARY.md](spec/DECISIONS.md) - Recent patterns
-
-**Example implementations**:
-- [docs/compiler/DEFTYPE_DEFSTRUCT_IMPLEMENTATION.md](spec/DECISIONS.md) - Type aliases & structs
-- [docs/compiler/DEFMODIFIER_IMPLEMENTATION.md](spec/DECISIONS.md) - User-defined modifiers
+The best bug reports arrive as a corpus file in `examples/80-adversarial/`.
 
 ---
 
-## 🆘 Getting Help
+## 🆘 Getting help
 
-- **Questions about architecture?** → Read [COMPILER_ARCHITECTURE.md](language-compiler.md)
-- **Stuck on implementation?** → Check [IMPLEMENTATION_GUIDE.md](docs/development/IMPLEMENTATION_GUIDE.md#debugging-tools)
-- **Need to understand types?** → Read [TYPE_SYSTEM.md](spec/DECISIONS.md)
-- **Want to see patterns?** → Check existing implementations in `docs/compiler/`
-- **Issues?** → Open a GitHub issue with details
-
----
-
-## 📖 Code Change Rules
-
-See [code change instructions in README](../README.md) - summary:
-- ✅ Make minimal modifications
-- ✅ Change only what's necessary
-- ✅ Don't fix unrelated bugs
-- ✅ Update docs if relevant
-- ✅ Run tests after changes
-- ❌ Don't break existing behavior
-- ❌ Don't remove/modify working code unless necessary
+- **Why is it like this?** → [spec/DECISIONS.md](spec/DECISIONS.md), topic index first
+- **What is broken?** → [roadmap.md](roadmap.md), Known gaps
+- **How does the suite work?** → [src/test/README.md](../src/test/README.md)
+- **Anything else** → open a GitHub issue
 
 ---
 
-## 🎓 Learning Path
+## 🙏 Thank you
 
-### Week 1: Understand the Basics
-- [ ] Read [QUICK_START.md](quick-start.md)
-- [ ] Run a few examples
-- [ ] Try the REPL
-- [ ] Read [SYNTAX.md](language-syntax.md) (first 3 sections)
-
-### Week 2: Understand the Compiler
-- [ ] Read [COMPILER_ARCHITECTURE.md](language-compiler.md)
-- [ ] Run `npm test` and understand test structure
-- [ ] Test compilation stages: `ts-node src/index.ts transform --stage types examples/00-basics/00_vars.lisp`
-- [ ] Inspect `.json` artifacts with `jq`
-
-### Week 3: Make Your First Change
-- [ ] Pick an easy issue from [TODO.md](roadmap.md)
-- [ ] Read [IMPLEMENTATION_GUIDE.md](spec/DECISIONS.md)
-- [ ] Make a small change
-- [ ] Run tests
-- [ ] Submit PR
-
-### Week 4+: Deeper Work
-- [ ] Choose feature from [ROADMAP.md](roadmap.md)
-- [ ] Study related code
-- [ ] Implement & test
-- [ ] Document & submit PR
-
----
-
-## 🙏 Thank You
-
-Thanks for contributing! You're helping build a language that combines elegance, safety, and pragmatism. We appreciate:
-
-- Code contributions
-- Bug reports
-- Documentation improvements
-- Examples & tutorials
-- Feedback & ideas
-
----
-
-**Questions?** → Create an issue or discussion on GitHub
-
-**Ready to contribute?** → Start with [QUICK_START.md](quick-start.md) and pick an issue!
+The corpus is the reason any of this can be trusted. Every adversarial example you add makes the
+next change safer.
