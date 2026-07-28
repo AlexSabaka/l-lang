@@ -255,6 +255,18 @@ export class LLangAstBuilder extends BaseCstVisitor {
         imaginary: parseFloat(parsed?.[2] || "0"),
       });
     }
+    // D88: an IMAGINARY literal is a complex-number node with a zero real part, so it rides the same
+    // desugar `3+4i` does and needs no AST type of its own. The trailing `i`/`j` is dropped before
+    // parsing; separators go with it, for the reason spelled out below.
+    if (ctx.ImaginaryNumber) {
+      const match = ctx.ImaginaryNumber[0].image;
+      const digits = match.slice(0, -1).replace(/_/g, "");
+      return this.makeNode("complex-number", ctx, {
+        match,
+        real: 0,
+        imaginary: parseFloat(digits),
+      });
+    }
     if (ctx.FractionNumber) {
       const match = ctx.FractionNumber[0].image;
       const [num, denom] = match.split("/");

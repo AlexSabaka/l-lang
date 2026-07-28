@@ -331,6 +331,25 @@ export const OctalNumber = createToken({
   name: "OctalNumber",
   pattern: /0o[0-7]+(?:_[0-7]+)*/,
 });
+/**
+ * `4i`, `4.5j`, `1_000i`, `1e3i` -- an IMAGINARY literal (D88), desugared to `(Complex 0.0 n)`.
+ *
+ * DECIMALS ONLY, by ruling: hex/octal/binary take no postfix ever. That falls out of the token order
+ * rather than needing a check -- Hex/Binary/Octal are matched BEFORE this, so `0xFFi` lexes as the hex
+ * number `0xFF` followed by the identifier `i`, and fails as an ordinary undefined name rather than
+ * silently becoming an imaginary hex.
+ *
+ * `[ij]` and not `[ijIJ]`: capital `I` is `std/math/complex`'s exported unit-imaginary CONSTANT, and a
+ * postfix that shadowed it would make `I` mean two things one character apart.
+ *
+ * The leading `[+-]?` is safe here for the same reason it is on `IntegerNumber`: l-lang is prefix, so
+ * there is no infix `x+4i` for a signed literal to swallow the operator of.
+ */
+export const ImaginaryNumber = createToken({
+  name: "ImaginaryNumber",
+  pattern:
+    /[+-]?[0-9]+(?:_[0-9]+)*(?:\.(?!\.)(?:[0-9]+(?:_[0-9]+)*)?)?(?:[eE][+-]?[0-9]+)?[ij]/,
+});
 export const FloatNumber = createToken({
   name: "FloatNumber",
   // `(?!\.)` after the dot: `0.5` and trailing-dot `1.` still lex as floats, but `0..100` no longer has
@@ -439,6 +458,7 @@ export const defaultModeTokens: TokenType[] = [
   // Literals (most specific first!) before single-char operators
   ComplexNumber, FractionNumber,
   HexNumber, BinaryNumber, OctalNumber,
+  ImaginaryNumber,
   FloatNumber, IntegerNumber,
   RawString, FormattedStringStart, Quote, StringLiteral,
   // Single-char operators after numbers (so +/- in numbers match first)
@@ -486,6 +506,7 @@ export const formatExprModeTokens: TokenType[] = [
   // Literals
   ComplexNumber, FractionNumber,
   HexNumber, BinaryNumber, OctalNumber,
+  ImaginaryNumber,
   FloatNumber, IntegerNumber,
   RawString, Quote, StringLiteral,
   // Operators

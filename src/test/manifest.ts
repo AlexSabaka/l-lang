@@ -203,6 +203,13 @@ export const MANIFEST: Record<string, ManifestEntry> = {
     status: "xfail",
     reason: "D5: array/generic argument type-checking",
   },
+  "80-adversarial/numeric_radix_literals.lisp": {
+    status: "test",
+    oracleDivergent:
+      "The JS backend cannot emit radix literals AT ALL -- `ELL0100 visitHexNumber is not implemented " +
+      "in the JS backend`, likewise octal and binary. The 2026-07-27 audit filed this as a C-backend " +
+      "defect (\"divergent refusal frontier\"); it is the opposite, and D66 freezes the JS path.",
+  },
   "80-adversarial/mangle_hex_terminator.lisp": {
     status: "test",
     oracleDivergent:

@@ -481,6 +481,16 @@
     ]
   },
   {
+    "probe": "LL0200 a hex literal is an Int, not Unknown",
+    "diagnostics": [
+      {
+        "code": "LL0200",
+        "severity": "error",
+        "text": "Type mismatch: cannot assign Int to String for variable 'h'."
+      }
+    ]
+  },
+  {
     "probe": "LL0245 a syntax module's name used without importing it",
     "diagnostics": [
       {

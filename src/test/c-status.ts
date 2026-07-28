@@ -364,6 +364,11 @@ export const C_PASSING: readonly string[] = [
   // work, and the module is injected because the LITERAL is present, which is why this file imports
   // nothing. Values hand-derived; the complex multiply is where a sign error would hide.
   "80-adversarial/numeric_tower_literals.lisp",
+  // D88 N2. Radix literals had no checker arm and inferred Unknown -- assignable both ways, so
+  // `(let h <- String 0xFF)` compiled clean. They are Int now. JS cannot emit them at all, so that
+  // file is oracle-divergent; the imaginary literal is portable and graded on both.
+  "80-adversarial/numeric_radix_literals.lisp",
+  "80-adversarial/numeric_imaginary_literal.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

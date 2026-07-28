@@ -338,6 +338,7 @@ class LLangParser extends CstParser {
         { ALT: () => this.CONSUME(t.HexNumber) },
         { ALT: () => this.CONSUME(t.BinaryNumber) },
         { ALT: () => this.CONSUME(t.OctalNumber) },
+        { ALT: () => this.CONSUME(t.ImaginaryNumber) },
         { ALT: () => this.CONSUME(t.FloatNumber) },
         { ALT: () => this.CONSUME(t.IntegerNumber) },
       ]);
@@ -1865,6 +1866,7 @@ class LLangParser extends CstParser {
       first?.tokenType === t.BinaryNumber ||
       first?.tokenType === t.OctalNumber ||
       first?.tokenType === t.FractionNumber ||
+      first?.tokenType === t.ImaginaryNumber ||
       first?.tokenType === t.ComplexNumber
     );
   }

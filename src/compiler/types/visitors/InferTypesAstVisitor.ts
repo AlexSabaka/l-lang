@@ -3699,6 +3699,13 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
       // Literals
       case "integer-number":
+      // D88: the radix literals are Int too. They had NO arm and fell through to Unknown, which the
+      // gap ledger has been counting as `A1:numeric-tower-literal` -- "channel types it Unknown, it is
+      // Int". An Unknown is assignable both ways, so `(let h <- String 0xFF)` was not an error; the
+      // literal was not merely untyped, it turned checking off at its use site.
+      case "hex-number":
+      case "octal-number":
+      case "binary-number":
         inferredType = TypeEnvironment.primitive("Int");
         break;
       

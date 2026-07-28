@@ -359,6 +359,14 @@ const PROBES: Probe[] = [
   // `EmitCirToC.ts:977` instead of a diagnostic pointing at the user's source. They are pinned HERE
   // and not in the corpus because both COMPILE AND RUN on JS, so there is no manifest status that
   // fits: `negative` asserts failure on both backends, `xfail` asserts nothing at all.
+  // D88 N2: a radix literal is an Int, so a bad assignment is caught. It inferred Unknown before --
+  // assignable in BOTH directions -- so this compiled clean. The literal did not merely lack a type;
+  // it turned checking off at its use site.
+  {
+    name: "LL0200 a hex literal is an Int, not Unknown",
+    source: "(let h <- String 0xFF)\n(console.log h)",
+    stage: "types",
+  },
   // LL0245 (D88): the name resolved only because a literal elsewhere pulled its module in. Pinned
   // HERE and not in the corpus because it is a WARNING -- the program compiles and runs, so no corpus
   // status asserts it. (It is also invisible through `run` today, which prints diagnostics only when
