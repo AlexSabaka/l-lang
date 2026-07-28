@@ -12,6 +12,11 @@
  *   the exact mistake this manifest exists to stop repeating.
  * - 'test': redundant for a file that already has a matching .expect (that's the default),
  *   but declaring it explicitly forces a hard error if the golden ever goes missing.
+ * - `oracleDivergent` (on a 'test'): graded on C against its .expect, and SKIPPED on the JS run.
+ *   For a file where C is RIGHT and the frozen JS backend is measurably WRONG (D86). Without it such
+ *   a file had nowhere to live -- a golden fails the JS run, and 'xfail' leaves C's correct answer
+ *   ungraded and free to regress silently. The string states the JS defect, so the skip is a recorded
+ *   measurement rather than a shrug. Exactly mirrors 'negative', which is graded on JS and skipped on C.
  * - 'negative': the file is SUPPOSED to fail. It must not compile, and it must report every
  *   code in `codes`. Without this status such a file has nowhere to live: run as a positive
  *   test it is a permanent ERROR (which is how 02-errors/01_errors.lisp spent the whole audit),
@@ -27,6 +32,8 @@ export interface ManifestEntry {
   reason?: string;
   /** 'negative' only: every diagnostic code the file must report. */
   codes?: string[];
+  /** 'test' only: grade on C, skip on JS. The string names the measured JS defect (D86). */
+  oracleDivergent?: string;
 }
 
 // Keyed by path relative to examples/.
@@ -196,19 +203,21 @@ export const MANIFEST: Record<string, ManifestEntry> = {
     status: "xfail",
     reason: "D5: array/generic argument type-checking",
   },
+  "80-adversarial/mangle_hex_terminator.lisp": {
+    status: "test",
+    oracleDivergent:
+      "The SAME collision D84 fixed on C: JS's `encodeIdentifier` maps `x-ac` and `x\u2DAC` both onto " +
+      "`x2dac` and emits `const x2dac` twice. It is caught there only because redeclaring a const is a " +
+      "JavaScript syntax error -- surfacing as ELL0101 'the JS backend emitted code that is not valid " +
+      "JavaScript', a codegen bug rather than a diagnostic.",
+  },
   "20-algorithms/00_bfs.lisp": {
-    status: "xfail",
-    reason:
-      "Re-measured 2026-07-27, and the blocker MOVED to the oracle. The two example faults are fixed: " +
-      "D9's forced nil-check on `queue.shift` (`Point?`) is written out, and `visited[key]` became " +
-      "`(get visited key)` because the INDEXER is partial and raised KeyError on every unvisited cell. " +
-      "C is now CORRECT -- all 13 lines match a hand-derived BFS trace ending `Found goal at 4, 4`. " +
-      "JS prints `Visiting 0, 0` twice and `No path found`, because it DROPS CONSTRUCTOR ARGUMENTS: " +
-      "`(new Point 3 4)` answers (0,0) for a class or struct with no explicit `:ctor`, so every queued " +
-      "point is the origin. Reduced to five lines; D66 says the JS backend is not fixed. No golden, " +
-      "because the corpus cannot yet say 'pinned against C, oracle known-wrong' -- the manifest is " +
-      "backend-independent. That mechanism is what this file and `hyphen_field_encoding` are both " +
-      "waiting on.",
+    status: "test",
+    oracleDivergent:
+      "JS DROPS CONSTRUCTOR ARGUMENTS: `(new Point 3 4)` answers (0,0) for a class or struct with no " +
+      "explicit `:ctor`, so every queued point is the origin and the search prints `Visiting 0, 0` " +
+      "twice then `No path found`. Reduced to five lines. C walks all 13 steps of a hand-derived BFS " +
+      "trace ending `Found goal at 4, 4`, which is this file's golden.",
   },
   // The bounds check its own comment admitted was missing is now written -- one flat `and` whose
   // short-circuit runs the bounds tests before the indexer that depends on them. Passes on BOTH.
@@ -264,15 +273,12 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   // dropped all but the first element), CF1 (return inside ||/&& was swallowed by an IIFE), PR3
   // (\xHH degraded to the bare char). Only PR4 below is still live.
   "80-adversarial/hyphen_field_encoding.lisp": {
-    status: "xfail",
-    reason:
-      "STILL BROKEN -- silent wrong answer (finding PR4, l-lang-ex snake). A hyphenated map field " +
-      "encodes inconsistently: the `:next-dir` map key stays literal, but DOT access mangles the " +
-      "hyphen (`.next-dir` -> `.next2ddir`). So `w.next-dir` reads a key that was never written " +
-      "(undefined), `(w.next-dir := \"down\")` writes a SECOND mangled `next2ddir` key, and " +
-      "`(w[\"next-dir\"])` bracket-reads the original -- the three spellings disagree on one field. " +
-      "No golden: current output is wrong and a golden would bless it. Expected-vs-actual is in the " +
-      "file header and the writeup.",
+    status: "test",
+    oracleDivergent:
+      "JS mangles a hyphenated field on DOT access but not as a map key, so `.next-dir` reads and " +
+      "writes `next2ddir` while `w[\"next-dir\"]` reads the original -- three spellings of one field " +
+      "disagreeing, and the map grows a second key. C makes all three agree, which is verbatim the " +
+      "EXPECTED block this file's header has carried since it was written.",
   },
 
   // --- 02-errors/diagnostics: negative tests (p1-matrix ll* probes) ---

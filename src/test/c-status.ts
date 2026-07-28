@@ -355,6 +355,11 @@ export const C_PASSING: readonly string[] = [
   // the stack. Now it ends the process. `.panic` golden, so a regression to catchable shows up as
   // extra stdout.
   "80-adversarial/debug_panic_is_fatal.lisp",
+  // D86 oracle-divergent trio: C is right, the frozen JS backend is measurably wrong, so each is
+  // graded HERE and skipped on the JS run. They were parked as xfail for want of exactly that status.
+  "80-adversarial/hyphen_field_encoding.lisp",
+  "80-adversarial/mangle_hex_terminator.lisp",
+  "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check
   // fired -- the compiler being right about an algorithm that was wrong.

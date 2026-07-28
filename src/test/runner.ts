@@ -115,14 +115,14 @@ const COMPILE_OPTIONS: CompilerOptions = {
 
 interface TestResult {
   name: string;
-  status: 'pass' | 'fail' | 'skip' | 'error' | 'not-yet' | 'refused' | ExampleStatus;
+  status: 'pass' | 'fail' | 'skip' | 'error' | 'not-yet' | 'refused' | 'divergent' | ExampleStatus;
   message?: string;
   expected?: string;
   actual?: string;
   stderr?: string;
 }
 
-type Classification = { status: ExampleStatus | 'undeclared'; reason?: string; codes?: string[] };
+type Classification = { status: ExampleStatus | 'undeclared'; reason?: string; codes?: string[]; oracleDivergent?: string };
 
 /**
  * A sibling `<name>.panic` declares that the example is EXPECTED to die at run time -- the corpus
@@ -528,6 +528,12 @@ function printTestResult(result: TestResult, index: number, total: number) {
         console.log();
       }
       break;
+    // Its OWN status rather than a skip, and counted, deliberately: a skip reads as "we gave up",
+    // and this is a recorded measurement of a frozen backend (D86). If the number grows, the oracle
+    // is drifting further from the reference and that should be visible without --verbose.
+    case 'divergent':
+      console.log(chalk.magenta('🔀 DIVERGENT') + (result.message ? chalk.gray(`  (${result.message})`) : ''));
+      break;
     case 'skip':
       console.log(chalk.yellow('⚠️  SKIP'));
       if (VERBOSE && result.message) {
@@ -619,15 +625,21 @@ function validateRatchets(): number {
 }
 
 /** A file the parent has already classified, handed to a worker (or the serial path) to run. */
-type ClassifiedItem = { filePath: string; status: ExampleStatus; reason?: string; codes?: string[] };
+type ClassifiedItem = { filePath: string; status: ExampleStatus; reason?: string; codes?: string[]; oracleDivergent?: string };
 
 /**
  * Run one already-classified example to a TestResult. The SINGLE source of per-file dispatch, shared
  * by the serial path and every worker -- so parallel and serial cannot drift on how a file is graded.
  */
 function runClassified(item: ClassifiedItem): TestResult {
-  const { filePath, status, reason, codes } = item;
+  const { filePath, status, reason, codes, oracleDivergent } = item;
   if (status === 'test') {
+    // D86: C is the reference. A file marked `oracleDivergent` is graded on C and SKIPPED on JS,
+    // because the frozen oracle is measurably wrong for it -- the mirror of `negative`, which is
+    // graded on JS and skipped on C. The reason rides along so the skip prints what the defect IS.
+    if (oracleDivergent && BACKEND === 'js') {
+      return { name: path.basename(filePath), status: 'divergent', message: oracleDivergent };
+    }
     return BACKEND === 'c' ? runCTest(filePath) : runTest(filePath);
   }
   if (status === 'negative') {
@@ -758,6 +770,7 @@ async function main() {
   // 'undeclared' already exited above -- everything reaching here is a real ExampleStatus.
   const items: ClassifiedItem[] = classifications.map((c) => ({
     filePath: c.filePath, status: c.status as ExampleStatus, reason: c.reason, codes: c.codes,
+    oracleDivergent: c.oracleDivergent,
   }));
 
   let results: TestResult[];
@@ -784,6 +797,7 @@ async function main() {
   const xfail = results.filter(r => r.status === 'xfail').length;
   const notYet = results.filter(r => r.status === 'not-yet').length;
   const refused = results.filter(r => r.status === 'refused').length;
+  const divergent = results.filter(r => r.status === 'divergent').length;
 
   console.log(chalk.bold('\n================================'));
   console.log(chalk.bold(BACKEND === 'c' ? '  Test Results (C backend)' : '  Test Results'));
@@ -795,6 +809,7 @@ async function main() {
     console.log(chalk.gray(`🚧 Not yet:  ${notYet}`));
     console.log(chalk.blue(`🚫 Refused:  ${refused}`));
   }
+  if (divergent) console.log(chalk.magenta(`🔀 Divergent:${divergent}`) + chalk.gray('  (C is the reference -- D86)'));
   console.log(chalk.cyan(`📚 Library:  ${library}`));
   console.log(chalk.magenta(`🧪 Fixture:  ${fixture}`));
   console.log(chalk.yellow(`⏳ XFail:    ${xfail}`));

@@ -1,0 +1,4 @@
+read-only half: up
+after write: down
+bracket: down
+whole map: {"next-dir":"down"}
