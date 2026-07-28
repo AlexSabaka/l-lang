@@ -481,6 +481,26 @@
     ]
   },
   {
+    "probe": "LL0244 integer division by a literal zero",
+    "diagnostics": [
+      {
+        "code": "LL0244",
+        "severity": "error",
+        "text": "Integer '/' by a literal zero. At run time this PANICS (D85) -- a zero divisor is a contract the caller broke, not data to recover from -- so a zero written directly in the source is a program that cannot do anything but abort. Reported here instead. (Real division is unaffected: '(/ 1.0 0.0)' is Infinity by IEEE 754.)"
+      }
+    ]
+  },
+  {
+    "probe": "LL0244 integer modulo by a literal zero",
+    "diagnostics": [
+      {
+        "code": "LL0244",
+        "severity": "error",
+        "text": "Integer '%' by a literal zero. At run time this PANICS (D85) -- a zero divisor is a contract the caller broke, not data to recover from -- so a zero written directly in the source is a program that cannot do anything but abort. Reported here instead. (Real division is unaffected: '(/ 1.0 0.0)' is Infinity by IEEE 754.)"
+      }
+    ]
+  },
+  {
     "probe": "LL0106 C emitter refuses a method bound as a value",
     "diagnostics": [
       {

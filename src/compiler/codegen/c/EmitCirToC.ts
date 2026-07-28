@@ -898,6 +898,19 @@ export class EmitCirToC {
         const r = this.expr(e.rhs);
         switch (e.mode) {
           case "int":
+            // `/` and `%` go through a guarded helper (D85). Raw `a / b` is undefined for b == 0 AND
+            // for INT64_MIN / -1, and undefined is not a value: the same emitted unit answered 0 at
+            // -O0 and 1 at -O2 on arm64, and traps on x86. `ll_idiv` panics on zero and spells the
+            // INT_MIN case as the wrap D51 promises.
+            //
+            // ELIDED for a literal divisor that is neither 0 nor -1 -- the common `(/ n 2)` shape --
+            // so the guard costs nothing where it provably cannot fire. A literal ZERO never reaches
+            // here: `LL0244` rejects it at the type stage.
+            if (e.op === "/" || e.op === "%") {
+              const lit = e.rhs.kind === "c-lit" && e.rhs.lit === "int" ? e.rhs.value : undefined;
+              const safe = lit !== undefined && lit !== "0" && lit !== "-1";
+              if (!safe) return `${e.op === "/" ? "ll_idiv" : "ll_imod"}(${l}, ${r})`;
+            }
             return `(${l} ${e.op} ${r})`;
           case "real":
             if (e.op === "%") return `fmod(${l}, ${r})`;

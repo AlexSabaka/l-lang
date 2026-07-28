@@ -359,6 +359,18 @@ const PROBES: Probe[] = [
   // `EmitCirToC.ts:977` instead of a diagnostic pointing at the user's source. They are pinned HERE
   // and not in the corpus because both COMPILE AND RUN on JS, so there is no manifest status that
   // fits: `negative` asserts failure on both backends, `xfail` asserts nothing at all.
+  // LL0244 (D85): a zero divisor the compiler can SEE. Reported by the type stage, so it fires on
+  // both backends -- the probe runs the default js.
+  {
+    name: "LL0244 integer division by a literal zero",
+    source: "(console.log (/ 1 0))",
+    stage: "types",
+  },
+  {
+    name: "LL0244 integer modulo by a literal zero",
+    source: "(console.log (% 1 0))",
+    stage: "types",
+  },
   {
     name: "LL0106 C emitter refuses a method bound as a value",
     source:

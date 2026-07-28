@@ -6385,3 +6385,55 @@ the other "C right, oracle wrong" cases waiting on a way to pin them.
 Pinned by `80-adversarial/mangle_injective.lisp`, C-passing: the colliding pair as two globals, the
 silent shadowing shape, the join at two classes, and — as the guard that the longer escape did not
 break the common case — ordinary kebab names plus `snake_case`/`snake-case`/`_leading`/`trailing_`.
+
+## D85 — integer division by zero PANICS; a literal zero is a compile error (2026-07-28)
+
+`EmitCirToC` emitted raw `(a / b)` for statically-typed Int/Int. C leaves integer division undefined
+for **two** divisors, and undefined is not a value:
+
+*   **`b == 0`** — the same emitted translation unit answered **0 at -O0 and 1 at -O2** on arm64, and
+    x86's `IDIV` raises `#DE` and kills the process. One program, three behaviours, chosen by host and
+    optimiser. (The 2026-07-27 audit reported this as a SIGFPE crash. It is not one here; that
+    observation was x86's. The divergence is the real defect and it is worse than the crash, because a
+    crash is at least loud.)
+*   **`INT64_MIN / -1`** — the true result is 2^63, unrepresentable. D51 says Int **wraps**; C says
+    undefined, and `-fwrapv` does not rescue it because x86 traps in hardware regardless.
+
+**Ruling (Sabaka): detectable at compile time is a compile error; detected at run time is a panic.**
+
+A zero divisor is a **contract the caller broke**, not data to recover from — so it lands on the far
+side of D82's line from an out-of-range index, next to a refinement violation. `ll_idiv`/`ll_imod`
+therefore do their own `fprintf` + `exit`, exactly as `ll_refine_check_int` does, and **never route
+through the catchable `ll_trap`**. Sabaka extended the same principle to `std/debug`'s `assert`.
+
+`ArithmeticError` is the name in the message. The D62 tower already declares it and
+`std/math/rational` already throws it for a zero denominator — so the primitive and the stdlib now
+agree on what this failure is *called*, while differing on severity in the way they should: check
+explicitly and you get a catchable exception, skip the check and you get a panic. That is the same
+split as `checked_div` versus `/`.
+
+**Scope, and it is narrower than it looks.** REAL division is untouched: `(/ 1.0 0.0)` is `Infinity`
+and `(% 1.0 0.0)` is `NaN` by IEEE 754, legal, and already identical on both backends. Only the
+*integer* operators are wrong at zero.
+
+**The overflow half is not a new ruling.** D51 already made Int wrapping two's-complement, and both
+backends already answered `INT64_MIN`. The guard changes **no observable value** — it stops the C being
+undefined while producing it, by negating through `uint64_t`, which is the defined spelling of the
+same bits. `a % -1` is 0 for every `a`, so that guard needs no arithmetic at all.
+
+**LL0244 is deliberately syntactic.** Only a literal `0` in divisor position is reported. Following
+`(let z 0)` to its use needs constant propagation the type stage does not do, and a check that fired on
+*some* constant zeros would be worse than one whose rule a reader can state. The runtime guard covers
+everything it misses. It lives in the type stage, so both backends report it.
+
+**The guard is elided** for a literal divisor that is neither `0` nor `-1` — the common `(/ n 2)` —
+so it costs nothing where it provably cannot fire.
+
+**A deliberate divergence.** On JS, `(/ 1 0)` throws a host `BigInt` `RangeError` that a broad
+`catch :of Error` swallows — and notably NOT a `catch :of ArithmeticError`, so its catchability was
+never designed, just inherited. D66 freezes that backend. C panics, JS catches; C is the ruled
+behaviour.
+
+Pinned by `80-adversarial/integer_division_guard.lisp` (C-passing: the real cases, ordinary and
+negative operands, a non-literal divisor, and `INT64_MIN / -1` in both the bound and literal spellings)
+and by two `test:diagnostics` probes for LL0244.

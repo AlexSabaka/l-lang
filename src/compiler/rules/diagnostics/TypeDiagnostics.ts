@@ -432,6 +432,18 @@ export const TypeDiagnostics = {
       `(Int, Real, String, Char, Boolean, Void).`
   ),
 
+  // LL0244 -- a zero divisor the compiler can see (D85). Int only: `(/ 1.0 0.0)` is Infinity by
+  // IEEE 754 and legal on both backends, so only the INTEGER operators are wrong at zero.
+  DivisionByZeroLiteral: def<{ op: string }>(
+    "LL0244",
+    Error,
+    (p) =>
+      `Integer '${p.op}' by a literal zero. At run time this PANICS (D85) -- a zero divisor is a ` +
+      `contract the caller broke, not data to recover from -- so a zero written directly in the ` +
+      `source is a program that cannot do anything but abort. Reported here instead. ` +
+      `(Real division is unaffected: '(/ 1.0 0.0)' is Infinity by IEEE 754.)`
+  ),
+
   // LL0230
   ArrayLazyMember: def<{ member: string }>(
     "LL0230",

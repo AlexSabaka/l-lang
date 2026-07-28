@@ -2526,6 +2526,36 @@ static int64_t ll_bit_ushr(int64_t a, int64_t n) { return (int64_t)((uint64_t)a 
    contract violation is a bug, not a catchable exception (it does NOT ll_throw, so it never crosses
    the floor; the recoverable path is a future D47 signal). clo/chi are 0/1 gates so an open bound is
    checked on one side only. */
+/* Integer division and modulo (D85).
+ *
+ * A zero divisor PANICS, and deliberately does not route through `ll_trap`: a trap is catchable
+ * (D82), and Sabaka's ruling puts a zero divisor on the CONTRACT side of that line rather than the
+ * data side. So these sit beside `ll_refine_check_*` -- their own `fprintf` + `exit`, no handler
+ * lookup, nothing to catch. The kind is spelled in the message because there is no object to build.
+ *
+ * `b == -1` is the OTHER guard, and it is not about zero at all. `INT64_MIN / -1` is 2^63, which does
+ * not fit, and in C that is undefined behaviour rather than the wrap D51 promises -- on x86 the IDIV
+ * instruction raises #DE and kills the process even under `-fwrapv`. Negating through `uint64_t` is
+ * the defined spelling of the same value, so D51's wrap holds on every host. `a % -1` is 0 for all a,
+ * including INT64_MIN, so the modulo guard needs no arithmetic at all. */
+static int64_t ll_idiv(int64_t a, int64_t b) {
+    if (b == 0) {
+        fprintf(stderr, "ArithmeticError: division by zero\n");
+        exit(1);
+    }
+    if (b == -1) return (int64_t)(0u - (uint64_t)a);
+    return a / b;
+}
+
+static int64_t ll_imod(int64_t a, int64_t b) {
+    if (b == 0) {
+        fprintf(stderr, "ArithmeticError: modulo by zero\n");
+        exit(1);
+    }
+    if (b == -1) return 0;
+    return a % b;
+}
+
 static int64_t ll_refine_check_int(int64_t v, int64_t lo, int64_t hi, int64_t clo, int64_t chi) {
     if ((clo && v < lo) || (chi && v > hi)) {
         fprintf(stderr, "refinement violated: %lld is outside the declared range\n", (long long)v);

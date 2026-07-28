@@ -344,6 +344,12 @@ export const C_PASSING: readonly string[] = [
   // parameter shadowing the other (10 where JS said 116). The same escape fixes the
   // `__ll_method_<class>_<method>` join, which `Foo`+`bar_baz` and `Foo_bar`+`baz` both reached.
   "80-adversarial/mangle_injective.lisp",
+  // D85. Raw `(a / b)` was emitted for static Int/Int, which C leaves undefined for b == 0 and for
+  // INT64_MIN / -1 -- the same unit answered 0 at -O0 and 1 at -O2 here, and traps on x86. Guarded
+  // now: a zero divisor PANICS (ruled a contract violation, so it does not route through the
+  // catchable `ll_trap`), and INT_MIN/-1 produces D51's wrap value without going through UB to get
+  // there. This file pins the values that must NOT have moved.
+  "80-adversarial/integer_division_guard.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check
   // fired -- the compiler being right about an algorithm that was wrong.

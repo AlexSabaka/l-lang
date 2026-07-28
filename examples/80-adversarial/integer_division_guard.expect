@@ -1,0 +1,11 @@
+real / 0.0 : Infinity
+real % 0.0 : NaN
+7 / 2      : 3 1
+-7 / 2     : -3 -1
+7 / -2     : -3 1
+by binding : 4 1
+MIN / -1   : -9223372036854775808
+MIN % -1   : 0
+MIN / lit  : -9223372036854775808
+MIN % lit  : 0
+done

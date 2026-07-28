@@ -4000,7 +4000,9 @@ class InferAndCheckPass extends BaseAstTreeWalker {
           // An operator is not a function you can shadow; which overload applies depends on the
           // OPERAND types, which is exactly what inferOperatorType/TypeChecker.findOperator does.
           if (TypeChecker.isOperatorName(funcName)) {
-            inferredType = this.inferOperatorType(funcName, listNodes(listNode).slice(1));
+            const opArgs = listNodes(listNode).slice(1);
+            this.checkLiteralZeroDivisor(funcName, opArgs, listNode);
+            inferredType = this.inferOperatorType(funcName, opArgs);
           }
           // Handle function calls
           else if (funcType && funcType.kind === "function") {
@@ -4970,6 +4972,31 @@ class InferAndCheckPass extends BaseAstTreeWalker {
    * A variadic function absorbs the tail, so its declared params are a MINIMUM, not an exact count --
    * the corpus really does have `(fn print [msg <- String ...args])`, `compose` and `partial`.
    */
+  /**
+   * LL0244 (D85): integer `/` or `%` by a ZERO WRITTEN IN THE SOURCE.
+   *
+   * The runtime answer is a panic, so a literal zero divisor is a program whose only possible outcome
+   * is an abort -- worth saying at compile time rather than at run time. Sabaka's ruling: detectable
+   * at compile time is a compile error, detected at run time is a panic.
+   *
+   * DELIBERATELY SYNTACTIC. Only a literal `0` in the divisor position is reported -- `(let z 0)`
+   * followed by `(/ x z)` is not, because tracking that needs constant propagation this pass does not
+   * do, and a check that fires on SOME constant zeros would be worse than one whose rule a reader can
+   * state. The runtime guard covers everything this misses.
+   *
+   * Int only: `(/ 1.0 0.0)` is Infinity by IEEE 754 and is legal on both backends, so a Real divisor
+   * is not an error. A bare `0` is an Int literal (D71 -- a `.` or an exponent is what makes a Real),
+   * so testing the literal's own spelling is the whole test.
+   */
+  private checkLiteralZeroDivisor(op: string, args: ast.ASTNode[], reportNode: ast.ASTNode): void {
+    if (op !== "/" && op !== "%") return;
+    if (args.length !== 2) return;
+    const divisor = args[1];
+    if (divisor?._type !== "integer-number") return;
+    if (Number((divisor as ast.IntegerNumberNode).value) !== 0) return;
+    this.report(TD.DivisionByZeroLiteral, reportNode, { op });
+  }
+
   private checkCallArguments(
     funcType: InferredType,
     funcName: string,
