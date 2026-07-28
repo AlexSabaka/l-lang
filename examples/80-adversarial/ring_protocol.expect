@@ -1,0 +1,10 @@
+Int:       yes
+Real:      yes
+Rational:  yes
+Complex:   yes
+Coin:      yes
+Money:     yes
+Coin  :of Ring (runtime): true
+Money :of Ring (runtime): false
+coins:     12
+money:     375

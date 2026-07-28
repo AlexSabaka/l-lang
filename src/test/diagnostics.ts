@@ -333,6 +333,14 @@ const PROBES: Probe[] = [
   { name: "silent: annotated arithmetic", source: "(let a <- Int 1)\n(let b <- Int 2)\n(console.log (+ a b))" },
   { name: "silent: a parameter resolves", source: "(fn f [n <- Int] -> Int (return (+ n 1)))\n(console.log (f 1))" },
   { name: "silent: JS globals", source: '(console.log (Math.max 1 2) (JSON.stringify [1]))' },
+  // D89's positive half. Before it, this was `LL0203 expected Ring, got Int` -- no primitive conformed
+  // to any interface at all -- which made a numeric protocol useless for the numbers.
+  {
+    name: "silent: Ring accepts a primitive",
+    source:
+      "(definterface Ring<T> (fn :operator + [other <- T] -> T) (fn :operator * [other <- T] -> T))\n" +
+      "(fn f [x <- Ring] -> Int (return 1))\n(console.log (f 3) (f 2.5))",
+  },
 
   // --- C backend refusals (LL0105 / LL0107): the probe's honest "not modeled" answers. These
   //     type-check clean (and compile on JS) but refuse on the C backend, so they run language:"c"
@@ -406,6 +414,35 @@ const PROBES: Probe[] = [
   {
     name: "LL0244 integer modulo by a literal zero",
     source: "(console.log (% 1 0))",
+    stage: "types",
+  },
+  // D89: a PRIMITIVE answers an OPERATOR-named interface member and nothing else. The interface is
+  // declared inline rather than imported from `std/core/protocols` so these stay dep-free like their
+  // neighbours; the stdlib declaration is pinned by `80-adversarial/ring_protocol.lisp`.
+  {
+    name: "LL0203 Ring refuses a String (it has + and no *)",
+    source:
+      "(definterface Ring<T> (fn :operator + [other <- T] -> T) (fn :operator * [other <- T] -> T))\n" +
+      '(fn f [x <- Ring] -> Int (return 1))\n(console.log (f "s"))',
+    stage: "types",
+  },
+  // The SCOPE of the widening, and the reason it is keyed on `isOperatorName`: a NAMED member is not
+  // synthesized, so `Int` still fails an interface that asks for a method. If this ever goes silent,
+  // "primitives conform to operator protocols" has quietly become "primitives conform to anything".
+  {
+    name: "LL0203 a named-member interface still refuses Int",
+    source:
+      "(definterface Comparable<T> (fn compare-to [other <- T] -> Int))\n" +
+      "(fn f [x <- Comparable] -> Int (return 1))\n(console.log (f 3))",
+    stage: "types",
+  },
+  // And a comparison-only interface must NOT be satisfiable by synthesis: `getBinaryOpType` answers
+  // Boolean for every `<` whatever the operands, so an operator that cannot say no is not evidence.
+  {
+    name: "LL0203 a comparison-member interface is not answered by synthesis",
+    source:
+      "(definterface Ordered<T> (fn :operator < [other <- T] -> Boolean))\n" +
+      "(fn f [x <- Ordered] -> Int (return 1))\n(console.log (f 3))",
     stage: "types",
   },
   {

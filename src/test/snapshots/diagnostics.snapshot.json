@@ -461,6 +461,10 @@
     "diagnostics": []
   },
   {
+    "probe": "silent: Ring accepts a primitive",
+    "diagnostics": []
+  },
+  {
     "probe": "LL0105 C backend refuses an async function",
     "diagnostics": [
       {
@@ -541,6 +545,36 @@
         "code": "LL0244",
         "severity": "error",
         "text": "Integer '%' by a literal zero. At run time this PANICS (D85) -- a zero divisor is a contract the caller broke, not data to recover from -- so a zero written directly in the source is a program that cannot do anything but abort. Reported here instead. (Real division is unaffected: '(/ 1.0 0.0)' is Infinity by IEEE 754.)"
+      }
+    ]
+  },
+  {
+    "probe": "LL0203 Ring refuses a String (it has + and no *)",
+    "diagnostics": [
+      {
+        "code": "LL0203",
+        "severity": "error",
+        "text": "Argument 1 of 'f': expected Ring, got String."
+      }
+    ]
+  },
+  {
+    "probe": "LL0203 a named-member interface still refuses Int",
+    "diagnostics": [
+      {
+        "code": "LL0203",
+        "severity": "error",
+        "text": "Argument 1 of 'f': expected Comparable, got Int."
+      }
+    ]
+  },
+  {
+    "probe": "LL0203 a comparison-member interface is not answered by synthesis",
+    "diagnostics": [
+      {
+        "code": "LL0203",
+        "severity": "error",
+        "text": "Argument 1 of 'f': expected Ordered, got Int."
       }
     ]
   },

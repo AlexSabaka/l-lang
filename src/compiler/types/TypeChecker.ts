@@ -76,6 +76,45 @@ export class TypeChecker {
   }
 
   /**
+   * The member a NON-CLASS type answers an OPERATOR-named interface member with (D89).
+   *
+   * `Int` has no member list -- it is a primitive, not a declaration -- and it still answers `+` and
+   * `*`. Where a class's `+` is found in `availableClassMembers`, a primitive's is found in the
+   * operator tables, so this synthesizes the member the interface is asking about and hands it back in
+   * the SAME shape a declared one has. The comparison downstream is then literally the same line, which
+   * is the point: a primitive and a class are judged by one rule, not two that can disagree.
+   *
+   * Scoped to operators BY CONSTRUCTION rather than by a list of blessed types. `isOperatorName` is the
+   * existing "is this punctuation" test (it is how `inferOperatorType` tells `Math.log` from `*`), so a
+   * NAMED interface member -- `compare-to`, `format` -- finds nothing here and a primitive still fails
+   * it. That is why `[x <- Comparable]` keeps refusing `3`: `Int` has no `compare-to` and inventing one
+   * would be a different, much larger claim than "Int can be added".
+   *
+   * `undefined` means "does not answer", which the caller reads as a failed conformance.
+   */
+  private static operatorMemberOf(source: InferredType, required: any): any | undefined {
+    if (!this.isOperatorName(required?.name ?? "")) return undefined;
+    // `getBinaryOpType` answers Boolean for EVERY comparison, whatever the operands -- there is no pair
+    // it refuses. Synthesizing one would make every type in the language conform to any interface that
+    // names it, which is the empty-interface failure this function's caller already refuses by hand: an
+    // operator that cannot say no is not evidence that the type answers it.
+    if (["<", ">", "<=", ">=", "==", "!=", "≠"].includes(required.name)) return undefined;
+    const sig = required.type;
+    if (!sig || sig.kind !== "function") return undefined;
+
+    // Arity comes from the INTERFACE's own signature, so a unary `-` and a binary `-` are asked of the
+    // right table. `Ring`'s members are binary; nothing forces that here.
+    const params: InferredType[] = sig.params ?? [];
+    const returns =
+      params.length === 1 ? this.getBinaryOpType(required.name, source, params[0].kind === "generic" ? source : params[0])
+      : params.length === 0 ? this.getUnaryOpType(required.name, source)
+      : undefined;
+    if (!returns) return undefined;
+
+    return { name: required.name, type: { kind: "function", name: "Function", params: params.length === 1 ? [source] : [], returns } };
+  }
+
+  /**
    * Does `source` satisfy `target` INTERFACE by shape, declared or not? (D42/Zg -- the Go model.)
    *
    * WIDTH: the source must have every member the interface names; extras are fine -- that is what
@@ -84,6 +123,11 @@ export class TypeChecker {
    * Only INTERFACE targets. Class-to-class and struct-to-struct stay nominal (`typesEqual`), so `Dog`
    * is still not a `Cat` however identical their shapes -- that is the half of D42 that P7d got right
    * and this must not undo.
+   *
+   * D89 widened the SOURCE side: a non-class source answers OPERATOR-named members from the operator
+   * tables (`operatorMemberOf`). Before that, no primitive conformed to any interface at all -- measured,
+   * `[x <- Comparable]` and `[x <- Ring]` both refused `3` -- which made a `Ring` constraint useless for
+   * exactly the types a numeric protocol exists to describe.
    */
   private static conformsStructurally(
     source: InferredType,
@@ -91,7 +135,6 @@ export class TypeChecker {
     symbolTable?: SymbolTable
   ): boolean {
     if (!symbolTable || target.kind !== "interface" || !target.name || !source?.name) return false;
-    if (source.kind !== "class" && source.kind !== "struct") return false;
 
     const required = this.requiredInterfaceMembers(target.name, symbolTable);
 
@@ -103,10 +146,16 @@ export class TypeChecker {
     // before this and answers declared conformance on its own.
     if (required.length === 0) return false;
 
-    const available = this.availableClassMembers(source.name, symbolTable);
+    // A declaration has a member list; a primitive does not, so `operatorMemberOf` stands in for one.
+    // The fallback runs for classes too and costs them nothing -- `getBinaryOpType` refuses a class
+    // operand -- so there is one lookup expression rather than two branches to keep in step.
+    const available =
+      source.kind === "class" || source.kind === "struct"
+        ? this.availableClassMembers(source.name, symbolTable)
+        : [];
 
     return required.every((r: any) => {
-      const m = available.find((a: any) => a.name === r.name);
+      const m = available.find((a: any) => a.name === r.name) ?? this.operatorMemberOf(source, r);
       if (!m) return false;
       // Member types are compared only when BOTH sides carry a real one. `Any` on either side means
       // "not inferred", not "anything goes" -- and treating an un-inferred member as a mismatch would

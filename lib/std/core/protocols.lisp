@@ -1,7 +1,7 @@
 ;; std/core/protocols -- the small universal protocols (D55/§10: "complete the set").
 ;;
 ;; l-lang already ships one-or-two-method interfaces as the house style -- Iterable/Iterator/Disposable,
-;; Writer/Reader, Clock. This module adds the three that every language eventually needs, kept exactly as
+;; Writer/Reader, Clock. This module adds the four that every language eventually needs, kept exactly as
 ;; small: a type OPTS IN by `:implements`ing one, and the stdlib's generic operations dispatch on it.
 ;;
 ;;   * Comparable<T> -- one method `compare-to` gives the whole order (< <= > >= via its sign).
@@ -9,6 +9,8 @@
 ;;   * Formattable   -- `format` customizes how a value renders through `display` (interpolation, print,
 ;;                      console.log) -- wired into the floor display path, so a Formattable type prints
 ;;                      its own way EVERYWHERE, not only where someone remembered to call a formatter.
+;;   * Ring<T>       -- `+` and `*`. D88 named it "the natural fourth protocol beside D63's"; D89 built
+;;                      it, and it is what a MATRIX's cells must share.
 ;;
 ;; The generics below (`compare`, `hash-of`) are protocol-aware with a total fallback, so they work on
 ;; primitives too -- `(compare 3 5)` is -1 without anyone implementing anything.
@@ -22,6 +24,25 @@
 
   (definterface Formattable
     (fn format [] -> String))
+
+  ;; The algebraic one, and the only protocol here whose members are OPERATORS rather than names.
+  ;;
+  ;; That difference is load-bearing. A primitive has no member list, so `Int` conformed to NOTHING
+  ;; before D89 -- `[x <- Comparable]` refused `3` and so would `[x <- Ring]`, which is absurd for the
+  ;; type a numeric protocol most exists to describe. The checker now answers an OPERATOR-named member
+  ;; from its operator tables, so `Int`, `Real` and `Char` are Rings, `Rational` and `Complex` are Rings
+  ;; through their declared overloads, and `String` is not (it has `+` and no `*`). A NAMED member is
+  ;; untouched by that rule, which is why `Comparable` still refuses `3`.
+  ;;
+  ;; The rule is deliberately NOT "must be numeric": that would exclude `Rational` and `Complex`, which
+  ;; are exactly the types D88 built. It is "closed under `+` and `*`", which is what a ring is.
+  ;;
+  ;; KNOWN LOOSENESS, measured: a bare `Ring` erases `T`, so a type whose `*` takes something OTHER than
+  ;; itself still conforms -- `Vec2`'s `(fn :operator * [k <- Real] -> Vec2)` passes. Tightening it to a
+  ;; genuine closed-under-`T` check needs bounded generics (Phase Bg), which are not built.
+  (definterface Ring<T>
+    (fn :operator + [other <- T] -> T)
+    (fn :operator * [other <- T] -> T))
 
   ;; -- generic compare: the one order sort/min/max route through ------------------------------------
   ;; Comparable when the receiver is; otherwise the natural order of a primitive (Int/Real/String/Char)
@@ -46,5 +67,5 @@
     (for :each c :from cps :then (h := (bxor (* h 33) c)))
     (return h)))
 
-  (export Comparable Hashable Formattable compare hash-of)
+  (export Comparable Hashable Formattable Ring compare hash-of)
 )

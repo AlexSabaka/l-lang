@@ -377,6 +377,11 @@ export const C_PASSING: readonly string[] = [
   // demand-injected now, so the operator that had desugared to an unreachable name since it landed
   // finally works with no import.
   "80-adversarial/range_adjacency.lisp",
+  // D89. `Ring` is D88's recorded fourth protocol, and building it was mostly a measurement: structural
+  // conformance already answered it for a CLASS, and no PRIMITIVE conformed to any interface at all --
+  // `[x <- Ring]` refused `3`. An operator-named member is now synthesized from the operator tables, so
+  // Int/Real conform and `Comparable` still refuses `3` (a NAME, not punctuation).
+  "80-adversarial/ring_protocol.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check
