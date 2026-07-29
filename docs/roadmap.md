@@ -1150,17 +1150,34 @@ coroutine split in a C `for(...)` update slot. Only possible because **C2** made
 **Still D94's `nil`:** a loop as a call argument or `return` operand. `(+ (while …) 1)` is still
 LL0204. That line is an increment, not a principle.
 
-### A nested closure in a PIPELINE HEAD is not called on C
+### ~~A nested closure in a PIPELINE HEAD is not called on C~~ — **CLOSED**
 
-`((mk) |> (take 2))` where `mk` is a nested function emits `u_take(ll_box_closure(u_mk), 2)` — the
-closure itself, not the result of calling it — where the same program with a *top-level* `mk` emits
-`u_take(u_mk(), 2)`. Fails as `TypeError: expected a number`; **works on JS**, so it is a backend
-divergence as well as a defect.
+The diagnosis in the previous entry was right and the location was one level off. It is D1's rule —
+`(f)` is a call iff `f` names a function — and the rule was stated **three times**, with one of them
+asking a different question:
 
-Nothing to do with generators: a nested plain function and a nested `:gen` fail identically, and calling
-the same nested closure *directly* works. It is D1's rule — `(f)` is a call iff `f` names a function —
-not reaching a closure local on the pipeline path. Found while writing C2's corpus guard, which uses the
-raw `iter`/`next` cursor instead and says why.
+| site | question it asked | |
+|---|---|---|
+| `classifyCall.isFunction` | is the name declared a function / typed as one? | correct |
+| `resolveFreeCall`, local arm | *(calls through the closure at any arity)* | correct |
+| `resolveCall`, local arm | **is it a LOCAL?** → read, for every local | wrong |
+
+The third only runs where the HIR left a raw list for the backend to re-drive — and **a pipeline head
+is exactly that**. `((mk) |> f)` desugars to a core `call` node whose *argument* is the untouched list
+`(mk)`, so the head was classified by the out-of-step rule: a top-level `mk` took the
+top-level-function branch and called, a nested one took the local branch and yielded the closure.
+
+Measured on the same program twice: top-level `mk` → `3`; nested `mk` → `ELL0106 cast:closure->vec`
+where the stage was typed, and `TypeError: expected a number` at run time where it was not. Correct on
+JS throughout, so it was a backend divergence as well as a defect.
+
+The fix is gated on the local's C type being a **closure** — the only form of "is a function" that
+survives to that point. A boxed local that *might* hold one at run time stays a read, because
+narrowing it would be a guess and D1's read is the answer when the question cannot be settled
+statically. Guarded by `80-adversarial/pipeline_head_closure.lisp`, which pins that other half too.
+
+**`nested_generator.lisp` was written around this** — it uses the raw `iter`/`next` cursor and says
+why. That comment is now describing a closed defect rather than a live one.
 
 ### An l-lang comment containing `*/` emits invalid JavaScript
 

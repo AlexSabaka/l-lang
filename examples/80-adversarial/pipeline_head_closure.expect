@@ -1,0 +1,6 @@
+nested fn head    : 3
+lambda head       : 5
+multi-stage       : 6
+non-function local: 18
+top-level head    : 2
+done

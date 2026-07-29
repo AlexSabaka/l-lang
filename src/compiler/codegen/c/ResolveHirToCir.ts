@@ -3115,11 +3115,26 @@ export class ResolveHirToCir {
       const name = (callee as ast.SimpleIdentifierNode).id;
       const cName = mangleC(name);
       // (1) A LOCAL binding used as a callee. With ARGS -> a call through a closure VALUE (a param
-      // `f`, a let-bound closure `times-3`); the "callee is a value" gap (spec A3). With ZERO args
-      // it is a D1 READ (`(counter)` reads the binding -- invoking a zero-arg closure is `(call c)`).
+      // `f`, a let-bound closure `times-3`); the "callee is a value" gap (spec A3).
+      //
+      // WITH ZERO ARGS, D1 ASKS WHAT THE NAME DENOTES, NOT WHERE IT IS BOUND: `(f)` is a call iff `f`
+      // names a FUNCTION, and a read otherwise. `classifyCall.isFunction` is that rule, and
+      // `resolveFreeCall`'s local branch already calls through the closure at any arity. This branch
+      // asked a different question -- "is it a local?" -- and answered READ for every local, so the
+      // three sites disagreed the moment a zero-argument call reached this path instead of the HIR's.
+      //
+      // Which is exactly what a PIPELINE HEAD does. `((mk) |> f)` desugars to a core `call` node whose
+      // ARGUMENT is the raw list `(mk)`, and a raw list is re-driven through here rather than modelled
+      // in the HIR -- so `(top-mk)` called (branch 3, a top-level function) and `(nested-mk)` did not,
+      // yielding the closure itself. Measured: `ELL0106 cast:closure->vec` where the stage was typed,
+      // `TypeError: expected a number` where it was not, and correct on JS throughout.
+      //
+      // Gated on the local's C type being a closure, which is the only form of "is a function" that
+      // survives to here. A boxed local MIGHT hold one at run time and stays a read -- narrowing it
+      // would be a guess, and D1's read is the answer when the question cannot be settled statically.
       const local = this.localInfo(cName);
       if (local) {
-        if (args.length === 0) return this.resolveIdentifier(callee as ast.IdentifierNode);
+        if (args.length === 0 && local.ctype.k !== "closure") return this.resolveIdentifier(callee as ast.IdentifierNode);
         return this.closureCall(node, this.resolveIdentifier(callee as ast.IdentifierNode), args);
       }
       // (2) A struct/class name -> construction (spec A4: the HIR models no construction). Registers

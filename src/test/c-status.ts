@@ -518,6 +518,13 @@ export const C_PASSING: readonly string[] = [
   // layer beneath it an adapter call, so one decorator worked and two trapped -- with the outer's log
   // line already printed, which is the tell that the fault is in the CALL, not the callee.
   "80-adversarial/stacked_rest_decorators.lisp",
+  // D1 asks what a NAME DENOTES, not where it is bound. Three sites answer it and `resolveCall`'s
+  // local arm asked "is it a LOCAL?" instead -- read, for every local, at zero arity. It only runs
+  // where the HIR left a raw list to re-drive, and a PIPELINE HEAD is exactly that: `((mk) |> f)`
+  // desugars to a core `call` whose ARGUMENT is the untouched `(mk)`. A top-level `mk` called; a
+  // nested one yielded the closure. Pins D1's other half too -- `(n)` on a non-function local stays a
+  // read -- which is why the fix is gated on the local's C type being a closure.
+  "80-adversarial/pipeline_head_closure.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check
