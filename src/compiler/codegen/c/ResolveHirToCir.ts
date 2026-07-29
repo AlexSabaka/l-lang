@@ -2930,6 +2930,46 @@ export class ResolveHirToCir {
     return { src: node, ctype: target.sig.ret, kind: "c-call", callee: { kind: "free", cName: target.cName, params: target.sig.params, ret: target.sig.ret }, args: [recv, ...cArgs] };
   }
 
+  /**
+   * `gs[0].hi` used as a CALLEE -> the receiver `gs[0]` and the method name `hi`.
+   *
+   * The suffix chain has to be walked one index short, not sliced: `xs[0].a.b` may arrive as one
+   * member group holding two names or as two groups holding one each, and both spellings mean the
+   * same thing. So this reproduces `resolveRawIndexer`'s walk exactly and stops before the FINAL
+   * index of the FINAL group -- which is the one `classifyList` used to decide this was a call at all.
+   *
+   * `undefined` when the chain does not end in a dotted member, which keeps D1 intact: `(obj["m"] x)`
+   * is a read of `obj["m"]` followed by `x`, and turning it into a call is the exact thing
+   * `IndexerNode.members` exists to prevent. The caller then falls through to the refusal.
+   */
+  private splitIndexerCallee(node: ast.IndexerNode): { recv: CExpr; method: string } | undefined {
+    const groups = node.indices ?? [];
+    if (!groups.length) return undefined;
+    const lastG = groups.length - 1;
+    if (node.members?.[lastG] !== true) return undefined;
+    const lastGroup = groups[lastG] ?? [];
+    if (!lastGroup.length) return undefined;
+    const tail: any = lastGroup[lastGroup.length - 1];
+    const method = tail?.id !== undefined ? String(tail.id) : String(tail?.value ?? "");
+    if (!method) return undefined;
+
+    let expr: CExpr = this.resolveIdentifier(node.id);
+    groups.forEach((group, g) => {
+      const isMember = node.members?.[g] === true;
+      const upto = g === lastG ? group.length - 1 : group.length;
+      for (let i = 0; i < upto; i++) {
+        const ix: any = group[i];
+        if (isMember) {
+          expr = this.memberRead(node, expr, ix?.id !== undefined ? String(ix.id) : String(ix?.value ?? ""));
+        } else {
+          expr = this.indexRead(node, expr, this.resolveAstExpr(ix), true);
+        }
+      }
+    });
+    this.ledger.record("A3", "indexed-method", node, `method '${method}' called on an indexed receiver (the callee is an indexer, not a name)`);
+    return { recv: expr, method };
+  }
+
   private resolveRawIndexer(node: ast.IndexerNode): CExpr {
     let expr: CExpr = this.resolveIdentifier(node.id);
     (node.indices ?? []).forEach((group, g) => {
@@ -3208,6 +3248,16 @@ export class ResolveHirToCir {
     if (callee._type === "call") {
       // A computed callee (a pipeline stage producing a function): call through the value.
       return this.closureCall(node, this.resolveAstExpr(callee), args);
+    }
+    // `(gs[0].hi)` -- a method on an INDEXED receiver. `classifyList` mints a call for this because
+    // `isDottedMemberIndexer` says the suffix chain ENDS in a dotted member, which is D1's rule that
+    // `(obj.m)` is a call while `(obj["m"])` is a read. The callee is then an `indexer`, and the only
+    // thing here was a refusal -- while the `member` case ten lines up already did exactly this job
+    // for a computed receiver arriving from the pipeline desugar. Two spellings of "call a method on
+    // something you had to compute first", one of them lowered.
+    if (callee._type === "indexer") {
+      const split = this.splitIndexerCallee(callee as ast.IndexerNode);
+      if (split) return this.resolveNativeMethod(node, split.recv, split.method, args);
     }
     if (ast.isListNode(callee) || callee._type === "indexer") {
       throw this.refuse(node, "computed-callee", "resolveCall");

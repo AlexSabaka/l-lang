@@ -564,6 +564,19 @@ export const C_PASSING: readonly string[] = [
   // guard anywhere for a class field DEFAULTING to a map literal -- a third report of the one absent
   // `map` case in `resolveAstExpr`, and stated in the file as a different root cause.
   "80-adversarial/decorator_module_scope.lisp",
+  // `(gs[0].hi)` -- a method on an INDEXED receiver, which is the dispatch-table shape and what blocks
+  // `std/math/fft`. `classifyList` mints a call because the suffix chain ends in a DOTTED member (D1),
+  // so the callee is an `indexer` and C had only `ELL0106 computed-callee` -- while `resolveCall`'s
+  // `member` case ten lines up already did this for a computed receiver. The index is not 0 and the
+  // chain has a field before the method, so a lowering that dropped the suffix or took the FIRST
+  // dotted one would answer plausibly and wrongly. Pins D1's other half too: a BRACKET suffix stays a
+  // read, which is what `IndexerNode.members` exists for.
+  "80-adversarial/indexed_method_call.lisp",
+  // The NATIVE half of the same fix -- `.length`/`.toUpperCase` on an indexed receiver. oracleDivergent:
+  // JS emits the member as a property and calls it (`__ll_index(...)["length"]()`), which is a codegen
+  // bug in the frozen backend rather than a disagreement. Two `.length`s on different receiver types,
+  // so one syntax reaches two runtime accessors.
+  "80-adversarial/indexed_native_member.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

@@ -219,6 +219,16 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "the tower's two halves part company: the LITERALS are portable (they desugar to ordinary " +
       "constructions and both backends run them), and PROMOTION is not.",
   },
+  "80-adversarial/indexed_native_member.lisp": {
+    status: "test",
+    oracleDivergent:
+      "The JS backend emits a NATIVE member on an indexed receiver as an ordinary property and then " +
+      "CALLS it -- `__ll_index(rows, 1)[\"length\"]()` -- so `(rows[1].length)` dies with `TypeError: " +
+      "__ll_index(...).length is not a function`. A codegen bug in the deprecated backend (D66), not " +
+      "a disagreement about what the program means. The USER-CLASS half of the same C fix agrees on " +
+      "both backends and is graded on both in `indexed_method_call.lisp`, so the split is exactly the " +
+      "native-member case and no wider.",
+  },
   "80-adversarial/int_division_erasure.lisp": {
     status: "test",
     oracleDivergent:

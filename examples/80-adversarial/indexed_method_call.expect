@@ -1,0 +1,5 @@
+vector elem : 10
+map elem    : 18
+nested field: 8
+bracket read: 5
+done

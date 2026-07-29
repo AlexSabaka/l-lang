@@ -1416,9 +1416,33 @@ This is the *frontend's* instance of the "who calls it?" failure mode: a token i
 Whether `:where`/`:is` should be wired (they read as refinement syntax) or removed is a language
 question, unruled and untouched here.
 
+### ~~A method on an INDEXED receiver refused on C~~ — **CLOSED**
+
+`(gs[0].hi)` — the dispatch-table shape, and one of the two things blocking `std/math/fft`.
+
+`classifyList` mints a **call** for it because `isDottedMemberIndexer` says the suffix chain ends in a
+dotted member, which is D1's rule that `(obj.m)` is a call while `(obj["m"])` is a read. The callee is
+then an `indexer` rather than a name, and C had only `ELL0106 computed-callee` — **while
+`resolveCall`'s `member` case ten lines above it already did exactly this job** for a computed receiver
+arriving from the pipeline desugar. Two spellings of "call a method on something you had to compute
+first"; one of them lowered. (The sibling-rule failure mode again.)
+
+The chain is walked **one index short** rather than sliced, because `xs[0].a.b` may arrive as one
+member group of two names or as two groups of one, and both spellings mean the same thing. A chain not
+ending in a dotted member returns `undefined` and falls through to the refusal, so **D1 does not
+move**: `(m["f"] 5)` is still a block yielding 5.
+
+**The native half diverges, and the oracle is the wrong one.** `(rows[1].length)` answers `2` on C and
+dies on JS with `TypeError: __ll_index(...).length is not a function` — the frozen backend emits the
+member as a property and then calls it. A codegen bug (D66), not a disagreement about meaning. So the
+user-class cases are graded on both backends (`indexed_method_call.lisp`) and the native ones on C only
+(`indexed_native_member.lisp`, `oracleDivergent`) — the split is exactly the native-member case and no
+wider.
+
 ### `std/math/fft` is blocked, and its draft is gone
 
-Blocked on the C `computed-callee` refusal (`ResolveHirToCir.ts`) plus an unpinned JS index bug. Its
+**One of its two blockers is now gone** — the `computed-callee` refusal above is closed. What remains is
+the unpinned JS index bug, and the rewrite itself. Its
 sibling `random` shipped by redesign (D65, seeded xoshiro256\*\*, using D61's bit operators) rather
 than by waiting for the blocker to lift, which is the available route here too. **The drafted module
 is lost** — it was held in a scratchpad that no longer exists — so this is a rewrite, not a recovery.
