@@ -1911,15 +1911,34 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       return emitted as unknown as ESTree.Expression;
     }
 
+    // A NAMED `fn` USED AS A VALUE IS A FUNCTION, NOT AN ERROR (D94).
+    //
+    // `(let f (fn named [] 1))` emits a FunctionDeclaration, which is a statement -- so this method
+    // used to throw on it, while the C reference backend answered the function. An anonymous
+    // `(fn [] 1)` already worked on both, so the two spellings of the same idea disagreed across
+    // backends and one of them crashed the compiler.
+    //
+    // The declaration and the expression differ only in ESTree node type; `id` is carried so the
+    // function keeps its name (and stays self-recursive). This is a coercion, which is exactly what
+    // this method is for.
+    if (emitted.type === "FunctionDeclaration") {
+      return { ...(emitted as any), type: "FunctionExpression" } as ESTree.Expression;
+    }
+
     // Under the HIR, EVERY value-position control-flow construct (an `if`/`when`/`cond`/`match` used as
     // a value, a `||`/`&&` operand, a value-position `try`) is lowered before it reaches here -- to a
-    // ternary or a temp assigned in each branch, never an IIFE (D45). So a statement in expression
-    // position is now an internal invariant violation, not a user-reachable state: the ternary / IIFE /
-    // sequence coercions and the LL0103 refusal this method used to do are retired. `asExpression`
-    // stays only as the leaf coercer (the fast-path + SpreadElement pass-through above).
-    throw new Error(
-      `asExpression: '${emitted.type}' in expression position -- control flow must be HIR-lowered`
-    );
+    // ternary or a temp assigned in each branch, never an IIFE (D45). So a CONTROL-FLOW statement in
+    // expression position is an internal invariant violation: the ternary / IIFE / sequence coercions
+    // and the LL0103 refusal this method used to do are retired.
+    //
+    // What remains reachable is a DECLARATION in a value slot -- `(let x (defclass C …))` -- which the
+    // C backend refuses as ELL0106. It gets a located diagnostic (LL0109) rather than the bare
+    // `throw new Error` that stood here: that handed the user a raw Node stack trace out of the
+    // compiler, which CONTRIBUTING names a defect regardless of what was being refused. Reported and
+    // CONTINUING, like `onUnhandled` -- `hasErrors` blocks codegen and exits 1, so one run reports
+    // every such site instead of dying on the first.
+    this.report(CD.DeclarationNotAValue, node, { type: node._type });
+    return ESTreeBuilder.identifier(node, "undefined");
   }
 
   /** Force an emitted node into STATEMENT position. */

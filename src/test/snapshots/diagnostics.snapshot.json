@@ -170,6 +170,26 @@
     ]
   },
   {
+    "probe": "LL0204 arithmetic on a loop's value",
+    "diagnostics": [
+      {
+        "code": "LL0204",
+        "severity": "error",
+        "text": "Operator '+' is not defined for Nil and Int."
+      }
+    ]
+  },
+  {
+    "probe": "LL0204 arithmetic on an assignment's value",
+    "diagnostics": [
+      {
+        "code": "LL0204",
+        "severity": "error",
+        "text": "Operator '+' is not defined for Nil and Int."
+      }
+    ]
+  },
+  {
     "probe": "LL0206 private member access",
     "diagnostics": [
       {
@@ -415,6 +435,16 @@
         "code": "LL0102",
         "severity": "error",
         "text": "'constant-pattern' cannot appear in a binding position. A destructuring binding may only contain names, nested [..] / {..} patterns, '...rest', or '_'."
+      }
+    ]
+  },
+  {
+    "probe": "LL0109 a declaration used as a value",
+    "diagnostics": [
+      {
+        "code": "LL0109",
+        "severity": "error",
+        "text": "a 'class' declaration cannot be used as a value on the JavaScript backend. Declare it at statement position and refer to it by name. (The C backend refuses this too, as ELL0106.)"
       }
     ]
   },

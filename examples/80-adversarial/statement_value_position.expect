@@ -1,0 +1,22 @@
+if: 1
+when: 10
+cond: 20
+match: one
+try: 40
+block ran
+block: 60
+anon fn: 2
+named fn: 6
+while: nil
+while ran: 3
+tick
+tick
+tick
+for: nil
+each 1
+each 2
+each 3
+foreach: nil
+assign: nil
+assign ran: 5
+done

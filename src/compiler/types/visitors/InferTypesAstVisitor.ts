@@ -4295,6 +4295,78 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         break;
       }
 
+      // D94 -- A FORM THAT YIELDS NOTHING YIELDS `nil`, AND THE VALUE IS TYPED.
+      //
+      // Same shape as the block above, and found the same way: no case here, so a loop or an
+      // assignment in value position landed in `default` as Unknown. Unknown is not a harmless
+      // placeholder -- it is what let the value FLOW. Measured before the change, all four of
+      // `(+ (while …) 1)`, `(+ (for …) 1)`, `(+ (let y 5) 1)` and `(+ (z := 5) 1)` passed the type
+      // checker and died at RUN time (`TypeError: expected a number` on C, a crash inside the shim on
+      // JS), while `(+ (for :each …) 1)` printed `1` -- a silent wrong answer, which is worse than
+      // either.
+      //
+      // `Nil` rather than Unknown is the whole fix, and it needs NO NEW DIAGNOSTIC: the existing
+      // **LL0204** already refuses the operator, and names the type it was handed --
+      // `Operator '+' is not defined for Nil and Int`. Typing the form turns four runtime panics and
+      // one silent wrong answer into one compile error that was there the whole time, waiting for
+      // something to tell it what the operand was.
+      //
+      // `variable` IS DELIBERATELY ABSENT. The channel entry for a VariableNode is not free -- it is
+      // the BINDING'S type, written by `visitVariable` and read back by `LowerAstToHirVisitor`'s
+      // `declaredTypeOf` to decide how the binding is declared in C. Typing the node `Nil` here would
+      // declare every nested `let` as Nil. `(let x (let y 5))` therefore stays untyped for now; see
+      // roadmap, Known gaps.
+      // AND WALKING THE `for` IS WHAT FIXED THE INVALID C, WHICH IS NOT OBVIOUS FROM HERE.
+      //
+      // A C-style `for` in a `let` init emitted `u_i = ll_copy(ll_op_add(u_i, ll_box_int(1)))` against
+      // a variable the same function had declared `int64_t` -- passing `int64_t` where `ll_value` is
+      // wanted, which `cc` rejects. The same loop in statement position compiled. It reads like a C
+      // backend bug and it is not one: `ResolveHirToCir` resolves a `for`'s `:step` before its `:init`,
+      // so the induction variable has no local yet and the emitter falls back to the type CHANNEL --
+      // and the channel was empty here, because nothing had ever walked into a value-position `for`.
+      //
+      // `visitChildren` fills it, and the emission goes back to the unboxed `u_i = (u_i + 1)` with no
+      // codegen change at all. Reordering the C resolution to init-first was tried as the fix and
+      // REVERTED: it works, but it also makes `03-loops/02_more_for_loops.lisp` resolve a closure it
+      // used to refuse (LL0107) and then hang, because closures capture mutable locals by value. That
+      // is a real defect the refusal was masking (roadmap, Known gaps) and not one to unmask by
+      // accident while fixing a type.
+      case "while":
+      case "for": {
+        this.visitChildren(node);
+        inferredType = TypeEnvironment.nil();
+        break;
+      }
+      case "for-each": {
+        // Through the real visitor, not `visitChildren`: it is what types the element binding.
+        this.visitForEach(node as ast.ForEachNode);
+        inferredType = TypeEnvironment.nil();
+        break;
+      }
+
+      // AN ASSIGNMENT IS TYPED HERE AND CHECKED NOWHERE HERE, AND THE ASYMMETRY IS DELIBERATE.
+      //
+      // The first version of this called `visitSimpleAssignment` / `visitCompoundAssignment`, matching
+      // the `for-each` arm above. It broke THIRTEEN corpus files, all through `lib/std/io/files.lisp`:
+      //
+      //     (if (!= chunk nil) (out := (+ out chunk)))
+      //
+      // `visitIf` -- the STATEMENT path -- narrows `chunk` to non-nil for its then-branch. THIS path
+      // is `inferExpressionType`'s `case "if"`, which infers the branches WITHOUT that narrowing (an
+      // `if`'s value is its branches', so it only needs their types). Re-running the assignment's
+      // CHECKS from here therefore re-checked `(+ out chunk)` with `chunk : String?` and reported
+      // LL0205 -- against code whose comment already explains why the inner `if` is not redundant.
+      //
+      // So: the type is a property of the form and is safe to state anywhere; the CHECKS depend on the
+      // scope they run in and must fire once, on the statement path that owns the narrowing. The
+      // operands are still visited there. What this arm buys is `(+ (z := 5) 1)` becoming LL0204
+      // rather than a runtime panic, which needs the type and nothing else.
+      case "simple-assignment":
+      case "compound-assignment": {
+        inferredType = TypeEnvironment.nil();
+        break;
+      }
+
       default:
         inferredType = TypeEnvironment.unknown();
         this.context.log(LogLevel.Debug, `No type inference for node type: ${node._type}`);

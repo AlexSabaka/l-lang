@@ -97,4 +97,25 @@ export const CodegenDiagnostics = {
       `(setjmp/longjmp on C) that JS cannot express (D47); the backend refuses. Compile with --language c.`
   ),
 
+  // LL0109 (D94) -- a DECLARATION used as a value, on the JS backend.
+  //
+  // `asExpression` used to end in a bare `throw new Error(...)`, on the argument that the HIR lowers
+  // every value-position control-flow construct, so reaching it was "an internal invariant violation,
+  // not a user-reachable state". Measured: it is reachable two ways -- `(let f (fn named [] 1))` and
+  // `(let x (defclass C …))` both landed there, and both handed the user a raw Node stack trace out of
+  // the compiler. CONTRIBUTING is explicit that a bare throw is a defect regardless of what it was
+  // refusing, so the invariant keeps its meaning and gains a location.
+  //
+  // The named-`fn` half is not refused at all any more -- it emits a FunctionExpression and yields the
+  // function, which is what the C reference already did (D94). This code is what is left: a class,
+  // struct or enum declaration in a value slot, which C refuses too (ELL0106).
+  DeclarationNotAValue: def<{ type: string }>(
+    "LL0109",
+    Error,
+    (p) =>
+      `a '${p.type}' declaration cannot be used as a value on the JavaScript backend. ` +
+      `Declare it at statement position and refer to it by name. (The C backend refuses this too, ` +
+      `as ELL0106.)`
+  ),
+
 };

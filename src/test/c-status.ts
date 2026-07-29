@@ -405,6 +405,13 @@ export const C_PASSING: readonly string[] = [
   // spread of a call result -- which are what the corpus's 80 sites use. The spaced form is LL0037
   // and lives in test:diagnostics, since a file here has to run.
   "80-adversarial/spread_adjacency.lisp",
+  // D94: every form yields a value, and a form yielding nothing yields `nil`. Pins BOTH halves for the
+  // nil-yielding forms -- what they answered AND the effect they had, so a lowering that "fixed" the
+  // value by dropping the loop fails the second assertion. Carries the regression guard for the
+  // invalid C: a C-style `for` in a `let` init used to emit `ll_op_add(u_i, …)` against an `int64_t`
+  // and fail `cc`, while the same loop in statement position compiled. The refusals it names
+  // (LL0204 on a loop's value, LL0109 on a declaration used as one) are in test:diagnostics.
+  "80-adversarial/statement_value_position.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

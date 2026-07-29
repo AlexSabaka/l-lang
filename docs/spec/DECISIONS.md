@@ -7210,6 +7210,40 @@ and it comes first.
 comprehension, and that is a different and larger design than giving a statement a bottom value. Recorded
 as open. `nil` is the floor this ruling sets, not a claim that the floor is the ceiling.
 
+### BUILT (D94-a) — and three things the build corrected
+
+**The invalid C was not a C backend bug.** This ruling recorded it as one — "value position changes the
+induction variable's boxing decision" — and the fix is in the **type checker**. `ResolveHirToCir`
+resolves a `for`'s `:step` before its `:init`, so the induction variable has no local yet and the
+emitter falls back to the type channel; the channel was empty because nothing had ever walked into a
+value-position `for`. Typing the form fills it, and the emission returns to the unboxed
+`u_i = (u_i + 1)` with **no codegen change at all** — `test:codegen` 312/0, unmoved.
+
+Reordering the C resolution to init-first was tried as the fix, works, and was **REVERTED**: it also
+makes `03-loops/02_more_for_loops.lisp` resolve a closure it currently refuses (LL0107) and then **hang**,
+printing `i: 0, j: 0` forever, because closures capture mutable locals by value. Trading a refusal for a
+hang is the wrong direction, and the defect the refusal was masking is now recorded in roadmap on its own
+terms rather than unmasked as a side effect of a type fix.
+
+**A type may be stated anywhere; a CHECK may not.** The first build typed the assignment forms by
+delegating to `visitSimpleAssignment` / `visitCompoundAssignment`, symmetrically with `for-each`. It
+broke **thirteen** corpus files through `lib/std/io/files.lisp`, on `(if (!= chunk nil) (out := (+ out chunk)))`:
+`visitIf` narrows `chunk` for its then-branch, but `inferExpressionType`'s `if` case infers the branches
+*without* that narrowing, so re-running the assignment's checks from there reported LL0205 against code
+whose own comment explains why the inner `if` is not redundant. The assignment arms now state the type
+and run no checks. The checks belong to the statement path that owns the scope.
+
+**`let` / `mut` are NOT built, and the reason is structural.** The type channel's entry for a
+`VariableNode` is not free — it is the *binding's* type, written by `visitVariable` and read back by
+`LowerAstToHirVisitor.declaredTypeOf` to decide how the binding is declared in C. Typing the node `Nil`
+would declare every nested `let` as Nil. `(let x (let y 5))` still panics at run time; carried in roadmap.
+
+The rest of the ruling holds on both backends: `while`, `for`, `for :each` and both assignment forms type
+as `Nil` and are refused by the **existing LL0204** (*"Operator '+' is not defined for Nil and Int"*) with
+no new diagnostic; a named `fn` emits a `FunctionExpression` and yields the function, matching C; and a
+declaration in a value slot is **LL0109** with a location instead of `asExpression`'s bare `throw` —
+which stood behind a comment asserting it was "not a user-reachable state", and was reachable two ways.
+
 ---
 
 ## D95 — the metaprogramming tiers get their STAGES (2026-07-29)

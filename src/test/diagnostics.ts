@@ -236,6 +236,23 @@ const PROBES: Probe[] = [
   },
   { name: "LL0204 operator not defined (unary)", source: '(let s "x")\n(console.log (- s))' },
   {
+    // D94. A LOOP'S VALUE IS `Nil`, AND THE TYPE IS WHAT MAKES THIS A COMPILE ERROR.
+    //
+    // These forms used to land in `inferExpressionType`'s `default` arm as Unknown, and Unknown is
+    // what let the value flow: this program passed the type checker and panicked at RUN time on both
+    // backends (`TypeError: expected a number` on C, a crash inside the shim on JS). The `for :each`
+    // variant was worse -- it printed `1`, a silent wrong answer.
+    //
+    // No new diagnostic was needed. LL0204 was always able to refuse this; nothing had ever told it
+    // what the left operand was.
+    name: "LL0204 arithmetic on a loop's value",
+    source: "(mut i 0)\n(console.log (+ (while (< i 3) ((i := (+ i 1)))) 1))",
+  },
+  {
+    name: "LL0204 arithmetic on an assignment's value",
+    source: "(mut z 0)\n(console.log (+ (z := 5) 1))",
+  },
+  {
     name: "LL0206 private member access",
     source: "(defclass C (let :private v <- Int 0))\n(let c (C))\n(console.log c.v)",
   },
@@ -313,6 +330,18 @@ const PROBES: Probe[] = [
     stage: "codegen",
   },
   { name: "LL0102 non-name in binding position", source: "(let [1] [5])", stage: "codegen" },
+  {
+    // D94. A DECLARATION in a value slot. This is what is left of `asExpression`'s bare
+    // `throw new Error` once the named-`fn` case stopped being an error at all (it emits a
+    // FunctionExpression now and yields the function, matching the C reference). The throw handed the
+    // user a raw Node stack trace, which is a defect regardless of what was being refused.
+    //
+    // The C backend refuses the same program as ELL0106, so the two agree that a declaration is not a
+    // value -- they only differ in which net catches it.
+    name: "LL0109 a declaration used as a value",
+    source: "(let x (defclass C (let :ctor a <- Int)))",
+    stage: "codegen",
+  },
   {
     name: "LL0102 constructor default before required",
     source: "(defstruct S (let :ctor a <- Int 0) (let :ctor b <- Int))",

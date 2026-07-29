@@ -730,31 +730,58 @@ a temporary first, so it is evaluated exactly once (verified: two impure interio
 not four). **Comparisons and `%` across dimensions remain unruled** — that half of the D90 gap is
 untouched by this.
 
-### D94 is ruled and unbuilt — three defects behind "everything is an expression"
+### ~~D94's three defects behind "everything is an expression"~~ — **CLOSED**
 
-The claim is stated in `docs/language-syntax.md:18` and `docs/inbox/hir-brief.md:21`, and **D9's
-`Void`-is-`Nil` ruling rests on it as a premise**. D94 makes it the rule; the compiler does not yet
-honour it. Measured 2026-07-29, `(let x <FORM>)` on both backends. The corpus depends on none of it —
-**zero** sites put a loop or an assignment in an operand slot.
+The claim was stated in `docs/language-syntax.md:18` and `docs/inbox/hir-brief.md:21`, and **D9's
+`Void`-is-`Nil` ruling rests on it as a premise**. All three defects are fixed; guarded by
+`80-adversarial/statement_value_position.lisp` on both backends, plus three `test:diagnostics` probes.
 
-*   **`for` in value position emits C that `cc` rejects**, while the same loop compiles and runs as a
-    statement: `for (; (u_i < INT64_C(3)); u_i = ll_copy(ll_op_add(u_i, ll_box_int(INT64_C(1)))))` —
-    `int64_t` passed where `ll_value` is expected. Value position changes the induction variable's
-    boxing decision and the step expression is not brought along. Reproduces at top level and inside a
-    function body. JS answers `nil`, so this is also a backend divergence.
-*   **A statement's `nil` is untyped, so nothing catches its misuse.** `(+ <while-value> 1)` passes the
-    type checker and dies at **run time** — C panics `TypeError: expected a number`, JS crashes inside
-    the runtime shim. Typing the value `Nil` is the half of D94 that does the work.
-*   **A named `fn` and every declaration in value position hand the user a Node stack trace** from
-    `JSTransformerAstVisitor.ts:1921`. A bare `throw` is a defect independent of D94 —
-    `CONTRIBUTING.md`: *never a bare throw*. C yields the function; the anonymous lambda form
-    (53 corpus sites) works on both and is unaffected.
+*   ~~**`for` in value position emitted C that `cc` rejects**~~ — `int64_t` passed where `ll_value` was
+    expected, while the same loop in statement position compiled. **The cause was not in the C backend
+    at all**: the type checker never walked into a `for` that sits in a `let` init, so the channel had
+    no entry for the induction variable, and the emitter fell back to boxed while the init declared
+    `int64_t`. Typing the form fixed the emission with no codegen change.
+*   ~~**A statement's `nil` was untyped**~~ — `(+ <while-value> 1)` passed the checker and died at run
+    time on both backends; `(+ (for :each …) 1)` printed `1`, a **silent wrong answer**. `while`, `for`,
+    `for :each` and the assignments now type as `Nil` and the existing **LL0204** refuses them
+    (*"Operator '+' is not defined for Nil and Int"*). No new diagnostic was needed.
+*   ~~**A named `fn` and every declaration in value position handed the user a Node stack trace**~~ —
+    `asExpression`'s bare `throw`, on the argument that reaching it was "not a user-reachable state".
+    It was reachable two ways. A named `fn` now emits a `FunctionExpression` and yields the function,
+    matching C; a declaration in a value slot is **LL0109** with a location (C refuses it as ELL0106).
+
+**Still open — a `let` in value position.** `(let x (let y 5))` is deliberately untouched: the type
+channel's entry for a `VariableNode` is not free, it is the *binding's* type, read back by
+`LowerAstToHirVisitor.declaredTypeOf` to decide how the binding is declared in C. Typing the node
+`Nil` there would declare every nested `let` as Nil. It still panics at run time.
 
 **Not part of D94, and prior to it: l-lang has no `break` and no `continue`** — not a token, not a
 node, not a production. (`examples/03-loops/02_more_for_loops.lisp` defines a *function* named
 `continue`.) So "should `break` carry a value" is not the open question; **"should `break` exist"** is.
 Whether a loop should yield a **sequence** rather than `nil` — a `for` that collects is a comprehension
 — is recorded as open alongside it.
+
+### A closure capturing a mutable loop variable copies it — masked by an LL0107 refusal
+
+Found while fixing D94, by a change that was then **reverted for exposing it**. `03-loops/02_more_for_loops.lisp`
+declares its induction variables and two closures over them in a `for`'s `:init`:
+
+```lisp
+:init ( (mut i 0) (mut j 0)
+        (fn forward [] ((j := (+ j 1)) (if (>= j max-j) ((j := 0) (i := (+ i 1))))))
+        (fn continue [] (< i max-i)) )
+:cond (continue)  :step (forward)
+```
+
+The C backend resolves the `:step` **before** the `:init`, so `forward` is not declared yet and the
+file refuses with **LL0107** (unresolvable host global). Resolving init-first — which is what C's own
+`for (init; test; update)` evaluation order says, and what the induction variable's type needs — makes
+the call resolve and the program then **runs forever printing `i: 0, j: 0`**: the closures capture `i`
+and `j` by value, so the mutations never reach the loop. The refusal is load-bearing by accident.
+
+Reverted rather than shipped, because trading a refusal for a hang is the wrong direction. The real fix
+is cell capture for a mutable local closed over by a nested function — `declareLocal` already carries a
+`cell` flag and `promoteFrame.ts` exists, so the machinery is there and something is not reaching it.
 
 ### D95 is ruled and unbuilt — and one grammar question is deferred
 

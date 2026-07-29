@@ -18,10 +18,19 @@
 Everything is an S-expression, and **everything is an expression** (D94) — `if`, `when`, `cond`,
 `match`, `try`, `restart-case` and a block all yield values.
 
-> **Ruled, not yet built.** The forms that yield *nothing* — `while`, `for`, `for :each`, `let`/`mut`
-> and assignment — are ruled to yield `nil` **typed `Nil`**, so misusing that value is a compile
-> error. Today the value is untyped and the misuse panics at run time instead, and a C-style `for` in
-> value position emits C that does not compile. See roadmap, *Known gaps*.
+The forms that yield *nothing* — `while`, `for`, `for :each` and assignment — yield `nil` **typed
+`Nil`**, so misusing that value is a compile error rather than a runtime panic:
+
+```lisp
+(mut i 0)
+(let w (while (< i 3) ((i := (+ i 1)))))   ;; w is nil
+(+ w 1)                                    ;; LL0204 — '+' is not defined for Nil and Int
+```
+
+> One gap remains: a `let` in value position (`(let x (let y 5))`) is still untyped and panics at run
+> time. See roadmap, *Known gaps*.
+
+> `examples/80-adversarial/statement_value_position.lisp`
 
 But **l-lang is not a Lisp with types bolted on**, and it is worth being honest about that up front.
 A Lisp decides what a list means by looking up its head; l-lang decides by **parsing**. The grammar

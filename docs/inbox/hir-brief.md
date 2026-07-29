@@ -23,9 +23,10 @@ block — all are expressions. JavaScript/ESTree is **statement-oriented**: `if`
 value, `return`/`throw`/`yield` are statements, the ternary is the only expression conditional.
 
 > **`for` was aspirational here, and D94 later had to rule it.** Measured 2026-07-29: `for`,
-> `for :each`, `while`, `let`/`mut` and assignment yield `nil` untyped, and a C-style `for` in value
-> position emits C that does not compile. The premise this brief opens with is now the rule (D94)
-> rather than a description; roadmap *Known gaps* tracks the distance.
+> `for :each`, `while` and assignment yielded `nil` UNTYPED, so the value flowed into arithmetic and
+> panicked at run time; a C-style `for` in value position emitted C that did not compile. D94 made the
+> premise this brief opens with into the rule, and it now holds — those forms type as `Nil`. A `let` in
+> value position is the one remaining gap (roadmap, *Known gaps*).
 
 The current pipeline is **typed AST → ESTree in one hop**, and that single visitor
 (`JSTransformerAstVisitor`) bridges the impedance *ad hoc, per node*. It is simultaneously doing at
