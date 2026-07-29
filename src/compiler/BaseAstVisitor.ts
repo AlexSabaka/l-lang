@@ -58,6 +58,8 @@ export class BaseAstVisitor {
         "program": this.visitProgram.bind(this),
         "list": this.visitList.bind(this),
         "quote": this.visitQuote.bind(this),
+        "quasiquote": this.visitQuasiquote.bind(this),
+        "unquote": this.visitUnquote.bind(this),
         "vector": this.visitVector.bind(this),
         "matrix": this.visitMatrix.bind(this),
         "map": this.visitMap.bind(this),
@@ -222,6 +224,14 @@ export class BaseAstVisitor {
 
   visitList(node: ast.ListNode): any {
     return this.onUnhandled(node, "visitList");
+  }
+
+  visitQuasiquote(node: ast.QuasiquoteNode): any {
+    return this.onUnhandled(node, "visitQuasiquote");
+  }
+
+  visitUnquote(node: ast.UnquoteNode): any {
+    return this.onUnhandled(node, "visitUnquote");
   }
 
   visitQuote(node: ast.QuoteNode): any {

@@ -58,6 +58,35 @@ const SpreadMustBeAdjacent = createRule<ast.IdentifierNode>()
   .addTest((node) => (node as any).id === "...")
   .build();
 
+// D96 -- `~x` is a HOLE, and a hole needs a template around it.
+//
+// Caught at the SYNTAX stage rather than left to run out of road: measured, an unquote in ordinary
+// code reached codegen and reported `ELL0106 Cannot generate C for 'unquote': no lowering exists`,
+// which tells the author about a backend gap when what they actually did was use a template operator
+// outside a template. The check is an ancestry walk because that is exactly what the rule is -- an
+// unquote is legal if and only if some enclosing node is a quasiquote.
+//
+// A SPACED `~ x` never reaches here: adjacency already made it the operator character `~` followed by
+// a separate expression, which is what it has always been and is not an error. That asymmetry with
+// `...` (whose spaced form IS reported, LL0037) is deliberate -- `...` has no other meaning, and `~`
+// does.
+const UnquoteNeedsQuasiquote = createRule<ast.UnquoteNode>()
+  .addTypeFilter("unquote")
+  .addSeverity(RuleSeverity.Error)
+  .addCode("LL0110")
+  .addMessage(
+    "'~' is an UNQUOTE and only means anything inside a quasiquote: write '`(f ~x)', not '~x' on " +
+    "its own. Spaced, '~ x' is the operator character and not an unquote at all -- the same " +
+    "adjacency rule '..' and '...' follow."
+  )
+  .addTest((node) => {
+    for (let p: any = (node as any)._parent; p; p = p._parent) {
+      if (p._type === "quasiquote") return false;
+    }
+    return true;
+  })
+  .build();
+
 const ImportMustHaveSource = createRule<ast.ImportNode>()
   .addTypeFilter("import")
   .addSeverity(RuleSeverity.Error)
@@ -330,4 +359,5 @@ export const Rules = {
   IdentifierMustHaveName,
   RangeSpanNotImplemented,
   SpreadMustBeAdjacent,
+  UnquoteNeedsQuasiquote,
 } as const;

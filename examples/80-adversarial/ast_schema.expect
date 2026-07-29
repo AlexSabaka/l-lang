@@ -1,7 +1,7 @@
 type: list
 is-list: true
 is-while: false
-kind count: 86
+kind count: 88
 known: true false
 for fields: ["initial" "condition" "step" "then" "else" "duplicateClauses"]
 for children: ["initial" "condition" "step" "then" "else"]

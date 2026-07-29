@@ -418,6 +418,15 @@ export const StringContent = createToken({
   line_breaks: true,
 });
 export const Quote = createToken({ name: "Quote", pattern: /'(?!")/ }); // Not followed by "
+// D96 -- QUASIQUOTE. A template: quoted like `'`, except that a tight `~x` inside it is an UNQUOTE
+// and splices `x`'s value in. Backtick was measured free before it was taken: it is not a token, and
+// its only occurrences in the corpus and stdlib are inside comments.
+//
+// There is no Unquote token. `~` already lexes as `Tilde` (an operator-name character), and the
+// parser reads a TIGHT `~x` inside a quasiquote as the unquote -- adjacency, exactly the rule D88/N4
+// gave `..` and D93 gave `...`. Adding a second token for it would make `~` ambiguous everywhere
+// else, which is the cost `,` was rejected for.
+export const Quasiquote = createToken({ name: "Quasiquote", pattern: /`/ });
 export const StringLiteral = createToken({
   name: "StringLiteral",
   pattern: /"(?:[^"\\]|\\.)*"/,
@@ -460,7 +469,7 @@ export const defaultModeTokens: TokenType[] = [
   HexNumber, BinaryNumber, OctalNumber,
   ImaginaryNumber,
   FloatNumber, IntegerNumber,
-  RawString, FormattedStringStart, Quote, StringLiteral,
+  RawString, FormattedStringStart, Quote, Quasiquote, StringLiteral,
   // Single-char operators after numbers (so +/- in numbers match first)
   Dot, Pipe, Ampersand, Equal, Plus, Minus, Star, Slash,
   Percent, Caret, Question, Exclamation, Tilde, Comma, Colon, Underscore,
@@ -508,7 +517,7 @@ export const formatExprModeTokens: TokenType[] = [
   HexNumber, BinaryNumber, OctalNumber,
   ImaginaryNumber,
   FloatNumber, IntegerNumber,
-  RawString, Quote, StringLiteral,
+  RawString, Quote, Quasiquote, StringLiteral,
   // Operators
   Dot, Pipe, Ampersand, Equal, Plus, Minus, Star, Slash,
   Percent, Caret, Question, Exclamation, Tilde, Comma, Colon, Underscore,

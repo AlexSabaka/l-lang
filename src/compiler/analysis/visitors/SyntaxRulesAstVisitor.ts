@@ -303,6 +303,19 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
     );
   }
 
+  /**
+   * D96 -- an unquote needs a quasiquote around it (LL0110).
+   *
+   * THE VISITOR METHOD IS THE WIRING. `NodeValidationRules.ts` rules do not run by existing; they run
+   * because a visitor method passes them to `checkRules`. LL0037 was defined, exported, and fired in
+   * no position at all until it was added above, and `LL0004` before it had never run once -- so a
+   * rule without a `visitX` is a claim, not a check. Proven to fire here before this line was left in.
+   */
+  visitUnquote(node: ast.UnquoteNode) {
+    checkRules(node, [r.UnquoteNeedsQuasiquote as Rule<ast.ASTNode>], this.context);
+    return node;
+  }
+
   visitFunctionParameter(node: ast.ParameterNode) {
     checkRules(node, [r.FunctionParameterMustHaveName], this.context);
     node.modifiers.forEach((modifier) =>

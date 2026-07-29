@@ -459,6 +459,16 @@
     ]
   },
   {
+    "probe": "LL0110 an unquote outside a quasiquote",
+    "diagnostics": [
+      {
+        "code": "LL0110",
+        "severity": "error",
+        "text": "'~' is an UNQUOTE and only means anything inside a quasiquote: write '`(f ~x)', not '~x' on its own. Spaced, '~ x' is the operator character and not an unquote at all -- the same adjacency rule '..' and '...' follow."
+      }
+    ]
+  },
+  {
     "probe": "LL0099 a form's _parent is not readable at compile time",
     "diagnostics": [
       {

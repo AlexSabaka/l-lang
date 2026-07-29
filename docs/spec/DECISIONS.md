@@ -3,7 +3,7 @@
 Rulings on l-lang's language surface. **D1–D16 were taken 2026-07-12** following a full compiler
 audit (161 agents, 148 verified findings across grammar, types, codegen, analysis passes,
 stdlib/runtime, docs conformance, examples, and hygiene); the document has grown by ruling ever
-since, and runs to **D95** as of 2026-07-29. Every ruling was made with a native backend in front of
+since, and runs to **D96** as of 2026-07-29. Every ruling was made with a native backend in front of
 it — several are not stylistic preferences, they are things that cannot be retrofitted later without
 breaking every existing program.
 
@@ -63,7 +63,7 @@ touches; **bold** marks the one to read first.
 | **nil, Void, and optionality** | **D9** (what `nil` is — ruled twice), **D94** (a statement's value is `nil`, *typed* `Nil`), D49 (Void, void-in-value) |
 | **numbers** | **D88** (the tower: literals, promotion, `..`), **D92** (n-ary folds to binary), **D93** (`...` binds by adjacency), D8 (number literals), D71 (`_` separators, `0o`), D61 (bit operators), D43, D85 (division by zero), D89 (`Ring`), D90 (dimensions) |
 | **strings and text** | D67 (`r"…"` raw, `f"…"` formatted, the regex engine), D74, D52 (codepoints — see D50–D55) |
-| **metaprogramming** | **D69** (the three tiers — *what each receives*), **D95** (the three tiers — *when each runs*), D3 + D3b/D3c/D3d, D73 (the in-house comptime interpreter), **D75** (`defmodifier` is flat), D68 (`:foo` is three roles), D72 (`defattribute`) |
+| **metaprogramming** | **D69** (the three tiers — *what each receives*), **D95** (the three tiers — *when each runs*), **D96** (quasiquote `` ` `` and its holes `~x`), D3 + D3b/D3c/D3d, D73 (the in-house comptime interpreter), **D75** (`defmodifier` is flat), D68 (`:foo` is three roles), D72 (`defattribute`) |
 | **modules, packages, visibility** | **D35** (the package is the compilation unit), D6, D20–D22 (export, naming, layout), D7 (the stdlib boundary) |
 | **errors and conditions** | **D87** (the failure taxonomy), D82 (data is catchable, a contract violation is not), D62 (the typed error tower), **D47** (conditions / restarts), D85 |
 | **generators and async** | **D31** (`:gen` + `yield`), D32 (`Awaitable` / `Task`), D58 (coroutine lowering), D60 (`:async` stays C-refused), D33 (LINQ) |
@@ -7338,3 +7338,69 @@ unlock the other 23 surfaces for `defsyntax` directly and make D69's migration p
 the token tier carrying it alone. It is real work with a real conflict — the `:of` guard and the `..`
 range live in that same rule, and modifier parsing is adjacent — so it is its own ruling, with the
 measurement above already gathered for it.
+
+---
+
+## D96 — a quasiquote is `` ` ``, and its holes are `~x` (2026-07-29)
+
+**Ruling.** `` `form `` is a **quasiquote**: a quoted template in which a tight **`~x`** is an
+**unquote**, replaced by the *value* of `x`. Spaced, `~ x` is the operator character it has always
+been. An unquote outside a quasiquote is **LL0110**.
+
+### Why quote was not enough
+
+`'(if c nil body)` **names** `c` and `body`; it does not carry what they hold. So after M3 a handler
+could *inspect* a form and never *build* one — and building one is the entire job of the tier D69
+describes as receiving an AST and returning an AST. Nothing in the language could express it: there
+is no quasiquote, and the comptime interpreter has no `map` case either, so even constructing a node
+by hand was unavailable.
+
+### Both characters were measured free before they were taken
+
+*   **`` ` ``** — not a token, and its only occurrences across the corpus and stdlib are inside
+    comments.
+*   **`~`** — a legal operator-name *character* that nothing anywhere spells as one. D61's bitwise NOT
+    is `bnot`, a named floor function, so `~` was carrying no meaning at all.
+
+### `,` was the first choice and was rejected on measurement
+
+The classic Lisp spelling was chosen first, on the belief that comma is unused. It is not: **36
+occurrences in 10 files**, and `grid[1, 1]` is *real multi-index syntax* (`indexerSuffix` is
+`AT_LEAST_ONE(expression, OPTION(Comma))`), not decoration. So `` `grid[i, j] `` would have been
+genuinely ambiguous, and the tight/spaced pair `[a, b]` versus `[a ,b]` would have been a silent
+re-reading — the one outcome D93's note calls worse than an error.
+
+**`~` needs no new token and no new rule.** `~` already lexes as `Tilde`, and *adjacency* decides:
+the rule D88/N4 gave `..` and D93 gave `...`, applied a third time rather than invented a first.
+
+### The asymmetry with `...`, which is deliberate
+
+A spaced `...` is **reported** (LL0037); a spaced `~ x` is **accepted** as the operator. The
+difference is that `...` has no other meaning and `~` does. LL0110 therefore catches the case that is
+unambiguously wrong — a hole with no template around it — and not the one that is merely a different
+form.
+
+That case had to be caught at the syntax stage. Measured: before the rule, `~x` in ordinary code
+reached **codegen** and reported `ELL0106 no lowering exists for 'unquote'`, telling the author about
+a backend gap when what they had done was use a template operator outside a template.
+
+### The template is COPIED, not filled in place
+
+A handler runs once per use site. A template that filled its own holes would come back already-filled
+on the second call — the shared-mutable-default bug, and one that shows only on the *second*
+expansion. The copy is structural rather than defended by a flag, and the corpus pins it by expanding
+the same template twice with different arguments.
+
+**A spliced value becomes a NODE**, because what surrounds it is a tree: an Int becomes an
+`integer-number`, a Real a `float-number` (D51's split, kept through the splice), and an AST value
+goes in as itself. Otherwise `` `(+ ~a ~b) `` would produce a tree with raw host values hanging off
+it, which nothing downstream could type or emit.
+
+### Cost
+
+Two node kinds (`quasiquote`, `unquote`), so the generated AST schema went **86 → 88** — and it
+tracked that without `80-adversarial/ast_schema.lisp` being edited, which is M2's freshness gate doing
+its job. One per-alternative ambiguity suppression in the `expression` rule, because `~` is an
+operator-name character and `~[…]` is a prefix path of `assignmentOrExpr` as well; suppressed on the
+**alternative** rather than the rule, since that rule's ambiguity detection is what caught the
+`quoteExpr` defect its own comment records.

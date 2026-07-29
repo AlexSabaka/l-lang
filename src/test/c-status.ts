@@ -442,6 +442,12 @@ export const C_PASSING: readonly string[] = [
   // Pins the tier boundary too: a returned form re-wraps as `quote` and stays DATA rather than being
   // spliced as code, which would be `defsyntax`'s job (D69).
   "80-adversarial/comptime_form.lisp",
+  // D96: `` ` `` is a template and `~x` is a hole. Pins what quote alone cannot do -- BUILD a form out
+  // of pieces -- including splicing a whole sub-form, every literal kind keeping its own (D51's Int
+  // vs Real survives the splice), and the one that only fails on the SECOND expansion: the template is
+  // COPIED, so expanding it twice with different arguments gives two different answers rather than the
+  // first one twice.
+  "80-adversarial/quasiquote.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

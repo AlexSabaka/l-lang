@@ -29,8 +29,10 @@
 
     ;; -- the schema is the whole node set, and it is generated -------------------------------------
     ;;
-    ;; 86 is `ast.ts`'s count of interfaces extending `ASTNode<...>`. If someone adds an 87th and does
-    ;; not regenerate, `test:docs` is red before this line is wrong.
+    ;; 88 is `ast.ts`'s count of interfaces extending `ASTNode<...>` -- it was 86 until D96 added
+    ;; `quasiquote` and `unquote`, and the schema tracked that WITHOUT this file being touched, which is
+    ;; the gate doing its job. If someone adds an 89th and does not regenerate, `test:docs` goes red
+    ;; before this line is wrong.
 
     (let ks (kinds))
     (console.log "kind count:" ks.length)

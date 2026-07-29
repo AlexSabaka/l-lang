@@ -14,13 +14,13 @@
 ;;
 ;; Every accessor is TOTAL: an unknown kind answers an empty vector, never an error.
 ;;
-;; 86 node kinds.
+;; 88 node kinds.
 (
     ;; The kind of a datum, or nil if it is not a node.
     (fn node-type [n <- Any] -> String? (return n._type))
 
     ;; Every node kind the parser can build, sorted.
-    (fn kinds [] -> String[] (return ["any-pattern" "attribute-def" "await" "binary-number" "boolean" "call" "cast" "class" "comment" "complex-number" "composite-identifier" "compound-assignment" "cond" "cond-case" "constant-pattern" "dimension-refinement" "enum" "enum-key" "export" "extends" "float-number" "for" "for-each" "format-expression" "formatted-string" "fraction-number" "function" "function-type" "functional-pattern" "generic-type" "handle" "hex-number" "identifier-pattern" "if" "implements" "import" "indexer" "integer-number" "interface" "intersection-type" "invoke-restart" "key-value" "list" "list-pattern" "macro-def" "map" "map-key-type" "map-pattern" "map-pattern-pair" "map-type" "mapped-type" "match" "match-case" "matrix" "member" "modifier" "modifier-def" "null" "octal-number" "parameter" "program" "quote" "range-refinement" "rest-pattern" "restart-case" "signal" "simple-assignment" "simple-identifier" "simple-type" "spread" "string" "struct" "try-catch" "tuple-type" "type" "type-constraint" "type-def" "type-guard" "type-name" "type-pattern" "union-type" "variable" "vector" "vector-pattern" "when" "while"]))
+    (fn kinds [] -> String[] (return ["any-pattern" "attribute-def" "await" "binary-number" "boolean" "call" "cast" "class" "comment" "complex-number" "composite-identifier" "compound-assignment" "cond" "cond-case" "constant-pattern" "dimension-refinement" "enum" "enum-key" "export" "extends" "float-number" "for" "for-each" "format-expression" "formatted-string" "fraction-number" "function" "function-type" "functional-pattern" "generic-type" "handle" "hex-number" "identifier-pattern" "if" "implements" "import" "indexer" "integer-number" "interface" "intersection-type" "invoke-restart" "key-value" "list" "list-pattern" "macro-def" "map" "map-key-type" "map-pattern" "map-pattern-pair" "map-type" "mapped-type" "match" "match-case" "matrix" "member" "modifier" "modifier-def" "null" "octal-number" "parameter" "program" "quasiquote" "quote" "range-refinement" "rest-pattern" "restart-case" "signal" "simple-assignment" "simple-identifier" "simple-type" "spread" "string" "struct" "try-catch" "tuple-type" "type" "type-constraint" "type-def" "type-guard" "type-name" "type-pattern" "union-type" "unquote" "variable" "vector" "vector-pattern" "when" "while"]))
 
     ;; Is this the name of a kind the parser can build?
     (fn kind-exists [k <- String] -> Boolean
@@ -86,6 +86,7 @@
             "octal-number" => (return true)
             "parameter" => (return true)
             "program" => (return true)
+            "quasiquote" => (return true)
             "quote" => (return true)
             "range-refinement" => (return true)
             "rest-pattern" => (return true)
@@ -106,6 +107,7 @@
             "type-name" => (return true)
             "type-pattern" => (return true)
             "union-type" => (return true)
+            "unquote" => (return true)
             "variable" => (return true)
             "vector" => (return true)
             "vector-pattern" => (return true)
@@ -179,6 +181,7 @@
             "octal-number" => (return ["match" "value"])
             "parameter" => (return ["name" "modifiers" "type" "spread"])
             "program" => (return ["program"])
+            "quasiquote" => (return ["nodes"])
             "quote" => (return ["nodes"])
             "range-refinement" => (return ["lo" "hi"])
             "rest-pattern" => (return ["id"])
@@ -199,6 +202,7 @@
             "type-name" => (return ["name" "variance"])
             "type-pattern" => (return ["id" "type"])
             "union-type" => (return ["types"])
+            "unquote" => (return ["expression"])
             "variable" => (return ["name" "mutable" "extern" "modifiers" "type" "value"])
             "vector" => (return ["values"])
             "vector-pattern" => (return ["elements"])
@@ -271,6 +275,7 @@
             "octal-number" => (return [])
             "parameter" => (return ["name" "modifiers" "type"])
             "program" => (return ["program"])
+            "quasiquote" => (return ["nodes"])
             "quote" => (return ["nodes"])
             "range-refinement" => (return ["lo" "hi"])
             "rest-pattern" => (return ["id"])
@@ -291,6 +296,7 @@
             "type-name" => (return [])
             "type-pattern" => (return ["id" "type"])
             "union-type" => (return ["types"])
+            "unquote" => (return ["expression"])
             "variable" => (return ["name" "modifiers" "type" "value"])
             "vector" => (return ["values"])
             "vector-pattern" => (return ["elements"])
@@ -362,6 +368,7 @@
     (fn is-octal-number [n <- Any] -> Boolean (return (== n._type "octal-number")))
     (fn is-parameter [n <- Any] -> Boolean (return (== n._type "parameter")))
     (fn is-program [n <- Any] -> Boolean (return (== n._type "program")))
+    (fn is-quasiquote [n <- Any] -> Boolean (return (== n._type "quasiquote")))
     (fn is-quote [n <- Any] -> Boolean (return (== n._type "quote")))
     (fn is-range-refinement [n <- Any] -> Boolean (return (== n._type "range-refinement")))
     (fn is-rest-pattern [n <- Any] -> Boolean (return (== n._type "rest-pattern")))
@@ -382,6 +389,7 @@
     (fn is-type-name [n <- Any] -> Boolean (return (== n._type "type-name")))
     (fn is-type-pattern [n <- Any] -> Boolean (return (== n._type "type-pattern")))
     (fn is-union-type [n <- Any] -> Boolean (return (== n._type "union-type")))
+    (fn is-unquote [n <- Any] -> Boolean (return (== n._type "unquote")))
     (fn is-variable [n <- Any] -> Boolean (return (== n._type "variable")))
     (fn is-vector [n <- Any] -> Boolean (return (== n._type "vector")))
     (fn is-vector-pattern [n <- Any] -> Boolean (return (== n._type "vector-pattern")))
@@ -399,9 +407,10 @@
         is-import is-indexer is-integer-number is-interface is-intersection-type is-invoke-restart
         is-key-value is-list is-list-pattern is-macro-def is-map is-map-key-type is-map-pattern
         is-map-pattern-pair is-map-type is-mapped-type is-match is-match-case is-matrix is-member
-        is-modifier is-modifier-def is-null is-octal-number is-parameter is-program is-quote
-        is-range-refinement is-rest-pattern is-restart-case is-signal is-simple-assignment
-        is-simple-identifier is-simple-type is-spread is-string is-struct is-try-catch
-        is-tuple-type is-type is-type-constraint is-type-def is-type-guard is-type-name
-        is-type-pattern is-union-type is-variable is-vector is-vector-pattern is-when is-while)
+        is-modifier is-modifier-def is-null is-octal-number is-parameter is-program is-quasiquote
+        is-quote is-range-refinement is-rest-pattern is-restart-case is-signal
+        is-simple-assignment is-simple-identifier is-simple-type is-spread is-string is-struct
+        is-try-catch is-tuple-type is-type is-type-constraint is-type-def is-type-guard
+        is-type-name is-type-pattern is-union-type is-unquote is-variable is-vector
+        is-vector-pattern is-when is-while)
 )

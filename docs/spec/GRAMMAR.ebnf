@@ -7,7 +7,7 @@
 (* ===== productions ===== *)
 
 program                ::= expression* ;
-expression             ::= ( comment | importExpr | exportExpr | variable | functionExpr | classDecl | structDecl | enumDecl | interfaceDecl | typeDefDecl | castDefDecl | castExpr | modifierDefDecl | attributeDefDecl | macroDecl | whenExpr | ifExpr | condExpr | forExpr | whileExpr | tryCatchExpr | restartCaseExpr | handleExpr | signalExpr | invokeRestartExpr | matchExpr | awaitExpr | spreadExpr | assignmentOrExpr | quoteExpr | nil | boolean | number | string ) ;
+expression             ::= ( comment | importExpr | exportExpr | variable | functionExpr | classDecl | structDecl | enumDecl | interfaceDecl | typeDefDecl | castDefDecl | castExpr | modifierDefDecl | attributeDefDecl | macroDecl | whenExpr | ifExpr | condExpr | forExpr | whileExpr | tryCatchExpr | restartCaseExpr | handleExpr | signalExpr | invokeRestartExpr | matchExpr | awaitExpr | spreadExpr | unquoteExpr | assignmentOrExpr | quoteExpr | quasiquoteExpr | nil | boolean | number | string ) ;
 assignmentOrExpr       ::= primaryExpr assignmentOp? ;
 primaryExpr            ::= ( list | matrix | vector | map | identifier ( ( indexerSuffix | memberSuffix ) )* ) ;
 assignmentOp           ::= ( ":=" expression | <PlusEq> expression | "-=" expression | <StarEq> expression | <SlashEq> expression | "%=" expression ) ;
@@ -31,6 +31,8 @@ map                    ::= <LBrace> ( ( keyValue | comment ) ","? )* <RBrace> ;
 keyValue               ::= ( <Colon> key expression? | <ModKeyword> expression? | string expression ) ;
 key                    ::= ( <Identifier> | <StringLiteral> | <BareKeyword> ) ;
 quoteExpr              ::= <Quote> ( list | expression ) ;
+quasiquoteExpr         ::= "`" ( list | expression ) ;
+unquoteExpr            ::= <Tilde> expression ;
 type                   ::= ( <LParen> unionType <RParen> ( <LBracket> <RBracket> )? <Question>? | unionType ( <LBracket> <RBracket> )? <Question>? ) ;
 unionType              ::= intersectionType ( <Pipe> intersectionType )* ;
 intersectionType       ::= basicType ( <Ampersand> basicType )* ;

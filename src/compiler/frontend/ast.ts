@@ -81,6 +81,8 @@ export type NodeType =
   | "program"
   | "list"
   | "quote"
+  | "quasiquote"
+  | "unquote"
   | "vector"
   | "matrix"
   | "map"
@@ -197,6 +199,36 @@ export interface ListNode extends ASTNode<"list"> {
  */
 export interface QuoteNode extends ASTNode<"quote"> {
   nodes: ASTNode;
+}
+
+/**
+ * `` `(if ~c nil ~body) `` -- a QUASIQUOTE: a quoted TEMPLATE with holes (D96).
+ *
+ * Identical to `quote` except that an `unquote` anywhere inside it is replaced by the VALUE of its
+ * expression when the template is evaluated. That is what lets a handler build a form out of the
+ * pieces it was given, which quote alone cannot do: `'(if c nil body)` names `c` and `body`, it does
+ * not carry what they hold.
+ *
+ * Backtick was measured free before it was taken -- not a token, and its only occurrences in the
+ * corpus and stdlib are inside comments.
+ */
+export interface QuasiquoteNode extends ASTNode<"quasiquote"> {
+  nodes: ASTNode;
+}
+
+/**
+ * `~x` -- an UNQUOTE, the hole in a quasiquoted template (D96).
+ *
+ * BOUND BY ADJACENCY, exactly as `..` is (D88/N4) and `...` is (D93): `~x` is an unquote and `~ x` is
+ * the operator character `~` followed by `x`. That is why no new token was needed -- `~` already lexes
+ * as `Tilde` -- and it is why `,` was rejected for this job, since a spaced comma is an optional
+ * separator in eight productions and the tight/spaced pair would have been a silent re-reading.
+ *
+ * Parsed ANYWHERE an expression is, like `spread`, and refused outside a quasiquote by name
+ * (**LL0110**) rather than by a parse error some distance from the mistake.
+ */
+export interface UnquoteNode extends ASTNode<"unquote"> {
+  expression: ASTNode;
 }
 
 export interface VectorNode extends ASTNode<"vector"> {

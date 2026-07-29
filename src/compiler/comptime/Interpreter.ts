@@ -145,6 +145,21 @@ export class ComptimeInterpreter {
       case "quote":
         return (n as ast.QuoteNode).nodes;
 
+      // `` `(if ~c nil ~body) `` -- a TEMPLATE (D96). Everything is data, as in quote, EXCEPT the
+      // unquotes: each one is evaluated and its value spliced in as a node. This is the operation
+      // quote alone cannot express -- `'(if c nil body)` NAMES `c`, it does not carry what `c` holds --
+      // and without it a handler could inspect forms but never build one.
+      case "quasiquote":
+        return this.fillTemplate((n as ast.QuasiquoteNode).nodes, env);
+
+      // Reached only OUTSIDE a quasiquote, since `fillTemplate` consumes the ones inside it. A hole
+      // with no template around it has nothing to be a hole in.
+      case "unquote":
+        throw new ComptimeError(
+          "'~' is an unquote and only means anything inside a quasiquote (D96)",
+          node
+        );
+
       // `expr._type`, `expr.nodes` -- a dotted read. The head is resolved as a binding and the
       // remaining parts are walked as FIELDS, which for an AST value is the same map-shaped access the
       // emitted backends give it (M1).
@@ -162,6 +177,64 @@ export class ComptimeInterpreter {
     }
 
     throw new ComptimeError(`'${node._type}' cannot be evaluated at compile time`, node);
+  }
+
+  /**
+   * Walk a quasiquoted template, replacing every `unquote` with the VALUE of its expression (D96).
+   *
+   * The template is COPIED, never mutated: a `defsyntax` handler is called once per use site, and a
+   * template that filled its own holes in place would come back already-filled the second time. That
+   * is the same class of bug as a shared mutable default argument, and it would only show on the
+   * second expansion -- so the copy is structural rather than defended by a flag.
+   *
+   * A spliced value has to become a NODE, because what surrounds it is a tree: an Int becomes an
+   * `integer-number`, a String a `string`, and an AST value goes in as itself. That is what makes
+   * `` `(+ ~a ~b) `` with `a = 1` a form that means `(+ 1 b)` rather than a tree with a raw JS number
+   * hanging off it, which nothing downstream could type or emit.
+   */
+  private fillTemplate(node: ast.ASTNode, env: Env): ast.ASTNode {
+    if (!node || typeof node !== "object") return node;
+
+    if (node._type === "unquote") {
+      const v = this.evalNode((node as ast.UnquoteNode).expression, env);
+      return this.valueToNode(v, node);
+    }
+
+    const out: any = { ...(node as any) };
+    for (const key of ast.getNodeIterableKeys(node)) {
+      const value = (node as any)[key];
+      if (Array.isArray(value)) {
+        out[key] = ast.mapChildArray(value, (item: any) =>
+          ast.isAstNode(item) ? this.fillTemplate(item, env) : item
+        );
+      } else if (ast.isAstNode(value)) {
+        out[key] = this.fillTemplate(value, env);
+      }
+    }
+    return out as ast.ASTNode;
+  }
+
+  /** A comptime VALUE, as the AST node that carries it -- the splice half of `fillTemplate`. */
+  private valueToNode(v: CTValue, at: ast.ASTNode): ast.ASTNode {
+    const loc = { _location: at._location, _parent: (at as any)._parent };
+    if (ast.isAstNode(v)) return v as ast.ASTNode;
+    if (v === null) return { _type: "null", ...loc } as any;
+    if (typeof v === "bigint") {
+      // The exact decimal text, not a JS number: `match` is the lossless copy every downstream reader
+      // wants, and rounding past 2^53 here is the bug the old vm path shipped.
+      return { _type: "integer-number", value: Number(v), match: v.toString(), ...loc } as any;
+    }
+    if (typeof v === "number") {
+      return Number.isInteger(v)
+        ? ({ _type: "integer-number", value: v, match: String(v), ...loc } as any)
+        : ({ _type: "float-number", value: v, match: String(v), ...loc } as any);
+    }
+    if (typeof v === "boolean") return { _type: "boolean", value: v, ...loc } as any;
+    if (typeof v === "string") return { _type: "string", value: v, ...loc } as any;
+    if (Array.isArray(v)) {
+      return { _type: "vector", values: v.map((e) => this.valueToNode(e, at)), ...loc } as any;
+    }
+    throw new ComptimeError("a value of this kind cannot be spliced into a template", at);
   }
 
   /**

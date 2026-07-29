@@ -1,0 +1,13 @@
+built kind: list
+built head: +
+built args: 3 4
+no holes: a b
+wrapped head: !
+wrapped inner: list >
+int: integer-number
+real: float-number
+string: string
+bool: boolean
+call 1: 1
+call 2: 9
+done

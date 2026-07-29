@@ -349,6 +349,13 @@ const PROBES: Probe[] = [
   },
 
   {
+    // D96. `~x` is a HOLE and needs a template around it. Before the rule it reached CODEGEN and
+    // reported `ELL0106 Cannot generate C for 'unquote'` -- telling the author about a backend gap
+    // when what they did was use a template operator outside a template.
+    name: "LL0110 an unquote outside a quasiquote",
+    source: "(let x 1)\n(console.log ~x)",
+  },
+  {
     // M3. A quoted form is now a legal `:comptime` ARGUMENT (it is a compile-time constant in exactly
     // the sense LL0099 means -- quote does not evaluate its operand, so there is nothing to fail). A
     // form's `_parent` is still refused, and deliberately: it is CYCLIC, and reading it would let a

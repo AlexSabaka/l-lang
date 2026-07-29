@@ -39,6 +39,8 @@ class LLangParser extends CstParser {
   keyValue: ParserMethod<[], CstNode>;
   key: ParserMethod<[], CstNode>;
   quoteExpr: ParserMethod<[], CstNode>;
+  quasiquoteExpr: ParserMethod<[], CstNode>;
+  unquoteExpr: ParserMethod<[], CstNode>;
   type: ParserMethod<[], CstNode>;
   unionType: ParserMethod<[], CstNode>;
   intersectionType: ParserMethod<[], CstNode>;
@@ -191,12 +193,23 @@ class LLangParser extends CstParser {
         { ALT: () => this.SUBRULE(this.awaitExpr) },
         // Spread operator
         { ALT: () => this.SUBRULE(this.spreadExpr) },
+        // D96 -- `~x`, an unquote. It MUST precede `assignmentOrExpr`: `~` is a legal operator-name
+        // character, so `~[...]` is a prefix path of both, and declaration order is what resolves it.
+        // The suppression is PER-ALTERNATIVE rather than on the whole OR -- this rule's ambiguity
+        // detection is what caught the `quoteExpr` defect the comment above records, and switching it
+        // off wholesale to add one operator would trade a real instrument for a convenience.
+        { IGNORE_AMBIGUITIES: true, ALT: () => this.SUBRULE(this.unquoteExpr) },
         // Assignment or simple expression
         // This handles: identifier, identifier[idx], list, vector, map, matrix
         // with optional assignment suffix
         { ALT: () => this.SUBRULE(this.assignmentOrExpr) },
         // Quote expression
         { ALT: () => this.SUBRULE(this.quoteExpr) },
+        // D96 -- a quasiquoted template, and its holes. `unquoteExpr` is reachable ANYWHERE an
+        // expression is, exactly like `spreadExpr` above: the grammar is context-free here, so
+        // "only inside a quasiquote" is enforced by name (LL0110) rather than by a parse error
+        // some distance from the mistake.
+        { ALT: () => this.SUBRULE(this.quasiquoteExpr) },
         // Literals (cannot be assigned to)
         { ALT: () => this.SUBRULE(this.nil) },
         { ALT: () => this.SUBRULE(this.boolean) },
@@ -606,6 +619,27 @@ class LLangParser extends CstParser {
           { ALT: () => this.SUBRULE(this.expression) },
         ],
       });
+    });
+
+    // D96 -- the same shape as `quoteExpr`, and for the same reason: `list` (the literal paren) is
+    // the more specific case and is tried first, falling back to a bare expression.
+    this.quasiquoteExpr = this.RULE("quasiquoteExpr", () => {
+      this.CONSUME(t.Quasiquote);
+      this.OR({
+        IGNORE_AMBIGUITIES: true,
+        DEF: [
+          { ALT: () => this.SUBRULE(this.list) },
+          { ALT: () => this.SUBRULE(this.expression) },
+        ],
+      });
+    });
+
+    // `~x` -- an unquote. No Unquote token: `~` already lexes as `Tilde`, and ADJACENCY decides
+    // whether this is the hole or the operator character, the rule `..` and `...` already follow.
+    // The builder checks the offsets; the grammar only has to let the token in.
+    this.unquoteExpr = this.RULE("unquoteExpr", () => {
+      this.CONSUME(t.Tilde);
+      this.SUBRULE(this.expression);
     });
 
     // ========================================================================

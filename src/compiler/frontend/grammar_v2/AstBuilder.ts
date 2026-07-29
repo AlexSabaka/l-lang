@@ -146,7 +146,11 @@ export class LLangAstBuilder extends BaseCstVisitor {
       "whileExpr", "tryCatchExpr",
       "restartCaseExpr", "handleExpr", "signalExpr", "invokeRestartExpr",
       "matchExpr", "awaitExpr", "spreadExpr",
-      "assignmentOrExpr", "quoteExpr", "nil", "boolean", "number", "string",
+      // D96 -- `unquoteExpr` sits here, ahead of `assignmentOrExpr`, for the same reason the GRAMMAR
+      // puts it there: `~` is a legal operator-name character, so the two share a prefix path and
+      // order is what resolves it. This list and the parser's OR must stay in the same order.
+      "unquoteExpr",
+      "assignmentOrExpr", "quoteExpr", "quasiquoteExpr", "nil", "boolean", "number", "string",
     ];
     for (const alt of alternatives) {
       if (ctx[alt]) {
@@ -692,6 +696,32 @@ export class LLangAstBuilder extends BaseCstVisitor {
       ? this.visit(ctx.list[0])
       : this.visit(ctx.expression[0]);
     return this.makeNode("quote", ctx, { mode: "default", nodes });
+  }
+
+  /** `` `(if ~c nil) `` -- a quasiquoted template (D96). Same datum rule as `quote`. */
+  quasiquoteExpr(ctx: any): ast.QuasiquoteNode {
+    const nodes = ctx.list ? this.visit(ctx.list[0]) : this.visit(ctx.expression[0]);
+    return this.makeNode("quasiquote", ctx, { nodes });
+  }
+
+  /**
+   * `~x` -- an unquote, BOUND BY ADJACENCY (D96).
+   *
+   * The same gate `spreadExpr` uses for `...` (D93) and `rangeIsTight` uses for `..` (D88/N4):
+   * compare the operator's end offset against the operand's start. Tight is the hole; SPACED is the
+   * operator character `~` followed by a separate expression, which is what it has always been.
+   *
+   * A spaced `~` becomes the bare marker identifier `~`, exactly as a spaced `...` does -- reported,
+   * never silently re-read, because a silent re-reading is the one outcome worse than an error.
+   */
+  unquoteExpr(ctx: any): ast.ASTNode {
+    const expression = this.visit(ctx.expression[0]);
+    const tilde = ctx.Tilde?.[0];
+    const operandStart = expression?._location?.start?.offset;
+    const tight =
+      tilde == null || operandStart == null ? true : tilde.endOffset + 1 === operandStart;
+    if (tight) return this.makeNode("unquote", ctx, { expression });
+    return this.makeNode("simple-identifier", ctx, { id: "~" });
   }
 
   // ========================================================================
