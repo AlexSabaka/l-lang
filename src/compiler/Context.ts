@@ -9,6 +9,7 @@ import {
   BuildSymbolTableAstVisitor,
   ComptimeEvaluationAstVisitor,
   ExpandSyntaxAstVisitor,
+  LoopsToSequencesAstVisitor,
   DesugarAstVisitor,
   InlineImportsAstVisitor,
   SyntaxRulesAstVisitor,
@@ -655,6 +656,12 @@ export class Context {
     // input would have been. An expansion that produced `(if)` with no arms should fail the way a
     // hand-written one does.
     ast = new ExpandSyntaxAstVisitor(this).expand(ast as ASTNode) as any;
+
+    // D100 -- a loop BOUND to a name becomes a lazy sequence. At this seam for D95's reason: the
+    // rewrite INTRODUCES a `:gen` declaration, and the symbol table is built one stage later. Put
+    // in the desugarer (which runs after symbols) it failed with `LL0210 '__ll_seq_0' is not
+    // defined` -- nothing was ever going to give the synthesized name a symbol.
+    ast = new LoopsToSequencesAstVisitor().rewrite(ast as ASTNode) as any;
 
     // SYNTAX STAGE
     this.performanceMetrics.startTimer("syntax");

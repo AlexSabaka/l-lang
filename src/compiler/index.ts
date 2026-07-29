@@ -18,6 +18,7 @@ export * from "./transformation/visitors/DesugarAstVisitor";
 export * from "./transformation/visitors/ComptimeEvaluationAstVisitor";
 export * from "./transformation/visitors/InlineImportsAstVisitor";
 export * from "./transformation/visitors/ExpandSyntaxAstVisitor";
+export * from "./transformation/visitors/LoopsToSequencesAstVisitor";
 
 export * from "./types/visitors/InferTypesAstVisitor";
 

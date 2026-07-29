@@ -898,40 +898,25 @@ without that the generator mutates its own copy, which is the by-value failure C
 
 `:async` stays refused by ruling (D60). Guarded by `80-adversarial/nested_generator.lisp`.
 
-### C3 — loops yield a lazy sequence: RULED and MEASURED, plumbing not landed
+### ~~C3 — loops yield a lazy sequence~~ — **CLOSED (D100)**
 
-The semantics are decided and the cost is known; what is missing is the desugar that applies them.
+`(let ys (for :each x :from xs :then (* x 2)))` binds a lazy sequence. One iteration yields its BODY's
+value; a loop in statement position is untouched and keeps D94's `nil`.
 
-**Ruled (Sabaka, 2026-07-29): comprehension.** One iteration yields its BODY's value, so
-`(for :each x :from xs :then (* x 2))` is the doubled sequence and a `while` yields each body value.
-The alternative — yielding the loop VARIABLE — is incoherent for `while`, which has none.
+**Elision is not an optimisation, it is the scope.** 367 loops across corpus and stdlib, 3 in value
+position — only a loop whose value is *bound* is rewritten at all, so the other 364 emit what they did
+before.
 
-**Cost measured, and it is the good news.** Corpus + stdlib hold **367 loops** (176 `while`, 191 `for`)
-and exactly **3** are in value position — all three in `80-adversarial/statement_value_position.lisp`,
-the file D94 wrote to assert they yield `nil`. So a naive rewrite would allocate 364 coroutine frames
-nobody asked for. **Elision is free**: the HIR's destination-driven lowering already distinguishes
-them — `loopResult` receives `dest`, and `dest.kind === "effect"` *is* "the value is discarded".
+**The placement was the whole problem, and D95 had already ruled it.** The rewrite INTRODUCES a `:gen`
+declaration, and the symbol table is built one stage later; put in the desugarer it failed with
+`LL0210 '__ll_seq_0' is not defined`. It runs at D95's pre-symbols seam, for D95's reason.
 
-**The target shape is proven** — a named nested `:gen` wrapping the loop, called:
+Two shapes the source does not show had to be handled: **two layers of list-wrapping** (the statement
+*and* the value), and a **C-style `for` rotated into a `while`**, because its `:step` cannot survive a
+coroutine split in a C `for(...)` update slot. Only possible because **C2** made a nested `:gen` lower.
 
-```lisp
-(fn :gen mk [] -> Iterator<Int> (for :each x :from xs :then (yield (* x 2))))
-(let seq (mk))            ;; sums to 12 on BOTH backends
-```
-
-**What blocked the automatic desugar**, both measured:
-
-*   A block statement arrives WRAPPED — `list{nodes:[variable]}`, which `classifyList` calls a
-    `grouping`, not a `variable`. A rewrite keyed on the node type directly matches nothing at all.
-    (This is the list-wrapped-declaration shape the codebase already documents in three other places.)
-*   The alternative that needs no statement to hoist into — an immediately-applied
-    `((fn :gen [] …))` — **does not work on either backend**. On C it reaches the generator lift and
-    then fails at run time; on JS the result is not iterable. So the hoisting is not avoidable by
-    choosing a different shape.
-
-Landing this needs the block-level rewrite to reach the right lists, and it supersedes D94's `nil`
-for the value-position case only — statement-position loops keep emitting a plain loop and keep
-D94's ruling.
+**Still D94's `nil`:** a loop as a call argument or `return` operand. `(+ (while …) 1)` is still
+LL0204. That line is an increment, not a principle.
 
 ### A nested closure in a PIPELINE HEAD is not called on C
 

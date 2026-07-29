@@ -1,4 +1,5 @@
-;; ADVERSARIAL: every form yields a value, and a form that yields NOTHING yields `nil` (D94).
+;; ADVERSARIAL: every form yields a value (D94) -- and a loop BOUND to a name yields a LAZY
+;; SEQUENCE (D100), which supersedes D94's `nil` for the value-position case only.
 ;;
 ;; "Everything is an expression" was stated in three places -- `language-syntax.md`, `hir-brief.md`,
 ;; and inside D9, where it is the ARGUMENT for `Void` and `Nil` being one type -- and was true in
@@ -13,8 +14,10 @@
 ;; This file pins the VALUES. The refusals cannot live here -- a file in this directory has to run --
 ;; so they are pinned in `test:diagnostics`:
 ;;
-;;   (+ (while …) 1)                 -- LL0204, "Operator '+' is not defined for Nil and Int"
 ;;   (let x (defclass C …))          -- LL0109 on JS, ELL0106 on C: a declaration is not a value
+;;
+;; (D94's `(+ (while …) 1)` -> LL0204 probe no longer applies to a BOUND loop, which is a sequence
+;; now. It still applies to every other nil-yielding form.)
 (
     ;; -- the forms that carry a value ---------------------------------------------------------------
 
@@ -50,25 +53,34 @@
     (let h (fn nm [x <- Int] -> Int (return (* x 2))))
     (console.log "named fn:" (h 3))
 
-    ;; -- the forms that yield `nil` -- and STILL RUN ------------------------------------------------
+    ;; -- a loop BOUND to a name is a LAZY SEQUENCE (D100, superseding this file's original point) --
     ;;
-    ;; The value being nil is not the loop being skipped. Each of these asserts both halves: what the
-    ;; form answered, and the effect it had. A lowering that "fixed" the value by dropping the loop
-    ;; would pass the first assertion and fail the second.
+    ;; This file was written for D94, which ruled a loop's value `nil`. D100 supersedes that FOR THE
+    ;; VALUE-POSITION CASE ONLY: a loop whose value is bound becomes a generator, and one iteration
+    ;; yields its BODY's value. A loop in STATEMENT position is untouched and still yields nil, which
+    ;; is the elision that makes this affordable -- 367 loops in corpus + stdlib, 3 of them here.
+    ;;
+    ;; LAZY IS THE WHOLE POINT, and `ran` is how it is visible: nobody pulls these sequences, so the
+    ;; loops DO NOT RUN. Under D94 this printed 3. The `tick` and `each` lines that used to appear
+    ;; here are gone for the same reason.
 
     (mut i 0)
     (let w (while (< i 3) ((i := (+ i 1)))))
     (console.log "while:" w)
     (console.log "while ran:" i)
 
-    ;; THE REGRESSION GUARD for the invalid C. This exact shape -- a C-style `for` in a `let` init --
-    ;; is what failed `cc`. It has to be COMPILED to be tested, so it must live in a running file.
+    ;; A C-STYLE `for` is ROTATED into a `while` to become a generator -- `(for :init i :cond c :step s
+    ;; :then b)` is `i; (while c (b s))`. It has to be: coroutine lowering splits the body across
+    ;; resume labels, and a C `for(...)` update slot takes one expression. Without the rotation the
+    ;; emitter refuses outright.
     (let fr (for :init (mut k 0) :cond (< k 3) :step (k := (+ k 1)) :then ((console.log "tick"))))
     (console.log "for:" fr)
 
     (let xs [1 2 3])
     (let fe (for :each n :from xs :then ((console.log "each" n))))
     (console.log "foreach:" fe)
+
+    ;; -- an ASSIGNMENT still yields nil, because it is not a loop --------------------------------
 
     (mut z 0)
     (let asg (z := 5))

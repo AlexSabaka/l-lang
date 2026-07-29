@@ -460,6 +460,12 @@ export const C_PASSING: readonly string[] = [
   // loop), per-instance frames (two pulls of one nested generator), and an infinite one consumed
   // finitely through the raw cursor.
   "80-adversarial/nested_generator.lisp",
+  // D100: a loop BOUND to a name is a lazy sequence, one iteration yielding its BODY's value. Pins the
+  // comprehension reading, the LAZINESS (a side-effecting body has not run before the sequence is
+  // pulled -- under D94 the counter would already read 3), the C-style `for` ROTATION into a `while`
+  // (its `:step` cannot survive a coroutine split in a C `for(...)` update slot), and composition with
+  // `take`, which a statement `for` could never do.
+  "80-adversarial/loop_sequence.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

@@ -1,5 +1,5 @@
 import * as ast from "../../frontend/ast";
-import { listNodes, valueIsTail } from "../../analysis/listForm";
+import { classifyList, listNodes, valueIsTail } from "../../analysis/listForm";
 import { Context, LogLevel } from "../../Context";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { formatWithOptions } from "util";
@@ -100,6 +100,7 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       program: node.program.map((n) => this.visit(n) as ast.ASTNode),
     } as ast.ProgramNode;
   }
+
 
   /** Extract a type node's name (unwrapping the `type` wrapper), for matching a `<- T` annotation. */
   private typeNameOf(t: any): string | undefined {

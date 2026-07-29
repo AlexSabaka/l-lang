@@ -3,7 +3,7 @@
 Rulings on l-lang's language surface. **D1–D16 were taken 2026-07-12** following a full compiler
 audit (161 agents, 148 verified findings across grammar, types, codegen, analysis passes,
 stdlib/runtime, docs conformance, examples, and hygiene); the document has grown by ruling ever
-since, and runs to **D99** as of 2026-07-29. Every ruling was made with a native backend in front of
+since, and runs to **D100** as of 2026-07-29. Every ruling was made with a native backend in front of
 it — several are not stylistic preferences, they are things that cannot be retrofitted later without
 breaking every existing program.
 
@@ -59,7 +59,7 @@ touches; **bold** marks the one to read first.
 | **protocols and interfaces** | **D42** (structural, for assignability), **D91** (`:of` is lineage, `:is` is shape — the two runtime questions), D63 (Comparable / Hashable / Formattable — *nominal*), D29 (constructs defined by protocols), D30 (Iterable / Iterator), D89 (`Ring`, and a primitive answering a protocol) |
 | **classes and structs** | **D11** (the class surface, value-semantic structs, no `protected`), D81 (a base method's call is virtual on C) |
 | **pattern matching** | **D25**, D26 (guards, `:when`), D27 (`:of` type patterns), D28 (rest patterns), D74 (a pattern's string decodes), D83 (a comment is not a value) |
-| **control flow and `return`** | D12 (control forms), **D40** (`return` returns from the function), **D94** (every form yields a value; `break` does not exist), D83 |
+| **control flow and `return`** | **D100** (a bound loop is a lazy sequence), D12 (control forms), **D40** (`return` returns from the function), **D94** (every form yields a value; `break` does not exist), D83 |
 | **nil, Void, and optionality** | **D9** (what `nil` is — ruled twice), **D94** (a statement's value is `nil`, *typed* `Nil`), D49 (Void, void-in-value) |
 | **numbers** | **D88** (the tower: literals, promotion, `..`), **D92** (n-ary folds to binary), **D93** (`...` binds by adjacency), D8 (number literals), D71 (`_` separators, `0o`), D61 (bit operators), D43, D85 (division by zero), D89 (`Ring`), D90 (dimensions) |
 | **strings and text** | **D98** (`f"…"` is the only formatted string; `'` quotes), D67 (`r"…"` raw, `f"…"` formatted, the regex engine), D74, D52 (codepoints — see D50–D55) |
@@ -7525,3 +7525,55 @@ Loud, located, and consistent with how every other syntax error in l-lang report
 would say that commas are special when the point of the ruling is that they are not.
 
 The corpus did not move: **JS 286 / C 281**, before and after.
+
+---
+
+## D100 — a loop bound to a name is a lazy sequence (2026-07-29)
+
+**Ruling.** `(let ys (for :each x :from xs :then (* x 2)))` binds a **lazy sequence** — `ys` is
+`2 4 6`, computed on demand. One iteration yields its **body's value**, which is the comprehension
+reading. **Supersedes D94's `nil` for the bound case only**; a loop in statement position is
+untouched and still yields `nil`.
+
+### Why the statement case is untouched, and why that is not a compromise
+
+Measured across corpus and stdlib: **367 loops, of which 3 are in value position.** Rewriting every
+loop into a coroutine would allocate 364 frames nobody asked for. Elision is not an optimisation bolted
+on afterwards — only a loop whose value is *bound* is rewritten at all, so the other 364 emit exactly
+the code they did before.
+
+### One iteration yields the BODY
+
+`(for :each x :from xs :then (* x 2))` is the doubled sequence. The alternative — yielding the loop
+**variable** — was rejected because `while` has no variable to yield, so the two loop forms would have
+produced different *kinds* of thing.
+
+### It runs before the SYMBOLS stage, and that is the whole placement
+
+The rewrite **introduces** a `:gen` declaration, and the symbol table is built one stage later. A first
+attempt put it in the desugarer — which runs *after* symbols — and failed with
+`LL0210 '__ll_seq_0' is not defined`: nothing was ever going to give the synthesized name a symbol.
+
+That is the rule **D95** already states for `defsyntax`, and the same reason `:comptime` may run late:
+a comptime fold only ever *deletes* declarations and folds expressions to constants, so the table it
+was built against stays true. A pass that **adds** a name goes where additions go.
+
+### Two shapes had to be handled that the source does not show
+
+**Two layers of wrapping.** A block statement arrives as `list{nodes:[variable]}` — a `grouping` to
+`classifyList` — and the variable's *value* arrives as `list{nodes:[for-each]}` in turn. A first
+attempt unwrapped one and matched nothing at all.
+
+**A C-style `for` is rotated into a `while`.** `(for :init i :cond c :step s :then b)` becomes
+`i; (while c (b s))`. It has to be: coroutine lowering splits the body across resume labels, and a C
+`for(...)` update slot takes one expression or simple assignment — without the rotation the emitter
+refuses outright. The identity is the same one the hand-written proof of this design used before any
+code was written.
+
+### What this depends on, and what it does not cover
+
+It is only possible because **C2** made a nested `:gen` lower on C: a loop lives inside a function, so
+its synthesized generator is nested by construction.
+
+**Only a loop BOUND to a name.** A loop as a call argument or a `return` operand is still D94's `nil` —
+`(+ (while …) 1)` is still LL0204. That line is an increment, not a principle, and roadmap says so.
