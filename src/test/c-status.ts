@@ -425,6 +425,12 @@ export const C_PASSING: readonly string[] = [
   // mangled name, so an uncaptured second `j` inherits a cell), which is what caught the `c-for` update
   // slot emitting a cell's write without its deref.
   "80-adversarial/for_init_capture.lisp",
+  // M1: `'form` is code as data, and the C backend now builds the SAME datum the JS one does -- it had
+  // NO lowering at all (`ELL0106 special:quote`), so homoiconicity's representation half did not exist
+  // on the REFERENCE backend. Asserts the CONTRACT (reachable by name and index, `_type` is the node's
+  // own, Int stays Int) rather than the serialisation, whose field order is `makeNode`'s insertion
+  // order and is nobody's ruling. The return trip (`eval`) is still LL0236 and is not used here.
+  "80-adversarial/quote_datum.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

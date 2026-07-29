@@ -170,7 +170,10 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "after S-a4: this is now a clean LL0236 on BOTH backends naming the missing runtime AST " +
       "interpreter, where it used to compile to the HOST's eval on JS -- evaluating JavaScript, not " +
       "l-lang -- and refuse with LL0107 on C. So the file's remaining failure is one honest " +
-      "diagnostic rather than a silent backend split.",
+      "diagnostic rather than a silent backend split. RE-MEASURED AGAIN after M1: quote now LOWERS ON " +
+      "C (it was ELL0106 `special:quote`, no code generator at all), so the C backend reaches the " +
+      "same `eval` line the JS one does and reports the same code at the same location. Only (2) is " +
+      "left, and only (1) is a language decision -- which still has no D-number.",
   },
   "05-data-structures/02_maps.lisp": {
     status: "xfail",

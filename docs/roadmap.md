@@ -799,6 +799,29 @@ same-named bindings in one frame share an entry and an uncaptured one can inheri
 That is a cost, not a wrong answer — but only while the declaration, every read and every write agree,
 which is exactly what the third defect above broke. The corpus file pins that case.
 
+### ~~`quote` has no C lowering~~ — **CLOSED (M1)**, and homoiconicity's return trip is what is left
+
+`'form` was `ELL0106 special:quote, no lowering exists` on the **reference** backend (D86), so the
+language's headline feature existed only on the deprecated oracle — and because
+`12-quote-macros/00_quoting.lisp` is `xfail` and was never in `c-status.ts`, nothing measured the gap.
+
+The lowering is `JSTransformerAstVisitor.dataToESTree`'s twin, and has to be: both backends are graded
+against one golden. Three lines of contract — an array becomes a vector, an object becomes a map keyed
+by its own fields minus `_location` and `_parent`, everything else is its literal. No new emitter
+machinery: `c-map` and `c-vector` already existed and `EmitCirToC` already builds this exact shape for
+the `__ll_meta` graph (D70). Guarded by `80-adversarial/quote_datum.lisp`, which pins the **contract**
+(reachable by name and index, `_type` is the node's own, Int stays Int) rather than the serialisation,
+whose field order is `AstBuilder.makeNode`'s insertion order and is nobody's ruling.
+
+`00_quoting.lisp` now reports the **same diagnostic at the same location on both backends** — `LL0236`,
+`eval` — where C used to refuse at quote before ever reaching it.
+
+**What is left is the return trip, and one unruled decision.** `eval` needs a runtime AST interpreter
+(LL0236). And the governing homoiconicity ruling — *"BOTH, with the AST datum as the source of truth
+and cons/list a derived layer"*, taken 2026-07-22 — **still has no D-number**; it lives in a string in
+`manifest.ts`. D95 raised its stakes: with `defmacro` receiving tokens and `defsyntax` receiving an
+AST, that ruling now has to say how the two views relate.
+
 ### An l-lang comment containing `*/` emits invalid JavaScript
 
 `;; a comment containing */ a block-comment terminator` compiles and runs on C and is **LL0101** on JS

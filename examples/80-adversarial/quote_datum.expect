@@ -1,0 +1,12 @@
+type: list
+head type: simple-identifier
+head id: +
+int type: integer-number
+int value: 1
+real type: float-number
+string type: string
+bool type: boolean
+nested type: list
+inner op: >
+unbound: undefined-name-xyz
+done

@@ -1263,6 +1263,53 @@ export class ResolveHirToCir {
     return { src, ctype: e.ctype, kind: "c-copy", inner: e };
   }
 
+  /**
+   * `'(+ 1 2)` -- CODE AS DATA (D3d), reconstructed as a value the program can walk.
+   *
+   * The exact twin of `JSTransformerAstVisitor.dataToESTree`, and it has to be: both backends are
+   * graded against ONE golden, so a quoted form must print identically on each. The shared contract is
+   * three lines long -- an array becomes a vector, an object becomes a map keyed by its own field
+   * names MINUS `_location` and `_parent`, and everything else is its literal. Those two keys are
+   * dropped because they are compiler bookkeeping (`_parent` is also cyclic, so emitting it would not
+   * terminate).
+   *
+   * D3d's ruling is what makes this worth having: quote used to compile to `JSON.stringify(node)`,
+   * which is code-as-TEXT, i.e. code as nothing. The map tree is walkable -- `expr.nodes.nodes` and
+   * `(head ...)` work on it -- and it is the representation half of homoiconicity. The RETURN trip
+   * (`eval`) is still LL0236, and this does not change that.
+   *
+   * Nothing new in the emitter: `c-map` and `c-vector` already exist, and `EmitCirToC` already builds
+   * exactly this shape for the `__ll_meta` reflection graph (D70).
+   */
+  private quoteDatum(value: any, at: ast.ASTNode): CExpr {
+    if (value === null || value === undefined) {
+      return { src: at, ctype: C_VALUE, kind: "c-lit", lit: "nil", value: "nil" };
+    }
+    if (Array.isArray(value)) {
+      return {
+        src: at, ctype: { k: "vec", elem: C_VALUE }, kind: "c-vector",
+        elements: value.map((v) => this.quoteDatum(v, at)),
+      };
+    }
+    if (typeof value === "object") {
+      const entries: CMapEntry[] = Object.keys(value)
+        .filter((k) => k !== "_location" && k !== "_parent")
+        .map((k) => ({ key: k, value: this.quoteDatum(value[k], at) }));
+      return { src: at, ctype: { k: "map" }, kind: "c-map", entries };
+    }
+    if (typeof value === "boolean") {
+      return { src: at, ctype: C_BOOL, kind: "c-lit", lit: "bool", value: value ? "true" : "false" };
+    }
+    if (typeof value === "number") {
+      // An AST literal's `value` is a JS number. Integral ones stay Int so `'(+ 1 2)` reports `1`
+      // rather than `1.0` -- D51's Int/Real split, kept through the datum.
+      return Number.isInteger(value)
+        ? { src: at, ctype: C_INT, kind: "c-lit", lit: "int", value: String(value) }
+        : { src: at, ctype: C_REAL, kind: "c-lit", lit: "real", value: String(value) };
+    }
+    return { src: at, ctype: C_STR, kind: "c-lit", lit: "str", value: String(value) };
+  }
+
   /** Resolve an assignment target to an lvalue: a name, a struct FIELD chain, or an INDEX. */
   private resolveLValue(node: ast.ASTNode, target: ast.ASTNode): CLValue {
     // `x` / `this.x` / `a.b.c` -- an identifier or dotted chain.
@@ -2305,6 +2352,10 @@ export class ResolveHirToCir {
         const g = node as ast.TypeGuardNode;
         return this.resolveTypeTest(node, this.resolveAstExpr(g.value), g.type);
       }
+      case "quote":
+        // `'(+ 1 2)` -- CODE AS DATA (D3d). The operand is never evaluated; it is reconstructed as a
+        // walkable value. See `quoteDatum`.
+        return this.quoteDatum((node as ast.QuoteNode).nodes, node);
       default:
         throw this.refuse(node, node._type, "resolveAstExpr");
     }
