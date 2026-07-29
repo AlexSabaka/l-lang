@@ -606,7 +606,11 @@ static ll_value ll_call_dyn(int argc, ll_value *argv) {
  *
  * The allocation KIND stays `LL_H_CELL` rather than `LL_H_OBJ`: it is an accounting label (D59 -- the
  * collector is ruled and not built), and cells remain worth counting separately from user objects. */
-static const char *const LL_CELL_FIELD_NAMES[1] = {"v"};
+/* `const char *` and NOT `const char *const`: `ll_class.field_names` is `const char **`, and the
+ * emitter's own `static const char* __ll_fields_X[]` arrays match it. The inner `const` discarded a
+ * qualifier at the initializer and put a warning on EVERY compiled program -- a build that always
+ * warns is a build whose warnings nobody reads. */
+static const char *LL_CELL_FIELD_NAMES[1] = {"v"};
 static const ll_class LL_CELL_CLASS = {
   "__ll_cell", false, 1, LL_CELL_FIELD_NAMES, 0, 0, 0, 0, 0, false, 0
 };
