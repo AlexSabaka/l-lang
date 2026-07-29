@@ -459,6 +459,66 @@
     ]
   },
   {
+    "probe": "LL0038 a defsyntax declared twice",
+    "diagnostics": [
+      {
+        "code": "LL0038",
+        "severity": "error",
+        "text": "'dup' is already declared as a 'defsyntax' in this module. A second declaration would silently replace the first, and every use site before it would change meaning."
+      }
+    ]
+  },
+  {
+    "probe": "LL0039 a defsyntax called with the wrong number of forms",
+    "diagnostics": [
+      {
+        "code": "LL0039",
+        "severity": "error",
+        "text": "the syntax 'unless' takes 2 forms, but 1 was given. A 'defsyntax' is matched on shape, so the count is part of the form it accepts."
+      }
+    ]
+  },
+  {
+    "probe": "LL0040 a defsyntax that expands into itself",
+    "diagnostics": [
+      {
+        "code": "LL0040",
+        "severity": "error",
+        "text": "expanding 'loopy' did not terminate (depth budget exhausted). A 'defsyntax' that expands into its own form, directly or through another, has no fixed point."
+      }
+    ]
+  },
+  {
+    "probe": "LL0041 a defsyntax whose body leaves the comptime subset",
+    "diagnostics": [
+      {
+        "code": "LL0041",
+        "severity": "error",
+        "text": "expanding 'g' failed: 'while' cannot be evaluated at compile time"
+      }
+    ]
+  },
+  {
+    "probe": "LL0042 a defsyntax that answers a value instead of a form",
+    "diagnostics": [
+      {
+        "code": "LL0042",
+        "severity": "error",
+        "text": "the syntax 'five' must expand to a FORM, but it answered bigint. Build one with a quasiquote -- '`(if ~c nil ~body)' -- rather than returning a value."
+      }
+    ]
+  },
+  {
+    "probe": "LL0023 defmacro is still reserved, defsyntax is not",
+    "diagnostics": [
+      {
+        "code": "LL0023",
+        "severity": "error",
+        "text": "'defmacro' is not implemented in 0.x. Macros are planned, and the keyword is reserved -- 'm' is not defined. Metaprogramming today is ':comptime' (compile-time evaluation) and 'defmodifier' (a decorator)."
+      }
+    ]
+  },
+  {
     "probe": "LL0110 an unquote outside a quasiquote",
     "diagnostics": [
       {

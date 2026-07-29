@@ -83,6 +83,7 @@ export type NodeType =
   | "quote"
   | "quasiquote"
   | "unquote"
+  | "syntax-def"
   | "vector"
   | "matrix"
   | "map"
@@ -517,6 +518,26 @@ export interface DimensionRefinementNode extends ASTNode<"dimension-refinement">
   /** `*` or `/`. */
   op: string;
   operands: (string | DimensionRefinementNode)[];
+}
+
+/**
+ * `(defsyntax unless [c body] `(if ~c nil ~body))` -- a SYNTAX handler (D69/D95).
+ *
+ * The tier that receives a full AST and returns one. Its parameters are bound to the ARGUMENT FORMS
+ * at a use site, unevaluated -- that is the whole difference from a function, and it is why a handler
+ * can decide not to evaluate something (`unless` never evaluates `body` when the condition holds).
+ *
+ * Expanded between PARSE and SYNTAX (D95), so it runs before names mean anything -- which is why a
+ * handler is module-local and cannot be imported: import resolution is two stages later.
+ *
+ * Distinct from `MacroDefNode`, which exists only to be REFUSED (LL0023). `defmacro` receives tokens
+ * and needs a pre-parse stage; this one needs no new stage machinery, which is why it is the tier that
+ * proves the layer.
+ */
+export interface SyntaxDefNode extends ASTNode<"syntax-def"> {
+  name: string;
+  params: ParameterNode[];
+  body: ASTNode[];
 }
 
 export interface ModifierDefNode extends ASTNode<"modifier-def"> {

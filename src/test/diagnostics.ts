@@ -348,6 +348,40 @@ const PROBES: Probe[] = [
     stage: "codegen",
   },
 
+  // --- the `defsyntax` tier's refusals (LL0038-LL0042, D95). All syntax-band: the expansion stage
+  //     runs between parse and syntax, so a handler that fails has to be reported there or not at
+  //     all -- nothing downstream models a `syntax-def`.
+  {
+    name: "LL0038 a defsyntax declared twice",
+    source: "(defsyntax dup [x] `(a ~x))\n(defsyntax dup [x] `(b ~x))\n(dup 1)",
+  },
+  {
+    name: "LL0039 a defsyntax called with the wrong number of forms",
+    source: "(defsyntax unless [c body] `(if ~c nil ~body))\n(unless 1)",
+  },
+  {
+    // Expands into its own form: no fixed point. The depth budget is what makes this a diagnostic
+    // rather than a compiler that never returns.
+    name: "LL0040 a defsyntax that expands into itself",
+    source: "(defsyntax loopy [x] `(loopy ~x))\n(loopy 1)",
+  },
+  {
+    // The handler RAN and raised. Carries the interpreter's own message, so the diagnostic names the
+    // construct rather than saying "expansion failed" -- a handler may use the comptime SUBSET, and
+    // `while` is outside it.
+    name: "LL0041 a defsyntax whose body leaves the comptime subset",
+    source: "(defsyntax g [x] (while true 1))\n(g 1)",
+  },
+  {
+    name: "LL0042 a defsyntax that answers a value instead of a form",
+    source: "(defsyntax five [x] 5)\n(console.log (five 1))",
+  },
+  {
+    // `defmacro` is UNCHANGED: it receives tokens and needs a pre-parse stage, so D95 leaves it
+    // refused by name while `defsyntax` becomes real. The two must not drift into each other.
+    name: "LL0023 defmacro is still reserved, defsyntax is not",
+    source: "(defmacro m [] 1)",
+  },
   {
     // D96. `~x` is a HOLE and needs a template around it. Before the rule it reached CODEGEN and
     // reported `ELL0106 Cannot generate C for 'unquote'` -- telling the author about a backend gap

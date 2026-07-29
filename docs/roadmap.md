@@ -883,7 +883,20 @@ comment, and a `*/` in the text closes it early. Found by writing an adversarial
 quoted C source. Deprecated-backend only, and the diagnostic is honest rather than silent, so it is
 recorded rather than fixed.
 
-### D95 is ruled and unbuilt — and one grammar question is deferred
+### `defsyntax` is BUILT (D95-a/D96) — and `defmacro` is what is left
+
+The tier exists: `DefSyntaxKw`, a production, a node, and an expansion stage between parse and syntax.
+A handler receives the argument FORM unevaluated — `unless` places its body in a branch that does not
+run, and the corpus asserts the side-effect counter stays `0`. Templates are built with D96's
+quasiquote. Five refusals (LL0038–LL0042) plus D96's LL0110, all probed.
+
+`defmacro` is unchanged and still LL0023. It receives TOKENS and needs a whole pre-parse stage;
+`defsyntax` needed no new stage machinery, which is why it went first.
+
+**Not claimed: hygiene.** A template that introduced a binding could capture one at the use site.
+Nothing prevents it and the corpus does not pretend otherwise.
+
+### D95's remaining half — and one grammar question is deferred
 
 *   **`defsyntax` has no token**, so it is refused as `LL0210 'defsyntax' is not defined` rather than by
     name. D3's banner has recorded this; D95 makes it actionable. `MacroDefNode.keyword` is typed to

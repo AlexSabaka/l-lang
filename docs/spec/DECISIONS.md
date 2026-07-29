@@ -148,12 +148,18 @@ about 7 of which are also valid JS operators. `(x <= 5)` currently parses as an 
 
 ## D3 — `defmacro` / `defsyntax`
 
-> **Only `defmacro` is actually reserved.** `DefMacroKw` exists and is parsed purely so **LL0023** can
-> refuse it with a location. There is no `DefSyntaxKw` token and no rule, so `(defsyntax foo …)` still
-> parses as a call to an undefined name — the exact failure mode this ruling was written to prevent.
-> **D69** later rules all three tiers by what each handler receives, and **D95** rules when each one
-> runs — so the design is settled and only the grammar is missing. D95 also acts on this banner:
-> `defsyntax` gets a token so it can be refused by name like `defmacro`.
+> **SUPERSEDED IN HALF: `defsyntax` IS BUILT (D95-a).** This ruling put both keywords out for 1.0.
+> `defsyntax` is now implemented — a real declaration, expanded between parse and syntax — so the half
+> of this ruling that reserved it no longer describes the tree.
+>
+> `defmacro` is unchanged and still refused by name (**LL0023**), and the asymmetry is the point: it
+> receives TOKENS, which needs a whole pre-parse stage, while `defsyntax` receives an AST and needed no
+> new stage machinery. **D69** rules the tiers by what each handler receives, **D95** by when each runs,
+> **D96** supplies the quasiquote a handler builds its answer with.
+>
+> This banner previously recorded that only `defmacro` was *reserved* — there was no `DefSyntaxKw`
+> token, so `(defsyntax foo …)` parsed as a call to an undefined name, the exact failure mode this
+> ruling was written to prevent. That is closed too: the token exists.
 **Ruling:** OUT for 1.0, documented as "Planned." The keywords are reserved — `(defmacro ...)`
 becomes a hard "not implemented in 0.x" error, never a silent call. Metaprogramming for 1.0 is
 `:comptime` + `defmodifier`, both of which are currently broken and must be fixed.
@@ -7338,6 +7344,42 @@ unlock the other 23 surfaces for `defsyntax` directly and make D69's migration p
 the token tier carrying it alone. It is real work with a real conflict — the `:of` guard and the `..`
 range live in that same rule, and modifier parsing is adjacent — so it is its own ruling, with the
 measurement above already gathered for it.
+
+### BUILT (D95-a) — `defsyntax` is implemented; `defmacro` is not, and the asymmetry is the point
+
+The tier is real: `DefSyntaxKw`, a `syntaxDefDecl` production, a `SyntaxDefNode`, and an expansion
+stage at the seam this ruling names. `defmacro` stays refused by name (LL0023) — it receives TOKENS
+and needs a whole pre-parse stage, while `defsyntax` receives an AST and needed **no new stage
+machinery**, which is exactly why it is the tier that proves the layer.
+
+**A handler receives the ARGUMENT FORM, unevaluated.** That is the whole difference from a function,
+and `unless` is the smallest thing that demonstrates it: the body is placed in a branch that does not
+run, so it is never evaluated at all — the corpus asserts a side-effect counter stays `0`. A function
+would have evaluated it before being called.
+
+**Two budgets, not one.** A macro runs away in two directions and they need separate numbers to be
+diagnosable: DEPTH catches a handler that expands into its own form (no fixed point), TOTAL catches one
+whose output grows each round — bounded depth, unbounded work. Modelled on the comptime interpreter's
+own `MAX_STEPS`/`MAX_DEPTH` pair, for the reason it has them: a compiler that never returns is worse
+than one that refuses.
+
+**Five refusals, all syntax-band** (LL0038–LL0042), because the stage runs before names mean anything
+and nothing downstream models a `syntax-def` — an unreported failure would leave the use site standing
+as a call to a function that no longer exists, which is the shape of the `:comptime` bug LL0099 exists
+for. Redefinition is refused rather than allowed to win silently, which is how D72/LL0031 records a
+`defmodifier` quietly ceasing to decorate.
+
+**Two things the build had to get right that the ruling did not mention.** Handlers are collected by
+walking the **AST**, not the flattened top-level statements — the same correction D72's annotation
+registry carries and C1 had to make again, against the same silent-scan-at-the-wrong-depth failure.
+And an expansion's nodes arrive with no `_parent`, so the stage re-links the tree before the syntax
+stage reads it: that chain is what `SymbolTable.scopeOf` climbs, and what D96's `LL0110` climbs.
+
+**Quote is not expanded.** `'(unless a b)` means exactly what it says; expanding inside it would make
+quote mean something other than its own contract.
+
+**Not claimed: hygiene.** A template that introduced a binding could capture one at the use site.
+Nothing in this build prevents it and the corpus does not pretend otherwise.
 
 ---
 

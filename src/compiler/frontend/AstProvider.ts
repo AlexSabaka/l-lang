@@ -5,7 +5,11 @@ import { LLangLexer } from "./grammar_v2/tokens";
 import { parser as v2Parser } from "./grammar_v2/Parser";
 import { LLangAstBuilder } from "./grammar_v2/AstBuilder";
 
-function assignParentNodeReferences(
+// EXPORTED as of D95: the `defsyntax` expansion stage rebuilds parts of the tree, and every node it
+// introduces arrives with no `_parent` at all. That chain is not decoration -- `SymbolTable.scopeOf`
+// climbs it to find an enclosing scope, and `UnquoteNeedsQuasiquote` climbs it to decide whether a
+// hole has a template. Re-linking after an expansion is the same obligation the parse stage has.
+export function assignParentNodeReferences(
   node: ast.ASTNode,
   parent?: ast.ASTNode
 ): void {

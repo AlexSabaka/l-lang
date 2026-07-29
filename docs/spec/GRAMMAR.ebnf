@@ -7,7 +7,7 @@
 (* ===== productions ===== *)
 
 program                ::= expression* ;
-expression             ::= ( comment | importExpr | exportExpr | variable | functionExpr | classDecl | structDecl | enumDecl | interfaceDecl | typeDefDecl | castDefDecl | castExpr | modifierDefDecl | attributeDefDecl | macroDecl | whenExpr | ifExpr | condExpr | forExpr | whileExpr | tryCatchExpr | restartCaseExpr | handleExpr | signalExpr | invokeRestartExpr | matchExpr | awaitExpr | spreadExpr | unquoteExpr | assignmentOrExpr | quoteExpr | quasiquoteExpr | nil | boolean | number | string ) ;
+expression             ::= ( comment | importExpr | exportExpr | variable | functionExpr | classDecl | structDecl | enumDecl | interfaceDecl | typeDefDecl | castDefDecl | castExpr | modifierDefDecl | attributeDefDecl | macroDecl | syntaxDefDecl | whenExpr | ifExpr | condExpr | forExpr | whileExpr | tryCatchExpr | restartCaseExpr | handleExpr | signalExpr | invokeRestartExpr | matchExpr | awaitExpr | spreadExpr | unquoteExpr | assignmentOrExpr | quoteExpr | quasiquoteExpr | nil | boolean | number | string ) ;
 assignmentOrExpr       ::= primaryExpr assignmentOp? ;
 primaryExpr            ::= ( list | matrix | vector | map | identifier ( ( indexerSuffix | memberSuffix ) )* ) ;
 assignmentOp           ::= ( ":=" expression | <PlusEq> expression | "-=" expression | <StarEq> expression | <SlashEq> expression | "%=" expression ) ;
@@ -64,6 +64,7 @@ refinementConstraint   ::= ( dimensionConstraint | <LParen> expression? <Range> 
 dimensionConstraint    ::= <LParen> ( <Star> | <Slash> ) dimensionOperand+ <RParen> ;
 dimensionOperand       ::= ( dimensionConstraint | <Identifier> ) ;
 macroDecl              ::= "defmacro" <Identifier>? expression* ;
+syntaxDefDecl          ::= "defsyntax" <Identifier> ( <LBracket> ( parameter ","? )* <RBracket> )? expression* ;
 modifierDefDecl        ::= "defmodifier" <Identifier> ( <LBracket> ( parameter ","? )* <RBracket> )? expression* ;
 attributeDefDecl       ::= "defattribute" <Identifier> ( <LBracket> ( parameter ","? )* <RBracket> )? ;
 importExpr             ::= "import" ( importDefinition ","? )+ ;

@@ -142,7 +142,7 @@ export class LLangAstBuilder extends BaseCstVisitor {
     const alternatives = [
       "comment", "importExpr", "exportExpr", "variable", "functionExpr",
       "classDecl", "structDecl", "enumDecl", "interfaceDecl", "typeDefDecl", "castDefDecl", "castExpr",
-      "modifierDefDecl", "attributeDefDecl", "macroDecl", "whenExpr", "ifExpr", "condExpr", "forExpr",
+      "modifierDefDecl", "attributeDefDecl", "macroDecl", "syntaxDefDecl", "whenExpr", "ifExpr", "condExpr", "forExpr",
       "whileExpr", "tryCatchExpr",
       "restartCaseExpr", "handleExpr", "signalExpr", "invokeRestartExpr",
       "matchExpr", "awaitExpr", "spreadExpr",
@@ -1155,6 +1155,14 @@ export class LLangAstBuilder extends BaseCstVisitor {
     }) : undefined;
     const body = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
     return this.makeNode("macro-def", ctx, { keyword: "defmacro", name, body });
+  }
+
+  /** `(defsyntax name [params] body...)` -- a SYNTAX handler (D95). */
+  syntaxDefDecl(ctx: any): ast.SyntaxDefNode {
+    const name = ctx.Identifier[0].image;
+    const params = ctx.parameter ? ctx.parameter.map((p: any) => this.visit(p)) : [];
+    const body = ctx.expression ? ctx.expression.map((e: any) => this.visit(e)) : [];
+    return this.makeNode("syntax-def", ctx, { name, params, body });
   }
 
   modifierDefDecl(ctx: any): ast.ModifierDefNode {

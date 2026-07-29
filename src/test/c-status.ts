@@ -448,6 +448,11 @@ export const C_PASSING: readonly string[] = [
   // COPIED, so expanding it twice with different arguments gives two different answers rather than the
   // first one twice.
   "80-adversarial/quasiquote.lisp",
+  // D95: the `defsyntax` tier itself. Pins what a FUNCTION cannot do -- `unless` places its body in a
+  // branch that does not run, so the body is never evaluated and the side-effect counter stays 0 --
+  // plus using an argument form twice, reordering two of them, branching on a form's SHAPE, composing
+  // one handler through another, and quote staying DATA (a quoted `(unless a b)` is not expanded).
+  "80-adversarial/defsyntax.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

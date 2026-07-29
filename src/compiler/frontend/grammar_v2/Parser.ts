@@ -40,6 +40,7 @@ class LLangParser extends CstParser {
   key: ParserMethod<[], CstNode>;
   quoteExpr: ParserMethod<[], CstNode>;
   quasiquoteExpr: ParserMethod<[], CstNode>;
+  syntaxDefDecl: ParserMethod<[], CstNode>;
   unquoteExpr: ParserMethod<[], CstNode>;
   type: ParserMethod<[], CstNode>;
   unionType: ParserMethod<[], CstNode>;
@@ -176,6 +177,7 @@ class LLangParser extends CstParser {
         { ALT: () => this.SUBRULE(this.modifierDefDecl) },
         { ALT: () => this.SUBRULE(this.attributeDefDecl) },
         { ALT: () => this.SUBRULE(this.macroDecl) },
+        { ALT: () => this.SUBRULE(this.syntaxDefDecl) },
         // Control flow (keywords: when, if, cond, for, while, try, match)
         { ALT: () => this.SUBRULE(this.whenExpr) },
         { ALT: () => this.SUBRULE(this.ifExpr) },
@@ -1269,6 +1271,25 @@ class LLangParser extends CstParser {
     this.macroDecl = this.RULE("macroDecl", () => {
       this.CONSUME(t.DefMacroKw);
       this.OPTION(() => this.CONSUME(t.Identifier));
+      this.MANY(() => {
+        this.SUBRULE(this.expression);
+      });
+    });
+
+    // D95 -- `(defsyntax name [params] body...)`. Same shape as `modifierDefDecl`, which is the other
+    // declaration that takes a name, typed parameters and a body. Unlike `macroDecl` above -- which is
+    // deliberately loose because it exists only to be refused by name -- this one is real syntax.
+    this.syntaxDefDecl = this.RULE("syntaxDefDecl", () => {
+      this.CONSUME(t.DefSyntaxKw);
+      this.CONSUME(t.Identifier);
+      this.OPTION(() => {
+        this.CONSUME(t.LBracket);
+        this.MANY2(() => {
+          this.SUBRULE(this.parameter);
+          this.OPTION2(() => this.CONSUME(t.Comma));
+        });
+        this.CONSUME(t.RBracket);
+      });
       this.MANY(() => {
         this.SUBRULE(this.expression);
       });

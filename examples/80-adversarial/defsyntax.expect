@@ -1,0 +1,8 @@
+5 is not > 10
+side effects: 0
+twice 4: 8
+flip 3 10: 7
+arg kind: list
+composed through two handlers
+quoted, unexpanded: unless
+done

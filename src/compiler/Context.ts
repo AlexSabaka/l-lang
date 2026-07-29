@@ -8,6 +8,7 @@ import {
   BuildDependencyGraphAstVisitor,
   BuildSymbolTableAstVisitor,
   ComptimeEvaluationAstVisitor,
+  ExpandSyntaxAstVisitor,
   DesugarAstVisitor,
   InlineImportsAstVisitor,
   SyntaxRulesAstVisitor,
@@ -642,6 +643,18 @@ export class Context {
     if (stopAt === "parse") {
       return { ast: ast as ASTNode };
     }
+
+    // THE `defsyntax` EXPANSION -- between PARSE and SYNTAX (D95).
+    //
+    // This seam is forced, not chosen. Later is impossible: an expansion INTRODUCES code, and the
+    // symbol table would have been built over a tree that no longer exists -- which is exactly why
+    // `:comptime` can run after symbols and this cannot, since `:comptime` only ever deletes
+    // declarations and folds expressions to constants. Earlier is impossible too: there is no tree yet.
+    //
+    // Before SYNTAX rather than after, so that a handler's OUTPUT is checked by the same rules its
+    // input would have been. An expansion that produced `(if)` with no arms should fail the way a
+    // hand-written one does.
+    ast = new ExpandSyntaxAstVisitor(this).expand(ast as ASTNode) as any;
 
     // SYNTAX STAGE
     this.performanceMetrics.startTimer("syntax");

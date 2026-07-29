@@ -96,6 +96,27 @@ export class ComptimeInterpreter {
     return this.evalNode(node, new Map());
   }
 
+  /**
+   * Evaluate a BODY with parameters already bound -- the `defsyntax` entry point (D95).
+   *
+   * The difference from `evaluate` is entirely in the environment: a syntax handler is called with its
+   * parameters bound to the ARGUMENT FORMS, unevaluated. That is what makes it a macro rather than a
+   * function, and it is why the bindings have to arrive from outside rather than being computed here.
+   *
+   * The body is a block, so its LAST expression is the answer -- the same rule a function body follows.
+   */
+  evaluateWith(body: ast.ASTNode[], bindings: Map<string, CTValue>): CTValue {
+    this.steps = 0;
+    this.depth = 0;
+    const env: Env = new Map(bindings);
+    let last: CTValue = null;
+    for (const stmt of body) {
+      if (!stmt || stmt._type === "comment") continue;
+      last = this.evalNode(stmt, env);
+    }
+    return last;
+  }
+
   private tick(node: ast.ASTNode) {
     if (++this.steps > MAX_STEPS) {
       throw new ComptimeError(

@@ -196,6 +196,66 @@ export const SyntaxDiagnostics = {
       `mean it.`
   ),
 
+  // LL0038-LL0042 (D95) -- the `defsyntax` tier's refusals.
+  //
+  // All five are SYNTAX-band because the expansion stage runs between parse and syntax, before names
+  // mean anything. A handler that fails has to be reported there or not at all: nothing downstream
+  // models a `syntax-def`, so an unreported failure would leave the use site standing as a call to a
+  // function that no longer exists -- the exact shape of the `:comptime` bug LL0099 was written for,
+  // where the declaration was deleted and the call was not.
+
+  // A second `defsyntax` of the same name. Keyed by name like every other registry here, so the later
+  // one would simply WIN and the earlier stop applying -- the silent failure D72/LL0031 records for
+  // `defmodifier`, where a decorator quietly stopped decorating and the program kept compiling.
+  SyntaxRedefined: def<{ name: string }>(
+    "LL0038",
+    Error,
+    (p) =>
+      `'${p.name}' is already declared as a 'defsyntax' in this module. A second declaration would ` +
+      `silently replace the first, and every use site before it would change meaning.`
+  ),
+
+  // Arity is checked BEFORE the handler runs, so the message can name both numbers. A handler called
+  // with the wrong count would otherwise fail somewhere inside its own body, pointing at the template.
+  SyntaxArity: def<{ name: string; expected: number; got: number }>(
+    "LL0039",
+    Error,
+    (p) =>
+      `the syntax '${p.name}' takes ${p.expected} form${p.expected === 1 ? "" : "s"}, but ${p.got} ` +
+      `${p.got === 1 ? "was" : "were"} given. A 'defsyntax' is matched on shape, so the count is part ` +
+      `of the form it accepts.`
+  ),
+
+  // Two budgets, because a macro runs away in two directions. `depth` is `(defsyntax loop [] (loop))`,
+  // which expands into itself at one site forever; `total` is a handler that grows its output each
+  // round -- bounded depth, unbounded work. A compiler that never returns is worse than one that
+  // refuses, which is the argument the comptime interpreter's own step budget already makes.
+  SyntaxRunaway: def<{ name: string; limit: string }>(
+    "LL0040",
+    Error,
+    (p) =>
+      `expanding '${p.name}' did not terminate (${p.limit} budget exhausted). A 'defsyntax' that ` +
+      `expands into its own form, directly or through another, has no fixed point.`
+  ),
+
+  // The handler ran and raised. Carries the interpreter's own message, which names the construct it
+  // could not evaluate -- the subset a handler may use is the comptime subset.
+  SyntaxFailed: def<{ name: string; error: string }>(
+    "LL0041",
+    Error,
+    (p) => `expanding '${p.name}' failed: ${p.error}`
+  ),
+
+  // A handler that answers 5 has not written a macro; it has written a function with the wrong
+  // keyword. Refused by name rather than by whatever a raw value breaks downstream.
+  SyntaxNotAForm: def<{ name: string; got: string }>(
+    "LL0042",
+    Error,
+    (p) =>
+      `the syntax '${p.name}' must expand to a FORM, but it answered ${p.got}. Build one with a ` +
+      "quasiquote -- '`(if ~c nil ~body)' -- rather than returning a value."
+  ),
+
   MacroNotImplemented: def<{ keyword: string; name?: string }>(
     "LL0023",
     Error,

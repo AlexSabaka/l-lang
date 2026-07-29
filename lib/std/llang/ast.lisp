@@ -14,13 +14,13 @@
 ;;
 ;; Every accessor is TOTAL: an unknown kind answers an empty vector, never an error.
 ;;
-;; 88 node kinds.
+;; 89 node kinds.
 (
     ;; The kind of a datum, or nil if it is not a node.
     (fn node-type [n <- Any] -> String? (return n._type))
 
     ;; Every node kind the parser can build, sorted.
-    (fn kinds [] -> String[] (return ["any-pattern" "attribute-def" "await" "binary-number" "boolean" "call" "cast" "class" "comment" "complex-number" "composite-identifier" "compound-assignment" "cond" "cond-case" "constant-pattern" "dimension-refinement" "enum" "enum-key" "export" "extends" "float-number" "for" "for-each" "format-expression" "formatted-string" "fraction-number" "function" "function-type" "functional-pattern" "generic-type" "handle" "hex-number" "identifier-pattern" "if" "implements" "import" "indexer" "integer-number" "interface" "intersection-type" "invoke-restart" "key-value" "list" "list-pattern" "macro-def" "map" "map-key-type" "map-pattern" "map-pattern-pair" "map-type" "mapped-type" "match" "match-case" "matrix" "member" "modifier" "modifier-def" "null" "octal-number" "parameter" "program" "quasiquote" "quote" "range-refinement" "rest-pattern" "restart-case" "signal" "simple-assignment" "simple-identifier" "simple-type" "spread" "string" "struct" "try-catch" "tuple-type" "type" "type-constraint" "type-def" "type-guard" "type-name" "type-pattern" "union-type" "unquote" "variable" "vector" "vector-pattern" "when" "while"]))
+    (fn kinds [] -> String[] (return ["any-pattern" "attribute-def" "await" "binary-number" "boolean" "call" "cast" "class" "comment" "complex-number" "composite-identifier" "compound-assignment" "cond" "cond-case" "constant-pattern" "dimension-refinement" "enum" "enum-key" "export" "extends" "float-number" "for" "for-each" "format-expression" "formatted-string" "fraction-number" "function" "function-type" "functional-pattern" "generic-type" "handle" "hex-number" "identifier-pattern" "if" "implements" "import" "indexer" "integer-number" "interface" "intersection-type" "invoke-restart" "key-value" "list" "list-pattern" "macro-def" "map" "map-key-type" "map-pattern" "map-pattern-pair" "map-type" "mapped-type" "match" "match-case" "matrix" "member" "modifier" "modifier-def" "null" "octal-number" "parameter" "program" "quasiquote" "quote" "range-refinement" "rest-pattern" "restart-case" "signal" "simple-assignment" "simple-identifier" "simple-type" "spread" "string" "struct" "syntax-def" "try-catch" "tuple-type" "type" "type-constraint" "type-def" "type-guard" "type-name" "type-pattern" "union-type" "unquote" "variable" "vector" "vector-pattern" "when" "while"]))
 
     ;; Is this the name of a kind the parser can build?
     (fn kind-exists [k <- String] -> Boolean
@@ -98,6 +98,7 @@
             "spread" => (return true)
             "string" => (return true)
             "struct" => (return true)
+            "syntax-def" => (return true)
             "try-catch" => (return true)
             "tuple-type" => (return true)
             "type" => (return true)
@@ -193,6 +194,7 @@
             "spread" => (return ["expression"])
             "string" => (return ["value"])
             "struct" => (return ["name" "modifiers" "implements" "extends" "body"])
+            "syntax-def" => (return ["name" "params" "body"])
             "try-catch" => (return ["try" "catch" "finally"])
             "tuple-type" => (return ["elements"])
             "type" => (return ["type" "array" "optional"])
@@ -287,6 +289,7 @@
             "spread" => (return ["expression"])
             "string" => (return [])
             "struct" => (return ["name" "modifiers" "implements" "extends" "body"])
+            "syntax-def" => (return ["params" "body"])
             "try-catch" => (return ["try" "finally"])
             "tuple-type" => (return ["elements"])
             "type" => (return ["type"])
@@ -380,6 +383,7 @@
     (fn is-spread [n <- Any] -> Boolean (return (== n._type "spread")))
     (fn is-string [n <- Any] -> Boolean (return (== n._type "string")))
     (fn is-struct [n <- Any] -> Boolean (return (== n._type "struct")))
+    (fn is-syntax-def [n <- Any] -> Boolean (return (== n._type "syntax-def")))
     (fn is-try-catch [n <- Any] -> Boolean (return (== n._type "try-catch")))
     (fn is-tuple-type [n <- Any] -> Boolean (return (== n._type "tuple-type")))
     (fn is-type [n <- Any] -> Boolean (return (== n._type "type")))
@@ -410,7 +414,7 @@
         is-modifier is-modifier-def is-null is-octal-number is-parameter is-program is-quasiquote
         is-quote is-range-refinement is-rest-pattern is-restart-case is-signal
         is-simple-assignment is-simple-identifier is-simple-type is-spread is-string is-struct
-        is-try-catch is-tuple-type is-type is-type-constraint is-type-def is-type-guard
-        is-type-name is-type-pattern is-union-type is-unquote is-variable is-vector
+        is-syntax-def is-try-catch is-tuple-type is-type is-type-constraint is-type-def
+        is-type-guard is-type-name is-type-pattern is-union-type is-unquote is-variable is-vector
         is-vector-pattern is-when is-while)
 )

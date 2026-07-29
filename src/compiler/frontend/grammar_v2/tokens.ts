@@ -91,6 +91,11 @@ export const DefAttributeKw = createToken({ name: "DefAttributeKw", pattern: /de
 export const DefStructKw = createToken({ name: "DefStructKw", pattern: /defstruct/, longer_alt: Identifier, categories: [BareKeyword] });
 export const DefClassKw = createToken({ name: "DefClassKw", pattern: /defclass/, longer_alt: Identifier, categories: [BareKeyword] });
 export const DefMacroKw = createToken({ name: "DefMacroKw", pattern: /defmacro/, longer_alt: Identifier, categories: [BareKeyword] });
+// D95/D3 -- `defsyntax` finally gets a token. D3 reserved BOTH keywords and its own standing banner
+// recorded that only one of them was: `defsyntax` gave `LL0210 is not defined`, the message any typo
+// gets. Unlike `defmacro`, which is still refused by name (LL0023), this one is now IMPLEMENTED --
+// D95 places its expansion between parse and syntax.
+export const DefSyntaxKw = createToken({ name: "DefSyntaxKw", pattern: /defsyntax/, longer_alt: Identifier, categories: [BareKeyword] });
 export const DefEnumKw = createToken({ name: "DefEnumKw", pattern: /defenum/, longer_alt: Identifier, categories: [BareKeyword] });
 export const DefTypeKw = createToken({ name: "DefTypeKw", pattern: /deftype/, longer_alt: Identifier, categories: [BareKeyword] });
 // D46/B-3: a user-defined CONVERSION -- a stripped function keyed by (source, target) rather than
@@ -442,7 +447,7 @@ export const defaultModeTokens: TokenType[] = [
   WhiteSpace,
   Comment,
   // Keywords (most specific first)
-  DefInterfaceKw, DefModifierKw, DefAttributeKw, DefStructKw, DefClassKw, DefMacroKw, DefEnumKw, DefTypeKw, DefCastKw, CastKw,
+  DefInterfaceKw, DefModifierKw, DefAttributeKw, DefStructKw, DefClassKw, DefMacroKw, DefSyntaxKw, DefEnumKw, DefTypeKw, DefCastKw, CastKw,
   FinallyKw, MatchKw, WhileKw, CatchKw, AwaitKw, AsyncKw,
   // D47 restart keywords -- multi-word (hyphenated) forms FIRST so they win over their bare prefixes.
   RestartCaseKw, InvokeRestartKw, SignalKw, HandleKw,
@@ -489,7 +494,7 @@ export const formatExprModeTokens: TokenType[] = [
   WhiteSpace,
   Comment,
   // Keywords
-  DefInterfaceKw, DefModifierKw, DefAttributeKw, DefStructKw, DefClassKw, DefMacroKw, DefEnumKw, DefTypeKw, DefCastKw, CastKw,
+  DefInterfaceKw, DefModifierKw, DefAttributeKw, DefStructKw, DefClassKw, DefMacroKw, DefSyntaxKw, DefEnumKw, DefTypeKw, DefCastKw, CastKw,
   FinallyKw, MatchKw, WhileKw, CatchKw, AwaitKw, AsyncKw,
   // D47 restart keywords -- multi-word (hyphenated) forms FIRST so they win over their bare prefixes.
   RestartCaseKw, InvokeRestartKw, SignalKw, HandleKw,
