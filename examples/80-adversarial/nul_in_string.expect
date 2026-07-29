@@ -1,0 +1,11 @@
+length         : 5
+== "ab"        : false
+shared prefix  : false
+identical      : true
+distinct keys  : one two
+concat length  : 3
+after the NUL  : cd
+ordering       : true
+both spellings : true 3
+interpolated   : 5 chars, false equal
+done

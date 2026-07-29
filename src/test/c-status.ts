@@ -437,7 +437,7 @@ export const C_PASSING: readonly string[] = [
   // would try to descend into). Node counts hand-derived from the source forms: 4 and 7.
   "80-adversarial/ast_schema.lisp",
   // M3: the comptime evaluator holds an AST, so a `:comptime` function can RECEIVE a form and walk it.
-  // Everything here folds before codegen -- the emitted C carries `ll_str_lit("list")` and `INT64_C(3)`
+  // Everything here folds before codegen -- the emitted C carries `ll_str_from("list", 4)` and `INT64_C(3)`
   // as literals and no call survives -- so this grades the compiler's own evaluator, not a library.
   // Pins the tier boundary too: a returned form re-wraps as `quote` and stays DATA rather than being
   // spliced as code, which would be `defsyntax`'s job (D69).
@@ -482,6 +482,14 @@ export const C_PASSING: readonly string[] = [
   // expand and this one does not. Nothing downstream knows `my-for` existed: it expands to a block and
   // a `while`, so types, the HIR and both backends see code they already understood.
   "80-adversarial/for_as_macro.lisp",
+  // An l-lang String is a COUNTED byte range, and every C literal was built with `ll_str_lit`, which
+  // measures with `strlen`. Truncation at the first NUL was the visible half; the half that matters is
+  // that `ll_str_eq` -- correct as written -- was then handed two truncated strings, so two DIFFERENT
+  // literals sharing a NUL prefix compared EQUAL, and two map keys sharing one COLLIDED (measured: the
+  // second `ll_map_set` overwrote the first, so a two-entry literal answered `two two`). Nine of this
+  // file's eleven lines were wrong before the fix. Nothing prints a NUL -- a golden is compared as
+  // text, so every assertion reduces to a length, a boolean, or a substring that excludes it.
+  "80-adversarial/nul_in_string.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

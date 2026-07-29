@@ -267,7 +267,7 @@ export interface CIndex {
 }
 
 /** A member READ fully resolved by P1 to a runtime accessor: `runtimeFn(object)` -- or, for a
- *  fully-dynamic read (`needsName`), `runtimeFn(object, ll_str_lit(fieldName))`. */
+ *  fully-dynamic read (`needsName`), `runtimeFn(object, ll_str_from(fieldName, len))`. */
 export interface CMember {
   kind: "c-member";
   object: CExpr;

@@ -53,6 +53,29 @@ function staticZero(t: CType): string {
   }
 }
 
+/**
+ * A string literal as an `ll_str*`, WITH ITS LENGTH STATED.
+ *
+ * `ll_str_lit` measures its argument with `strlen`, which is the one measurement a C string cannot
+ * make about an l-lang one: an l-lang String is a counted byte range and may contain NUL. Every
+ * literal used to go through it, so `"ab\x00cd"` arrived as the two bytes `ab` -- and because the
+ * runtime's own equality is `len == len && memcmp`, ALREADY correct, two distinct literals sharing a
+ * NUL prefix compared EQUAL. Measured before this fix: `(== "ab\x00cd" "ab\x00XY")` answered `true`
+ * on C and `false` on JS, and `.length` answered 2 against JS's 5.
+ *
+ * The escape side was never wrong -- `cEscape` emits `\000` for a NUL, always three octal digits, so
+ * a following digit cannot be absorbed into it. Only the length was, so only the length is fixed:
+ * the byte count is computed here and handed to `ll_str_from`, which copies exactly that many bytes.
+ *
+ * Used for EVERY literal the emitter produces, including field names and map keys that cannot
+ * contain a NUL today. Uniformity is the point -- "which of these seven sites can carry user text?"
+ * is a question that has to be re-answered every time one of them moves, and answering it wrong is
+ * silent.
+ */
+function cStr(s: string): string {
+  return `ll_str_from("${cEscape(s)}", ${Buffer.byteLength(s, "utf8")})`;
+}
+
 /** Escape a raw string for a C string literal (UTF-8 bytes pass through). */
 function cEscape(s: string): string {
   let out = "";
@@ -239,7 +262,7 @@ export class EmitCirToC {
   private emitMetadata(meta: Record<string, any>): void {
     const names = Object.keys(meta ?? {});
     if (names.length === 0) return;
-    const keys = names.map((n) => `ll_str_lit("${cEscape(n)}")`).join(", ");
+    const keys = names.map((n) => cStr(n)).join(", ");
     const vals = names.map((n) => this.metaValue(meta[n])).join(", ");
     this.line(`__ll_meta = ll_map_of(${names.length}, (ll_str*[]){${keys}}, (ll_value[]){${vals}});`);
   }
@@ -251,14 +274,14 @@ export class EmitCirToC {
     if (typeof v === "number") {
       return Number.isInteger(v) ? `ll_box_int(INT64_C(${v}))` : `ll_box_real(${v})`;
     }
-    if (typeof v === "string") return `ll_box_str(ll_str_lit("${cEscape(v)}"))`;
+    if (typeof v === "string") return `ll_box_str(${cStr(v)})`;
     if (Array.isArray(v)) {
       if (v.length === 0) return "ll_box_vec(ll_vec_of(0, (ll_value*)0))";
       return `ll_box_vec(ll_vec_of(${v.length}, (ll_value[]){${v.map((x) => this.metaValue(x)).join(", ")}}))`;
     }
     const ks = Object.keys(v);
     if (ks.length === 0) return "ll_box_map(ll_map_of(0, (ll_str**)0, (ll_value*)0))";
-    const keys = ks.map((k) => `ll_str_lit("${cEscape(k)}")`).join(", ");
+    const keys = ks.map((k) => cStr(k)).join(", ");
     const vals = ks.map((k) => this.metaValue(v[k])).join(", ");
     return `ll_box_map(ll_map_of(${ks.length}, (ll_str*[]){${keys}}, (ll_value[]){${vals}}))`;
   }
@@ -842,7 +865,7 @@ export class EmitCirToC {
             return /[.eE]/.test(e.value) ? e.value : `${e.value}.0`;
           case "bool": return e.value;
           case "char": return e.value;
-          case "str": return `ll_str_lit("${cEscape(e.value)}")`;
+          case "str": return cStr(e.value);
           case "nil": return "ll_nil()";
         }
         break;
@@ -861,7 +884,7 @@ export class EmitCirToC {
         return `ll_signal(${this.expr(e.condition)})`;
       case "c-interp": {
         const parts = e.parts.map((p) =>
-          typeof p === "string" ? `ll_box_str(ll_str_lit("${cEscape(p)}"))` : this.expr(p)
+          typeof p === "string" ? `ll_box_str(${cStr(p)})` : this.expr(p)
         );
         return `ll_str_concat_n(${parts.length}, (ll_value[]){${parts.join(", ")}})`;
       }
@@ -971,7 +994,7 @@ export class EmitCirToC {
       case "c-map": {
         if (e.entries.length === 0) return "ll_map_of(0, (ll_str**)0, (ll_value*)0)";
         const keys = e.entries.map((en) =>
-          typeof en.key === "string" ? `ll_str_lit("${cEscape(en.key)}")` : this.expr(en.key)
+          typeof en.key === "string" ? cStr(en.key) : this.expr(en.key)
         );
         const vals = e.entries.map((en) => this.expr(en.value));
         return `ll_map_of(${e.entries.length}, (ll_str*[]){${keys.join(", ")}}, (ll_value[]){${vals.join(", ")}})`;
@@ -989,7 +1012,7 @@ export class EmitCirToC {
       }
       case "c-member":
         return e.needsName
-          ? `${e.runtimeFn}(${this.expr(e.object)}, ll_str_lit("${cEscape(e.fieldName)}"))`
+          ? `${e.runtimeFn}(${this.expr(e.object)}, ${cStr(e.fieldName)})`
           : `${e.runtimeFn}(${this.expr(e.object)})`;
       case "c-box": {
         if (e.from.k === "value") return this.expr(e.inner);

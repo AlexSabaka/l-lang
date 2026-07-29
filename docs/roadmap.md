@@ -680,18 +680,16 @@ Six modules in one round, each ruled before it was written.
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
-### The six surviving C defects from the 2026-07-27 adversarial audit
+### The five surviving C defects from the 2026-07-27 adversarial audit
 
 The audit reported 29 findings; its triage adjudicated them to **11 distinct defects** behind a
-premise the audit had inverted (it named JS the oracle; D86 says C is the specification). **Five are
+premise the audit had inverted (it named JS the oracle; D86 says C is the specification). **Six are
 closed** — #1/#2 by D84's injective mangling, #3 by D85's division ruling, #4/#5 by commit `b466f71`
-turning six bare emitter throws into located LL0106s. These six are open, verified in source on
-2026-07-28, and were recorded nowhere but the triage until now:
+turning six bare emitter throws into located LL0106s, and the NUL one below. These five are open,
+verified in source on 2026-07-28, and were recorded nowhere but the triage until now:
 
-*   **Embedded NUL truncates a string literal, and two strings sharing a NUL prefix compare EQUAL.**
-    `ll_str_lit` measures with `strlen` (`EmitCirToC.ts`, `runtime.c`'s `ll_str_from(cstr,
-    strlen(cstr))`). `true` on C where JS answers `false`. **The equality half is security-relevant**
-    and is the one to fix first of these six.
+*   ~~**Embedded NUL truncates a string literal, and two strings sharing a NUL prefix compare
+    EQUAL.**~~ — **CLOSED**, and it was the one the triage named to fix first. See below.
 *   **An under-applied closure reads past `argv`.** The emitter unpacks `__argv[i]` unconditionally,
     so a call with too few arguments prints `#<object>` where JS binds nil.
 *   **Deep structural equality has no cycle guard and no pointer-identity short-circuit.** A
@@ -711,6 +709,41 @@ so none should be "corrected" before it is decided:
     (per-iteration snapshot). Undecided, and most languages moved toward C's answer.
 *   **`Number("")`** — `NaN` on C, `0` on JS. JS's `0` is a known wart, not a specification.
 *   **Module initialisation order**, and whether `T | Nil` and `T?` are the same type.
+
+### ~~An embedded NUL truncated a string literal, and NUL-prefixed strings compared EQUAL~~ — **CLOSED**
+
+An l-lang String is a **counted byte range**; a C string is a terminated one. Every literal the C
+emitter produced went through `ll_str_lit`, which measures with `strlen`, so the two representations
+were being conflated at the exact point where one becomes the other.
+
+**The truncation was the visible half. The equality was the dangerous one.** `ll_str_eq` is
+`len == len && memcmp` — correct as written, and correct for the whole life of the backend — but it
+was handed two *already truncated* strings, so it answered honestly about the wrong inputs:
+
+| measured | C, before | C, after | JS |
+|---|---|---|---|
+| `"ab\x00cd".length` | 2 | 5 | 5 |
+| `(== "ab\x00cd" "ab\x00XY")` | **true** | false | false |
+| `{"k\x001" "one" "k\x002" "two"}` | `two two` | `one two` | `one two` |
+
+That third row was not predicted and is worse than the triage recorded: the two keys did not merely
+compare equal, the second `ll_map_set` found the first "equal" and **overwrote** it, so a two-entry
+map literal became a one-entry map. A comparison that answers "equal" for unequal inputs is the shape
+behind every length-confusion CVE, which is why the triage named this the first of the six to fix.
+
+**The fix is one function and no runtime change.** `cStr()` in `EmitCirToC.ts` states the byte count
+at the emission site and calls `ll_str_from`. The escape side was never wrong — `cEscape` writes a
+NUL as `\000`, always three octal digits, so a following digit cannot be absorbed into it. Everything
+downstream of construction — concat, slice, compare, `.length`, display, `fwrite` — already worked
+from `s->len` and needed nothing.
+
+Applied at **all seven** literal-emission sites, including field names and map keys that cannot carry
+a NUL today: "which of these can hold user text?" is a question that must be re-answered every time
+one of them moves, and answering it wrong is silent.
+
+Guarded by `80-adversarial/nul_in_string.lisp`, which was measured RED first — **9 of its 11 lines
+were wrong** before the fix. `ll_str_lit` remains in the runtime for genuine C strings (`argv`,
+`getenv`, internal constants); it has no callers in the emitter.
 
 ### ~~Arithmetic is only checked at arity two~~ — **CLOSED (D92)**
 
