@@ -56,7 +56,7 @@ touches; **bold** marks the one to read first.
 | **the type system, broadly** | **D5** (superseded — see D42), **D42** (types nominal, interfaces structural), D44 (an annotation must name a type that exists), D43 (Int vs Real is static) |
 | **richer types** | D37 (tuples, records), D36 (typed surfaces, native members), D46 (refinements), **D90** (units of measure) |
 | **conversion and coercion** | **D46** (`defcast`, `(cast<T> x)`, refinements), D41 (`:of` narrows — a *guard*, not a conversion), D88 (promotion through an implicit cast) |
-| **protocols and interfaces** | **D42** (structural, for assignability), D63 (Comparable / Hashable / Formattable — *nominal*, at run time), D29 (constructs defined by protocols), D30 (Iterable / Iterator), D89 (`Ring`, and a primitive answering a protocol) |
+| **protocols and interfaces** | **D42** (structural, for assignability), **D91** (`:of` is lineage, `:is` is shape — the two runtime questions), D63 (Comparable / Hashable / Formattable — *nominal*), D29 (constructs defined by protocols), D30 (Iterable / Iterator), D89 (`Ring`, and a primitive answering a protocol) |
 | **classes and structs** | **D11** (the class surface, value-semantic structs, no `protected`), D81 (a base method's call is virtual on C) |
 | **pattern matching** | **D25**, D26 (guards, `:when`), D27 (`:of` type patterns), D28 (rest patterns), D74 (a pattern's string decodes), D83 (a comment is not a value) |
 | **control flow and `return`** | D12 (control forms), **D40** (`return` returns from the function), D83 |
@@ -3880,8 +3880,9 @@ the type question in both pattern and expression position; a second `-> Type` sp
 >
 > So a class that conforms by shape is accepted by `[x <- Ring]` at compile time and answers `false`
 > to `(x :of Ring)` at run time. **Two answers to one question, by design at each site and by nobody's
-> design taken together.** Pinned on both halves by `examples/80-adversarial/ring_protocol.lisp`;
-> reconciling them is a runtime-metadata change, tracked in `../roadmap.md`.
+> design taken together.** Pinned on both halves by `examples/80-adversarial/ring_protocol.lisp`.
+> **Resolved by D91**: the two questions get two operators — `:of` asks the nominal one and `:is` the
+> structural one — so neither answer has to change.
 **Ruling:** A class or struct keeps its **identity**: `Dog` is not a `Cat`, however identical their
 shapes, and no amount of matching members makes one assignable to the other. An **interface** is a
 **shape**: a class satisfies it by having its members, whether or not it declares `:implements`. A
@@ -6909,3 +6910,72 @@ newtype's parameter is boxed either way; that is pre-existing and has nothing to
     surface nobody agreed to.
 *   **Unit-polymorphic functions** (`fn sq<'u> [x <- Real<'u>] -> Real<'u^2>`) — F#'s research half,
     explicitly outside D88's ruling. This stops exactly short of it.
+
+---
+
+## D91 — `:of` is lineage, `:is` is shape (2026-07-29)
+
+**Ruling.** The two conformance questions get two operators, and the split is by what they ask rather
+than by where they appear:
+
+*   **`(x :of T)` — NOMINAL. Unchanged.** "Was `x` *declared* a `T`?" — the `:extends` / `:implements`
+    chain, exactly what D41 and D27 already do and what `ll_is_type` already answers. Every one of the
+    116 `:of` sites in the corpus keeps its current meaning byte for byte.
+*   **`(x :is I)` — STRUCTURAL. New.** "Does `x` have the *shape* of `I`?" — the interface's required
+    members are all present on `x`. This is `TypeChecker.conformsStructurally` (D42/Zg) made
+    observable at run time.
+
+The mnemonic is English and it is why this way round rather than the other: *"Aragorn son **of**
+Arathorn"* is descent — a fact about where a value came from. *"Aragorn **is** heir of Isildur"* is a
+claim about what it qualifies as, which is a fact about its shape. `of` is the lineage word.
+
+### What this closes
+
+**D42 and D63 gave opposite answers to one question, and both were right.** D42 rules interfaces
+structural, so a class carrying `compare-to` satisfies `[x <- Comparable]` with no `:implements`. D63
+rules display *nominal* on purpose — gated on a declared `:implements`, *"NOT on 'has a method named
+`format`', so an unrelated method of that name never hijacks rendering."* Each is correct in
+isolation; together they meant **a class accepted by `[x <- Ring]` at compile time answered `false` to
+`(x :of Ring)` at run time**, which `80-adversarial/ring_protocol.lisp` pins today.
+
+The contradiction was never in the answers. It was that **one operator was being asked two different
+questions**. Naming them separately dissolves it: D63's gating keeps `:of` and is unchanged, D42's
+conformance becomes reachable at run time through `:is`, and nothing has to be reconciled because
+nothing was ever in conflict once the questions were told apart.
+
+### Why not the other assignment
+
+Making `:of` structural was measured and rejected. Of the corpus's 116 `:of` sites, **only ~13 name an
+interface**; the other 103 name a class (44 of them `Error`) or a primitive. Structural conformance
+over a *class* would make any object shaped like `Error` answer true to `(err :of Error)`, and catch
+filters are spelled with `:of` — so the change would have reached the error model, which is not what
+anyone was trying to fix. Keeping `:of` nominal makes this ruling **purely additive**: no existing
+program changes meaning.
+
+### Scope
+
+*   **`:is` is interface-only.** `conformsStructurally` already refuses a non-interface target
+    (`target.kind !== "interface"`) and refuses an *empty* interface — structurally an empty interface
+    is satisfied by everything, which would make a marker interface a constraint that constrains
+    nothing, silently. A marker must be CLAIMED, and `:of` is how you claim it. `(x :is SomeClass)` is
+    a diagnostic, not a false.
+*   **`:is` narrows, like `:of` does** (D41), and appears in the same two positions: expression, and
+    `match` pattern.
+*   **The token already exists.** `IsModKw` has been lexed and present in both token arrays since the
+    modifier keywords were laid out, and is consumed by **zero** parser rules — reserved surface that
+    nothing called, which is the mutated form of this project's signature failure mode (IDENTITY.md
+    §3.2). This ruling spends it.
+*   **The runtime already carries what this needs**, on both backends: `(type-by-name "Shape")`
+    answers an interface's `:methods` and `(type x)` answers a value's. Verified on C before this was
+    ruled.
+
+### What stays unruled
+
+**Disposal still matches a member NAME.** D58 dispatches `dispose` by `strcmp` rather than by
+conformance to `Disposable`, which is a *fourth* answer to the conformance question and is not fixed
+here — it should become `(x :is Disposable)`, and that is a separate change with its own corpus
+evidence. `for :each` element typing stays nominal.
+
+**This ruling does not make `:is` the checker's operator.** Assignability is unchanged; `[x <- Ring]`
+already accepts structural conformers and continues to. `:is` is the runtime's way to ask the same
+question the checker was already asking, not a new rule about what is assignable.
