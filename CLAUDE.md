@@ -23,9 +23,9 @@ There is **no `package.json` at the repository root**. Every `npm run` is from `
 
 ```
 src/            the compiler (TypeScript). package.json lives HERE.
-lib/std/        the standard library, written in l-lang — 17 packages, 38 modules
-examples/       326 .lisp programs. This is the end-to-end suite, not a demo folder.
-docs/spec/      DECISIONS.md is the spec. Rulings D1–D90.
+lib/std/        the standard library, written in l-lang — 17 packages, 39 modules
+examples/       348 .lisp programs. This is the end-to-end suite, not a demo folder.
+docs/spec/      DECISIONS.md is the spec. Rulings D1–D102.
 ```
 
 `cd src` before any npm command. Every path in this file is relative to the repo root.
@@ -50,9 +50,14 @@ npx tsc --noEmit
 ../l-lang-games/verify.sh    # from the repo root — the games parity suite, both backends
 ```
 
-Baseline to hold, measured at `b948330`: **JS 276 passing / 0 failing / 5 oracle-divergent / 8 xfail.
-C 269 passing / 0 failing / 5 refused / 1 not-yet.** Both over the same 326-file total (13 library,
-1 fixture). Any movement is a finding — report the number, do not adjust it silently.
+Baseline to hold, measured at `0dd79ef` (2026-07-30): **JS 297 passing / 0 failing / 6
+oracle-divergent / 8 xfail. C 294 passing / 0 failing / 3 refused / 0 not-yet.** Both over the same
+348-file total (13 library, 1 fixture, 29 negative). Any movement is a finding — report the number,
+do not adjust it silently.
+
+*Adjusting this line is not the same as adjusting a number silently.* It moves only when every step
+between the old figure and the new one was reported in a commit message, and each of the 22 files
+added since `b948330` is named in `c-status.ts` with what it measures.
 
 **CI is not the gate.** `.github/workflows/ci.yml` runs `npm ci`, `npm run build`, `npm test` — the
 deprecated backend, and nothing else. Green CI means almost nothing; run the list above.
@@ -118,7 +123,7 @@ question instead. Commit subjects are one-line rulings in the same register:
 
 Imperative diagnostics live in `src/compiler/rules/diagnostics/` — one category file per emitting
 domain, codes banded (`00xx` syntax · `0099` comptime · `01xx` codegen · `02xx` type · `03xx`
-module). `npm run test:diagnostics` prints the allocator (`LL02xx: 29 taken, next free LL0209`) and
+module). `npm run test:diagnostics` prints the allocator (`LL02xx: 49 taken`, and the next free) and
 every new code needs a probe there. The declarative rules in
 `src/compiler/rules/NodeValidationRules.ts` carry the rest. See that directory's own `README.md` —
 it is current, and it is the pattern the rest of the docs are being rewritten toward: small, local,
@@ -144,6 +149,24 @@ type channel, `InlineImportsAstVisitor`, `visitTypeName`, `LL0004`, `:extern`, `
 
 Of a claimed feature, do not ask *"is it implemented?"* Ask **"who calls it?"** — then `git grep` the
 identifier and count the call sites.
+
+## The second failure mode: one sibling learns the rule, the other does not
+
+Three times on 2026-07-30 alone, in the C backend, a rule was applied at one site and not at the site
+beside it:
+
+| the rule | who knew it | who did not |
+|---|---|---|
+| clamp `__argc` before reading `__argv[i]` | the rest-parameter prologue | three fixed-parameter reads *in the same loop* |
+| a callee packs its own `[...rest]` | the lifted-closure prologue | the function adapter |
+| `(f)` is a call iff `f` names a function | `classifyCall`, `resolveFreeCall` | `resolveCall`, which asked "is it a local?" |
+
+Each was a real defect (a SIGSEGV, a `TypeError`, and a closure returned instead of called), and each
+had a **correct comment ten lines away explaining the rule it violated**. A missing case is the same
+shape: `resolveAstExpr` had `vector` and no `map`, which refused two unrelated features.
+
+So when you fix one arm of a switch or one branch of a dispatch, **read its siblings before you
+leave**, and say in the commit whether they agree. `git grep` the runtime function, not the concept.
 
 ## A claim about the code is a claim about a measurement
 
