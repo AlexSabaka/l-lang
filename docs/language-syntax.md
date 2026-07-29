@@ -15,8 +15,13 @@
 
 ## 0. What kind of language this is
 
-Everything is an S-expression, and everything is an expression — `if`, `match`, `for`, a block all
-yield values.
+Everything is an S-expression, and **everything is an expression** (D94) — `if`, `when`, `cond`,
+`match`, `try`, `restart-case` and a block all yield values.
+
+> **Ruled, not yet built.** The forms that yield *nothing* — `while`, `for`, `for :each`, `let`/`mut`
+> and assignment — are ruled to yield `nil` **typed `Nil`**, so misusing that value is a compile
+> error. Today the value is untyped and the misuse panics at run time instead, and a C-style `for` in
+> value position emits C that does not compile. See roadmap, *Known gaps*.
 
 But **l-lang is not a Lisp with types bolted on**, and it is worth being honest about that up front.
 A Lisp decides what a list means by looking up its head; l-lang decides by **parsing**. The grammar

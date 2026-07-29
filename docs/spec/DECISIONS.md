@@ -3,7 +3,7 @@
 Rulings on l-lang's language surface. **D1–D16 were taken 2026-07-12** following a full compiler
 audit (161 agents, 148 verified findings across grammar, types, codegen, analysis passes,
 stdlib/runtime, docs conformance, examples, and hygiene); the document has grown by ruling ever
-since, and runs to **D90** as of 2026-07-28. Every ruling was made with a native backend in front of
+since, and runs to **D94** as of 2026-07-29. Every ruling was made with a native backend in front of
 it — several are not stylistic preferences, they are things that cannot be retrofitted later without
 breaking every existing program.
 
@@ -59,8 +59,8 @@ touches; **bold** marks the one to read first.
 | **protocols and interfaces** | **D42** (structural, for assignability), **D91** (`:of` is lineage, `:is` is shape — the two runtime questions), D63 (Comparable / Hashable / Formattable — *nominal*), D29 (constructs defined by protocols), D30 (Iterable / Iterator), D89 (`Ring`, and a primitive answering a protocol) |
 | **classes and structs** | **D11** (the class surface, value-semantic structs, no `protected`), D81 (a base method's call is virtual on C) |
 | **pattern matching** | **D25**, D26 (guards, `:when`), D27 (`:of` type patterns), D28 (rest patterns), D74 (a pattern's string decodes), D83 (a comment is not a value) |
-| **control flow and `return`** | D12 (control forms), **D40** (`return` returns from the function), D83 |
-| **nil, Void, and optionality** | **D9** (what `nil` is — ruled twice), D49 (Void, void-in-value) |
+| **control flow and `return`** | D12 (control forms), **D40** (`return` returns from the function), **D94** (every form yields a value; `break` does not exist), D83 |
+| **nil, Void, and optionality** | **D9** (what `nil` is — ruled twice), **D94** (a statement's value is `nil`, *typed* `Nil`), D49 (Void, void-in-value) |
 | **numbers** | **D88** (the tower: literals, promotion, `..`), **D92** (n-ary folds to binary), **D93** (`...` binds by adjacency), D8 (number literals), D71 (`_` separators, `0o`), D61 (bit operators), D43, D85 (division by zero), D89 (`Ring`), D90 (dimensions) |
 | **strings and text** | D67 (`r"…"` raw, `f"…"` formatted, the regex engine), D74, D52 (codepoints — see D50–D55) |
 | **metaprogramming** | **D69** (the three tiers), D3 + D3b/D3c/D3d, D73 (the in-house comptime interpreter), **D75** (`defmodifier` is flat), D68 (`:foo` is three roles), D72 (`defattribute`) |
@@ -7123,3 +7123,81 @@ documents it**: `NodeValidationRules.ts` carries a standing note about `LL0004 I
 which was *"defined, exported from the rules barrel, and never wired into any visitor — so it had
 never run."* The lesson holds and is worth restating: of a new rule, do not ask *"is it defined?"*
 Ask **who calls it**, and prove it fires.
+---
+
+## D94 — "everything is an expression" is made TRUE, and the value is TYPED (2026-07-29)
+
+**Ruling.** Every form yields a value. The forms that yield nothing today yield **`nil`, typed
+`Nil`** — so a statement in value position stays legal, and *consuming* that value as anything other
+than `Nil` becomes a **compile** error instead of a runtime panic.
+
+The nil-yielding set is `while`, `for`, `for :each`, `let` / `mut`, `:=` and the compound
+assignments. A `fn` in value position yields the function: an **anonymous** `fn` is a lambda literal
+and always was a value; a **named** `fn` is a declaration that *also* yields, which is what the C
+backend already does.
+
+### Why it was open
+
+The claim is stated in three places and was true in none of them. `language-syntax.md:18` — *"everything
+is an expression — `if`, `match`, `for`, a block all yield values"*; `inbox/hir-brief.md:21` —
+*"every form yields a value. `if`, `cond`, `when`, `match`, `for`, a block"*. **Both name `for`**, which
+is the one form that emits C that does not compile.
+
+Measured, `(let x <FORM>)`, both backends:
+
+| form | C | JS |
+|---|---|---|
+| `if` · `when` · `cond` · `match` · `try`/`catch` · block | value | value |
+| `restart-case` | value | ELL0108 (D47, ruled) |
+| `fn` anonymous — the lambda literal | value | value |
+| `while` · `for :each` | `nil` | `nil` |
+| `let` / `mut` · `:=` | `nil` | `nil` |
+| `fn` **named** | value | **bare `throw`** |
+| `for` (C-style) | **invalid C** | `nil` |
+| `defclass` · `defstruct` · `defenum` | ELL0106 | **bare `throw`** |
+
+### The claim is load-bearing, which is why prose was not enough
+
+**D9 rests on it.** *"`Void` and `Nil` are the same type. In a Lisp everything is an expression, so
+'returns nothing' and 'returns the bottom value' are one statement."* That is not decoration — it is
+the argument. A ruling built on a premise the compiler does not honour is a ruling resting on nothing,
+and this makes the premise true rather than quietly weakening D9.
+
+### Two defects it was hiding
+
+**`for` in value position emits C that `cc` rejects.** The same loop compiles and runs as a statement:
+
+```
+for (; (u_i < INT64_C(3)); u_i = ll_copy(ll_op_add(u_i, ll_box_int(INT64_C(1)))))
+                                          ^ int64_t passed where ll_value is expected
+```
+
+Value position changes the induction variable's boxing decision and the step expression is not brought
+along. Reproduces at top level and inside a function body. Unrecorded in `roadmap.md`.
+
+**The `nil` is untyped, so nothing catches it.** `(+ <while-value> 1)` passes the type checker and dies
+at **run time** — C panics `TypeError: expected a number`, JS crashes inside the runtime shim. A
+statically typed language discovering this dynamically is the whole cost of leaving the claim unruled,
+and typing the value is the half of this ruling that does the work.
+
+**A bare `throw` is a defect independent of this ruling.** A named `fn` and every declaration in value
+position hand the user a Node stack trace from
+`JSTransformerAstVisitor.ts:1921` — *"never a bare `throw`; a compiler that hands a user a Node stack
+trace is a bug regardless of what it was refusing."*
+
+### The cost, measured before the change
+
+**Zero corpus sites.** No `.lisp` in `examples/` or `lib/` puts a loop or an assignment in an operand
+slot. 53 sites bind an **anonymous** `fn`, which is the one row that already works on both backends and
+is unaffected.
+
+### What this ruling deliberately does NOT decide
+
+**Loops have no early exit at all.** There is no `break` and no `continue` in l-lang — not a token, not
+a node, not a production. (`examples/03-loops/02_more_for_loops.lisp` defines a *function* named
+`continue`.) So "should `break` carry a value" is not the open question; **"should `break` exist"** is,
+and it comes first.
+
+**Whether a loop should yield a SEQUENCE rather than `nil`** — a `for` that collects its iterations is a
+comprehension, and that is a different and larger design than giving a statement a bottom value. Recorded
+as open. `nil` is the floor this ruling sets, not a claim that the floor is the ceiling.

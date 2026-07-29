@@ -22,6 +22,11 @@ l-lang is **expression-oriented**: every form yields a value. `if`, `cond`, `whe
 block — all are expressions. JavaScript/ESTree is **statement-oriented**: `if` is a statement with no
 value, `return`/`throw`/`yield` are statements, the ternary is the only expression conditional.
 
+> **`for` was aspirational here, and D94 later had to rule it.** Measured 2026-07-29: `for`,
+> `for :each`, `while`, `let`/`mut` and assignment yield `nil` untyped, and a C-style `for` in value
+> position emits C that does not compile. The premise this brief opens with is now the rule (D94)
+> rather than a description; roadmap *Known gaps* tracks the distance.
+
 The current pipeline is **typed AST → ESTree in one hop**, and that single visitor
 (`JSTransformerAstVisitor`) bridges the impedance *ad hoc, per node*. It is simultaneously doing at
 least five distinct lowerings at once — position resolution, tail-return injection, value-semantics

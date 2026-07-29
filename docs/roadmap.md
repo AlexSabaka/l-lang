@@ -730,6 +730,32 @@ a temporary first, so it is evaluated exactly once (verified: two impure interio
 not four). **Comparisons and `%` across dimensions remain unruled** — that half of the D90 gap is
 untouched by this.
 
+### D94 is ruled and unbuilt — three defects behind "everything is an expression"
+
+The claim is stated in `docs/language-syntax.md:18` and `docs/inbox/hir-brief.md:21`, and **D9's
+`Void`-is-`Nil` ruling rests on it as a premise**. D94 makes it the rule; the compiler does not yet
+honour it. Measured 2026-07-29, `(let x <FORM>)` on both backends. The corpus depends on none of it —
+**zero** sites put a loop or an assignment in an operand slot.
+
+*   **`for` in value position emits C that `cc` rejects**, while the same loop compiles and runs as a
+    statement: `for (; (u_i < INT64_C(3)); u_i = ll_copy(ll_op_add(u_i, ll_box_int(INT64_C(1)))))` —
+    `int64_t` passed where `ll_value` is expected. Value position changes the induction variable's
+    boxing decision and the step expression is not brought along. Reproduces at top level and inside a
+    function body. JS answers `nil`, so this is also a backend divergence.
+*   **A statement's `nil` is untyped, so nothing catches its misuse.** `(+ <while-value> 1)` passes the
+    type checker and dies at **run time** — C panics `TypeError: expected a number`, JS crashes inside
+    the runtime shim. Typing the value `Nil` is the half of D94 that does the work.
+*   **A named `fn` and every declaration in value position hand the user a Node stack trace** from
+    `JSTransformerAstVisitor.ts:1921`. A bare `throw` is a defect independent of D94 —
+    `CONTRIBUTING.md`: *never a bare throw*. C yields the function; the anonymous lambda form
+    (53 corpus sites) works on both and is unaffected.
+
+**Not part of D94, and prior to it: l-lang has no `break` and no `continue`** — not a token, not a
+node, not a production. (`examples/03-loops/02_more_for_loops.lisp` defines a *function* named
+`continue`.) So "should `break` carry a value" is not the open question; **"should `break` exist"** is.
+Whether a loop should yield a **sequence** rather than `nil` — a `for` that collects is a comprehension
+— is recorded as open alongside it.
+
 ### `std/math/fft` is blocked, and its draft is gone
 
 Blocked on the C `computed-callee` refusal (`ResolveHirToCir.ts`) plus an unpinned JS index bug. Its
