@@ -1,5 +1,5 @@
 import * as ast from "../../frontend/ast";
-import { valueIsTail } from "../../analysis/listForm";
+import { listNodes, valueIsTail } from "../../analysis/listForm";
 import { Context, LogLevel } from "../../Context";
 import { BaseAstTreeWalker } from "../../BaseAstTreeWalker";
 import { formatWithOptions } from "util";
@@ -58,6 +58,16 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     ["and", "&&"],
     ["or", "||"],
     ["not", "!"],
+  ]);
+
+  /**
+   * Operators whose n-ary form CHAINS instead of folding (D92): `(< a b c)` means `a<b && b<c`, not
+   * `((a<b)<c)`. NOT rewritten here -- chaining duplicates every interior operand, so it needs
+   * temporaries to stay safe against an impure one, and that is its own round. Listed so the fold
+   * below can exclude them by name rather than by accident.
+   */
+  private static readonly CHAIN_OPS: ReadonlySet<string> = new Set([
+    "<", ">", "<=", ">=", "==", "!=", "≠",
   ]);
 
   /**
@@ -294,6 +304,11 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
     const aliased = this.transformLogicalAlias(node);
     if (aliased) return aliased;
 
+    // BEFORE every other rewrite below: those read `nodes[1]`/`nodes[2]` as THE operands, and an
+    // n-ary form has more. Folding first means everything downstream only ever sees a binary one.
+    const folded = this.transformNaryOperator(node);
+    if (folded) return folded;
+
     if (this.isPipeline(node)) {
       const piped = this.transformPipeline(node);
       if (piped) return piped;
@@ -347,6 +362,68 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
         ...nodes.slice(1).map((n) => this.visit(n) as ast.ASTNode),
       ],
     } as ast.ListNode;
+  }
+
+  /**
+   * `(- 4 3 2 1)` -> `(- (- (- 4 3) 2) 1)` -- an n-ary operator LEFT-FOLDS into binary ones (D92).
+   *
+   * WHY THIS EXISTS. Nothing below the desugarer had a coherent answer for three operands, and the two
+   * backends had DIFFERENT incoherent ones:
+   *
+   *   - the JS shim defines `+ - * /` variadically and `% < > <= >= == !=` as `(a, b) => …`, so the
+   *     latter SILENTLY DISCARD every operand past the second. `(% 17 10 3)` answered 7 -- which is
+   *     `17 % 10` -- where a fold is 1, and nothing warned;
+   *   - the C backend folds, and then refuses whatever the fold produces (`(< 1 2 3)` becomes
+   *     `((1<2)<3)`, a bool against an int, `ELL0106 compare-on-bool/int`);
+   *   - `inferOperatorType` branches on arity 1 and 2 and falls through to `unknown()`, so an n-ary
+   *     form was typed by NOTHING. Both D88's promotion and D90's dimension rule live in the
+   *     two-operand branch, which is why `(+ metres seconds metres)` printed a number instead of
+   *     LL0247 while `(+ metres seconds)` was refused.
+   *
+   * Folding here fixes all three at once and by construction rather than by three separate patches:
+   * after this pass an operator application has exactly two operands, so every rule written for the
+   * binary case applies at every arity, and neither backend needs to know n-ary exists.
+   *
+   * LEFT, not right: `(- 10 1 2)` is 7 on both backends today and stays 7. The fold is chosen to
+   * preserve the answer the corpus already depends on -- 54 sites, overwhelmingly `(+ a ": " b)`
+   * string building -- not to impose a new one.
+   *
+   * NOT comparisons (`CHAIN_OPS`): `(< a b c)` means `a<b && b<c` (D92), which duplicates `b` and so
+   * needs a temporary to stay correct against an impure operand. Its own round.
+   *
+   * NOT a spread operand: `(+ ... xs)` is a variadic application, not an n-ary operator, and the C
+   * backend already refuses it by name. Folding it would quietly turn a refusal into wrong code.
+   *
+   * NOT dimensions: `(/ (* Kg Meter Meter) (* Second Second Second))` in a `:satisfies` never reaches
+   * here -- `dimensionOperand` yields plain STRINGS (D90), which is the reason it is its own rule.
+   */
+  private transformNaryOperator(node: ast.ListNode): ast.ASTNode | undefined {
+    const nodes = listNodes(node); // comment-filtered: a comment occupies no slot (D83)
+    const head = nodes[0];
+    if (!head || head._type !== "simple-identifier") return undefined;
+
+    const op = (head as any).id;
+    // `isOperatorName`: punctuation only. Inlined rather than imported -- it is a pure string
+    // predicate, and reaching into the type checker from the desugarer would invert the layering.
+    if (typeof op !== "string" || op.length === 0 || /\w/.test(op)) return undefined;
+    if (DesugarAstVisitor.CHAIN_OPS.has(op)) return undefined;
+
+    const operands = nodes.slice(1);
+    if (operands.length < 3) return undefined; // unary and binary are already the core form
+    if (operands.some((o) => o._type === "spread")) return undefined;
+
+    // `...node` / `...head` deliberately: the rebuilt nodes keep `_parent`, which `SymbolTable.scopeOf`
+    // climbs to find a node's scope -- the same reason `transformLogicalAlias` spreads rather than
+    // constructs. Every intermediate keeps the whole form's location, so a diagnostic on any of them
+    // points at the source the author actually wrote.
+    let acc = this.visit(operands[0]) as ast.ASTNode;
+    for (let i = 1; i < operands.length; i++) {
+      acc = {
+        ...node,
+        nodes: [{ ...head }, acc, this.visit(operands[i]) as ast.ASTNode],
+      } as ast.ListNode;
+    }
+    return acc;
   }
 
   /**

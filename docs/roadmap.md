@@ -712,37 +712,24 @@ so none should be "corrected" before it is decided:
 *   **`Number("")`** — `NaN` on C, `0` on JS. JS's `0` is a known wart, not a specification.
 *   **Module initialisation order**, and whether `T | Nil` and `T?` are the same type.
 
-### Arithmetic is only checked at arity two
+### ~~Arithmetic is only checked at arity two~~ — **CLOSED (D92)**
 
-**`(+ d t x)` with `d`/`x` in Meters and `t` in Seconds prints `114`.** Measured 2026-07-28 on C:
-100 metres + 4 seconds + 10 metres, silently, with no diagnostic — the exact Mars Climate Orbiter
-shape D90 exists to refuse, and *does* refuse at arity two (`(+ d t)` is LL0247).
+`(+ d t x)` printed `114` — 100 metres + 4 seconds + 10 metres, silently — because
+`inferOperatorType` branches on arity 1 and 2 and then falls through to `unknown()`, with both D90's
+dimension rule and D88's promotion inside the two-operand branch.
 
-`inferOperatorType` branches on `args.length === 1` and `args.length === 2` and then falls through to
-`return TypeEnvironment.unknown()`. **Both D90's dimension rule and D88's promotion live inside the
-two-operand branch**, so an n-ary operator application is typed `Unknown` and checked by nothing —
-not the dimension rule, not the operator-not-defined diagnostic. N-ary arithmetic is ordinary l-lang
-(`(- 10 1 2)` is the reading D90's own examples cite), so this is reachable, not theoretical.
+**Closed by lowering rather than by patching the checker**: an n-ary operator now left-folds into
+binary ones in the desugarer, above the type checker, so every rule written for two operands applies
+at every arity by construction. It also closed two silent wrong answers nobody had reported — the JS
+shim defined `%`, `<`, `>`, `<=`, `>=`, `==` and `!=` as binary functions that **discarded every
+operand past the second**, so `(% 17 10 3)` answered `7` (that is `17 % 10`; a fold is `1`) and
+`(< 1 3 2)` answered `true` (that is `1 < 3`). Pinned by `80-adversarial/nary_operator_fold.lisp`.
 
-Promotion's *value* survives — `(+ 1 1/2 1)` still prints `5/2`, because operator dispatch resolves
-it at run time — so the observable damage is the dimension check alone. The fix is a ruling on shape:
-fold n-ary operators pairwise before `inferOperatorType` and one rule covers every arity, or state
-the arity scope honestly in D88/D90. **Found by the documentation audit, not by the corpus** — no
-example exercises a three-operand `+` over dimensioned values.
-
-### The grammar artifacts have no regeneration gate
-
-`npm run grammar:ebnf` serializes Chevrotain's GAST straight off `Parser.ts`, so the EBNF **cannot**
-be wrong — but nothing makes anyone run it. The committed copy was three rulings stale when promoted
-to `docs/spec/GRAMMAR.ebnf` on 2026-07-28: it was missing `ImaginaryNumber` (D88) and the three
-dimension rules (D90). The fix is a `--check` mode in the generator plus a line in the gate, the
-same shape the diagnostics registry already uses to police its own code allocation.
-
-Related, and smaller: **12 of the 98 productions land in the diagram viewer's unlabelled "Other"
-bucket** — `build-diagrams.ts`'s `GROUPS` array hardcodes 86 rule names, so everything from D46
-(`refinementConstraint`, `castDefDecl`, `castExpr`), D47 (`restartCaseExpr`, `restartArm`,
-`handleExpr`, `handleClause`, `signalExpr`, `invokeRestartExpr`), D72 (`attributeDefDecl`) and D90
-(`dimensionConstraint`, `dimensionOperand`) is unnavigable in the viewer.
+**Still open — the chain half.** `(< a b c)` is ruled to mean `a<b && b<c` (D92) and is not built:
+chaining duplicates the interior operand, so it needs a temporary to stay correct against an impure
+one. Until it lands, a 3-operand comparison keeps its current behaviour; there are zero such sites in
+the corpus. **And comparisons/`%` across dimensions are still unruled** — that half of the D90 gap is
+untouched by this.
 
 ### `std/math/fft` is blocked, and its draft is gone
 

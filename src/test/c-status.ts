@@ -397,6 +397,10 @@ export const C_PASSING: readonly string[] = [
   // `(* d 2.0)` a Meter and `(+ d 2.0)` an error. Values hand-derived: F = m*a is where a sign or
   // exponent slip would be invisible in the number and caught only by the annotation.
   "80-adversarial/unit_dimensions.lisp",
+  // D92: an n-ary operator left-folds into binary ones above the checker. Pins the fold
+  // direction (`(- 4 3 2 1)` is -2, not 2), operand evaluation order, and `(% 17 10 3)` = 1 --
+  // which answered 7 on JS, because the shim's `%` was binary and dropped the third operand.
+  "80-adversarial/nary_operator_fold.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

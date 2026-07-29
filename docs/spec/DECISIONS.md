@@ -61,7 +61,7 @@ touches; **bold** marks the one to read first.
 | **pattern matching** | **D25**, D26 (guards, `:when`), D27 (`:of` type patterns), D28 (rest patterns), D74 (a pattern's string decodes), D83 (a comment is not a value) |
 | **control flow and `return`** | D12 (control forms), **D40** (`return` returns from the function), D83 |
 | **nil, Void, and optionality** | **D9** (what `nil` is — ruled twice), D49 (Void, void-in-value) |
-| **numbers** | **D88** (the tower: literals, promotion, `..`), D8 (number literals), D71 (`_` separators, `0o`), D61 (bit operators), D43, D85 (division by zero), D89 (`Ring`), D90 (dimensions) |
+| **numbers** | **D88** (the tower: literals, promotion, `..`), **D92** (n-ary folds to binary), D8 (number literals), D71 (`_` separators, `0o`), D61 (bit operators), D43, D85 (division by zero), D89 (`Ring`), D90 (dimensions) |
 | **strings and text** | D67 (`r"…"` raw, `f"…"` formatted, the regex engine), D74, D52 (codepoints — see D50–D55) |
 | **metaprogramming** | **D69** (the three tiers), D3 + D3b/D3c/D3d, D73 (the in-house comptime interpreter), **D75** (`defmodifier` is flat), D68 (`:foo` is three roles), D72 (`defattribute`) |
 | **modules, packages, visibility** | **D35** (the package is the compilation unit), D6, D20–D22 (export, naming, layout), D7 (the stdlib boundary) |
@@ -6979,3 +6979,76 @@ evidence. `for :each` element typing stays nominal.
 **This ruling does not make `:is` the checker's operator.** Assignability is unchanged; `[x <- Ring]`
 already accepts structural conformers and continues to. `:is` is the runtime's way to ask the same
 question the checker was already asking, not a new rule about what is assignable.
+
+---
+
+## D92 — an n-ary operator lowers to binary ones; arithmetic FOLDS, comparison CHAINS (2026-07-29)
+
+**Ruling.** `(op a b c …)` is rewritten in the desugarer, above the type checker, so that nothing
+below it ever sees more than two operands:
+
+*   **Arithmetic and every user-defined operator LEFT-FOLD.**
+    `(- 4 3 2 1)` → `(- (- (- 4 3) 2) 1)` = `-2`.
+*   **Comparisons CHAIN**, conjunctively — the Scheme and Common Lisp reading.
+    `(< a b c)` → `a<b && b<c`, *not* `((a<b)<c)`.
+
+### Why a rewrite rather than a rule
+
+Because there were three separate defects and they are all the same defect: **nothing below the
+desugarer had a coherent answer for three operands, and the two backends had different incoherent
+ones.**
+
+| | measured before this ruling |
+|---|---|
+| **JS** | the shim defines `+ - * /` variadically and `% < > <= >= == !=` as `(a, b) => …`, so seven operators **silently discarded every operand past the second**. `(% 17 10 3)` answered **7** — which is `17 % 10` — where a fold is `1`. `(< 1 3 2)` answered `true`, which is `1 < 3`. |
+| **C** | folds, then refuses whatever the fold produced: `(< 1 2 3)` becomes `((1<2)<3)`, a bool against an int, `ELL0106 compare-on-bool/int`. Fail-closed, and the better of the two behaviours. |
+| **the checker** | `inferOperatorType` branches on arity 1 and arity 2 and falls through to `unknown()`. An n-ary form was typed by **nothing** — which is why `(+ metres seconds metres)` printed `114` while `(+ metres seconds)` was `LL0247`. |
+
+Both **D88's promotion** and **D90's dimension rule** live inside that two-operand branch. Folding
+above the checker makes every rule written for the binary case apply at every arity **by
+construction**, rather than by being re-stated three times — and neither backend needs to know n-ary
+exists.
+
+### Why left, and why not uniform
+
+**Left, because the corpus already reads it that way.** `(- 10 1 2)` is `7` on both backends today and
+stays `7`; a right fold would make it `11`. **54 corpus sites** use an n-ary operator, overwhelmingly
+`(+ a ": " b)` string building. The fold direction was chosen to preserve an answer that already
+existed, not to impose a new one.
+
+**Comparisons are not folded, because folding them is nonsense.** `((a<b)<c)` compares a Boolean to
+whatever `c` is — under a uniform fold `(< 1 2 3)` becomes a type error, and the form is simply never
+writable. Chaining is what Scheme, Common Lisp and Python all mean by it, and it makes the form
+useful. This is the one place the ruling costs a second rule, and it is worth it: **arithmetic
+accumulates a value; a comparison accumulates a judgement.** Zero corpus sites depended on either
+answer, so the choice was free.
+
+### Scope, and what is explicitly not folded
+
+*   **A SPREAD operand is not an n-ary operator.** `(+ ... xs)` is a variadic application, which the C
+    backend already refuses by name (`ELL0106 spread`). Folding it would turn an honest refusal into
+    wrong code.
+*   **A DIMENSION never reaches the desugarer.** `(/ (* Kg Meter Meter) (* Second Second Second))` in
+    a `:satisfies` yields plain **strings** — that is precisely why D90 made `dimensionOperand` its
+    own grammar rule — so the type-level `*` and `/` are untouched by a rule about value arithmetic.
+*   **A comment occupies no slot** (D83): the fold reads the comment-filtered operand list, so
+    `(+ a ;; note` `b c)` folds as three operands, not four.
+*   **Evaluation order is preserved**, left to right. The fold rebuilds the tree and must not reorder;
+    `80-adversarial/nary_operator_fold.lisp` pins it with a side-effecting counter, where any other
+    order gives a different number.
+
+### The cascade, stated rather than discovered
+
+`(+ d t x)` with mismatched dimensions now reports **twice**: once for the inner `(+ d t)` naming
+`Meter` and `Second`, and once for the outer, naming `dimensionless` and `Meter`. The second is a
+consequence of the first — after the inner form errors its type is the base, and a base against a
+`Meter` genuinely is another dimension mismatch. The first message is the informative one and comes
+first. Not suppressed: reporting against a *derived* type is honest, and the checker's rule is only
+never to report against `Unknown`.
+
+### Landed in two rounds
+
+The fold shipped first: it is unambiguous, covers all 54 corpus sites, and closes both the silent
+`%` drop and the dimension hole. **Chaining is the second round**, because `(< a b c)` duplicates `b`
+and therefore needs a temporary to stay correct against an impure operand — and this compiler has
+shipped an evaluation-order bug green before, for want of exactly that care.
