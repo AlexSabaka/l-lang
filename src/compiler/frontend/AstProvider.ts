@@ -124,11 +124,12 @@ export class AstProvider {
       const e = v2Parser.errors[0];
       const tok = (e as any).token;
       const where = tok?.startLine ? `${tok.startLine}:${tok.startColumn}` : "?";
-      throw new Error(`${filePath}:${where}: ${e.message}`);
+      throw new Error(`${filePath}:${where}: ${explainParseError(e, tok)}`);
     }
 
     return new LLangAstBuilder(filePath).visit(cst) as ast.ProgramNode;
   }
+
 
   private parseSource(source: string, filePath: string): ast.ProgramNode {
     return this.parseWithGrammarV2(source, filePath);
@@ -210,4 +211,39 @@ export class AstProvider {
 
     return res;
   }
+}
+
+/**
+ * A parse error, said in terms of the language rather than of the parser.
+ *
+ * Only one case is special-cased, and it is the one a reader cannot act on: a `:keyword` CLAUSE
+ * where the grammar wants the form to end. Chevrotain reports it as
+ *
+ *     Expecting token of type --> RParen <-- but found --> ':then' <--
+ *
+ * which is accurate, useless, and identical to what a stray brace would say. The actual rule is
+ * D95's: a clause is welded to the heads that DECLARE it, so `(if c :then x)` parses and
+ * `(myform :then x)` does not, and no amount of staring at "RParen" says so.
+ *
+ * There is no LL code here on purpose. Parse errors run BEFORE the diagnostics machinery exists --
+ * `AstProvider` holds no `Context`, which is why every message on this path is a bare `Error` --
+ * so adding one would mean threading a context into the frontend for a message. The text is the
+ * fix; the code would be a refactor wearing a message's clothes.
+ *
+ * NO HEADS ARE ENUMERATED, deliberately. "`:then` belongs to `cond`, `for`, `if`, `when`, `while`"
+ * is true today and is a fifth place for the grammar to drift away from. What is said instead is
+ * only what cannot drift: this token is a clause marker, clause markers are not generic, and the
+ * token tier is where a user-defined surface can be spelled today.
+ */
+export function explainParseError(e: any, tok: any): string {
+  const name: string = tok?.tokenType?.name ?? "";
+  if (!name.endsWith("ModKw")) return e.message;
+  const image = tok?.image ?? name;
+  return (
+    `'${image}' is a :keyword CLAUSE, and a clause is not generic: it is accepted only by the ` +
+    `forms that declare it (D95). A user-defined head cannot carry one, and a form that does take ` +
+    `clauses does not take every clause. To give your own form a keyword surface today, use ` +
+    `\`defmacro\` (D102) -- it expands before the parser has an opinion, which is exactly the ` +
+    `restriction being reported here. [parser: ${e.message}]`
+  );
 }

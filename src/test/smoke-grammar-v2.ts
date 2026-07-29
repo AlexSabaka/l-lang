@@ -292,6 +292,49 @@ const CASES: SmokeCase[] = [
       );
     },
   },
+  {
+    // A `:keyword` CLAUSE on a head that does not declare it is D95's deferred restriction, and until
+    // 2026-07-30 it was reported as `Expecting token of type --> RParen <-- but found --> ':then' <--`
+    // -- accurate, useless, and identical to what a stray brace says. Nothing in it names the rule.
+    //
+    // Driven through the REAL parser rather than a synthesized error, so the case cannot drift from
+    // what a user actually gets: it re-parses a failing source and hands the parser's own error and
+    // token to the same explainer `AstProvider` calls.
+    name: "a :keyword clause on a user head is explained, not reported as `RParen`",
+    source: "(let x 1)", // parses; the assertion below drives its own source
+    check: () => {
+      const { explainParseError } = require("../compiler/frontend/AstProvider");
+      const failing = LLangLexer.tokenize("(myform :then 1)");
+      parser.input = failing.tokens;
+      parser.program();
+      assert(parser.errors.length > 0, "`(myform :then 1)` must not parse -- that is the restriction");
+      const e = parser.errors[0];
+      const msg: string = explainParseError(e, (e as any).token);
+      assert(msg.includes("D95"), `must name the ruling it is enforcing. got: ${msg}`);
+      assert(msg.includes("defmacro"), `must name the tier that CAN spell this today. got: ${msg}`);
+      assert(msg.includes(":then"), `must quote the clause the user wrote. got: ${msg}`);
+      // The parser's own text is kept, bracketed: it is what a bug report needs and what a reader
+      // comparing against Chevrotain's docs will look for.
+      assert(msg.includes("[parser:"), `must retain the raw parser message. got: ${msg}`);
+    },
+  },
+  {
+    // The GUARD on the case above: only a clause marker is re-explained. An ordinary parse error must
+    // arrive verbatim, or the special case has quietly become the general one -- which would be worse
+    // than the message it replaced, since every unbalanced paren would blame a keyword.
+    name: "an ordinary parse error is passed through untouched",
+    source: "(let x 1)",
+    check: () => {
+      const { explainParseError } = require("../compiler/frontend/AstProvider");
+      const failing = LLangLexer.tokenize("(console.log 1");
+      parser.input = failing.tokens;
+      parser.program();
+      assert(parser.errors.length > 0, "`(console.log 1` must not parse");
+      const e = parser.errors[0];
+      const msg: string = explainParseError(e, (e as any).token);
+      assert(msg === e.message, `an unbalanced paren must read exactly as the parser said. got: ${msg}`);
+    },
+  },
 ];
 
 function main() {

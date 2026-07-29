@@ -1392,6 +1392,16 @@ today, and `80-adversarial/for_as_macro.lisp` proves that is sufficient for `for
 and ignored. Whether `defsyntax` should do the same, take a map, or bind named parameters is untouched
 by any measurement above.
 
+**The refusal now explains itself**, which needed no ruling and was the one shippable part.
+`(myform :then 1)` reported `Expecting token of type --> RParen <-- but found --> ':then' <--` —
+accurate, useless, and identical to what a stray brace says. It now names the rule it is enforcing and
+points at `defmacro` as the tier that *can* spell a user-defined keyword surface today, with the raw
+parser text retained in brackets. No heads are enumerated: "`:then` belongs to `cond`/`for`/`if`/
+`when`/`while`" is true today and would be a fifth place for the grammar to drift away from. Guarded
+in `test:grammar-v2-smoke`, including the case that matters more — an ordinary parse error must still
+arrive **verbatim**, or the special case has quietly become the general one and every unbalanced paren
+blames a keyword.
+
 ### Two clause markers are lexed and parsed by NOBODY
 
 `IsModKw` (`:is`) and `WhereModKw` (`:where`) appear only in `tokens.ts` — three references each, all
