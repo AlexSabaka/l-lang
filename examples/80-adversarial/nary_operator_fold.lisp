@@ -9,9 +9,13 @@
 ;; arity 2 and falls through to `unknown()`, so a three-operand form was checked by NOTHING. That is
 ;; the hole `(+ metres seconds metres)` fell through -- see `unit_dimensions.lisp` for that half.
 ;;
-;; ONE REWRITE FIXES ALL THREE, and it is a desugar rather than three patches: fold n-ary into binary
+;; ONE REWRITE FIXES ALL THREE, and it is a desugar rather than three patches: lower n-ary into binary
 ;; above the type checker, and every rule written for two operands applies at every arity by
 ;; construction. Neither backend needs to know n-ary exists.
+;;
+;; TWO SHAPES, because the operators mean different things. Arithmetic FOLDS -- it accumulates a
+;; value. A comparison CHAINS -- it accumulates a judgement, so `(< a b c)` is `a<b && b<c`, the
+;; Scheme/CL reading, and folding it would compare a Boolean to an Int.
 ;;
 ;; LEFT, NOT RIGHT, and the corpus is why. `(- 10 1 2)` is 7 under a left fold and 11 under a right
 ;; one; 54 corpus sites already depend on the left reading, overwhelmingly `(+ a ": " b)` string
@@ -64,12 +68,34 @@
     (console.log "order:          " (- (step) (step) (step)))
     (console.log "steps taken:    " counter)
 
-    ;; -- what is deliberately NOT folded -----------------------------------------------------------
+    ;; -- comparisons CHAIN, they do not fold -------------------------------------------------------
     ;;
-    ;; Comparisons CHAIN rather than fold (D92): `(< a b c)` means `a<b && b<c`, not `((a<b)<c)`.
-    ;; Chaining duplicates the interior operand, so it needs a temporary to stay correct against an
-    ;; impure one, and that is a round of its own. Until it lands, a 3-operand comparison keeps the
-    ;; behaviour it always had; there are zero such sites in the corpus.
+    ;; `(< a b c)` is `a<b && b<c` (D92) -- the Scheme/CL reading. Folding it would compare a Boolean
+    ;; to an Int and the form would simply never be writable. `(< 1 3 2)` is the discriminator:
+    ;; chained it is FALSE, and the old JS answer was `true` because the shim's `<` was binary and the
+    ;; third operand never arrived.
+
+    (console.log "(< 1 2 3):      " (< 1 2 3))
+    (console.log "(< 1 3 2):      " (< 1 3 2))
+    (console.log "(< 1 2 3 4):    " (< 1 2 3 4))
+    (console.log "(> 5 3 4):      " (> 5 3 4))
+    (console.log "(== 1 1 1):     " (== 1 1 1))
+
+    ;; -- and the interior operand is read ONCE ------------------------------------------------------
+    ;;
+    ;; A chain names its interior operands twice (`a<b && b<c`), so an impure one would run twice --
+    ;; the evaluation-order class this corpus has shipped green before. An operand that is not a name
+    ;; or a literal is bound to a temporary first, and the chain reads the temporary. Two impure
+    ;; interiors here; `calls` is the assertion.
+
+    (mut calls 0)
+    (fn probe [n <- Int] -> Int (
+        (calls := (+ calls 1))
+        (return n)))
+    (console.log "chain impure:   " (< 1 (probe 3) (probe 5) 9))
+    (console.log "calls made:     " calls)
+
+    ;; -- what is deliberately NOT rewritten ---------------------------------------------------------
     ;;
     ;; A SPREAD is not an n-ary operator either -- `(+ ... xs)` is a variadic application, which the C
     ;; backend refuses by name (`ELL0106 spread`). Folding it would turn a refusal into wrong code.

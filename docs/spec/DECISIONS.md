@@ -7046,9 +7046,32 @@ consequence of the first — after the inner form errors its type is the base, a
 first. Not suppressed: reporting against a *derived* type is honest, and the checker's rule is only
 never to report against `Unknown`.
 
+### The interior operand is read twice, and that is the hazard
+
+A chain names each interior operand on both sides — `a<b && b<c` — so `(< 1 (next!) 9)` written
+naively would advance the iterator **twice**. That is the evaluation-order class this corpus has
+shipped green before, because nothing in a happy-path corpus exercises an impure operand.
+
+So an interior operand that is **not duplicable** — anything other than a name or a literal — is
+bound to a temporary first, and the chain reads the temporary:
+
+```lisp
+(< 1 (f x) 9)   ->   ( (let __ll_chain_0 (f x))
+                       (&& (< 1 __ll_chain_0) (< __ll_chain_0 9)) )
+```
+
+A block's value is its last item, so the form stays an expression.
+
+**A temporary is introduced only when one is needed.** `(< 1 2 3)` and `(< lo x hi)` — what people
+actually write — emit a bare `&&` chain with no binding at all. That is not merely tidier: the symbol
+table indexes the **pre**-desugar tree, so a synthesized name is one it has never seen. Keeping
+bindings off the common path keeps that risk off it too. (Measured: the synthesized binding *does*
+resolve, because the rebuilt nodes keep the original `_parent` — but it is not a risk worth taking
+where duplication is free.)
+
+Verified with two impure interior operands in one chain: **two** calls, not four, on both backends.
+
 ### Landed in two rounds
 
-The fold shipped first: it is unambiguous, covers all 54 corpus sites, and closes both the silent
-`%` drop and the dimension hole. **Chaining is the second round**, because `(< a b c)` duplicates `b`
-and therefore needs a temporary to stay correct against an impure operand — and this compiler has
-shipped an evaluation-order bug green before, for want of exactly that care.
+The fold shipped first — unambiguous, covering all 54 corpus sites, closing both the silent `%` drop
+and the dimension hole. The chain followed with the temporary machinery above.

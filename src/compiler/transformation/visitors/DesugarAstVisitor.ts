@@ -306,6 +306,9 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
 
     // BEFORE every other rewrite below: those read `nodes[1]`/`nodes[2]` as THE operands, and an
     // n-ary form has more. Folding first means everything downstream only ever sees a binary one.
+    const chained = this.transformComparisonChain(node);
+    if (chained) return chained;
+
     const folded = this.transformNaryOperator(node);
     if (folded) return folded;
 
@@ -362,6 +365,114 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
         ...nodes.slice(1).map((n) => this.visit(n) as ast.ASTNode),
       ],
     } as ast.ListNode;
+  }
+
+  /** Counter for the temporaries a comparison chain needs. Per-compilation, so names cannot collide. */
+  private chainTemps = 0;
+
+  /**
+   * May this operand be written into the tree TWICE without changing what the program does?
+   *
+   * A chain reads every interior operand from both sides (`a<b && b<c`), so duplicating one is only
+   * safe if evaluating it twice is indistinguishable from evaluating it once. A name and a literal
+   * qualify; anything with a call, an index or an operator in it does not -- `(< 1 (next!) 9)` would
+   * advance the iterator twice, which is the evaluation-order class this corpus has shipped green
+   * before.
+   */
+  private isDuplicable(n: ast.ASTNode): boolean {
+    switch (n._type) {
+      case "simple-identifier":
+      case "integer-number":
+      case "float-number":
+      case "hex-number":
+      case "octal-number":
+      case "binary-number":
+      case "fraction-number":
+      case "complex-number":
+      case "string":
+      case "boolean":
+      case "null":
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * `(< a b c)` -> `(&& (< a b) (< b c))` -- a comparison CHAINS rather than folds (D92).
+   *
+   * Folding a comparison is nonsense: `((a<b)<c)` compares a Boolean to whatever `c` is, so under a
+   * uniform fold the three-operand form is a type error and simply never writable. Chaining is what
+   * Scheme, Common Lisp and Python all mean by it. Arithmetic accumulates a VALUE; a comparison
+   * accumulates a JUDGEMENT, and that is the whole reason this is a second rule rather than a special
+   * case of the fold.
+   *
+   * ## The interior operand is read twice, and that is the hazard
+   *
+   * `b` appears on both sides of the `&&`. Written naively, `(< 1 (next!) 9)` calls `next!` twice --
+   * an evaluation-order bug of exactly the kind that has shipped green here before, because nothing
+   * in a happy-path corpus exercises an impure operand.
+   *
+   * So an interior operand is bound to a temporary FIRST, and the chain reads the temporary:
+   *
+   *     (< 1 (f x) 9)   ->   ( (let __ll_chain_0 (f x))
+   *                            (&& (< 1 __ll_chain_0) (< __ll_chain_0 9)) )
+   *
+   * A block's value is its last item, so the whole thing stays an expression.
+   *
+   * ## …but only when one is actually needed
+   *
+   * A name or a literal is duplicable — reading it twice is indistinguishable from reading it once —
+   * and `(< 1 2 3)` / `(< lo x hi)` are what people actually write. Those emit a bare `&&` chain with
+   * NO binding at all, which is not merely tidier: the symbol table indexes the PRE-desugar tree, so
+   * a synthesized name is one it has never seen. Introducing bindings only where the alternative is a
+   * wrong answer keeps that risk off the common path entirely.
+   */
+  private transformComparisonChain(node: ast.ListNode): ast.ASTNode | undefined {
+    const nodes = listNodes(node);
+    const head = nodes[0];
+    if (!head || head._type !== "simple-identifier") return undefined;
+
+    const op = (head as any).id;
+    if (typeof op !== "string" || !DesugarAstVisitor.CHAIN_OPS.has(op)) return undefined;
+
+    const operands = nodes.slice(1);
+    if (operands.length < 3) return undefined; // a binary comparison is already the core form
+    if (operands.some((o) => o._type === "spread")) return undefined;
+
+    const visited = operands.map((o) => this.visit(o) as ast.ASTNode);
+    const bindings: ast.ASTNode[] = [];
+
+    // Interior operands -- every one except the first and the last -- are the ones read twice.
+    const terms = visited.map((o, i) => {
+      const interior = i > 0 && i < visited.length - 1;
+      if (!interior || this.isDuplicable(o)) return o;
+
+      const name = `__ll_chain_${this.chainTemps++}`;
+      const ref = { ...head, id: name } as ast.ASTNode;
+      bindings.push({
+        ...node,
+        _type: "variable",
+        mutable: false,
+        extern: false,
+        name: { ...head, id: name },
+        value: o,
+      } as unknown as ast.ASTNode);
+      return ref;
+    });
+
+    const cmp = (l: ast.ASTNode, r: ast.ASTNode): ast.ASTNode =>
+      ({ ...node, nodes: [{ ...head }, l, r] } as ast.ListNode);
+    const and = (l: ast.ASTNode, r: ast.ASTNode): ast.ASTNode =>
+      ({ ...node, nodes: [{ ...head, id: "&&" }, l, r] } as ast.ListNode);
+
+    let chain = cmp(terms[0], terms[1]);
+    for (let i = 2; i < terms.length; i++) chain = and(chain, cmp(terms[i - 1], terms[i]));
+
+    // No temporary needed -> no block, no synthesized binding, nothing for scope resolution to miss.
+    if (bindings.length === 0) return chain;
+
+    return { ...node, nodes: [...bindings, chain] } as ast.ListNode;
   }
 
   /**

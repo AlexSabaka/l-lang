@@ -725,10 +725,9 @@ shim defined `%`, `<`, `>`, `<=`, `>=`, `==` and `!=` as binary functions that *
 operand past the second**, so `(% 17 10 3)` answered `7` (that is `17 % 10`; a fold is `1`) and
 `(< 1 3 2)` answered `true` (that is `1 < 3`). Pinned by `80-adversarial/nary_operator_fold.lisp`.
 
-**Still open — the chain half.** `(< a b c)` is ruled to mean `a<b && b<c` (D92) and is not built:
-chaining duplicates the interior operand, so it needs a temporary to stay correct against an impure
-one. Until it lands, a 3-operand comparison keeps its current behaviour; there are zero such sites in
-the corpus. **And comparisons/`%` across dimensions are still unruled** — that half of the D90 gap is
+**The chain half landed too**: `(< a b c)` is `a<b && b<c`, with an impure interior operand bound to
+a temporary first, so it is evaluated exactly once (verified: two impure interiors produce two calls,
+not four). **Comparisons and `%` across dimensions remain unruled** — that half of the D90 gap is
 untouched by this.
 
 ### `std/math/fft` is blocked, and its draft is gone
