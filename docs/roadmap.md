@@ -978,6 +978,31 @@ macro. LL0023 is re-aimed rather than retired — it now names a `defmacro` the 
 **Not claimed: hygiene.** A template that introduced a binding could capture one at the use site.
 Nothing prevents it and the corpus does not pretend otherwise.
 
+### `for` need not be a built-in — demonstrated (D102's payoff)
+
+`80-adversarial/for_as_macro.lisp` defines `for` as a **user macro**, with its real
+`:init/:cond/:step/:then` surface, in five lines:
+
+```lisp
+(defmacro my-for [ki ini kc tst ks stp kt bod]
+    (list "(" "(" ini ")" "(" "while" tst "(" bod stp ")" ")" ")"))
+```
+
+The identity is the one C3's hand-written proof used: `for (init; test; step) body` ≡
+`{ init; while (test) { body; step } }`. Nothing downstream knows `my-for` existed — it expands to a
+block and a `while` before the parser runs, so types, the HIR and both backends see code they already
+understood.
+
+**It is `defmacro`, not `defsyntax`, and that is the measurement.** `:keyword` clauses are welded to
+heads the grammar already knows, so a `defsyntax` call site would have to parse *before* it could
+expand, and `(u c :then b)` does not — `Expecting token of type --> RParen`. The token tier runs
+before the parser has an opinion; that is the one thing it buys.
+
+**What this does NOT do** is retire the built-in `for`. Migrating it for real means the clause surface
+below, plus deciding what happens to `for :each` (which `std/iter`'s `Iterable` defines, D30/D31) and
+to `:else`. This is an existence proof that the weakest construct in the language *could* be a library,
+not a decision that it becomes one.
+
 ### The clause surface — measured, and NOT one production change (D95, still deferred)
 
 `(head :kw expr …)` on any head is what would let the other 23 keyword-headed forms migrate onto

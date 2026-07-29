@@ -105,8 +105,26 @@ function collectMacros(toks: IToken[], src: string): MacroDef[] {
     const params: string[] = [];
     if (toks[k] && isLBracket(toks[k])) {
       const rb = matchBracket(toks, k);
+      // A PARAMETER NAME MUST BE AN IDENTIFIER, and a non-identifier is REFUSED rather than skipped.
+      //
+      // Filtering silently on `Identifier` was the first attempt and it is worse than it looks: a name
+      // that collides with a keyword lexes as that keyword -- `cond` is `CondKw` -- so it was dropped,
+      // the handler was declared with fewer parameters than it was written with, and the ARITY refusal
+      // then fired on a correct call site. Measured: `[ki init kc cond ks step kt body]` reported
+      // "takes 7" for eight names.
+      //
+      // Accepting them is no better: a keyword cannot be REFERENCED in the body either -- `(let cond 1)`
+      // is a parse error in ordinary l-lang -- so it would declare a parameter that can never be used.
+      // Saying so is the only outcome that is not a puzzle.
       for (let p = k + 1; p < rb; p++) {
-        if (toks[p].tokenType.name === "Identifier") params.push(toks[p].image);
+        const tk = toks[p];
+        if (tk.tokenType.name !== "Identifier") {
+          throw new Error(
+            `'${tk.image}' cannot be a macro parameter name: it lexes as a keyword, and a keyword ` +
+            `cannot be referenced as a variable anywhere in l-lang. Rename it.`
+          );
+        }
+        params.push(tk.image);
       }
       k = rb + 1;
     }

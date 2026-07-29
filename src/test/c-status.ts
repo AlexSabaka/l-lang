@@ -476,6 +476,12 @@ export const C_PASSING: readonly string[] = [
   // before the parser has an opinion. Also pins inspection (a handler branching on how many tokens it
   // was handed, which a function cannot do -- by call time the spelling is gone) and the fixed point.
   "80-adversarial/defmacro.lisp",
+  // `for` DOES NOT HAVE TO BE A BUILT-IN -- the existence proof, using its REAL `:init/:cond/:step/
+  // :then` surface. It is a `defmacro` rather than a `defsyntax` because those clauses are welded to
+  // heads the grammar knows (D95), so a `defsyntax` call site would have to PARSE before it could
+  // expand and this one does not. Nothing downstream knows `my-for` existed: it expands to a block and
+  // a `while`, so types, the HIR and both backends see code they already understood.
+  "80-adversarial/for_as_macro.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check
