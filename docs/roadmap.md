@@ -756,6 +756,25 @@ node, not a production. (`examples/03-loops/02_more_for_loops.lisp` defines a *f
 Whether a loop should yield a **sequence** rather than `nil` — a `for` that collects is a comprehension
 — is recorded as open alongside it.
 
+### D95 is ruled and unbuilt — and one grammar question is deferred
+
+*   **`defsyntax` has no token**, so it is refused as `LL0210 'defsyntax' is not defined` rather than by
+    name. D3's banner has recorded this; D95 makes it actionable. `MacroDefNode.keyword` is typed to
+    hold `"defmacro" | "defsyntax"` but `AstBuilder.ts:1128` hard-codes the first at the only
+    construction site — a field whose second case has no producer.
+*   **Neither expansion tier exists.** D95 places `defmacro` between lex and parse and `defsyntax`
+    between parse and syntax; `:comptime`'s position at the head of desugar is already built and is
+    forced by `ComptimeEvaluationAstVisitor.ts:147` needing `resolveSymbol`.
+*   **DEFERRED, deliberately: should `list` admit a generic `:keyword expr` clause on any head?**
+    Measured 2026-07-29 against an unknown head: `(f a b c)`, `(f [a b])`, `(f {:k v})` and the arrow
+    forms all parse, while `(f :then x)`, `(f :async)`, `(f (:else 1))`, `(f 1 catch 2)` and
+    `(f x { pat => expr })` are all **parse errors**. `Parser.ts:457` defines `list` as
+    `LParen expression* [:of type] [.. expr] RParen`. Consequence: **5 of the 28 keyword-headed
+    productions have a surface a user could reproduce** (`if`, `while`, `let`/`mut`, `await`, `quote`)
+    and 23 do not, which is why D69's *"grammar-native forms migrate onto `defsyntax` over time"* does
+    not hold as written. One production change would unlock them; the `:of` guard and the `..` range
+    live in that same rule, so it is its own ruling.
+
 ### `std/math/fft` is blocked, and its draft is gone
 
 Blocked on the C `computed-callee` refusal (`ResolveHirToCir.ts`) plus an unpinned JS index bug. Its

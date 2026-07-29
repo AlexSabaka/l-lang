@@ -3,7 +3,7 @@
 Rulings on l-lang's language surface. **D1–D16 were taken 2026-07-12** following a full compiler
 audit (161 agents, 148 verified findings across grammar, types, codegen, analysis passes,
 stdlib/runtime, docs conformance, examples, and hygiene); the document has grown by ruling ever
-since, and runs to **D94** as of 2026-07-29. Every ruling was made with a native backend in front of
+since, and runs to **D95** as of 2026-07-29. Every ruling was made with a native backend in front of
 it — several are not stylistic preferences, they are things that cannot be retrofitted later without
 breaking every existing program.
 
@@ -63,7 +63,7 @@ touches; **bold** marks the one to read first.
 | **nil, Void, and optionality** | **D9** (what `nil` is — ruled twice), **D94** (a statement's value is `nil`, *typed* `Nil`), D49 (Void, void-in-value) |
 | **numbers** | **D88** (the tower: literals, promotion, `..`), **D92** (n-ary folds to binary), **D93** (`...` binds by adjacency), D8 (number literals), D71 (`_` separators, `0o`), D61 (bit operators), D43, D85 (division by zero), D89 (`Ring`), D90 (dimensions) |
 | **strings and text** | D67 (`r"…"` raw, `f"…"` formatted, the regex engine), D74, D52 (codepoints — see D50–D55) |
-| **metaprogramming** | **D69** (the three tiers), D3 + D3b/D3c/D3d, D73 (the in-house comptime interpreter), **D75** (`defmodifier` is flat), D68 (`:foo` is three roles), D72 (`defattribute`) |
+| **metaprogramming** | **D69** (the three tiers — *what each receives*), **D95** (the three tiers — *when each runs*), D3 + D3b/D3c/D3d, D73 (the in-house comptime interpreter), **D75** (`defmodifier` is flat), D68 (`:foo` is three roles), D72 (`defattribute`) |
 | **modules, packages, visibility** | **D35** (the package is the compilation unit), D6, D20–D22 (export, naming, layout), D7 (the stdlib boundary) |
 | **errors and conditions** | **D87** (the failure taxonomy), D82 (data is catchable, a contract violation is not), D62 (the typed error tower), **D47** (conditions / restarts), D85 |
 | **generators and async** | **D31** (`:gen` + `yield`), D32 (`Awaitable` / `Task`), D58 (coroutine lowering), D60 (`:async` stays C-refused), D33 (LINQ) |
@@ -151,8 +151,9 @@ about 7 of which are also valid JS operators. `(x <= 5)` currently parses as an 
 > **Only `defmacro` is actually reserved.** `DefMacroKw` exists and is parsed purely so **LL0023** can
 > refuse it with a location. There is no `DefSyntaxKw` token and no rule, so `(defsyntax foo …)` still
 > parses as a call to an undefined name — the exact failure mode this ruling was written to prevent.
-> **D69** later rules all three tiers by what each handler receives, so the design is settled and only
-> the grammar is missing.
+> **D69** later rules all three tiers by what each handler receives, and **D95** rules when each one
+> runs — so the design is settled and only the grammar is missing. D95 also acts on this banner:
+> `defsyntax` gets a token so it can be refused by name like `defmacro`.
 **Ruling:** OUT for 1.0, documented as "Planned." The keywords are reserved — `(defmacro ...)`
 becomes a hard "not implemented in 0.x" error, never a silent call. Metaprogramming for 1.0 is
 `:comptime` + `defmodifier`, both of which are currently broken and must be fixed.
@@ -5678,6 +5679,12 @@ crash: the compiler can see the mismatch and currently says nothing.
 
 ## D69 — the metaprogramming tiers: `:comptime`, `defmacro`, `defsyntax` (2026-07-26)
 
+> **Completed and partly corrected by D95.** This ruling settles what each handler *receives* and
+> leaves *when each runs* open; D95 supplies the stages. It also falsifies the migration paragraph
+> below: *"grammar-native forms migrate onto `defsyntax` over time"* holds for **5 of the 28**
+> keyword-headed productions and not the other 23, because the parser refuses their surface on any
+> head it does not already know. That is a grammar limit, not a missing tier.
+
 Three tiers, distinguished by what the handler RECEIVES:
 
 | Tier | Receives | Job |
@@ -7123,6 +7130,7 @@ documents it**: `NodeValidationRules.ts` carries a standing note about `LL0004 I
 which was *"defined, exported from the rules barrel, and never wired into any visitor — so it had
 never run."* The lesson holds and is worth restating: of a new rule, do not ask *"is it defined?"*
 Ask **who calls it**, and prove it fires.
+
 ---
 
 ## D94 — "everything is an expression" is made TRUE, and the value is TYPED (2026-07-29)
@@ -7201,3 +7209,93 @@ and it comes first.
 **Whether a loop should yield a SEQUENCE rather than `nil`** — a `for` that collects its iterations is a
 comprehension, and that is a different and larger design than giving a statement a bottom value. Recorded
 as open. `nil` is the floor this ruling sets, not a claim that the floor is the ceiling.
+
+---
+
+## D95 — the metaprogramming tiers get their STAGES (2026-07-29)
+
+D69 ruled the three tiers by **what each handler receives** and left *when each runs* unstated. This
+supplies the missing half.
+
+| tier | receives | runs |
+|---|---|---|
+| `defmacro` | a cons list of tokens | between **LEX** and **PARSE** |
+| `defsyntax` | a full AST | after **PARSE**, before **SYNTAX** |
+| `:comptime` | nothing | at the head of **DESUGAR**, after **SYMBOLS** |
+
+```
+lex → [defmacro : tokens] → parse → [defsyntax : AST] → syntax → symbols
+    → [:comptime] → desugar → types → codegen
+```
+
+### `:comptime`'s position was already decided, and the reason is measurable
+
+It runs first in the desugar stage — `Context.ts:774`, ahead of `DesugarAstVisitor`. Not by
+convention: `ComptimeEvaluationAstVisitor.ts:147` calls
+`this.context.symbolTable?.resolveSymbol(symbolName)` to decide whether a callee is `:comptime`. It
+**needs the symbol table**, so it cannot run before the symbols stage.
+
+That is sound only because of what `:comptime` does — it *deletes* declarations and *replaces*
+expressions with literals. **It never introduces a name.** The expansion tiers invert exactly that
+property, which is why they cannot share its stage: what an expansion adds would arrive after the table
+was built over a tree that no longer exists.
+
+### Why `defmacro` is before the parser, and not merely "earlier"
+
+**A user-defined form can only ever be a plain application.** Measured against an *unknown* head — which
+is what every user-defined form is:
+
+| surface | unknown head |
+|---|---|
+| `(f a b c)` · `(f [a b])` · `(f {:k v})` · `(f (a b) (c d))` | parses |
+| `(f a <- T)` · `(f [a] -> T)` · `(f (a => b))` | parses |
+| `(f :then x)` — a `:keyword` clause | **parse error** |
+| `(f :async)` — a bare `:keyword` argument | **parse error** |
+| `(f (:else 1))` — a keyword-headed arm | **parse error** |
+| `(f 1 catch 2)` — bare-keyword infix | **parse error** |
+| `(f x { pat => expr })` — match arms | **parse error** |
+
+`Parser.ts:457` defines `list` as `LParen expression* [:of type] [.. expr] RParen` and nothing else.
+Every clause-structured surface is welded to a known head.
+
+**So D69's migration promise does not hold as written.** It says *"grammar-native forms migrate onto
+`defsyntax` over time… the direction of travel is fewer built-in special cases."* Sort the 28
+keyword-headed productions by whether a user could reproduce the surface: **5 could** — `if`, `while`,
+`let`/`mut`, `await`, `quote`, all plain application — and **23 could not**: `when` (`:then`), `for`
+(`:init :cond :step :then :each :from`), `match` (braces), `try` (`catch`/`finally`/`:of`), `cond`
+(`(:else …)`), `restart-case`, `handle`, `signal`, `invoke-restart`, `import`/`export` (`:from`/`:as`),
+and every `def*`. The blocker is not that the tier is unbuilt; it is that **the parser refuses the
+surface before any AST tier gets a turn**.
+
+A token tier is the only one that can introduce **new surface**, because it rewrites the stream before
+the fixed productions have a say. An AST tier can only recombine what the grammar already accepts. That
+is the argument for the split, and it means the honest name for `defmacro` is a **reader macro**.
+
+### Both expansion tiers are MODULE-LOCAL, and that is forced
+
+Imports resolve in the symbols stage — `BuildDependencyGraphAstVisitor.ts:96` recurses via
+`context.process(resolvedFile, "types")`. Both tiers run **before** it, so neither can see an imported
+name, and **a macro cannot be exported or imported**. This is the limit `defmodifier` already carries
+for its own unsolved reason (D72, *"module-local, inherited rather than chosen"*) — it is now a
+consequence of the stage rather than an accident.
+
+### `defsyntax` gets a token — D3's standing banner, re-measured and now actionable
+
+D3 already records this and it still holds: `defmacro` refuses with `LL0023`, while **`defsyntax` gives
+`LL0210 'defsyntax' is not defined`** — the message any typo gets. There is no `DefSyntaxKw` token.
+
+One detail to add to it. `MacroDefNode.keyword` is documented as *"`defmacro` or `defsyntax` — so the
+diagnostic can quote what was actually written"*, but `AstBuilder.ts:1128` hard-codes
+`keyword: "defmacro"` at the only construction site — a field whose second case has no producer, which is
+this project's signature failure mode wearing a type. D3 reserves both keywords; the tree reserves one.
+
+Now that the tier has a stage, `defsyntax` gets a token and joins `LL0023` — a refusal by name, which is
+what "reserved" is supposed to mean and what D3 asked for.
+
+### Open, and deferred deliberately
+
+**Whether `list` should admit a generic `:keyword expr` clause on any head.** One production change would
+unlock the other 23 surfaces for `defsyntax` directly and make D69's migration promise achievable without
+the token tier carrying it alone. It is real work with a real conflict — the `:of` guard and the `..`
+range live in that same rule, and modifier parsing is adjacent — so it is its own ruling, with the
+measurement above already gathered for it.

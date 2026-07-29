@@ -31,8 +31,17 @@ generics, variance. Remove the parentheses and what is left reads closer to Kotl
 Scheme.
 
 The corollary matters when you write l-lang: reach for the type system, not for macros. There are no
-macros — `defmacro` and `defsyntax` are reserved and refused (**LL0023**), the tiers are designed
-(D69) and the grammar is not built.
+macros — `defmacro` is refused by name (**LL0023**) and `defsyntax` is not yet even a token. The
+tiers are designed: D69 rules what each handler receives, D95 rules when each one runs. Neither
+expansion tier is built.
+
+That "decides by parsing" line has a consequence worth knowing before you plan around macros. A form
+the parser does not already know can only be a **plain application** — `(f a b c)`, with vectors,
+maps, nested lists and the arrow forms as arguments. The clause surfaces this language is actually
+built from (`:then`, `:init`/`:cond`/`:step`, `catch`/`finally`, `(:else …)` arms, `match`'s braces)
+are welded to known heads and are parse errors on any other. So of 28 keyword-headed productions,
+**5 have a surface a user could ever reproduce** — which is why the migration onto `defsyntax` that
+D69 anticipates is a grammar question first (D95, deferred).
 
 ---
 
