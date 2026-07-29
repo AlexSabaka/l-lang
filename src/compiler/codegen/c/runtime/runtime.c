@@ -2487,6 +2487,11 @@ static double ll_as_num(ll_value v) {
 
 static bool ll_both_int(ll_value a, ll_value b) { return a.tag == LL_INT && b.tag == LL_INT; }
 
+/* The D85 integer guards, declared here and defined below: the boxed `/` and `%` need exactly the
+ * same arithmetic the statically-typed ones use, and "the same" has to mean the SAME FUNCTION. */
+static int64_t ll_idiv(int64_t a, int64_t b);
+static int64_t ll_imod(int64_t a, int64_t b);
+
 static ll_value ll_op_add(ll_value a, ll_value b) {
   if (a.tag == LL_STR || b.tag == LL_STR) return ll_box_str(ll_concat_vals(a, b));
   if (ll_both_int(a, b)) return ll_box_int(a.as.i + b.as.i);
@@ -2503,12 +2508,35 @@ static ll_value ll_op_mul(ll_value a, ll_value b) {
   return ll_box_real(ll_as_num(a) * ll_as_num(b));
 }
 
+/* INT/INT IS INTEGER DIVISION HERE TOO, and the comment this replaced -- "JS: division always yields
+ * a Real" -- was simply false about the oracle it named. Int is a BigInt on JS, so `7n / 2n` is `3n`
+ * and `1n / 0n` throws; the shim was right and only C converted to double.
+ *
+ * The consequence was a SILENT WRONG ANSWER, and one worse than the zero case the 2026-07-27 audit
+ * recorded: the SAME EXPRESSION answered differently depending on whether its operands happened to be
+ * statically typed.
+ *
+ *     (/ 7 2)  statically Int/Int  ->  3      (ll_idiv)
+ *     (/ 7 2)  through Unknown     ->  3.5    (this function)
+ *
+ * Nothing in the language makes a value's type-erasure change its arithmetic. `+`, `-` and `*` beside
+ * this all dispatch on the runtime tags via `ll_both_int` and preserve int-ness; `/` did not, and `%`
+ * did only when the divisor was non-zero.
+ *
+ * Routing through `ll_idiv`/`ll_imod` -- the same functions the static path calls, not a copy of
+ * their logic -- brings three of D85's guarantees to the boxed path at once: a zero divisor PANICS
+ * rather than yielding Infinity/NaN, `INT64_MIN / -1` is D51's wrap rather than C's undefined (and
+ * x86's #DE), and the quotient is an Int.
+ *
+ * REAL division is untouched, exactly as D85 scoped it: `(/ 1.0 0.0)` is `Infinity` and `(% 1.0 0.0)`
+ * is `NaN` by IEEE 754, on both backends. Only the case where BOTH tags are LL_INT changes. */
 static ll_value ll_op_div(ll_value a, ll_value b) {
-  return ll_box_real(ll_as_num(a) / ll_as_num(b)); /* JS: division always yields a Real */
+  if (ll_both_int(a, b)) return ll_box_int(ll_idiv(a.as.i, b.as.i));
+  return ll_box_real(ll_as_num(a) / ll_as_num(b));
 }
 
 static ll_value ll_op_mod(ll_value a, ll_value b) {
-  if (ll_both_int(a, b) && b.as.i != 0) return ll_box_int(a.as.i % b.as.i);
+  if (ll_both_int(a, b)) return ll_box_int(ll_imod(a.as.i, b.as.i));
   return ll_box_real(fmod(ll_as_num(a), ll_as_num(b)));
 }
 

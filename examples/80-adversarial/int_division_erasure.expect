@@ -1,0 +1,12 @@
+static 7/2 : 3
+erased 7/2 : 3
+static 7%2 : 1
+erased 7%2 : 1
+static 8/2 : 4
+erased 8/2 : 4
+static len/10: 0
+erased len/10: 0
+real   7/2 : 3.5
+erased 7/2.: 3.5
+real   1/0 : Infinity
+done

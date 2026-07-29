@@ -680,14 +680,14 @@ Six modules in one round, each ruled before it was written.
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
-### The three surviving C defects from the 2026-07-27 adversarial audit
+### The two surviving C defects from the 2026-07-27 adversarial audit
 
 The audit reported 29 findings; its triage adjudicated them to **11 distinct defects** behind a
-premise the audit had inverted (it named JS the oracle; D86 says C is the specification). **Eight are
+premise the audit had inverted (it named JS the oracle; D86 says C is the specification). **Nine are
 closed** — #1/#2 by D84's injective mangling, #3 by D85's division ruling, #4/#5 by commit `b466f71`
-turning six bare emitter throws into located LL0106s, and the NUL, `argv` and cyclic-equality ones
-below. These three are open, verified in source on 2026-07-28, and were recorded nowhere but the
-triage until now:
+turning six bare emitter throws into located LL0106s, and the NUL, `argv`, cyclic-equality and
+division-erasure ones below. These two are open, verified in source on 2026-07-28, and were recorded
+nowhere but the triage until now:
 
 *   ~~**Embedded NUL truncates a string literal, and two strings sharing a NUL prefix compare
     EQUAL.**~~ — **CLOSED**, and it was the one the triage named to fix first. See below.
@@ -698,8 +698,8 @@ triage until now:
     ruling**, listed below. See both entries.
 *   **Stacked `...args` decorators trap** — `TypeError: expected a Vector` on C, correct on JS. Not
     stale against D75: the flat contract landed and two layers still break.
-*   **A boxed int `/0` yields `Infinity`** instead of trapping, so the `catch` never fires. A
-    distinct code path from D85's static Int/Int guard.
+*   ~~**A boxed int `/0` yields `Infinity`** instead of trapping.~~ — **CLOSED**, and the `Infinity`
+    was a symptom: the *quotient* was wrong too. See below.
 *   **Deep non-tail recursion SIGSEGVs** where JS raises a catchable stack overflow.
 
 **And four divergences that need a RULING, not a fix** — in each, C is at least as defensible as JS,
@@ -817,6 +817,40 @@ Guarded by `80-adversarial/cyclic_equality.lisp`, which asserts the *shape* both
 (caught, and execution continues) rather than the message, since those legitimately differ. It also
 pins that the short-circuit did not quietly turn `==` into `is`: distinct-but-equal values are still
 equal, differing ones still are not, and a finite chain still walks.
+
+### ~~Erasing a type changed the arithmetic — boxed `/` was real division~~ — **CLOSED**
+
+The audit recorded "a boxed int `/0` yields `Infinity` instead of trapping". That is the corner of
+this that a zero divisor makes visible. The defect is larger and quieter: **the quotient was wrong.**
+
+`binopMode` returned `"real"` for `/` **before** the boxed-operand check that every other arithmetic
+operator makes — so `/` was the one operator that narrowed an Unknown, and it narrowed it
+unconditionally to double:
+
+| | statically typed | through an Unknown |
+|---|---|---|
+| C, before | `(/ 7 2)` → `3` | `(/ 7 2)` → **`3.5`** |
+| C, after | `3` | `3` |
+| JS | `3` | `3` |
+
+`+`, `-` and `*` beside it already fell to `ll_op_*`, which dispatches on the runtime **tag** and
+preserves int-ness. `%` did too, but only when the divisor was non-zero. Routing `/` and `%` through
+`ll_idiv`/`ll_imod` — *the same functions the static path calls*, not a copy of their logic — brings
+three of D85's guarantees to the boxed path at once: a zero divisor panics, `INT64_MIN / -1` wraps
+per D51 rather than being C-undefined, and the quotient is an Int. Real division is untouched,
+exactly as D85 scoped it.
+
+**One corpus file went red, and it was right to.** `01-functions/04_pipelines.lisp` advertised
+`Pipeline C1 Result (0.25)` from `"hello" |> (fn [s] (return s.length)) |> (/ 10)`. `.length` is an
+Int (D52), so under D49d that asks for `5 / 10 == 0` — which is what the **statically typed spelling
+has always answered on both backends**. It printed `0.25` only through the pipeline, where the lambda
+erases the type. The demonstration there is *pipelines*; the line now says `(/ 10.0)`, which is what
+it meant, and matches the file's own `Real`-typed helpers.
+
+**And that is where the JS backend contradicts itself**, which is why the guard is graded on C only:
+JS's run-time `.length` is a host **Number** while its own checker types it **Int**, so JS answers
+`0` statically and `0.5` erased. Exactly one line of
+`80-adversarial/int_division_erasure.lisp` diverges, and the manifest entry names it.
 
 ### ~~Arithmetic is only checked at arity two~~ — **CLOSED (D92)**
 

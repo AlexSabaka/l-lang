@@ -3526,11 +3526,29 @@ export class ResolveHirToCir {
     if (op === "+" && (lt.k === "str" || rt.k === "str")) return "str-concat";
     if (["+", "-", "*", "/", "%"].includes(op)) {
       if (op === "/") {
+        // A BOXED OPERAND IS CHECKED FIRST, like every other operator below. This `return` used to
+        // come before that check, so `/` was the one arithmetic operator that narrowed an Unknown --
+        // and it narrowed it to `real`, unconditionally. The result was a SILENT WRONG ANSWER whose
+        // shape is the worst kind: the same expression answered differently depending on whether its
+        // operands happened to be statically typed.
+        //
+        //     (/ 7 2)  statically Int/Int   ->  3      (mode "int", ll_idiv)
+        //     (/ 7 2)  through an Unknown   ->  3.5    (mode "real", ll_unbox_real on an LL_INT)
+        //
+        // JS answers 3 for both -- Int is a BigInt there, so the shim's runtime dispatch divides two
+        // BigInts and truncates. Falling to "boxed" routes through `ll_op_div`, which dispatches on
+        // the actual tags exactly as `+`/`-`/`*` already did, and inherits D85's guards with it: a
+        // zero divisor PANICS instead of yielding Infinity, and INT64_MIN/-1 wraps per D51.
+        if (lt.k === "value" || rt.k === "value") {
+          this.ledger.record("A6", "boxed-arith", src, "boxed operand in division; runtime tag dispatch (cannot narrow an Unknown)");
+          return "boxed";
+        }
         // D49d: `Int / Int` is integer division. The decision is the NODE's (h.intDiv), not something
         // re-derived from CIR ctypes here -- deriving it locally is how the two backends first
         // disagreed: C read int/int off the ctypes for `(/ (round x) 100)` and truncated, while JS read
         // the HIR types, saw non-Int, and did not. int64_t `/` truncates toward zero, matching the
-        // Math.trunc JS emits.
+        // Math.trunc JS emits. That hazard is a STATIC one and does not reach the boxed branch above,
+        // where neither backend has a type to read and both dispatch on the runtime tag.
         return intDiv ? "int" : "real";
       }
       if (lt.k === "int" && rt.k === "int") return "int";

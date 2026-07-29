@@ -219,6 +219,17 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "the tower's two halves part company: the LITERALS are portable (they desugar to ordinary " +
       "constructions and both backends run them), and PROMOTION is not.",
   },
+  "80-adversarial/int_division_erasure.lisp": {
+    status: "test",
+    oracleDivergent:
+      "JS CONTRADICTS ITSELF on the two spellings of one division, and this file is where that is " +
+      "measured. `.length` is typed Int by BOTH checkers (D52), and `(/ s.length 10)` answers 0 on " +
+      "both backends when the types survive -- D49d's integer division. Put a lambda in between and " +
+      "JS answers 0.5, because its run-time `.length` is a host Number while its own checker still " +
+      "calls it Int; erasing a type changed the arithmetic. C answers 0 in both, agreeing with " +
+      "itself and with D49d. Exactly one line of this file diverges (`erased len/10`), which is the " +
+      "whole defect and no more. D66 freezes the JS path.",
+  },
   "80-adversarial/numeric_radix_literals.lisp": {
     status: "test",
     oracleDivergent:

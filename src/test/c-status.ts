@@ -504,6 +504,13 @@ export const C_PASSING: readonly string[] = [
   // refuses under a depth budget, which the file asserts as catchable-and-continues rather than as an
   // answer, because the two backends' messages differ and the ruling is open in roadmap.
   "80-adversarial/cyclic_equality.lisp",
+  // ERASING A TYPE MUST NOT CHANGE THE ARITHMETIC. `binopMode` returned "real" for `/` BEFORE the
+  // boxed check every other operator makes, so `(/ 7 2)` was 3 statically and 3.5 through an Unknown.
+  // The audit recorded only the corner of this it could see -- boxed `(/ 1 0)` yielding Infinity
+  // rather than D85's panic -- but the Infinity is a symptom and the wrong QUOTIENT is the defect.
+  // oracleDivergent: JS contradicts itself here (0 static, 0.5 erased, because its `.length` is a
+  // host Number at run time while its checker types it Int), on exactly one line.
+  "80-adversarial/int_division_erasure.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

@@ -27,10 +27,17 @@
 
     ;; 3. Mixed with standard library methods (if shimmed) and mixed directions
         ;; .toUpperCase |>
+    ;; `10.0` and not `10`, because this line wants a REAL quotient and says so in its own label.
+    ;; `.length` is an Int (D52) and D49d makes `Int / Int` integer division, so `(/ 10)` here asks for
+    ;; `5 / 10 == 0` -- which is what the statically-typed spelling of it has always answered on BOTH
+    ;; backends. It printed 0.25 only through the pipeline, where the lambda erases the type and the
+    ;; deprecated backend's `.length` is a host Number at run time while its own checker calls it Int.
+    ;; The demonstration here is PIPELINES; relying on a lost type to get its advertised answer was
+    ;; incidental, and `80-adversarial/int_division_erasure.lisp` is where that divergence is pinned.
     (let result-c-1
         ("hello"
             |> (fn [s] (return s.length))
-            |> (/ 10)
+            |> (/ 10.0)
             |> square))
     (console.log f"Pipeline C1 Result (0.25): {(result-c-1)}")
 
