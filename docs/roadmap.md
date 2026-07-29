@@ -1345,6 +1345,67 @@ design question, not an implementation detail.
 **The pressure is off**: D102's `defmacro` can already spell these surfaces, because it runs before the
 parser has an opinion.
 
+#### Scoped 2026-07-30 — the numbers the ruling needs, and NO ruling taken
+
+This is a measurement, not a decision. The deferred question is Sabaka's; what was missing was the
+cost of each answer.
+
+**The surface, counted.** 16 `*ModKw` clause markers are lexed and **18 productions** consume them:
+
+| marker | consumed by |
+|---|---|
+| `:cond` `:then` | `condCase`, `forClause`, `ifExpr`, `whenExpr`, `whileExpr` |
+| `:else` | `condCase`, `forClause`, `ifExpr` |
+| `:each` `:from` `:init` | `forClause` |
+| `:step` | `forClause`, `keyValue` |
+| `:of` | `catchFilter`, **`list`**, `spreadExpr`, `typePattern` |
+| `:extends` `:implements` | `classDecl`, `structDecl`, `interfaceDecl` |
+| `:as` `:on` `:satisfies` `:when` | `exportAlias`/`symbolAlias`, `handleClause`, `typeDefDecl`, `matchCase` |
+
+**The precedent is already in `list`, and it is the wrong shape.** The generic list rule carries two
+optional trailing constructs — `:of T` and `.. hi` — so "a list may end in a keyword thing" is not new.
+But **both change the node's KIND**: `:of` returns a `type-guard`, `..` returns a desugared `Range`
+construction. Neither is *carried on* a list. That is exactly what "the builder has nowhere to put it"
+means, and it is why the 2026-07-29 probe's five grammar lines produced a silent drop.
+
+**The consumer count is 50, not 110.** There are 110 raw `.nodes` reads outside the frontend, but the
+number that matters is the **50 sites in 12 files** that dispatch on list-ness (`case "list"`,
+`_type === "list"`, `isListNode`) — 20 of them in `InferTypesAstVisitor` alone.
+
+**Three answers, and what each costs:**
+
+*   **(a) An optional `clauses?` field on `ListNode`** — cheapest, and follows `ForNode.duplicateClauses`'
+    precedent of "present only when relevant". **All 50 sites ignore it by construction**, silently.
+    This is the silent-wrong-answer generator the probe hit, restated: nothing forces a consumer to
+    notice a field it never reads.
+*   **(b) Desugar clauses away in the builder**, so no consumer sees them. Only the desugarer changes.
+    But then a `defsyntax` handler can never *receive* a clause — which forecloses the only reason to
+    build this.
+*   **(c) A distinct `_type`** (a `clause-list`). Most expensive, and **the only one where forgetting a
+    consumer cannot be silent**: C's `resolveAstExpr` already ends in `default: throw this.refuse(node,
+    node._type)`, and the generated `lib/std/llang/ast.lisp` (89 kinds, freshness-gated by
+    `test:docs`) turns red until it is regenerated. The forcing functions exist already.
+
+**The handler-binding half is still open and is genuinely separate.** `defmacro` binds positionally
+today, and `80-adversarial/for_as_macro.lisp` proves that is sufficient for `for`'s real
+`:init/:cond/:step/:then` surface — the clause markers arrive as ordinary tokens and are simply named
+and ignored. Whether `defsyntax` should do the same, take a map, or bind named parameters is untouched
+by any measurement above.
+
+### Two clause markers are lexed and parsed by NOBODY
+
+`IsModKw` (`:is`) and `WhereModKw` (`:where`) appear only in `tokens.ts` — three references each, all
+declaration — and in **no parser rule at all**. Writing either is a parse error.
+
+Found while counting the clause surface above. The two corpus files that use them,
+`04-pattern-matching/03_pattern_kinds.lisp` and `06-value-semantics/01_structs_refinement.lisp`, are
+**both xfail already**, so nothing regressed and nothing measured this — the tokens are lexed for a
+syntax that was never built.
+
+This is the *frontend's* instance of the "who calls it?" failure mode: a token is not a feature.
+Whether `:where`/`:is` should be wired (they read as refinement syntax) or removed is a language
+question, unruled and untouched here.
+
 ### `std/math/fft` is blocked, and its draft is gone
 
 Blocked on the C `computed-callee` refusal (`ResolveHirToCir.ts`) plus an unpinned JS index bug. Its
