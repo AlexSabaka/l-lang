@@ -139,7 +139,7 @@ interface ClassDesc {
 export class ResolveHirToCir {
   private readonly functions: CFunction[] = [];
   private readonly lifted: CLifted[] = [];
-  private readonly adapters = new Map<string, { forCName: string; params: CType[]; ret: CType; arity: number }>();
+  private readonly adapters = new Map<string, { forCName: string; params: CType[]; ret: CType; arity: number; restAt?: number }>();
   /** Top-level user function signatures, by SOURCE name -- direct-call targets.
    *  `restAt` is the index of a REST parameter (`[a ...xs]`) when the function has one: from that
    *  position on, the call site packs its trailing arguments into one vec (see `packRestArgs`). */
@@ -2965,7 +2965,7 @@ export class ResolveHirToCir {
     // defines (which would fail at link time, further from the cause).
     if (!sig) throw this.refuse(node, `function-value:${name}`, "functionValue");
     const cName = mangleC(alias);
-    this.adapters.set(cName, { forCName: cName, params: sig.params, ret: sig.ret, arity: sig.arity });
+    this.adapters.set(cName, { forCName: cName, params: sig.params, ret: sig.ret, arity: sig.arity, restAt: sig.restAt });
     return {
       src: node,
       ctype: { k: "closure", params: sig.params, ret: sig.ret },

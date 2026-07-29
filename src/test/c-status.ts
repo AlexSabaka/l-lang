@@ -511,6 +511,13 @@ export const C_PASSING: readonly string[] = [
   // oracleDivergent: JS contradicts itself here (0 static, 0.5 erased, because its `.length` is a
   // host Number at run time while its checker types it Int), on exactly one line.
   "80-adversarial/int_division_erasure.lisp",
+  // A `[...rest]` parameter is packed by whoever knows the arity, and through the BOXED convention
+  // that is the CALLEE -- `ll_call` hands over a flat argv and no site in between built a vector. The
+  // lifted-closure prologue already collected; the top-level-function ADAPTER read `__argv[restAt]` as
+  // though the vector were there. D75 makes the outermost decorator layer a direct call and every
+  // layer beneath it an adapter call, so one decorator worked and two trapped -- with the outer's log
+  // line already printed, which is the tell that the fault is in the CALL, not the callee.
+  "80-adversarial/stacked_rest_decorators.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

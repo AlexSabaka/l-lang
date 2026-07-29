@@ -1,0 +1,9 @@
+  c sees 3 args: [1 2 3]
+  b sees 3 args: [1 2 3]
+  a sees 3 args: [1 2 3]
+three: 6
+  a sees 1 args: [5]
+scaled: 100
+  a sees 0 args: []
+nullary: 42
+done

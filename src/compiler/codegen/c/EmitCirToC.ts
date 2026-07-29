@@ -388,12 +388,33 @@ export class EmitCirToC {
     this.line("}");
   }
 
-  /** A boxed-convention adapter for a top-level function used as a value: unbox, call, box. */
-  private emitAdapter(a: { forCName: string; params: CType[]; ret: CType; arity: number }): void {
+  /**
+   * A boxed-convention adapter for a top-level function used as a value: unbox, call, box.
+   *
+   * A `[...rest]` PARAMETER IS PACKED HERE, not read. A direct call site packs the vector itself
+   * because it knows the arity; `ll_call` hands over a flat argv and there is no such site, so the
+   * callee must collect. `emitLifted` above already says this for a lifted closure -- the adapter is
+   * the same convention reached by a different route, and it read `__argv[restAt]` as if the vector
+   * were already there.
+   *
+   * That is what made STACKED `...args` DECORATORS trap. D75 unfolds each layer into an ordinary C
+   * function taking one packed `ll_vec*`, and binds the next layer's `original` as a closure VALUE --
+   * so the outermost layer is called directly (packed by its call site, fine) and every layer beneath
+   * it is reached through this adapter (flat, and read as a vector). One decorator worked; two gave
+   * `TypeError: expected a Vector`, with the outer's log line already printed.
+   *
+   * The count is clamped exactly as the closure prologue clamps it, so an under-applied call gives an
+   * empty rest rather than a negative length.
+   */
+  private emitAdapter(a: { forCName: string; params: CType[]; ret: CType; arity: number; restAt?: number }): void {
     this.line(`static ll_value __ll_adapter_${a.forCName}(void* __env, int __argc, ll_value* __argv) {`);
     this.indent++;
     this.line("(void)__env; (void)__argc;");
-    const callArgs = a.params.map((t, i) => (t.k === "value" ? arg(i) : `${UNBOX_FN[t.k]}(${arg(i)})`));
+    const callArgs = a.params.map((t, i) =>
+      i === a.restAt
+        ? `ll_vec_of((size_t)(__argc > ${i} ? __argc - ${i} : 0), __argv + ${i})`
+        : t.k === "value" ? arg(i) : `${UNBOX_FN[t.k]}(${arg(i)})`
+    );
     const call = `${a.forCName}(${callArgs.join(", ")})`;
     if (a.ret.k === "void") this.line(`${call}; return ll_nil();`);
     else if (a.ret.k === "value") this.line(`return ${call};`);

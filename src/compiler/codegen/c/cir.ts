@@ -560,8 +560,11 @@ export interface CModule {
   classes: CClass[];
   /** Module-level bindings referenced by top-level functions -> file-scope C globals. */
   globals: { cName: string; ctype: CType }[];
-  /** Top-level functions used as VALUES need a boxed-convention adapter; keyed by cName. */
-  adapters: { forCName: string; params: CType[]; ret: CType; arity: number }[];
+  /** Top-level functions used as VALUES need a boxed-convention adapter; keyed by cName.
+   *  `restAt` is the index of a `[...rest]` parameter, and the adapter must PACK from there: a direct
+   *  call site packs the vector itself because it knows the arity, and the boxed convention has no
+   *  such site -- `ll_call` hands over a flat argv. Same rule the lifted-closure prologue follows. */
+  adapters: { forCName: string; params: CType[]; ret: CType; arity: number; restAt?: number }[];
   /** Top-level statements, in order -- the body of `int main(void)`. */
   main: CBlock;
   /** The reflection metadata graph (D54), from the SHARED builder the JS backend uses. Materialised

@@ -680,14 +680,14 @@ Six modules in one round, each ruled before it was written.
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
-### The two surviving C defects from the 2026-07-27 adversarial audit
+### The one surviving C defect from the 2026-07-27 adversarial audit
 
 The audit reported 29 findings; its triage adjudicated them to **11 distinct defects** behind a
-premise the audit had inverted (it named JS the oracle; D86 says C is the specification). **Nine are
+premise the audit had inverted (it named JS the oracle; D86 says C is the specification). **Ten are
 closed** — #1/#2 by D84's injective mangling, #3 by D85's division ruling, #4/#5 by commit `b466f71`
-turning six bare emitter throws into located LL0106s, and the NUL, `argv`, cyclic-equality and
-division-erasure ones below. These two are open, verified in source on 2026-07-28, and were recorded
-nowhere but the triage until now:
+turning six bare emitter throws into located LL0106s, and the NUL, `argv`, cyclic-equality,
+division-erasure and stacked-decorator ones below. This one is open, verified in source on
+2026-07-28, and was recorded nowhere but the triage until now:
 
 *   ~~**Embedded NUL truncates a string literal, and two strings sharing a NUL prefix compare
     EQUAL.**~~ — **CLOSED**, and it was the one the triage named to fix first. See below.
@@ -696,8 +696,8 @@ nowhere but the triage until now:
 *   ~~**Deep structural equality has no cycle guard and no pointer-identity short-circuit.**~~ —
     the crash is **CLOSED**; whether two *distinct* cyclic values are equal is now an **open
     ruling**, listed below. See both entries.
-*   **Stacked `...args` decorators trap** — `TypeError: expected a Vector` on C, correct on JS. Not
-    stale against D75: the flat contract landed and two layers still break.
+*   ~~**Stacked `...args` decorators trap** — `TypeError: expected a Vector` on C.~~ — **CLOSED**;
+    the fault was in how the inner layer was *called*, not in the layer. See below.
 *   ~~**A boxed int `/0` yields `Infinity`** instead of trapping.~~ — **CLOSED**, and the `Infinity`
     was a symptom: the *quotient* was wrong too. See below.
 *   **Deep non-tail recursion SIGSEGVs** where JS raises a catchable stack overflow.
@@ -851,6 +851,35 @@ it meant, and matches the file's own `Real`-typed helpers.
 JS's run-time `.length` is a host **Number** while its own checker types it **Int**, so JS answers
 `0` statically and `0.5` erased. Exactly one line of
 `80-adversarial/int_division_erasure.lisp` diverges, and the manifest entry names it.
+
+### ~~Stacked `...args` decorators trapped~~ — **CLOSED**
+
+A `[...rest]` parameter is packed **by whoever knows the arity**. A direct call site does, because it
+can see how many arguments there are. The boxed convention cannot: `ll_call` hands the callee a flat
+`(argc, argv)` and no site in between ever built a vector — so a function with a rest parameter,
+reached as a *value*, must collect its own.
+
+The lifted-closure prologue already did that, with a comment saying exactly why. The **top-level
+function adapter** did not: it read `__argv[restAt]` as though the vector were already there.
+
+D75 unfolds each decorator layer into an ordinary C function taking one packed `ll_vec*`, and binds
+the next layer's `original` as a closure **value**. So the outermost layer is called directly (packed
+by its call site, fine) and every layer beneath it goes through the adapter. One decorator worked;
+two gave `TypeError: expected a Vector` — **with the outer layer's log line already printed**, which
+is the tell that the fault was in the *call*, not in the callee that raised it.
+
+`emitAdapter` now packs `__argv[restAt..]` with the same clamp the closure prologue uses, so an
+under-applied call yields an empty rest rather than a negative length. `restAt` reaches it through
+the CIR adapter descriptor, from the signature that already recorded it.
+
+**Third instance of one convention being taught a rule while its sibling was not** — the rest clamp
+existed in the closure prologue while three fixed-parameter reads beside it trusted `__argc` (fixed
+this session), and the packing existed there while the adapter did not.
+
+Guarded by `80-adversarial/stacked_rest_decorators.lisp`: three layers deep (so a fix repairing only
+the first hop stops after the second), a fixed-parameter decorator stacked under a rest one (so
+"pack everything" would fail), and a nullary under a rest decorator (`__argc == 0`, the clamp's
+edge, and the NULL-argv call at the same time). It printed one line before the trap.
 
 ### ~~Arithmetic is only checked at arity two~~ — **CLOSED (D92)**
 
