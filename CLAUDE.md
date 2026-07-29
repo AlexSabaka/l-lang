@@ -50,10 +50,14 @@ npx tsc --noEmit
 ../l-lang-games/verify.sh    # from the repo root — the games parity suite, both backends
 ```
 
-Baseline to hold, measured at `0dd79ef` (2026-07-30): **JS 297 passing / 0 failing / 6
-oracle-divergent / 8 xfail. C 294 passing / 0 failing / 3 refused / 0 not-yet.** Both over the same
-348-file total (13 library, 1 fixture, 29 negative). Any movement is a finding — report the number,
+Baseline to hold, measured at `fe7d937` (2026-07-30): **JS 299 passing / 0 failing / 6
+oracle-divergent / 8 xfail. C 297 passing / 0 failing / 2 refused / 0 not-yet.** Both over the same
+350-file total (13 library, 1 fixture, 29 negative). Any movement is a finding — report the number,
 do not adjust it silently.
+
+**Both remaining C refusals are `:async`, refused by RULING (D60), not by gap.** There is no longer a
+construct the reference backend declines because nobody built it — so a new refusal is a regression,
+not a backlog item, and should be read that way.
 
 *Adjusting this line is not the same as adjusting a number silently.* It moves only when every step
 between the old figure and the new one was reported in a commit message, and each of the 22 files
