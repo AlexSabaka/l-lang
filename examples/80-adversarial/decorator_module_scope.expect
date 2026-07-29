@@ -1,0 +1,8 @@
+undecorated: 42
+[audit] call with 1 of 2
+decorated  : 42
+undecorated: 15
+setup saw 5 under [audit]
+decorated  : 15
+field map  : reg 7 0
+done

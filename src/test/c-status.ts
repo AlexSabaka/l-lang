@@ -556,6 +556,14 @@ export const C_PASSING: readonly string[] = [
   // Was `ELL0106 destructuring-element:rest-pattern`, then `map-pattern`, then `param-destructuring`
   // -- three names for two absences, both closed. Grades against the same golden JS uses.
   "04-pattern-matching/04_destructuring.lisp",
+  // `computeGlobals` scanned `items` for `_type === "function"`, and a `defmodifier` is not one -- it
+  // is a `modifier-def` HOLDING a function, which D75 then unfolds into a top-level C function. So a
+  // module-level binding a decorator reads hit exactly the obstruction that pass exists for: `cc:
+  // undeclared identifier 'u_prefix'`, correct on JS. Two bindings of different types, because the
+  // hoist carries the ctype and a scan that found one could miss the other. Also carries the only
+  // guard anywhere for a class field DEFAULTING to a map literal -- a third report of the one absent
+  // `map` case in `resolveAstExpr`, and stated in the file as a different root cause.
+  "80-adversarial/decorator_module_scope.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

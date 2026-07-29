@@ -411,9 +411,23 @@ export class ResolveHirToCir {
     }
     if (moduleBindings.size === 0) return;
     for (const n of items) {
-      if (n?._type !== "function") continue;
-      for (const fv of freeVariables(n as ast.FunctionNode)) {
-        if (moduleBindings.has(fv)) this.globalNames.add(fv);
+      if (n?._type === "function") {
+        for (const fv of freeVariables(n as ast.FunctionNode)) {
+          if (moduleBindings.has(fv)) this.globalNames.add(fv);
+        }
+        continue;
+      }
+      // A `defmodifier` BODY is scanned too, and it is not a `function` node -- it is a
+      // `modifier-def` holding one. D75 unfolds its wrapper into a top-level C function, so a
+      // module-level binding the wrapper reads faces exactly the obstruction this pass exists for:
+      // measured, `(let prefix "…")` read inside a decorator emitted `u_prefix` undeclared, and `cc`
+      // rejected the module. The workaround on record was "call a top-level FUNCTION instead"; the
+      // scan was simply not looking here.
+      if (n?._type === "modifier-def") {
+        for (const fv of freeVariablesOfBody((n as ast.ModifierDefNode).body ?? [],
+                                             ((n as ast.ModifierDefNode).params ?? []).map((p) => ast.symbolName(p.name as ast.IdentifierNode)))) {
+          if (moduleBindings.has(fv)) this.globalNames.add(fv);
+        }
       }
     }
     // Same claim as for this module's functions: our own globals own their bare names, so an

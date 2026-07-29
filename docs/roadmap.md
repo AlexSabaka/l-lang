@@ -1145,6 +1145,22 @@ neither named `resolveAstExpr`.
 Guarded by `test:imports` **S15.4**, which checks a vector in the same fixture — so the entry says
 "maps specifically", not "module-level literals in general", and can be falsified.
 
+**A THIRD report was the same case**, found afterwards by re-measuring a note that said a class field
+could not default to a map literal while a vector default was fine. It could not, for this reason, and
+now can — `80-adversarial/decorator_module_scope.lisp` carries the only guard for it.
+
+### ~~A decorator's wrapper cannot read a module-level binding~~ — **CLOSED**
+
+`computeGlobals` hoists every module-level binding a top-level function reads into a file-scope global,
+because a C function cannot see `main`'s locals — the JS backend closes over module scope for free. It
+scanned `items` for `_type === "function"`, and **a `defmodifier` is not one**: it is a `modifier-def`
+*holding* a function, which D75 then unfolds into a top-level C function.
+
+So a decorator that read a module-level `let` emitted `cc: error: use of undeclared identifier
+'u_prefix'`, and was correct on JS. The workaround on record was *"call a top-level function instead —
+one hop is the whole fix"*, which is true and turned out to be unnecessary: the scan was simply not
+looking in the one place D75 puts a function body.
+
 M2's schema was written as `match` arms returning vector literals to work around this. That workaround
 is no longer forced; it is left alone because rewriting a generated file to prove a point is not worth
 a re-generation.
