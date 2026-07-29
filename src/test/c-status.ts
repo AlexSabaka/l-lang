@@ -453,6 +453,13 @@ export const C_PASSING: readonly string[] = [
   // plus using an argument form twice, reordering two of them, branching on a form's SHAPE, composing
   // one handler through another, and quote staying DATA (a quoted `(unless a b)` is not expanded).
   "80-adversarial/defsyntax.lisp",
+  // C2: a NESTED `:gen` lowers, capturing its enclosing scope. The case that could not be represented
+  // is the MUTABLE capture -- a frame slot is an `ll_value` and a cell was a bare `ll_value*`, which
+  // the value union has no arm for. Cells are one-field OBJECTS now, so they box into a slot. Pins
+  // read-only capture, mutable capture (the generator advances the ENCLOSING `n`, asserted after the
+  // loop), per-instance frames (two pulls of one nested generator), and an infinite one consumed
+  // finitely through the raw cursor.
+  "80-adversarial/nested_generator.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

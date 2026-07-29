@@ -95,6 +95,9 @@ export interface CFieldGet {
   object: CExpr;
   slot: number;
   fieldName: string;
+  /** C2: this slot holds a CELL (a one-field object), so the read derefs through it. A generator
+   *  frame slot that carries a mutable capture is the only producer. */
+  cell?: boolean;
 }
 
 /** One captured free variable of a lifted closure. `value` is computed in the ENCLOSING scope; for a
@@ -398,7 +401,7 @@ export interface CDecl {
 export type CLValue =
   | { kind: "name"; cName: string; ctype: CType; cell?: boolean }
   | { kind: "index"; base: CExpr; index: CExpr; mode: IndexMode }
-  | { kind: "field"; object: CExpr; slot: number; fieldName: string }
+  | { kind: "field"; object: CExpr; slot: number; fieldName: string; cell?: boolean }
   | { kind: "dyn-field"; object: CExpr; fieldName: string };
 
 export interface CAssign {

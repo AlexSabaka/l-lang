@@ -593,12 +593,35 @@ static ll_value ll_call_dyn(int argc, ll_value *argv) {
 }
 
 /* A heap cell for a mutable-captured binding, shared between the origin frame and every closure that
- * captured it (spec A5 -- the shared mutable state the HIR does not express). */
-static ll_value *ll_cell(ll_value initial) {
-  ll_value *cell = (ll_value *)ll_gc_alloc(sizeof(ll_value), LL_H_CELL);
-  *cell = initial;
-  return cell;
+ * captured it (spec A5 -- the shared mutable state the HIR does not express).
+ *
+ * A CELL IS A ONE-FIELD OBJECT, not a bare `ll_value*`, and that is what lets a GENERATOR capture a
+ * mutable binding (C2). A generator's frame is `ll_obj.fields[]` -- a flexible array of `ll_value`,
+ * uniformly boxed by construction -- so it can hold anything an `ll_value` can hold and nothing else.
+ * A bare `ll_value*` is not one of those: the union is int/real/bool/char/str/vec/map/obj/closure and
+ * has no pointer arm. Boxing the cell as an ordinary object makes it storable in a frame slot with no
+ * change to the value union at all, which is the alternative this replaced -- an 11th tag would have
+ * put a user-invisible arm through 47 `case LL_` sites, equality, copy and display, for something that
+ * must never be observed.
+ *
+ * The allocation KIND stays `LL_H_CELL` rather than `LL_H_OBJ`: it is an accounting label (D59 -- the
+ * collector is ruled and not built), and cells remain worth counting separately from user objects. */
+static const char *const LL_CELL_FIELD_NAMES[1] = {"v"};
+static const ll_class LL_CELL_CLASS = {
+  "__ll_cell", false, 1, LL_CELL_FIELD_NAMES, 0, 0, 0, 0, 0, false, 0
+};
+
+static ll_value ll_cell(ll_value initial) {
+  ll_obj *c = (ll_obj *)ll_gc_alloc(sizeof(ll_obj) + sizeof(ll_value), LL_H_CELL);
+  c->cls = &LL_CELL_CLASS;
+  c->fields[0] = initial;
+  return ll_box_obj(c);
 }
+
+/* Read / write THROUGH a cell. Every capture of a mutable binding goes through these, which is what
+ * makes the binding shared rather than copied -- the defect C1 chased through three separate places. */
+static ll_value ll_cell_get(ll_value cell) { return cell.as.o->fields[0]; }
+static void ll_cell_set(ll_value cell, ll_value v) { cell.as.o->fields[0] = v; }
 
 /* -- unboxing (the A6 boundary made executable: wrong tag = trap, not coercion-by-accident) ------ */
 

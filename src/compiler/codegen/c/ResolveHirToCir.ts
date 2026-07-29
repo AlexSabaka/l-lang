@@ -4243,6 +4243,9 @@ export class ResolveHirToCir {
 
   /** A lambda literal used as a VALUE -> lift it and build a closure. */
   private resolveLambda(fn: ast.FunctionNode): CExpr {
+    // C2: a nested `:gen` LOWERS now. `:async` is still refused by ruling (D60), which is what
+    // `refuseCoroutine` is left guarding.
+    if (isGenerator(fn)) return this.liftGenerator(fn, "<lambda>");
     if (this.refuseCoroutine(fn, "<lambda>")) return { src: fn, ctype: C_VALUE, kind: "c-nil" };
     return this.lift(fn);
   }
@@ -4250,8 +4253,12 @@ export class ResolveHirToCir {
   /** A nested NAMED function declaration statement -> lift it and bind a local closure value. */
   private resolveNestedFnDecl(fn: ast.FunctionNode, modeled?: Extract<HExpr, { kind: "closure" }>): CStmt[] {
     const name = ast.symbolName(fn.name);
-    if (this.refuseCoroutine(fn, name)) return [];
-    const closure = this.lift(fn, modeled);
+    // C2: a nested `:gen` declaration binds a FACTORY closure, exactly as a nested plain function
+    // binds its own closure -- calling it makes a fresh frame, which is what per-instance state means.
+    const closure = isGenerator(fn)
+      ? this.liftGenerator(fn, name)
+      : (this.refuseCoroutine(fn, name) ? null : this.lift(fn, modeled));
+    if (closure === null) return [];
     const cName = mangleC(name);
     this.declareLocal(cName, closure.ctype, false, false);
     return [{ src: fn, ctype: C_VOID, kind: "c-decl", cName, declCType: closure.ctype, init: closure }];
@@ -4339,6 +4346,130 @@ export class ResolveHirToCir {
     return {
       src: fn,
       ctype: { k: "closure", params: paramCTypes, ret },
+      kind: "c-closure-make",
+      liftedName,
+      envStruct: captures.length ? `__ll_env_${liftedName}` : null,
+      captures,
+      arity: fn.params.length,
+      name: fn.name ? ast.symbolName(fn.name) : "",
+    };
+  }
+
+  /**
+   * A NESTED `:gen` -- lift it as a closure whose call builds a coroutine frame (C2, spec A8).
+   *
+   * `collectGenerator` handles the top-level case: a frame class, a step function, and a plain C
+   * factory. The only thing a nested one adds is CAPTURE, and the frame turns out to be the natural
+   * place to put it -- `promoteFrame` promotes every param and local to a slot by ruling ("promote
+   * everything", D58), so a captured binding is just another slot. Pass the captures alongside the
+   * params and the promotion covers them; the step function then reads a capture exactly as it reads
+   * a local, with no special case anywhere in the state machine.
+   *
+   * THE ONE THING THAT HAD TO CHANGE FOR THIS TO WORK is not here: a frame slot is an `ll_value`, and
+   * a mutable capture used to be a bare `ll_value*`, which the value union has no arm for. Cells are
+   * one-field OBJECTS now (see `ll_cell` in runtime.c), so they box into a slot like anything else.
+   * The alternative -- an 11th tag on `ll_value` -- would have put a user-invisible arm through 47
+   * `case LL_` sites, equality, copy and display, for something that must never be observed.
+   *
+   * The factory is the LIFTED function: called through the closure ABI, it reads captures out of the
+   * env and params out of `argv`, and returns the constructed frame.
+   */
+  private liftGenerator(fn: ast.FunctionNode, declName: string): CExpr {
+    const id = this.liftCounter++;
+    const baseName = fn.name ? mangleC(ast.symbolName(fn.name)) : "lam";
+    const liftedName = `__ll_lam_${baseName}_${id}`;
+    const tag = `__ll_gen_${baseName}_${id}`;
+    const stepName = `${tag}_step`;
+    const frameCType: CType = { k: "obj", className: tag };
+    this.ledger.record("A8", "nested-generator", fn, "nested `:gen` lifted: captures become frame slots (C2)");
+
+    // Captures, against the CURRENT scopes -- computed before isolating, exactly as `lift` does.
+    const captures: CCapture[] = [];
+    const capType = new Map<string, { ctype: CType; cell: boolean }>();
+    for (const srcName of freeVariables(fn)) {
+      const cName = mangleC(srcName);
+      if (this.globalDeclared.has(cName)) continue; // a file-scope global needs no capture
+      const info = this.localInfo(cName);
+      if (!info) continue;
+      const ctype = info.cell ? C_VALUE : info.ctype;
+      captures.push({ field: cName, ctype, value: { src: fn, ctype, kind: "c-ref", cName, cell: false }, cell: info.cell });
+      capType.set(cName, { ctype, cell: info.cell });
+    }
+
+    const savedScopes = this.scopes.slice();
+    const savedCells = this.cellVars;
+    const savedInFn = this.inFunctionBody;
+    (this as any).scopes = [new Map<string, VarInfo>()];
+    this.inFunctionBody = true;
+    let params: CParam[] = [];
+    let promoted!: PromotedFrame;
+    let states: number[] = [];
+    let capParams: { cName: string; ctype: CType; cell?: boolean }[] = [];
+    try {
+      this.cellVars = this.computeCellVars(fn.body ?? []);
+      const symT = this.dipSymbols("A3", "gen-signature", fn, "nested generator signature via the symbol table", declName)?.inferredType;
+      const paramTs = symT?.kind === "function" && symT.params ? symT.params : fn.params.map(() => undefined);
+      params = fn.params.map((p, i) => this.declareParam(p, paramTs[i] !== undefined ? mapType(paramTs[i]!) : undefined));
+      // A capture is declared as an ordinary local of the frame scope, so the body resolves it like
+      // any other binding -- and `promoteFrame` then gives it a slot because it is in the param list.
+      // `cell:false` on purpose: inside the frame the slot IS the storage, and the cell object it
+      // holds is deref'd by the same `c-ref` path a captured cell uses in a plain closure.
+      for (const [cName, info] of capType) this.declareLocal(cName, info.ctype, true, info.cell);
+      capParams = [...capType.entries()].map(([cName, info]) => ({ cName, ctype: info.ctype, cell: info.cell }));
+      const saved = this.inGenerator;
+      this.inGenerator = true;
+      try {
+        const lowered = lowerCoroutine(this.hirBodyFor(fn), fn);
+        states = lowered.states;
+        promoted = promoteFrame(this.resolveBlock(lowered.body), [...params, ...capParams], fn);
+      } finally {
+        this.inGenerator = saved;
+      }
+    } finally {
+      (this as any).scopes = savedScopes;
+      this.cellVars = savedCells;
+      this.inFunctionBody = savedInFn;
+    }
+
+    const self: CExpr = { src: fn, ctype: frameCType, kind: "c-ref", cName: "__f" };
+    // Falling off the end PARKS the machine -- without it the next pull dispatches back to the last
+    // suspend and re-runs the tail forever. Identical to the top-level path, and for the same reason.
+    promoted.body.stmts.push(
+      { src: fn, ctype: C_VOID, kind: "c-assign", target: { kind: "field", object: self, slot: STATE_SLOT, fieldName: "state" }, value: { src: fn, ctype: C_INT, kind: "c-lit", lit: "int", value: String(GEN_DONE) } },
+      { src: fn, ctype: C_VOID, kind: "c-return", value: { src: fn, ctype: C_VALUE, kind: "c-nil" } },
+    );
+    this.functions.push({
+      src: fn, cName: stepName, params: [{ cName: "__f", ctype: frameCType }], ret: C_VALUE,
+      body: states.length ? promoted.body : { stmts: promoted.body.stmts },
+    });
+    this.genClasses.push({
+      name: tag, sourceName: declName, isStruct: false,
+      fields: promoted.slots.map((s) => ({ name: s.cName, ctype: C_VALUE })),
+      methods: [], genStep: stepName,
+    });
+
+    // The factory body: construct the frame from the lifted function's params and its captures.
+    const zero: CExpr = { src: fn, ctype: C_INT, kind: "c-lit", lit: "int", value: "0" };
+    const make: CExpr = {
+      src: fn, ctype: frameCType, kind: "c-construct", className: tag, isStruct: false,
+      args: [
+        zero,
+        ...params.map((p) => ({ src: fn, ctype: p.ctype, kind: "c-ref", cName: p.cName } as CExpr)),
+        ...capParams.map((c) => ({ src: fn, ctype: c.ctype, kind: "c-ref", cName: c.cName } as CExpr)),
+      ],
+      fieldCount: promoted.slots.length,
+    };
+    this.lifted.push({
+      liftedName,
+      envStruct: captures.length ? `__ll_env_${liftedName}` : null,
+      captures: captures.map((c) => ({ field: c.field, ctype: c.ctype, cell: c.cell })),
+      params,
+      body: { stmts: [{ src: fn, ctype: C_VOID, kind: "c-return", value: make }] },
+    });
+
+    return {
+      src: fn,
+      ctype: { k: "closure", params: params.map((p) => p.ctype), ret: C_VALUE },
       kind: "c-closure-make",
       liftedName,
       envStruct: captures.length ? `__ll_env_${liftedName}` : null,

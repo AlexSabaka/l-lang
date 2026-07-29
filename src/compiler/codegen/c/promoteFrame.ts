@@ -42,6 +42,8 @@ export interface FrameSlot {
   cName: string;
   ctype: CType;
   slot: number;
+  /** C2: this slot holds a CELL object (a mutable capture), so reads and writes deref through it. */
+  cell?: boolean;
 }
 
 export interface PromotedFrame {
@@ -55,7 +57,14 @@ export interface PromotedFrame {
  * `params` are promoted first and in order, so the factory can fill them positionally with
  * `ll_obj_new`'s own argument list and no separate store sequence.
  */
-export function promoteFrame(body: CBlock, params: { cName: string; ctype: CType }[], self: ast.ASTNode): PromotedFrame {
+/**
+ * C2: which promoted slots hold a CELL rather than a plain value.
+ *
+ * A generator that captures a MUTABLE binding stores the cell object in its frame, so every read and
+ * write of that slot has to go through the cell -- otherwise the generator mutates its own copy and
+ * the enclosing scope never sees it, which is the by-value failure C1 chased through three places.
+ */
+export function promoteFrame(body: CBlock, params: { cName: string; ctype: CType; cell?: boolean }[], self: ast.ASTNode): PromotedFrame {
   const slots = new Map<string, FrameSlot>();
   let next = STATE_SLOT + 1;
   const assign = (cName: string, ctype: CType): FrameSlot => {
@@ -68,7 +77,7 @@ export function promoteFrame(body: CBlock, params: { cName: string; ctype: CType
   // The state occupies slot 0 and is stored as a plain int; every other slot's declared type is the
   // binding's own, which is what makes P2 unbox a promoted `Int` local back to an `int64_t` on read.
   slots.set(GEN_STATE_NAME, { cName: GEN_STATE_NAME, ctype: { k: "int" }, slot: STATE_SLOT });
-  for (const p of params) assign(p.cName, p.ctype);
+  for (const p of params) { const sl = assign(p.cName, p.ctype); if (p.cell) sl.cell = true; }
   // Declarations are collected in a first walk so that a read appearing before its declaration in
   // the traversal (a `while` test that mentions a variable declared above it, say) still resolves.
   collectDecls(body, assign);
@@ -99,7 +108,7 @@ export class FramePromotionRefusal extends Error {}
 // -- the rewrite -----------------------------------------------------------------------------------
 
 function fieldOf(slot: FrameSlot, selfRef: CExpr, src: ast.ASTNode): CExpr {
-  return { src, ctype: slot.ctype, kind: "c-field-get", object: selfRef, slot: slot.slot, fieldName: slot.cName };
+  return { src, ctype: slot.ctype, kind: "c-field-get", object: selfRef, slot: slot.slot, fieldName: slot.cName, cell: slot.cell };
 }
 
 function rewriteBlock(b: CBlock, slots: Map<string, FrameSlot>, selfRef: CExpr): CBlock {
@@ -118,14 +127,14 @@ function rewriteStmt(s: CStmt, slots: Map<string, FrameSlot>, selfRef: CExpr): C
       // nil-fills every slot it is not given, so the frame is already in the state the declaration
       // would have put it in.
       if (!s.init) return [];
-      const target: CLValue = { kind: "field", object: selfRef, slot: slot.slot, fieldName: s.cName };
+      const target: CLValue = { kind: "field", object: selfRef, slot: slot.slot, fieldName: s.cName, cell: slot.cell };
       return [{ src: s.src, ctype: s.ctype, kind: "c-assign", target, value: E(s.init) }];
     }
     case "c-assign": {
       let target = s.target;
       if (target.kind === "name" && slots.has(target.cName)) {
         const slot = slots.get(target.cName)!;
-        target = { kind: "field", object: selfRef, slot: slot.slot, fieldName: target.cName };
+        target = { kind: "field", object: selfRef, slot: slot.slot, fieldName: target.cName, cell: slot.cell };
       } else if (target.kind === "index") {
         target = { ...target, base: E(target.base), index: E(target.index) };
       } else if (target.kind === "field" || target.kind === "dyn-field") {

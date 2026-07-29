@@ -197,7 +197,9 @@ export class EmitCirToC {
       envEmitted.add(l.envStruct);
       this.line(`typedef struct ${l.envStruct} {`);
       this.indent++;
-      for (const c of l.captures) this.line(`${c.cell ? "ll_value*" : cType(c.ctype)} ${c.field};`);
+      // C2: a cell is a one-field OBJECT now, so a captured cell is an ordinary `ll_value` here --
+      // which is also what makes it storable in a generator frame slot.
+      for (const c of l.captures) this.line(`${c.cell ? "ll_value" : cType(c.ctype)} ${c.field};`);
       this.indent--;
       this.line(`} ${l.envStruct};`);
     }
@@ -275,7 +277,7 @@ export class EmitCirToC {
       if (l.params.length) this.line(`${this.declType(l.params[0].ctype, l.params[0].cName)} ${l.params[0].cName} = __cond;`);
       else this.line("(void)__cond;");
       for (const c of l.captures) {
-        this.line(`${c.cell ? "ll_value*" : this.declType(c.ctype, c.field)} ${c.field} = __e->${c.field};`);
+        this.line(`${c.cell ? "ll_value" : this.declType(c.ctype, c.field)} ${c.field} = __e->${c.field};`);
       }
       this.withFreshTryStack(() => this.emitBlockStmts(l.body));
       this.line("return ll_nil();"); // fall-off-end = decline
@@ -310,7 +312,7 @@ export class EmitCirToC {
       else this.line(`${this.declType(p.ctype, p.cName)} ${p.cName} = ${UNBOX_FN[p.ctype.k]}(__argv[${i}]);`);
     });
     for (const c of l.captures) {
-      this.line(`${c.cell ? "ll_value*" : this.declType(c.ctype, c.field)} ${c.field} = __e->${c.field};`);
+      this.line(`${c.cell ? "ll_value" : this.declType(c.ctype, c.field)} ${c.field} = __e->${c.field};`);
     }
     this.withFreshTryStack(() => this.emitBlockStmts(l.body));
     this.line("return ll_nil();"); // closures always return boxed; unreachable when the body returned
@@ -458,7 +460,7 @@ export class EmitCirToC {
       case "c-decl":
         if (s.cell) {
           // A mutable-captured binding: a heap cell shared with escaping closures.
-          this.line(`ll_value* ${s.cName} = ll_cell(${s.init ? this.expr(s.init) : "ll_nil()"});`);
+          this.line(`ll_value ${s.cName} = ll_cell(${s.init ? this.expr(s.init) : "ll_nil()"});`);
         } else {
           this.line(`${this.declType(s.declCType, s.cName)} ${s.cName} = ${s.init ? this.expr(s.init) : defaultInit(s.declCType)};`);
         }
@@ -813,8 +815,13 @@ export class EmitCirToC {
   }
 
   private lvalue(l: CLValue): string {
-    if (l.kind === "name") return l.cell ? `(*${l.cName})` : l.cName;
-    if (l.kind === "field") return `(${this.expr(l.object)})->fields[${l.slot}]`;
+    if (l.kind === "name") return l.cell ? `${l.cName}.as.o->fields[0]` : l.cName;
+    // C2: a frame slot holding a CELL is written THROUGH the cell, so the enclosing scope sees it.
+    // Without this the generator mutates its own copy -- the by-value failure C1 chased.
+    if (l.kind === "field") {
+      const f = `(${this.expr(l.object)})->fields[${l.slot}]`;
+      return l.cell ? `${f}.as.o->fields[0]` : f;
+    }
     if (l.kind === "dyn-field") return `*ll_member_slot(${this.expr(l.object)}, ${JSON.stringify(l.fieldName)})`;
     // index store: a partial write into a vector or map.
     if (l.mode === "map") return `*ll_map_slot(${this.expr(l.base)}, ${this.expr(l.index)})`;
@@ -840,7 +847,7 @@ export class EmitCirToC {
         }
         break;
       case "c-ref":
-        return e.cell ? `(*${e.cName})` : e.cName;
+        return e.cell ? `ll_cell_get(${e.cName})` : e.cName;
       case "c-temp":
         return e.name;
       case "c-nil":
@@ -1027,9 +1034,12 @@ export class EmitCirToC {
         const calls = e.initMethods.map((cn) => `${cn}(__o);`).join(" ");
         return `({ ll_obj* __o = ${make}; ${calls} __o; })`;
       }
-      case "c-field-get":
+      case "c-field-get": {
         // The raw slot holds a boxed ll_value; P2 inserts the unbox to the field's static type.
-        return `(${this.expr(e.object)})->fields[${e.slot}]`;
+        const f = `(${this.expr(e.object)})->fields[${e.slot}]`;
+        // C2: a generator frame slot carrying a MUTABLE CAPTURE holds the cell object, not the value.
+        return e.cell ? `ll_cell_get(${f})` : f;
+      }
       case "c-copy":
         // CP3 materialization: a struct deep-copies (recursing struct fields); everything else is
         // shared/value. The runtime dispatches on the tag; ll_copy_obj keeps the typed obj shape.

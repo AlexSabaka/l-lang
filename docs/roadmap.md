@@ -875,6 +875,41 @@ was going to be a `(let AST-FIELDS { … })` constant; it is emitted as `match` 
 literals instead, because a module about the compiler's own AST being JS-only would be absurd. Vectors
 in the same position are unaffected.
 
+### ~~A nested `:gen` has no C lowering~~ — **CLOSED (C2)**
+
+A top-level `:gen` has compiled since D58; a nested or lambda one was `ELL0105`, so laziness existed
+only at module scope on the **reference** backend while JS had it everywhere. That is what made "a loop
+yields a sequence" unbuildable: a loop lives inside a function, so its generator is nested by
+construction.
+
+**The obstruction was storage, not control flow.** A generator frame is `ll_obj.fields[]` — a flexible
+array of `ll_value`, uniformly boxed by construction — while a mutable capture was a bare `ll_value*`
+heap cell, and the value union has no pointer arm. A captured `mut` could not go in a frame slot at all.
+
+**A cell is a one-field OBJECT now**, so it boxes into a slot like anything else and the value union is
+untouched. The alternative — an 11th tag on `ll_value` — would have put a user-invisible arm through 47
+`case LL_` sites, equality, copy and display, for something that must never be observed. The migration
+is transparent: the corpus, `test:codegen` and `test:memory` were all unmoved by it.
+
+The rest fell out of a ruling already in place: `promoteFrame` promotes every param and local to a frame
+slot ("promote everything", D58), so a capture is just another slot and the state machine needed no
+special case. Frame slots holding a cell carry a `cell` flag so reads and writes deref through it —
+without that the generator mutates its own copy, which is the by-value failure C1 chased.
+
+`:async` stays refused by ruling (D60). Guarded by `80-adversarial/nested_generator.lisp`.
+
+### A nested closure in a PIPELINE HEAD is not called on C
+
+`((mk) |> (take 2))` where `mk` is a nested function emits `u_take(ll_box_closure(u_mk), 2)` — the
+closure itself, not the result of calling it — where the same program with a *top-level* `mk` emits
+`u_take(u_mk(), 2)`. Fails as `TypeError: expected a number`; **works on JS**, so it is a backend
+divergence as well as a defect.
+
+Nothing to do with generators: a nested plain function and a nested `:gen` fail identically, and calling
+the same nested closure *directly* works. It is D1's rule — `(f)` is a call iff `f` names a function —
+not reaching a closure local on the pipeline path. Found while writing C2's corpus guard, which uses the
+raw `iter`/`next` cursor instead and says why.
+
 ### An l-lang comment containing `*/` emits invalid JavaScript
 
 `;; a comment containing */ a block-comment terminator` compiles and runs on C and is **LL0101** on JS
