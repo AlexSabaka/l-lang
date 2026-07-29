@@ -1,0 +1,8 @@
+one of two : [7 nil]
+zero of two: [nil nil]
+three of two: [1 2]
+rest short : [9 0]
+adapter    : [7 nil]
+method     : [5 nil]
+is nil     : true
+done

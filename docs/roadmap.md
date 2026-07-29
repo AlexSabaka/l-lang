@@ -680,18 +680,18 @@ Six modules in one round, each ruled before it was written.
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
-### The five surviving C defects from the 2026-07-27 adversarial audit
+### The four surviving C defects from the 2026-07-27 adversarial audit
 
 The audit reported 29 findings; its triage adjudicated them to **11 distinct defects** behind a
-premise the audit had inverted (it named JS the oracle; D86 says C is the specification). **Six are
+premise the audit had inverted (it named JS the oracle; D86 says C is the specification). **Seven are
 closed** — #1/#2 by D84's injective mangling, #3 by D85's division ruling, #4/#5 by commit `b466f71`
-turning six bare emitter throws into located LL0106s, and the NUL one below. These five are open,
-verified in source on 2026-07-28, and were recorded nowhere but the triage until now:
+turning six bare emitter throws into located LL0106s, and the NUL and `argv` ones below. These four
+are open, verified in source on 2026-07-28, and were recorded nowhere but the triage until now:
 
 *   ~~**Embedded NUL truncates a string literal, and two strings sharing a NUL prefix compare
     EQUAL.**~~ — **CLOSED**, and it was the one the triage named to fix first. See below.
-*   **An under-applied closure reads past `argv`.** The emitter unpacks `__argv[i]` unconditionally,
-    so a call with too few arguments prints `#<object>` where JS binds nil.
+*   ~~**An under-applied closure reads past `argv`.**~~ — **CLOSED**, and it was worse than recorded:
+    a *nullary* dynamic call dereferences a NULL `argv` and SIGSEGVs. See below.
 *   **Deep structural equality has no cycle guard and no pointer-identity short-circuit.** A
     self-referential vector crashes C (no output, rc=1); JS answers `true`.
 *   **Stacked `...args` decorators trap** — `TypeError: expected a Vector` on C, correct on JS. Not
@@ -744,6 +744,40 @@ one of them moves, and answering it wrong is silent.
 Guarded by `80-adversarial/nul_in_string.lisp`, which was measured RED first — **9 of its 11 lines
 were wrong** before the fix. `ll_str_lit` remains in the runtime for genuine C strings (`argv`,
 `getenv`, internal constants); it has no callers in the emitter.
+
+### ~~An under-applied closure read past `argv`~~ — **CLOSED**
+
+`(argc, argv)` is a flat, **unchecked** pair. Arity is checked at compile time wherever the callee is
+known — `(g 7)` on a two-parameter `g` is LL0211 — but a callee reached as a *value* has no such
+site, and nothing between `ll_call` and the callee compares the count against the arity. All three C
+entry points that unpack it read `__argv[i]` unconditionally.
+
+**It was worse than the triage recorded.** The audit had the `#<object>`; it did not have this:
+
+| measured | C, before | C, after | JS |
+|---|---|---|---|
+| `(f 7)` on `(fn [a b])` | `[7 #<object>]` | `[7 nil]` | `[7 nil]` |
+| `(call f)` on `(fn [a b])` | **SIGSEGV, exit 139** | `[nil nil]` | `[nil nil]` |
+
+D1 makes `(f)` a *read* of `f`, so `call` is the only spelling of a no-argument invocation — and
+`ll_call_dyn` passes `(0, (ll_value*)0)` for it. `__argv[0]` on a null pointer is not a wrong value,
+it is a fault, and the guard file's first line took the whole program down before this landed.
+
+**And one shape looked correct while being undefined.** A top-level function used as a value goes
+through an adapter with the same unguarded read, and printed `[7 nil]` — the right answer, because
+the stack slot after the caller's one-element compound literal happened to hold zero and `LL_NIL` is
+0. Undefined behaviour that agrees with the oracle is still undefined behaviour, which is why all
+three sites are fixed and the guard asserts the shapes that were already "passing".
+
+`arg(i)` in `EmitCirToC.ts` is `(__argc > i ? __argv[i] : ll_nil())`. A missing argument binds nil,
+matching JS; where the parameter has a concrete C type the unbox then traps ("expected an Int")
+rather than computing on garbage. Over-application still drops extras — the guard is `>`, not `==`,
+because turning that into a refusal would be a language change nobody ruled. The rest parameter
+beside these was **already** clamped against `__argc`; that guard was written for this exact hazard
+and then not extended to the fixed parameters next to it.
+
+Cost is one compare per parameter per *dynamic* call; a statically resolved call passes typed C
+arguments and never touches argv. Guarded by `80-adversarial/under_applied_closure.lisp`.
 
 ### ~~Arithmetic is only checked at arity two~~ — **CLOSED (D92)**
 

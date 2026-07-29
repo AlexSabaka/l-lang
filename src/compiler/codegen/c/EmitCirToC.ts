@@ -76,6 +76,35 @@ function cStr(s: string): string {
   return `ll_str_from("${cEscape(s)}", ${Buffer.byteLength(s, "utf8")})`;
 }
 
+/**
+ * The i-th argument of a BOXED-CONVENTION entry point, or nil when the caller passed fewer.
+ *
+ * `(argc, argv)` is a flat, unchecked pair: `ll_call` hands the callee whatever the call site built,
+ * and nothing in between compares that count against the callee's arity. The three entry points that
+ * unpack it -- a lifted closure, a method's dynamic-dispatch adapter, a top-level function used as a
+ * value -- each read `__argv[i]` unconditionally, so an under-applied call READ PAST THE END of the
+ * caller's array. Measured: `(f 7)` on a two-parameter closure printed `[7 #<object>]` where JS binds
+ * `[7 nil]`.
+ *
+ * The adapter case is the one worth naming, because it LOOKED correct: a call site builds its
+ * arguments as a compound literal, and the stack slot after a one-element one happened to be zero --
+ * and `LL_NIL == 0`, so the garbage read decoded as nil and printed `[7 nil]`, the right answer for
+ * the wrong reason. Undefined behaviour that agrees with the oracle is still undefined behaviour, and
+ * it is why all three sites are fixed rather than only the one that printed wrong.
+ *
+ * Arity IS checked statically wherever the callee is known -- `(g 7)` on a two-parameter `g` is
+ * LL0211 and never reaches here. This path exists only for a callee reached as a VALUE, where the
+ * count is not knowable until run time.
+ *
+ * A missing argument becomes nil, matching JS. For a parameter with a concrete C type the unbox then
+ * traps ("expected an Int") instead of computing on garbage, which is the same answer one rung
+ * louder. The cost is one compare per parameter per dynamic call, and only on this convention -- a
+ * statically resolved call passes typed C arguments and never goes through argv at all.
+ */
+function arg(i: number): string {
+  return `(__argc > ${i} ? __argv[${i}] : ll_nil())`;
+}
+
 /** Escape a raw string for a C string literal (UTF-8 bytes pass through). */
 function cEscape(s: string): string {
   let out = "";
@@ -331,8 +360,8 @@ export class EmitCirToC {
         );
         return;
       }
-      if (p.ctype.k === "value") this.line(`${this.declType(p.ctype, p.cName)} ${p.cName} = __argv[${i}];`);
-      else this.line(`${this.declType(p.ctype, p.cName)} ${p.cName} = ${UNBOX_FN[p.ctype.k]}(__argv[${i}]);`);
+      if (p.ctype.k === "value") this.line(`${this.declType(p.ctype, p.cName)} ${p.cName} = ${arg(i)};`);
+      else this.line(`${this.declType(p.ctype, p.cName)} ${p.cName} = ${UNBOX_FN[p.ctype.k]}(${arg(i)});`);
     });
     for (const c of l.captures) {
       this.line(`${c.cell ? "ll_value" : this.declType(c.ctype, c.field)} ${c.field} = __e->${c.field};`);
@@ -350,7 +379,7 @@ export class EmitCirToC {
     this.line(`static ll_value ${m.cName}_dyn(ll_value __self, int __argc, ll_value* __argv) {`);
     this.indent++;
     this.line(`(void)__argc;${m.params.length ? "" : " (void)__argv;"}`);
-    const argParts = m.params.map((t, i) => (t.k === "value" ? `__argv[${i}]` : `${UNBOX_FN[t.k]}(__argv[${i}])`));
+    const argParts = m.params.map((t, i) => (t.k === "value" ? arg(i) : `${UNBOX_FN[t.k]}(${arg(i)})`));
     const call = `${m.cName}(ll_unbox_obj(__self)${argParts.length ? ", " + argParts.join(", ") : ""})`;
     if (m.ret.k === "void") this.line(`${call}; return ll_nil();`);
     else if (m.ret.k === "value") this.line(`return ${call};`);
@@ -364,7 +393,7 @@ export class EmitCirToC {
     this.line(`static ll_value __ll_adapter_${a.forCName}(void* __env, int __argc, ll_value* __argv) {`);
     this.indent++;
     this.line("(void)__env; (void)__argc;");
-    const callArgs = a.params.map((t, i) => (t.k === "value" ? `__argv[${i}]` : `${UNBOX_FN[t.k]}(__argv[${i}])`));
+    const callArgs = a.params.map((t, i) => (t.k === "value" ? arg(i) : `${UNBOX_FN[t.k]}(${arg(i)})`));
     const call = `${a.forCName}(${callArgs.join(", ")})`;
     if (a.ret.k === "void") this.line(`${call}; return ll_nil();`);
     else if (a.ret.k === "value") this.line(`return ${call};`);

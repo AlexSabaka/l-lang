@@ -490,6 +490,13 @@ export const C_PASSING: readonly string[] = [
   // file's eleven lines were wrong before the fix. Nothing prints a NUL -- a golden is compared as
   // text, so every assertion reduces to a length, a boolean, or a substring that excludes it.
   "80-adversarial/nul_in_string.lisp",
+  // `(argc, argv)` is UNCHECKED, and all three boxed entry points -- lifted closure, method adapter,
+  // function adapter -- read `__argv[i]` without it. The whole of this file printed NOTHING and exited
+  // 139 before the fix: its first line is a zero-argument dynamic call, where `argv` is not short but
+  // NULL. Includes the shapes that already "passed" (the adapter's `[7 nil]` came from a stack slot
+  // that happened to be zero, and `LL_NIL == 0`) -- the assertion there is that the answer is DEFINED,
+  // not that it changed. Arity IS checked statically when the callee is known; that is LL0211.
+  "80-adversarial/under_applied_closure.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check
