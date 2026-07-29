@@ -38,6 +38,26 @@ const RangeSpanNotImplemented = createRule<ast.IdentifierNode>()
   .addTest((node) => (node as any).id === "..")
   .build();
 
+// D93. `...` binds by ADJACENCY too, and for the same reason `..` does -- the two read as a pair and
+// were behaving as a pair only by accident. D88/N4 made `..` tight while `...` went on accepting
+// `(add3 ... xs)` identically to `(add3 ...xs)`: two dot-operators, two answers to the same
+// whitespace question.
+//
+// Caught here rather than in `AstBuilder` for the reason the rule above records: the builder has no
+// diagnostics channel. A spaced `...` is kept in the tree as its own element and lands here, instead
+// of silently re-reading `(f a ... b)` as a two-argument call.
+const SpreadMustBeAdjacent = createRule<ast.IdentifierNode>()
+  .addTypeFilter("simple-identifier")
+  .addSeverity(RuleSeverity.Error)
+  .addCode("LL0037")
+  .addMessage(
+    "A spread binds by adjacency: write '...xs', not '... xs'. Spaced, the '...' is a separate " +
+    "element and not a spread at all -- the same rule '..' follows, where '1..2' is a range and " +
+    "'1 .. 2' is three elements."
+  )
+  .addTest((node) => (node as any).id === "...")
+  .build();
+
 const ImportMustHaveSource = createRule<ast.ImportNode>()
   .addTypeFilter("import")
   .addSeverity(RuleSeverity.Error)
@@ -309,4 +329,5 @@ export const Rules = {
   MatchMustHaveCases,
   IdentifierMustHaveName,
   RangeSpanNotImplemented,
+  SpreadMustBeAdjacent,
 } as const;

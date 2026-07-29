@@ -785,12 +785,10 @@ Eight of the ten Tier-1 modules shipped as D76–D80, D65, D67 and `std/test`. S
     match its JS twin — `ll_trap_index` was matched verbatim (`IndexOutOfRange: 99 (length 3)`)
     precisely so a catchable trap reads the same on both. Found while fixing `00_bfs`.
 
-*   **Spread adjacency should be ruled like `..` was (D88/N4), and is NOT ruled yet.** Measured
-    2026-07-28: `(add3 ... xs)` and `[0 ... xs]` both work, identically to the tight `...xs` — so the
-    "spread requires adjacency" rule that motivated the `..` ruling **does not exist anywhere**. `..`
-    now binds tight and `...` does not, which is an inconsistency between two operators that read as a
-    pair. Parked at Sabaka's instruction ("just a note for later"), and the fix is the same shape:
-    check token offsets where the spread is built.
+*   ~~**Spread adjacency should be ruled like `..` was (D88/N4).**~~ — **CLOSED (D93).** `...` now
+    binds by adjacency, checked the same way `..` is: the `Spread` token's end offset against the
+    operand's start. A spaced `... xs` is not a spread and is **LL0037**. It cost the corpus nothing —
+    measured 80 tight spreads and zero spaced ones, where `..` had needed a 16-file migration.
 
 *   **Comparisons and `%` across dimensions are NOT ruled (D90).** `(< metres seconds)` and
     `(% metres seconds)` are the same category error `+`/`-` now refuse, and both are still silent.

@@ -283,14 +283,24 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
   }
 
   /**
-   * D88/N4 -- a STANDALONE `..` (the span/wildcard), which is not implemented.
+   * The two DOT OPERATORS, both of which bind by adjacency and neither of which `AstBuilder` can
+   * report on, because it has no diagnostics channel:
    *
-   * The only identifier this visitor inspects, and it exists because `AstBuilder` has no diagnostics
-   * channel: `..` binds by adjacency, so a spaced one is deliberately left in the tree as its own
-   * element and has to be reported from the first stage that can report anything.
+   *   D88/N4 -- a standalone `..`, the span/wildcard, which is not implemented (LL0034);
+   *   D93    -- a spaced `...`, which is not a spread (LL0037).
+   *
+   * A spaced one is deliberately left in the tree as its own element, and has to be reported from
+   * the first stage that can report anything. These are the only identifiers this visitor inspects.
    */
   visitSimpleIdentifier(node: ast.SimpleIdentifierNode) {
-    checkRules(node, [r.RangeSpanNotImplemented as Rule<ast.ASTNode>], this.context);
+    checkRules(
+      node,
+      [
+        r.RangeSpanNotImplemented as Rule<ast.ASTNode>,
+        r.SpreadMustBeAdjacent as Rule<ast.ASTNode>,
+      ],
+      this.context
+    );
   }
 
   visitFunctionParameter(node: ast.ParameterNode) {

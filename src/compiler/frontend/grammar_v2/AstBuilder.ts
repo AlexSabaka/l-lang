@@ -1602,8 +1602,35 @@ export class LLangAstBuilder extends BaseCstVisitor {
     return this.makeNode("await", ctx, { expression });
   }
 
-  spreadExpr(ctx: any): ast.SpreadNode {
+  /**
+   * `...xs` -- the SPREAD, and it binds by ADJACENCY, exactly as `..` does (D93).
+   *
+   * The two read as a pair and behaved as a pair only by accident: D88/N4 made `..` tight, so
+   * `(0 .. 3)` stopped being a range, while `...` went on accepting `(add3 ... xs)` and `[0 ... xs]`
+   * identically to the tight form. Two dot-operators, two answers to the same whitespace question.
+   *
+   * Same mechanism as `rangeIsTight`. A SPACED `...` is not a spread, and it surfaces as the marker
+   * identifier `...`, which `SpreadMustBeAdjacent` (LL0037) reports -- the sibling of `..`'s LL0034,
+   * carrying the same explanation.
+   *
+   * The OPERAND is not carried along with the marker, and that is deliberate: wrapping the pair in a
+   * list puts `...` in HEAD position, where the node rule never sees it and the only thing reported
+   * is a confusing arity error about the enclosing call. `..` keeps its marker as a MIDDLE element
+   * for the same reason. Dropping the operand is safe here precisely because the marker is reported:
+   * `..`'s warning against dropping is about a SILENT re-reading, and this one is not silent.
+   */
+  spreadExpr(ctx: any): ast.ASTNode {
     const expression = this.visit(ctx.expression[0]);
-    return this.makeNode("spread", ctx, { expression });
+    const dots = ctx.Spread?.[0];
+    const operandStart = expression?._location?.start?.offset;
+
+    const tight =
+      dots == null || operandStart == null
+        ? true // no offsets to judge by: keep the old answer
+        : dots.endOffset + 1 === operandStart;
+
+    if (tight) return this.makeNode("spread", ctx, { expression });
+
+    return this.makeNode("simple-identifier", ctx, { id: "..." });
   }
 }

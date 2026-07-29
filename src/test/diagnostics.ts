@@ -416,6 +416,18 @@ const PROBES: Probe[] = [
     source: "(for :each i :from (0 .. 3) :then (console.log i))",
     stage: "types",
   },
+  // D93: `...` binds by adjacency for the same reason `..` does. Both spellings, because the operand
+  // kind is irrelevant -- adjacency is about the `...` and what immediately follows it.
+  {
+    name: "LL0037 a spaced `...` is not a spread (call position)",
+    source: "((fn add3 [a <- Int b <- Int c <- Int] -> Int (return (+ a b c))) (let xs [1 2 3]) (add3 ... xs))",
+    stage: "types",
+  },
+  {
+    name: "LL0037 a spaced `...` is not a spread (vector position)",
+    source: "((let xs [1 2 3]) (let v [0 ... xs]))",
+    stage: "types",
+  },
   // D88 N3: the GUARD on promotion -- it adds assignability through DECLARED conversions and invents
   // none. There is no `String -> Int` defcast, so this stays an error.
   {

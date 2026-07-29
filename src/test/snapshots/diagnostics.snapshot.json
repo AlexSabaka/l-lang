@@ -519,6 +519,26 @@
     ]
   },
   {
+    "probe": "LL0037 a spaced `...` is not a spread (call position)",
+    "diagnostics": [
+      {
+        "code": "LL0037",
+        "severity": "error",
+        "text": "A spread binds by adjacency: write '...xs', not '... xs'. Spaced, the '...' is a separate element and not a spread at all -- the same rule '..' follows, where '1..2' is a range and '1 .. 2' is three elements."
+      }
+    ]
+  },
+  {
+    "probe": "LL0037 a spaced `...` is not a spread (vector position)",
+    "diagnostics": [
+      {
+        "code": "LL0037",
+        "severity": "error",
+        "text": "A spread binds by adjacency: write '...xs', not '... xs'. Spaced, the '...' is a separate element and not a spread at all -- the same rule '..' follows, where '1..2' is a range and '1 .. 2' is three elements."
+      }
+    ]
+  },
+  {
     "probe": "LL0204 promotion does not invent a conversion",
     "diagnostics": [
       {

@@ -401,6 +401,10 @@ export const C_PASSING: readonly string[] = [
   // direction (`(- 4 3 2 1)` is -2, not 2), operand evaluation order, and `(% 17 10 3)` = 1 --
   // which answered 7 on JS, because the shim's `%` was binary and dropped the third operand.
   "80-adversarial/nary_operator_fold.lisp",
+  // D93: `...` binds by adjacency like `..`. Pins the TIGHT forms -- call, vector, mid-vector, and a
+  // spread of a call result -- which are what the corpus's 80 sites use. The spaced form is LL0037
+  // and lives in test:diagnostics, since a file here has to run.
+  "80-adversarial/spread_adjacency.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

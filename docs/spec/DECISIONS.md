@@ -61,7 +61,7 @@ touches; **bold** marks the one to read first.
 | **pattern matching** | **D25**, D26 (guards, `:when`), D27 (`:of` type patterns), D28 (rest patterns), D74 (a pattern's string decodes), D83 (a comment is not a value) |
 | **control flow and `return`** | D12 (control forms), **D40** (`return` returns from the function), D83 |
 | **nil, Void, and optionality** | **D9** (what `nil` is — ruled twice), D49 (Void, void-in-value) |
-| **numbers** | **D88** (the tower: literals, promotion, `..`), **D92** (n-ary folds to binary), D8 (number literals), D71 (`_` separators, `0o`), D61 (bit operators), D43, D85 (division by zero), D89 (`Ring`), D90 (dimensions) |
+| **numbers** | **D88** (the tower: literals, promotion, `..`), **D92** (n-ary folds to binary), **D93** (`...` binds by adjacency), D8 (number literals), D71 (`_` separators, `0o`), D61 (bit operators), D43, D85 (division by zero), D89 (`Ring`), D90 (dimensions) |
 | **strings and text** | D67 (`r"…"` raw, `f"…"` formatted, the regex engine), D74, D52 (codepoints — see D50–D55) |
 | **metaprogramming** | **D69** (the three tiers), D3 + D3b/D3c/D3d, D73 (the in-house comptime interpreter), **D75** (`defmodifier` is flat), D68 (`:foo` is three roles), D72 (`defattribute`) |
 | **modules, packages, visibility** | **D35** (the package is the compilation unit), D6, D20–D22 (export, naming, layout), D7 (the stdlib boundary) |
@@ -7075,3 +7075,51 @@ Verified with two impure interior operands in one chain: **two** calls, not four
 
 The fold shipped first — unambiguous, covering all 54 corpus sites, closing both the silent `%` drop
 and the dimension hole. The chain followed with the temporary machinery above.
+
+---
+
+## D93 — `...` binds by adjacency, exactly as `..` does (2026-07-29)
+
+**Ruling.** A spread is `...xs`. **Spaced, `... xs` is not a spread** — the `...` is a separate
+element, reported as **LL0037**. This is the rule D88/N4 gave `..`, applied to the operator that
+reads as its sibling.
+
+### Why it was open
+
+The two dot-operators looked like a pair and behaved as a pair **only by accident**. D88/N4 made `..`
+tight — `1..2` is a range, `1 .. 2` is three elements — and migrated 16 corpus files onto the tight
+spelling. `...` was not touched, and went on accepting `(add3 ... xs)` identically to `(add3 ...xs)`.
+Two operators, one whitespace question, two answers. Recorded as a gap on 2026-07-28 with the fix
+already identified — *"the same shape: check token offsets where the spread is built"* — and parked.
+
+### The cost, measured before the change
+
+**Zero.** The corpus and stdlib carry **80 tight spreads and no spaced ones**. Unlike `..`, which
+needed a 16-file migration, this rule was free — which is the answer to why it should be taken now
+rather than deferred again: the longer it waits, the more likely someone writes the spaced form.
+
+### How it is enforced
+
+`AstBuilder.spreadExpr` compares the `Spread` token's end offset against the operand's start offset —
+the same comparison `rangeIsTight` makes, in the same place, for the same reason. When they are not
+adjacent, the node is not a spread; it becomes the marker identifier `...`, which
+`SyntaxRulesAstVisitor.visitSimpleIdentifier` reports.
+
+**The operand is not carried along with the marker.** Wrapping the pair in a list would put `...` in
+*head* position, where the node rule never sees it and the only thing reported is a confusing arity
+error about the enclosing call — measured. `..` keeps its marker as a middle element for the same
+reason. Dropping the operand is safe here **because the marker is reported**: `..`'s warning against
+dropping is about a *silent* re-reading, and this is not silent.
+
+### A note on how this nearly shipped broken
+
+The rule was written, exported from the barrel, and **called by nobody** — because the declarative
+rules in `NodeValidationRules.ts` are wired **per visitor method**, not run automatically over every
+node. It fired in no position at all until it was added to `visitSimpleIdentifier` beside
+`RangeSpanNotImplemented`.
+
+That is this project's signature failure mode, and it was walked into **inside the very file that
+documents it**: `NodeValidationRules.ts` carries a standing note about `LL0004 ImportHasSymbols`,
+which was *"defined, exported from the rules barrel, and never wired into any visitor — so it had
+never run."* The lesson holds and is worth restating: of a new rule, do not ask *"is it defined?"*
+Ask **who calls it**, and prove it fires.
