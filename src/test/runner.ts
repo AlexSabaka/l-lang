@@ -21,6 +21,7 @@ import { MANIFEST, ExampleStatus } from './manifest';
 import { CHILD_ENV } from './childEnv';
 import { C_PASSING } from './c-status';
 import { JS_NOT_YET } from './js-status';
+import { ccArgs } from "../compiler/codegen/c/ccFlags";
 
 // Backend under test. `--backend=c` compiles to C, builds with cc, runs the binary against the
 // SAME .expect goldens, with ratchet semantics from c-status.ts. Default `js` is byte-for-byte
@@ -319,7 +320,7 @@ function runCTest(lispPath: string): TestResult {
   // `-fwrapv` is required by D51, not a nicety: `Int` is a WRAPPING two's-complement 64-bit integer,
   // and plain signed overflow in C is undefined behaviour -- which is not wrapping, it is whatever the
   // optimiser decides. Without it `(+ INT64_MAX 1)` is UB and can differ between -O0 and -O2.
-  const cc = spawnWithRetry('cc', ['-std=c11', '-fwrapv', ...(COPT ? [`-${COPT}`] : []), cPath, '-o', binPath, '-lm'], { encoding: 'utf-8', timeout: 30000 });
+  const cc = spawnWithRetry('cc', ccArgs(cPath, binPath, COPT ? [`-${COPT}`] : []), { encoding: 'utf-8', timeout: 30000 });
   if ((cc.error as any)?.code === 'ETIMEDOUT') {
     // Distinguished from a compile error: an empty stderr would otherwise be reported as
     // `cc failed: ` with nothing after it.

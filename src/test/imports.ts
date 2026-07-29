@@ -21,6 +21,7 @@ import { CHILD_ENV } from "./childEnv";
 import { Context, CompilerOptions, LogLevel } from "../compiler/Context";
 import { ModuleResolver } from "../compiler/analysis/ModuleResolver";
 import { PackageRegistry } from "../compiler/analysis/PackageRegistry";
+import { ccArgs } from "../compiler/codegen/c/ccFlags";
 
 const VERBOSE = process.argv.includes("--verbose");
 const TMP = path.join(os.tmpdir(), "llang-import-tests");
@@ -112,7 +113,7 @@ function buildC(entry: string): Outcome {
   const binPath = entry.replace(/\.lisp$/, ".bin");
   fs.writeFileSync(cPath, result.code);
 
-  const cc = spawnSync("cc", ["-std=c11", "-fwrapv", cPath, "-o", binPath, "-lm"], {
+  const cc = spawnSync("cc", ccArgs(cPath, binPath), {
     encoding: "utf-8",
     timeout: 60_000,
   });

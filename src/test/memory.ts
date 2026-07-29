@@ -29,6 +29,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { Context, CompilerOptions, LogLevel, CompilationLanguage } from "../compiler/Context";
+import { ccArgs } from "../compiler/codegen/c/ccFlags";
 
 /** Flip to false in the commit that lands the collector. */
 const EXPECT_RED = true;
@@ -110,7 +111,7 @@ function main(): void {
   const cPath = path.join(OUT_DIR, "gc_garbage_loop.c");
   const binPath = path.join(OUT_DIR, "gc_garbage_loop.bin");
   fs.writeFileSync(cPath, compile("c"));
-  const cc = spawnSync("cc", ["-std=c11", "-fwrapv", "-O2", cPath, "-o", binPath, "-lm"], {
+  const cc = spawnSync("cc", ccArgs(cPath, binPath, ["-O2"]), {
     encoding: "utf-8",
     timeout: 60_000,
   });

@@ -12,6 +12,7 @@ import { getTemporaryStdinFile } from "../getStdinTempFile";
 import { exec } from "child_process";
 import fs from "fs";
 import path from "path";
+import { ccArgs } from "../../compiler/codegen/c/ccFlags";
 
 const { stdout } = process;
 
@@ -65,7 +66,11 @@ export function run(file: string, command: Command) {
         fs.rmSync(executable, { force: true });
       };
       fs.writeFileSync(cFile, code, { encoding: "utf-8" });
-      exec(`cc -w ${cFile} -o ${executable}`, (ccError, _ccOut, ccErr) => {
+      // The flags come from ONE place (`ccFlags.ts`) because they had drifted: every test harness
+      // used `-std=c11 -fwrapv` and this call used neither, so the gate graded a program built with
+      // different semantics than the one a user gets. `-w` stays local -- silencing warnings about
+      // generated code the user did not write is a UX choice, not a semantic one.
+      exec(`cc ${ccArgs(cFile, executable, ["-w"]).join(" ")}`, (ccError, _ccOut, ccErr) => {
         if (ccError) {
           console.error(`Error compiling C code: ${ccError.message}`);
           if (ccErr) process.stderr.write(ccErr);
