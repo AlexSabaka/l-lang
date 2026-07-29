@@ -39,6 +39,7 @@ npm test                     # JS backend — the oracle
 npm run test:c               # C backend — the reference
 npm run test:c:o2            # the same, at -O2
 npm run test:codegen
+npm run test:docs            # the documentation gate -- links, corpus paths, LLxxxx, npm scripts, grammar freshness
 npm run test:ast-invariants
 npm run test:type-errors
 npm run test:diagnostics
