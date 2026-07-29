@@ -7220,10 +7220,15 @@ value-position `for`. Typing the form fills it, and the emission returns to the 
 `u_i = (u_i + 1)` with **no codegen change at all** — `test:codegen` 312/0, unmoved.
 
 Reordering the C resolution to init-first was tried as the fix, works, and was **REVERTED**: it also
-makes `03-loops/02_more_for_loops.lisp` resolve a closure it currently refuses (LL0107) and then **hang**,
-printing `i: 0, j: 0` forever, because closures capture mutable locals by value. Trading a refusal for a
-hang is the wrong direction, and the defect the refusal was masking is now recorded in roadmap on its own
-terms rather than unmasked as a side effect of a type fix.
+makes `03-loops/02_more_for_loops.lisp` resolve a closure it then refused (LL0107) and **hang**. Trading
+a refusal for a hang is the wrong direction, so the defect the refusal was masking was recorded on its
+own terms rather than unmasked as a side effect of a type fix.
+
+> **Corrected, and closed, by C1.** This paragraph said the hang was "because closures capture mutable
+> locals by value". That was an inference from the symptom. Capture-by-reference was never broken — a
+> closure over a `mut` in an ordinary function body has always worked. The analysis simply never reached
+> a `for`'s `:init`, in three separate places. See roadmap; `not-yet` is now zero and the reorder ships
+> alongside the fixes it needed.
 
 **A type may be stated anywhere; a CHECK may not.** The first build typed the assignment forms by
 delegating to `visitSimpleAssignment` / `visitCompoundAssignment`, symmetrically with `for-each`. It

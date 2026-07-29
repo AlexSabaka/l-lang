@@ -1,0 +1,12 @@
+driven by closures, i = 0
+driven by closures, i = 1
+driven by closures, i = 2
+k = 0
+k = 2
+captured j = 0
+captured j = 1
+plain j = 0
+plain j = 1
+ordinary function scope: 2
+read-only closure sees 0
+read-only closure sees 1

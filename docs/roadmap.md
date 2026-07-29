@@ -761,27 +761,51 @@ node, not a production. (`examples/03-loops/02_more_for_loops.lisp` defines a *f
 Whether a loop should yield a **sequence** rather than `nil` — a `for` that collects is a comprehension
 — is recorded as open alongside it.
 
-### A closure capturing a mutable loop variable copies it — masked by an LL0107 refusal
+### ~~A closure in a `for`'s `:init` does not capture by reference~~ — **CLOSED (C1)**
 
-Found while fixing D94, by a change that was then **reverted for exposing it**. `03-loops/02_more_for_loops.lisp`
-declares its induction variables and two closures over them in a `for`'s `:init`:
+**A correction first.** The entry that stood here said *"the closures capture `i` and `j` by value"*,
+and that was an inference from the symptom, not a measurement of the mechanism. Capture-by-reference
+was never broken: `computeCellVars` has always promoted a mutable-captured local to a heap cell, and a
+closure over a `mut` in an ordinary function body has always worked (measured: answers `2`). What
+failed was **reaching** that analysis from a `for`. The `c-status.ts` note for `01_for.lisp` had
+already diagnosed it exactly — *"the cell analysis does not promote it inside a `for :init` … wants
+computeCellVars to see a for-init block"* — and was more accurate than what replaced it.
 
-```lisp
-:init ( (mut i 0) (mut j 0)
-        (fn forward [] ((j := (+ j 1)) (if (>= j max-j) ((j := 0) (i := (+ i 1))))))
-        (fn continue [] (< i max-i)) )
-:cond (continue)  :step (forward)
-```
+Three defects, none of them the capture mechanism:
 
-The C backend resolves the `:step` **before** the `:init`, so `forward` is not declared yet and the
-file refuses with **LL0107** (unresolvable host global). Resolving init-first — which is what C's own
-`for (init; test; update)` evaluation order says, and what the induction variable's type needs — makes
-the call resolve and the program then **runs forever printing `i: 0, j: 0`**: the closures capture `i`
-and `j` by value, so the mutations never reach the loop. The refusal is load-bearing by accident.
+*   **`collectMutDecls` descended only into `list` blocks** while its sibling `collectNestedFreeVars`
+    descended generically over every key. So a closure declared in a `for`'s `:init` was seen and the
+    `mut` beside it was not, and the intersection of "declared in this frame" and "captured by a nested
+    closure" came out empty. The two walkers now share one rule: descend everywhere the **function
+    frame** extends, stop at a nested `function`.
+*   **At module scope the analysis ran over `topLevelStmtNodes(body)`**, which keeps only
+    `opaque-stmt | class | expr-stmt | var-decl` — a top-level `for` is in *none* of those, so the cell
+    set was computed over **zero items**. It reads the AST now, the same correction D72's annotation
+    registry already carries ten lines above it, against the same silent-scan-at-the-wrong-depth failure.
+*   **`EmitCirToC`'s `c-for` update slot hand-rolled the lvalue** as a bare `target.cName`, ignoring the
+    `cell` flag its own `lvalue()` helper honours — so a cell was read `(*u_j)` and written `u_j`. A
+    second copy of one decision, drifted; unreachable until the first two made cells appear in a `for`.
 
-Reverted rather than shipped, because trading a refusal for a hang is the wrong direction. The real fix
-is cell capture for a mutable local closed over by a nested function — `declareLocal` already carries a
-`cell` flag and `promoteFrame.ts` exists, so the machinery is there and something is not reaching it.
+The ordering half — `init` before `test`/`update` in `ResolveHirToCir` — had to land **with** these and
+not before: alone it turns `02_more_for_loops.lisp` from a refusal into an infinite loop, which is why
+it was reverted once (D94-a).
+
+**Result: `not-yet` is now ZERO.** `03-loops/01_for.lisp` (which had timed out for the life of the C
+backend) and `03-loops/02_more_for_loops.lisp` both pass and are on the allowlist; refusals 5 → 4.
+Guarded by `80-adversarial/for_init_capture.lisp`.
+
+**Still open, and acceptable:** `cellVars` is keyed by **mangled name**, not by binding, so two
+same-named bindings in one frame share an entry and an uncaptured one can inherit a needless heap cell.
+That is a cost, not a wrong answer — but only while the declaration, every read and every write agree,
+which is exactly what the third defect above broke. The corpus file pins that case.
+
+### An l-lang comment containing `*/` emits invalid JavaScript
+
+`;; a comment containing */ a block-comment terminator` compiles and runs on C and is **LL0101** on JS
+(*"the JS backend emitted code that is not valid JavaScript"*). Comments are re-emitted into a JS block
+comment, and a `*/` in the text closes it early. Found by writing an adversarial example whose header
+quoted C source. Deprecated-backend only, and the diagnostic is honest rather than silent, so it is
+recorded rather than fixed.
 
 ### D95 is ruled and unbuilt — and one grammar question is deferred
 

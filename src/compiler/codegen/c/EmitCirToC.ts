@@ -530,7 +530,14 @@ export class EmitCirToC {
         if (s.update) {
           if (s.update.kind === "c-expr-stmt") update = `(void)(${this.expr(s.update.expr)})`;
           else if (s.update.kind === "c-assign" && s.update.target.kind === "name") {
-            update = `${s.update.target.cName} = ${this.expr(s.update.value)}`;
+            // `this.lvalue(...)`, NOT `target.cName`. Writing the name directly was a SECOND COPY of
+            // the lvalue decision, and it had drifted from the first: `lvalue()` derefs a heap cell
+            // (`(*u_j)`) and this did not, so a mutable-captured induction variable was READ through
+            // its cell and WRITTEN over the pointer -- `u_j = ll_copy(...)`, which is a `cc` type
+            // error, not a silent wrong answer, but only because the types happened to differ.
+            //
+            // It was unreachable until the cell analysis started seeing `for :init` bindings at all.
+            update = `${this.lvalue(s.update.target)} = ${this.expr(s.update.value)}`;
           } else throw new Error("C emit: for update must be an expression or a simple assignment");
         }
         this.line(`for (; ${test}; ${update}) {`);

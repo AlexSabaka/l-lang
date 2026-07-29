@@ -25,19 +25,26 @@ export const C_PASSING: readonly string[] = [
   "02-control-flow/03_flow_cond.lisp",
   "02-control-flow/04_flow_control.lisp",
   "03-loops/00_for_loop.lisp",
-  // 03-loops/01_for.lisp COMPILES but loops forever, so it times out rather than failing to build.
+  // C1 -- these two were the LAST `not-yet` and one of the refusals, and they were one defect wearing
+  // two faces. This entry's predecessor had already diagnosed it exactly ("the cell analysis does not
+  // promote it inside a `for :init`, so the env gets a copy ... wants computeCellVars to see a
+  // for-init block"), and the fix turned out to be three things, none of them the capture MECHANISM:
   //
-  // Two causes, one left. The old note blamed a `fn` in a `for :init` being registered as a TOP-LEVEL
-  // C function closing over a hoisted global -- that is FIXED, the nested `fn`s now lower as real
-  // closures. And `(call check-j)` used to resolve to the closure VALUE rather than invoking it,
-  // which is why it did not even emit ("no cast closure -> bool") -- also fixed.
+  //   1. `collectMutDecls` descended only into `list` blocks while its sibling `collectNestedFreeVars`
+  //      descended generically -- so a closure in a `for :init` was seen and the `mut` beside it was
+  //      not, and the intersection came out empty. The two walkers now share one rule.
+  //   2. The module-scope call passed `topLevelStmtNodes(body)`, which keeps only
+  //      `opaque-stmt|class|expr-stmt|var-decl` -- a top-level `for` is not in it AT ALL, so the set
+  //      was computed over ZERO items. It reads the AST now, as D72's annotation registry already did.
+  //   3. `EmitCirToC`'s `c-for` update slot hand-rolled the lvalue as `target.cName`, ignoring
+  //      `target.cell` that `lvalue()` handles -- so a cell was read `(*u_j)` and written `u_j`.
+  //      Unreachable until (1) and (2) made cells appear in a `for :init` at all.
   //
-  // What remains is the CAPTURE MODE. `j` is a `mut` that the nested `inc-j` MUTATES, so D48/Q3 makes
-  // it a by-REFERENCE capture (a heap cell). The cell analysis does not promote it inside a
-  // `for :init`, so the env gets a copy:
-  //     __e->u_j = u_j;                        /* env gets a copy   */
-  //     int64_t u_j = __e->u_j; u_j = u_j + 1; /* increments a copy */
-  // `j` never advances, `check-j` never goes false. Wants computeCellVars to see a for-init block.
+  // The ordering half (`init` before `test`/`update` in `ResolveHirToCir`) had to land WITH these:
+  // alone it makes `02_more_for_loops` resolve its closures and then loop forever, which is why it was
+  // reverted once (D94-a).
+  "03-loops/01_for.lisp",
+  "03-loops/02_more_for_loops.lisp",
   "03-loops/03_for_each.lisp",
   "03-loops/04_foreach.lisp",
   "03-loops/05_while.lisp",
@@ -412,6 +419,12 @@ export const C_PASSING: readonly string[] = [
   // and fail `cc`, while the same loop in statement position compiled. The refusals it names
   // (LL0204 on a loop's value, LL0109 on a declaration used as one) are in test:diagnostics.
   "80-adversarial/statement_value_position.lisp",
+  // C1: a closure declared in a `for`'s `:init` captures the loop's `mut` BY REFERENCE. Drives a loop
+  // ENTIRELY through closures over its own `:init` -- neither `:cond` nor `:step` names the variable --
+  // so a by-value capture does not terminate. Also pins the same-name collision (`cellVars` is keyed by
+  // mangled name, so an uncaptured second `j` inherits a cell), which is what caught the `c-for` update
+  // slot emitting a cell's write without its deref.
+  "80-adversarial/for_init_capture.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

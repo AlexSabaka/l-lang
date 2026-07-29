@@ -345,7 +345,19 @@ export class ResolveHirToCir {
     this.computeGlobals(items);
     // The module body is itself a scope for capture purposes (a top-level lambda still captures
     // module locals). Compute its cell set from nested closures before resolving.
-    this.cellVars = this.computeCellVars(items);
+    //
+    // FROM THE AST (`root`), NOT FROM `items` -- the same correction D72's annotation registry made
+    // ten lines up, for the same reason and with the same failure mode. `topLevelStmtNodes` keeps only
+    // `opaque-stmt | class | expr-stmt | var-decl` and recurses into `block`, so a top-level `for` /
+    // `while` / `if` is not in it AT ALL: measured, a module whose only statement is a `for` yields
+    // **zero** items, and the cell set came back empty without looking at anything. A `mut` declared
+    // in that loop's `:init` and captured by a closure beside it was therefore copied into the closure
+    // environment (`__e->u_i = u_i`) and mutated there, so the loop never advanced.
+    //
+    // Walking the AST is also the honest shape for the question being asked: "which of this frame's
+    // mutable bindings does some nested closure capture" is a property of the whole frame, not of the
+    // declarations that survived a flattening pass aimed at something else.
+    this.cellVars = this.computeCellVars([root]);
     const resolvedMain = body ? this.resolveBlock(body) : { stmts: [] };
     // An imported binding initializes BEFORE this module's own body -- the order the import implies.
     const main = { stmts: [...this.importedInits, ...resolvedMain.stmts] };
@@ -797,18 +809,36 @@ export class ResolveHirToCir {
     return cells;
   }
 
+  /**
+   * THE TWO WALKERS MUST AGREE ABOUT WHERE THE SCOPE ENDS, and they did not.
+   *
+   * `collectNestedFreeVars` descends GENERICALLY over every non-`_` key, stopping only at a nested
+   * `function`. This one used to descend only into `list` blocks -- so it never entered a `for`, a
+   * `while`, an `if` or a `try`. A `mut` declared in a `for`'s `:init` was therefore invisible to it,
+   * while a closure declared beside that `mut` WAS visible to its sibling. The capture was seen and
+   * the binding it captured was not, so the intersection came out empty and no cell was allocated.
+   *
+   * Measured: a closure over a `mut` in an ordinary function body works and answers 2; the identical
+   * closure moved into a `for`'s `:init` does not. That asymmetry is the whole bug -- capture-by-
+   * reference is implemented and was simply not reached.
+   *
+   * The rule both walkers now share: **the cell set is the FUNCTION FRAME's**, so descend everywhere
+   * the frame extends and stop at a nested `function`, whose muts are its own scope's problem. That is
+   * what `cellVars` already means at every call site -- a function body (3719), a handle clause (1405),
+   * or the module body (348).
+   */
   private collectMutDecls(node: any, into: Set<string>): void {
     if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { for (const c of node) this.collectMutDecls(c, into); return; }
     if (node._type === "variable" && (node as ast.VariableNode).mutable) {
       const n = (node as ast.VariableNode).name;
       if (n._type === "simple-identifier" || n._type === "composite-identifier") into.add(ast.symbolName(n as ast.IdentifierNode));
     }
-    // Only the immediate sequence's own muts (a nested fn's muts are ITS scope's problem).
+    // A nested fn opens its own frame; its muts are ITS scope's problem.
     if (node._type === "function") return;
-    if (node._type === "list") {
-      const form = classifyList(node as ast.ListNode);
-      if (form.kind === "block") for (const it of form.items) this.collectMutDecls(it, into);
-      else if (form.kind === "grouping") this.collectMutDecls(form.inner, into);
+    for (const k of Object.keys(node)) {
+      if (k.startsWith("_")) continue;
+      this.collectMutDecls(node[k], into);
     }
   }
 
@@ -949,14 +979,32 @@ export class ResolveHirToCir {
           }];
 
         case "for": {
+          // THE INIT IS RESOLVED FIRST, AND THE ORDER IS LOAD-BEARING.
+          //
+          // The `:init` DECLARES what the `:cond` and `:step` READ -- the induction variable, and (as
+          // `03-loops/02_more_for_loops.lisp` does) any helper closure over it. Resolving the step
+          // first asks `resolveIdentifier` for names that do not exist yet: a local falls back to the
+          // type channel and lands on C_VALUE while the init later declares `int64_t`, and a FUNCTION
+          // is not found at all and refuses as LL0107 (an unresolvable host global) -- which is why
+          // that file has been refused rather than compiled.
+          //
+          // This is also just C's own order: `for (init; test; update)` evaluates init once, before
+          // either of the others.
+          //
+          // IT MUST LAND WITH THE `collectMutDecls` FIX AND NOT BEFORE IT. Reordering alone makes that
+          // file resolve its closures and then LOOP FOREVER, because the `mut`s in its `:init` were
+          // invisible to the cell analysis and the closures got copies. Measured, and reverted once
+          // for exactly that reason (D94-a): a refusal traded for a hang is a worse program.
+          const init = this.resolveBlock(h.init);
+          const test = h.test ? this.resolveExpr(h.test) : null;
           // The step is a STATEMENT on the node now (an assignment, normally). resolveStmt can yield
           // several; the update slot takes one, and the lowering already guaranteed that shape.
           const updateStmts = h.update ? this.resolveStmt(h.update) : [];
           const update = updateStmts.length === 1 ? updateStmts[0] : null;
           const out: CStmt[] = [{
             src: h.src, ctype: C_VOID, kind: "c-for",
-            init: this.resolveBlock(h.init),
-            test: h.test ? this.resolveExpr(h.test) : null,
+            init,
+            test,
             update,
             body: this.resolveBlock(h.body),
             // On the node, not a trailing sibling: `:else` reads the `:init` bindings, which live in
