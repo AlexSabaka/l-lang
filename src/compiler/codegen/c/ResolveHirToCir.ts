@@ -212,6 +212,10 @@ export class ResolveHirToCir {
   /** D75 decorator SETUP initializers, spliced after the imports and before the module body: the
    *  slot runs ONCE at decoration time, which is before any call the module body can make. */
   private readonly decoratorInits: CStmt[] = [];
+  /** Bindings a DESTRUCTURED parameter introduces, awaiting the function prologue that consumes them.
+   *  A queue rather than a return value because `declareParam`'s eight call sites do not all build a
+   *  prologue; `resolveFunctionBody` drains it and `isolated` refuses if anything is left. */
+  private readonly pendingParamDestructure: CStmt[] = [];
   /** Lexical scope stack of local bindings (by C name). scope[0] is the module/main body. */
   private readonly scopes: Map<string, VarInfo>[] = [new Map()];
   /** Names (C names) that must be heap cells in the CURRENT function scope (mutable-captured). */
@@ -1197,7 +1201,18 @@ export class ResolveHirToCir {
       { src: node, ctype: C_VOID, kind: "c-decl", cName: tmp, declCType: C_VALUE, init, cell: false },
     ];
     const base: CExpr = { src: node, ctype: C_VALUE, kind: "c-ref", cName: tmp };
+    this.emitPatternBind(node, target, base, out);
+    return out;
+  }
 
+  /**
+   * Bind every name a pattern introduces, reading out of `subject`, appending to `out`.
+   *
+   * Shared by a destructuring DECLARATION and a destructured PARAMETER, which are the same problem
+   * reached from two directions -- `(let [a b] pt)` and `(fn f [[a b]] …)` differ only in where the
+   * subject comes from. Writing it twice is how the two would drift.
+   */
+  private emitPatternBind(node: ast.ASTNode, target: ast.ASTNode, base: CExpr, out: CStmt[]): void {
     const bind = (cName: string, value: CExpr) => {
       this.declareLocal(cName, C_VALUE);
       out.push({ src: node, ctype: C_VOID, kind: "c-decl", cName, declCType: C_VALUE, init: value, cell: false });
@@ -1283,7 +1298,6 @@ export class ResolveHirToCir {
       throw this.refuse(node, `destructuring-declaration:${target._type}`, "resolveVarDecl");
     }
     emit(target, base);
-    return out;
   }
 
   private resolveUserAssign(node: ast.SimpleAssignmentNode | ast.CompoundAssignmentNode, rhs: CExpr): CStmt[] {
@@ -3980,6 +3994,13 @@ export class ResolveHirToCir {
       // the checker says the ELEMENTS are. `[...args <- Any[]]` happens to agree; `[...args]` (no
       // annotation) would otherwise land on boxed `value` and the packed vec would not fit.
       if (p.spread) return VEC_OF_VALUE;
+      // A DESTRUCTURED parameter is boxed, because that is what `declareParam` emits for it -- the
+      // prologue reads it with `ll_dyn_length` and a boxed index. The checker still types
+      // `(fn f [[x y]] …)`'s parameter as `Int[]`, so without this the SIGNATURE said `ll_vec*` while
+      // the DEFINITION said `ll_value`, and `cc` rejected the call: "passing 'll_vec *' to parameter
+      // of incompatible type 'll_value'". This function's own header already required the two to
+      // agree; a destructured parameter is simply the third thing that overrides the checker here.
+      if (p.name?._type === "vector-pattern" || p.name?._type === "map-pattern") return C_VALUE;
       const sigT = symParams[i] ? mapType(symParams[i]) : undefined;
       return (sigT && sigT.k !== "value" ? sigT : undefined) ?? this.ctypeFromAnnotation(p) ?? sigT ?? C_VALUE;
     });
@@ -4028,7 +4049,17 @@ export class ResolveHirToCir {
     this.inFunctionBody = true;
     try {
       this.cellVars = this.computeCellVars(fn.body ?? []);
-      return run();
+      const result = run();
+      // NOBODY DROPS A DESTRUCTURED PARAMETER QUIETLY. `declareParam` queues the pattern's bindings
+      // and `resolveFunctionBody` drains them; every function emission runs inside this helper, so a
+      // path that declares such a parameter and never builds a prologue is caught HERE with a name
+      // rather than emitting a function whose parameters are unbound. Refusing beats a broken emit,
+      // and both beat silence.
+      if (this.pendingParamDestructure.length) {
+        this.pendingParamDestructure.length = 0;
+        this.refuse(fn, "param-destructuring-undrained", "isolated");
+      }
+      return result;
     } finally {
       (this as any).scopes = savedScopes;
       this.cellVars = savedCells;
@@ -4362,6 +4393,23 @@ export class ResolveHirToCir {
   }
 
   private declareParam(p: ast.ParameterNode, sigT: CType | undefined): CParam {
+    // A DESTRUCTURED parameter: `(fn print-point [[x y]] …)`. C has no such thing, so the parameter
+    // becomes an ordinary boxed one under a synthetic name and the pattern is bound in the function's
+    // PROLOGUE -- the same statements `(let [x y] pt)` emits, from `emitPatternBind`.
+    //
+    // The statements go on `pendingParamDestructure` rather than being returned, because
+    // `declareParam` has EIGHT call sites and only four of them build a prologue: returning them
+    // would let the other four drop a parameter's bindings silently, which is this project's
+    // signature failure rather than a shortcut. `resolveFunctionBody` drains the queue, and
+    // `isolated` asserts it is EMPTY on the way out -- so a future call site that reaches neither
+    // goes red instead of quiet.
+    if (p.name._type === "vector-pattern" || p.name._type === "map-pattern") {
+      const cName = `__ll_pd_${this.tempCounter++}`;
+      this.declareLocal(cName, C_VALUE);
+      this.ledger.record("A2", "param-destructure", p, "parameter binding structure is not in the HIR; bound in the function prologue");
+      this.emitPatternBind(p, p.name, { src: p, ctype: C_VALUE, kind: "c-ref", cName }, this.pendingParamDestructure);
+      return { cName, ctype: C_VALUE };
+    }
     if (p.name._type !== "simple-identifier" && p.name._type !== "composite-identifier") {
       this.refuse(p, "param-destructuring", "declareParam");
       return { cName: `p_bad`, ctype: C_VALUE };
@@ -4443,12 +4491,16 @@ export class ResolveHirToCir {
 
   /** Resolve a function's body from the HIR (or lower on demand if it was not pre-lowered). */
   private resolveFunctionBody(fn: ast.FunctionNode): CBlock {
+    // Drained BEFORE the body resolves, not after: the queue is filled by `declareParam` for THIS
+    // function, and a nested lambda inside the body would otherwise interleave its own.
+    const destructure = this.pendingParamDestructure.splice(0);
     let body = this.hir.bodyFor(fn);
     if (!body) {
       this.ledger.record("A3", "on-demand-lower", fn, "function body not pre-lowered; lowered on demand");
       body = new LowerAstToHirVisitor(this.context, `__ll_hir_i${this.liftCounter}`).lowerBody(fn.body ?? []);
     }
-    return this.resolveBlock(body);
+    const resolved = this.resolveBlock(body);
+    return destructure.length ? { stmts: [...destructure, ...resolved.stmts] } : resolved;
   }
 
   // -- closures / lambda lifting -------------------------------------------------------------------

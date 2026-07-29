@@ -544,6 +544,18 @@ export const C_PASSING: readonly string[] = [
   // case, a map pattern inside a vector one, which an arm that descended only into its own kind
   // would fail while passing everything else.
   "80-adversarial/destructure_rest_nested.lisp",
+  // A destructured PARAMETER is a prologue, and `declareParam` has 8 call sites of which only 4 build
+  // one -- so the bindings go on a queue that `resolveFunctionBody` drains and `isolated` asserts is
+  // EMPTY, rather than a return value four sites could drop silently. Exercises the SEAMS, not the
+  // syntax: a plain function, a LAMBDA and a METHOD are three different emitters, and the pattern is
+  // put in the MIDDLE of a parameter list so a lowering that assumed it was first mis-numbers the
+  // rest. `registerTopLevel` had to learn it too -- the checker types `[[x y]]` as `Int[]`, so the
+  // signature said `ll_vec*` where the definition said `ll_value` and `cc` rejected every call.
+  "80-adversarial/destructure_params.lisp",
+  // PROMOTED from refused: the last refusal that was not a RULING (the two `:async` files are D60).
+  // Was `ELL0106 destructuring-element:rest-pattern`, then `map-pattern`, then `param-destructuring`
+  // -- three names for two absences, both closed. Grades against the same golden JS uses.
+  "04-pattern-matching/04_destructuring.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

@@ -680,25 +680,38 @@ Six modules in one round, each ruled before it was written.
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
-### Destructuring: declarations are DONE, parameters are the remaining gap
+### ~~Destructuring: rest, nesting, and parameters~~ — **CLOSED**
 
-`(let [a b ...rest] xs)` and `(let {:user {:name n}} data)` were two names for one absence — each
-pattern arm bound `identifier-pattern` leaves and had no way to **descend**. Nesting is one recursive
-call; the tail is one clamped `ll_vec_slice`. Both land together because they are the same edit, and
-each level still binds a temp so its subject is evaluated exactly once.
+Three refusals, two absences.
 
-`04-pattern-matching/04_destructuring.lisp` is **still refused**, and the reason is now narrower and
-different: `ELL0106 param-destructuring` on `(fn print-point [[x y]] …)` at line 50. That is a
-separate seam and is **not** started.
+**`...rest` and nesting** were one: each pattern arm bound `identifier-pattern` leaves and had no way
+to **descend**. Nesting is one recursive call; the tail is one clamped `ll_vec_slice`. Each level
+binds a temp, so its subject is evaluated exactly once — `(let [a b] (next-pair))` must not call
+`next-pair` twice, and a nested form must not re-read its sub-subject per leaf.
 
-**Measured before touching it, which is why it is not started:** `declareParam` has **8 call sites**
-and only **4** of them build a prologue. A destructured parameter needs the pattern lowered into the
-function's prologue, so threading it through would either mean adding a prologue at four more sites
-or having those four **silently drop** the destructuring — which is this project's signature failure,
-not a shortcut. It wants one hook that every call site is forced to consume, and that is its own
-change.
+**A destructured parameter** is the same lowering reached from the other side: an ordinary boxed
+parameter under a synthetic name, plus the statements the declaration form emits. Both go through one
+`emitPatternBind`, because writing it twice is how the two would drift.
 
-Guarded by `80-adversarial/destructure_rest_nested.lisp`.
+**The hazard was the wiring, not the lowering** — `declareParam` has **8 call sites** and only **4**
+build a prologue, so returning the statements would let the other four drop a parameter's bindings
+silently. They go on a queue that `resolveFunctionBody` drains and that `isolated` asserts is **empty
+on the way out**: a path that declares such a parameter and never builds a prologue is refused by name
+(`param-destructuring-undrained`) instead of emitting a function whose body reads names nothing
+declared. That assertion is the whole reason this was safe to build.
+
+**And the signature had to learn it too.** The checker types `[[x y]]`'s parameter as `Int[]`, so the
+signature said `ll_vec*` while the definition said `ll_value`, and `cc` rejected every call site. A
+destructured parameter is now the third thing that overrides the checker in `registerTopLevel`, beside
+a rest parameter and an annotation.
+
+`04-pattern-matching/04_destructuring.lisp` moves from **refused to passing** — and it was the last
+refusal that was not a *ruling*. The two remaining are `:async`, refused by D60.
+
+Guarded by `80-adversarial/destructure_rest_nested.lisp` (declarations) and `destructure_params.lisp`,
+which exercises the **seams** rather than the syntax: a plain function, a lambda and a method are three
+different emitters, and the pattern sits in the *middle* of a parameter list so a lowering that assumed
+it was first mis-numbers everything after it.
 
 ### The one surviving C defect from the 2026-07-27 adversarial audit
 
