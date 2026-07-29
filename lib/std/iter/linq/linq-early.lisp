@@ -51,7 +51,7 @@
 
   ;; zip -- pair elements of `a` and `b` in lockstep as `[x y]`, typed as the tuple `[A B]` (Phase U),
   ;; stopping when EITHER runs out. The two sides may differ (`A`, `B`).
-  (fn :extension :gen zip<A,B> [a <- Iterable<A> b <- Iterable<B>] -> Iterator<[A B]>
+  (fn :extension :gen zip<A B> [a <- Iterable<A> b <- Iterable<B>] -> Iterator<[A B]>
     (let ia (iter a))
     (let ib (iter b))
     (mut x (next ia))

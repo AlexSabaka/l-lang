@@ -6,7 +6,7 @@
 
     ;; 2. Function with complex typed params
     (fn messy-signature [
-        x <- String | Real,
+        x <- String | Real
         y <- Boolean|Void
     ] -> Array<String | Real | Boolean | Void> (
         (return [x y])

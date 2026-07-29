@@ -15,7 +15,7 @@
             result))
 
     ;; Simple math function with logging
-    (fn :logged add [a <- Int, b <- Int] -> Int
+    (fn :logged add [a <- Int b <- Int] -> Int
         (+ a b)
     )
 

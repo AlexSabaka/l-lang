@@ -21,7 +21,7 @@
                 (if (and (not (and (== dx 0) (== dy 0)))
                          (>= ny 0) (< ny 3)
                          (>= nx 0) (< nx 3)
-                         (== grid[ny, nx] 1))
+                         (== grid[ny nx] 1))
                     (count := (+ count 1)))
             ))
         ))
@@ -30,14 +30,14 @@
 
     (fn next-gen [grid] (
         ;; Create new empty 3x3 matrix
-        (let new-grid [0,0,0 | 0,0,0 | 0,0,0])
+        (let new-grid [0 0 0 | 0 0 0 | 0 0 0])
         
         (mut y 0)
         (while (< y 3) (
             (mut x 0)
             (while (< x 3) (
                 (let n (count-neighbors grid x y))
-                (let cell grid[y, x])
+                (let cell grid[y x])
 
                 ;; Rules: 
                 ;; 1. Underpopulation (< 2) -> dies
@@ -48,8 +48,8 @@
                 ;; Two FLAT ifs rather than an if nested in an if's branches. Same rules, and it stays
                 ;; clear of the parked nested-`if` defect (roadmap, Known gaps) that a three-argument
                 ;; `if` with conditional leaves has bitten before.
-                (if (and (== cell 1) (or (== n 2) (== n 3))) (new-grid[y, x] := 1))
-                (if (and (== cell 0) (== n 3))              (new-grid[y, x] := 1))
+                (if (and (== cell 1) (or (== n 2) (== n 3))) (new-grid[y x] := 1))
+                (if (and (== cell 0) (== n 3))              (new-grid[y x] := 1))
                 (x := (+ x 1))
             ))
             (y := (+ y 1))
@@ -59,9 +59,9 @@
 
     ;; Blinker pattern
     (let gen0 
-        [ 0, 1, 0
-        | 0, 1, 0
-        | 0, 1, 0 ])
+        [ 0 1 0
+        | 0 1 0
+        | 0 1 0 ])
 
     (console.log "Generation 0:" gen0)
     (let gen1 (next-gen gen0))

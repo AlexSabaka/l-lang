@@ -2802,7 +2802,7 @@ const CASES: Case[] = [
     // AF-002.
     name: "Qa/AF-002: a spread in a matrix row contributes all its elements",
     source: `(let r [1 2 3])
-(let m [0,0 | ...r])
+(let m [0 0 | ...r])
 (let row m[1])
 (console.log row.length)
 (console.log row[0] row[1] row[2])`,

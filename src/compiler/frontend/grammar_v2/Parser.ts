@@ -328,7 +328,6 @@ class LLangParser extends CstParser {
       this.CONSUME(t.LBracket);
       this.AT_LEAST_ONE(() => {
         this.SUBRULE(this.expression);
-        this.OPTION(() => this.CONSUME(t.Comma));
       });
       this.CONSUME(t.RBracket);
     });
@@ -501,7 +500,6 @@ class LLangParser extends CstParser {
       this.CONSUME(t.LBracket);
       this.MANY(() => {
         this.SUBRULE(this.expression);
-        this.OPTION(() => this.CONSUME(t.Comma));
       });
       this.CONSUME(t.RBracket);
     });
@@ -527,7 +525,6 @@ class LLangParser extends CstParser {
         },
         DEF: () => {
           this.SUBRULE(this.expression);
-          this.OPTION(() => this.CONSUME(t.Comma));
         },
       });
     });
@@ -539,7 +536,6 @@ class LLangParser extends CstParser {
           { ALT: () => this.SUBRULE(this.keyValue) },
           { ALT: () => this.SUBRULE(this.comment) },
         ]);
-        this.OPTION(() => this.CONSUME(t.Comma));
       });
       this.CONSUME(t.RBrace);
     });
@@ -756,7 +752,6 @@ class LLangParser extends CstParser {
       this.CONSUME(t.LAngle);
       this.AT_LEAST_ONE(() => {
         this.SUBRULE(this.type);
-        this.OPTION(() => this.CONSUME(t.Comma));
       });
       this.CONSUME(t.RAngle);
     });
@@ -780,7 +775,6 @@ class LLangParser extends CstParser {
       this.CONSUME(t.LBrace);
       this.MANY(() => {
         this.SUBRULE(this.keyTypeDefinition);
-        this.OPTION(() => this.CONSUME(t.Comma));
       });
       this.CONSUME(t.RBrace);
     });
@@ -853,7 +847,6 @@ class LLangParser extends CstParser {
           this.CONSUME(t.LBracket);
           this.MANY(() => {
             this.SUBRULE(this.expression);
-            this.OPTION2(() => this.CONSUME(t.Comma));
           });
           this.CONSUME(t.RBracket);
         },
@@ -920,14 +913,12 @@ class LLangParser extends CstParser {
         this.CONSUME(t.LAngle);
         this.AT_LEAST_ONE(() => {
           this.SUBRULE(this.genericParam);
-          this.OPTION6(() => this.CONSUME2(t.Comma));
         });
         this.CONSUME(t.RAngle);
       });
       this.CONSUME(t.LBracket);
       this.MANY2(() => {
         this.SUBRULE(this.parameter);
-        this.OPTION3(() => this.CONSUME(t.Comma));
       });
       this.CONSUME(t.RBracket);
       this.OPTION4(() => {
@@ -1007,7 +998,6 @@ class LLangParser extends CstParser {
         this.CONSUME(t.LAngle);
         this.AT_LEAST_ONE(() => {
           this.SUBRULE(this.genericParam);
-          this.OPTION2(() => this.CONSUME(t.Comma));
         });
         this.CONSUME(t.RAngle);
       });
@@ -1036,7 +1026,6 @@ class LLangParser extends CstParser {
         this.CONSUME(t.LAngle);
         this.AT_LEAST_ONE(() => {
           this.SUBRULE(this.type);
-          this.OPTION2(() => this.CONSUME(t.Comma));
         });
         this.CONSUME(t.RAngle);
       });
@@ -1286,7 +1275,6 @@ class LLangParser extends CstParser {
         this.CONSUME(t.LBracket);
         this.MANY2(() => {
           this.SUBRULE(this.parameter);
-          this.OPTION2(() => this.CONSUME(t.Comma));
         });
         this.CONSUME(t.RBracket);
       });
@@ -1305,7 +1293,6 @@ class LLangParser extends CstParser {
         this.CONSUME(t.LBracket);
         this.MANY2(() => {
           this.SUBRULE(this.parameter);
-          this.OPTION2(() => this.CONSUME(t.Comma));
         });
         this.CONSUME(t.RBracket);
       });
@@ -1333,7 +1320,6 @@ class LLangParser extends CstParser {
         this.CONSUME(t.LBracket);
         this.MANY(() => {
           this.SUBRULE(this.parameter);
-          this.OPTION2(() => this.CONSUME(t.Comma));
         });
         this.CONSUME(t.RBracket);
       });
@@ -1348,7 +1334,6 @@ class LLangParser extends CstParser {
       this.CONSUME(t.ImportKw);
       this.AT_LEAST_ONE(() => {
         this.SUBRULE(this.importDefinition);
-        this.OPTION(() => this.CONSUME(t.Comma));
       });
     });
 
@@ -1364,7 +1349,6 @@ class LLangParser extends CstParser {
       this.CONSUME(t.LBrace);
       this.AT_LEAST_ONE(() => {
         this.SUBRULE(this.symbolAlias);
-        this.OPTION(() => this.CONSUME(t.Comma));
       });
       this.CONSUME(t.RBrace);
       this.CONSUME(t.FromKw);
@@ -1391,7 +1375,6 @@ class LLangParser extends CstParser {
       this.CONSUME(t.ExportKw);
       this.AT_LEAST_ONE(() => {
         this.SUBRULE(this.exportAlias);
-        this.OPTION(() => this.CONSUME(t.Comma));
       });
     });
 
@@ -1743,7 +1726,6 @@ class LLangParser extends CstParser {
       this.CONSUME(t.LBrace);
       this.MANY(() => {
         this.SUBRULE(this.mapPatternPair);
-        this.OPTION(() => this.CONSUME(t.Comma));
       });
       this.CONSUME(t.RBrace);
     });

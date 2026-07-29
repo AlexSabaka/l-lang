@@ -32,7 +32,7 @@
             ;; D9's forced unwrap. Not defensive programming -- the program does not COMPILE without it.
             (if (!= current nil) (
                 ;; Check goal (value 9)
-                (if (== grid[current.y, current.x] 9)
+                (if (== grid[current.y current.x] 9)
                     (return f"Found goal at {(current.x)}, {(current.y)}")
                     (console.log f"Visiting {(current.x)}, {(current.y)}"))
 
@@ -50,7 +50,7 @@
                             (>= next-y 0) (< next-y 5)
                             (== (get visited key) nil))
                         ;; This is a way around how currently && operator and alike are treated
-                        (if (!= grid[next-y, next-x] 1) (
+                        (if (!= grid[next-y next-x] 1) (
                             (visited[key] := true)
                             (queue.push (new Point next-x next-y))
                         ))

@@ -22,7 +22,7 @@
     (console.log "First element from a vector (head v):" (head v))
 
     ;; Map variable 'm'
-    (let m { :a 1, :b 2 })
+    (let m { :a 1 :b 2 })
 
     ;; Log the map 'm'
     (console.log m)

@@ -116,7 +116,7 @@ const CASES: SmokeCase[] = [
     // GUARD: RAngle must NOT get `longer_alt: OperatorIdent`, or nested generics close (`>>`) would
     // lex as one OperatorIdent and the generics rule -- which wants two RAngle -- would break.
     name: "longer_alt guard: nested generics still close with two RAngle",
-    source: "(fn f [x <- Map<Int, List<Int>>] -> Int (return 0))",
+    source: "(fn f [x <- Map<Int List<Int>>] -> Int (return 0))",
     check: ({ tokens }) => {
       const names = tokenNames(tokens);
       const raCount = names.filter((n) => n === "RAngle").length;

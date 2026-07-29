@@ -71,7 +71,7 @@
 
     (let grid [10 20 | 30 40])
     (console.log "row 0:" (grid[0]))
-    (console.log "cell:" (grid[1, 1]))
+    (console.log "cell:" (grid[1 1]))
 
     ;; -- the refusals are pinned in `test:diagnostics`, where a file may fail to compile ------------
     ;;

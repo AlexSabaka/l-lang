@@ -3,7 +3,7 @@
 Rulings on l-lang's language surface. **D1–D16 were taken 2026-07-12** following a full compiler
 audit (161 agents, 148 verified findings across grammar, types, codegen, analysis passes,
 stdlib/runtime, docs conformance, examples, and hygiene); the document has grown by ruling ever
-since, and runs to **D98** as of 2026-07-29. Every ruling was made with a native backend in front of
+since, and runs to **D99** as of 2026-07-29. Every ruling was made with a native backend in front of
 it — several are not stylistic preferences, they are things that cannot be retrofitted later without
 breaking every existing program.
 
@@ -71,6 +71,7 @@ touches; **bold** marks the one to read first.
 | **the backends** | **D86** (C is the reference), D66 (JS is deprecated to an oracle), D39 (the PEG and js-legacy retired), D45 / D48 (the HIR), D50–D55 (the intrinsic floor), D84 (injective mangling) |
 | **diagnostics** | **D38** (one registry), D44, D4 (unknown modifiers), D15 (native-forward syntax) |
 | **the stdlib** | D7, D76 (builder), D77 (json), D78 (calendar), D79 (log), D80 (cli), D64 (path), D65 (random), D67 (regex), D62 (errors) |
+| **lexis and layout** | **D99** (whitespace separates; no commas), **D98** (`f"…"` only; `'` quotes), D71 (`_` separators, `0o`), D88 (`..` adjacency), D93 (`...` adjacency), D96 (`` ` `` / `~` adjacency) |
 | **tooling and process** | D23 (REPL semantics), D38, D86, D87 |
 
 ---
@@ -7486,3 +7487,41 @@ l-lang inside template literals and were migrated by hand; the rest are TypeScri
 like `ch === '"'`, which a sed would have corrupted.
 
 The corpus did not move: **JS 286 / C 281**, `test:codegen` 312/0, before and after.
+
+---
+
+## D99 — a comma is not a separator; whitespace separates everywhere (2026-07-29)
+
+**Ruling.** `,` is removed from the grammar. Whitespace separates every list, vector, map, parameter
+list, generic list and **index list** — `grid[i j]`, not `grid[i, j]`.
+
+### Why now, and what it cost to find out
+
+It surfaced while choosing D96's unquote spelling. `,` was the first choice, on the belief that comma
+was unused — the classic Lisp spelling. Measured, it is not unused: **36 comma tokens across 10
+files**, and `grid[1, 1]` is *real multi-index syntax* (`indexerSuffix` is
+`AT_LEAST_ONE(expression, OPTION(Comma))`), not decoration. So `` `grid[i, j] `` inside a quasiquote
+would have been genuinely ambiguous and D96 took `~` instead.
+
+That measurement is what made the comma's position visible: it was an **optional** separator at
+**eighteen** grammar sites, decorating a syntax that never needed it. A language whose lists are
+already whitespace-separated does not get to have a second, silent, optional way of writing the same
+thing — a reader cannot tell whether a comma means anything, because it never did.
+
+### The migration
+
+**36 removals across 10 files.** Lexer-driven, for the reason D98's was, and the ratio here is
+starker: **5,844 non-token commas were left alone** — every one of them inside a string literal or a
+comment. A regex would have had 5,844 false positives against 36 real ones.
+
+A comma is replaced by a space only where deleting it would FUSE two tokens (`[a,b]` → `[a b]`); where
+one already follows, it is simply dropped.
+
+### What a comma does now
+
+A parse error naming the character — `Expecting token of type --> RBracket <-- but found --> ',' <--`.
+Loud, located, and consistent with how every other syntax error in l-lang reports. It is deliberately
+**not** an `LLxxxx`: parse errors as a class are not coded yet, and inventing a code for this one alone
+would say that commas are special when the point of the ruling is that they are not.
+
+The corpus did not move: **JS 286 / C 281**, before and after.

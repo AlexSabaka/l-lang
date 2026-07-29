@@ -34,7 +34,7 @@
             result))
 
     ;; Fast function
-    (fn :timed simple-add [a <- Int, b <- Int] -> Int
+    (fn :timed simple-add [a <- Int b <- Int] -> Int
         (+ a b)
     )
 
