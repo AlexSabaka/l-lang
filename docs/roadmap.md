@@ -957,37 +957,47 @@ comment, and a `*/` in the text closes it early. Found by writing an adversarial
 quoted C source. Deprecated-backend only, and the diagnostic is honest rather than silent, so it is
 recorded rather than fixed.
 
-### `defsyntax` is BUILT (D95-a/D96) — and `defmacro` is what is left
+### Both metaprogramming tiers are BUILT (D95-a, D96, D102)
 
 The tier exists: `DefSyntaxKw`, a production, a node, and an expansion stage between parse and syntax.
 A handler receives the argument FORM unevaluated — `unless` places its body in a branch that does not
 run, and the corpus asserts the side-effect counter stays `0`. Templates are built with D96's
 quasiquote. Five refusals (LL0038–LL0042) plus D96's LL0110, all probed.
 
-`defmacro` is unchanged and still LL0023. It receives TOKENS and needs a whole pre-parse stage;
-`defsyntax` needed no new stage machinery, which is why it went first.
+**`defmacro` is built too (D102)** — the token tier, between lex and parse. It is the only tier that
+can introduce **surface**: D95 measured that 23 of 28 keyword-headed productions have a spelling no
+user-defined head can reproduce, and a `:then` clause that is a parse error for `defsyntax` works for
+`defmacro`, because the expansion runs before the parser has an opinion.
+
+A handler receives a vector of token **images** and returns one — D101's third representation, kept
+deliberately plain so it needs no new value kind. The evaluator gained `head`/`tail`/`empty`/`list`/
+`get`, which are the floor's own entries: a handler that can index a vector but not build one is not a
+macro. LL0023 is re-aimed rather than retired — it now names a `defmacro` the expander could not
+*read*, which is still reachable and is what `(defmacro)` produces.
 
 **Not claimed: hygiene.** A template that introduced a binding could capture one at the use site.
 Nothing prevents it and the corpus does not pretend otherwise.
 
-### D95's remaining half — and one grammar question is deferred
+### The clause surface — measured, and NOT one production change (D95, still deferred)
 
-*   **`defsyntax` has no token**, so it is refused as `LL0210 'defsyntax' is not defined` rather than by
-    name. D3's banner has recorded this; D95 makes it actionable. `MacroDefNode.keyword` is typed to
-    hold `"defmacro" | "defsyntax"` but `AstBuilder.ts:1128` hard-codes the first at the only
-    construction site — a field whose second case has no producer.
-*   **Neither expansion tier exists.** D95 places `defmacro` between lex and parse and `defsyntax`
-    between parse and syntax; `:comptime`'s position at the head of desugar is already built and is
-    forced by `ComptimeEvaluationAstVisitor.ts:147` needing `resolveSymbol`.
-*   **DEFERRED, deliberately: should `list` admit a generic `:keyword expr` clause on any head?**
-    Measured 2026-07-29 against an unknown head: `(f a b c)`, `(f [a b])`, `(f {:k v})` and the arrow
-    forms all parse, while `(f :then x)`, `(f :async)`, `(f (:else 1))`, `(f 1 catch 2)` and
-    `(f x { pat => expr })` are all **parse errors**. `Parser.ts:457` defines `list` as
-    `LParen expression* [:of type] [.. expr] RParen`. Consequence: **5 of the 28 keyword-headed
-    productions have a surface a user could reproduce** (`if`, `while`, `let`/`mut`, `await`, `quote`)
-    and 23 do not, which is why D69's *"grammar-native forms migrate onto `defsyntax` over time"* does
-    not hold as written. One production change would unlock them; the `:of` guard and the `..` range
-    live in that same rule, so it is its own ruling.
+`(head :kw expr …)` on any head is what would let the other 23 keyword-headed forms migrate onto
+`defsyntax`. **Probed 2026-07-29 and reverted.**
+
+*   **The grammar half is trivial and works.** Five lines — `MANY2(ModKeyword expression)` after the
+    `..` option. Chevrotain accepts it with no ambiguity error, `(myform :then 1)` parses, the `:of`
+    guard still resolves, corpus stays 289/0.
+*   **The builder half is the whole job, and without it the change is a silent-wrong-answer
+    generator.** `LLangAstBuilder.list` has nowhere to put a clause, so it drops the keyword and merges
+    the operand into the argument list: `(f :then 7)` returns **70**, byte-identical to `(f 7)`. The
+    `:then` is gone and nothing says so.
+
+Doing it properly means carrying clauses into the AST, teaching every list consumer (`classifyList`,
+the checker, the HIR, both codegens) what a clause-bearing list is, and deciding how a `defsyntax`
+handler *receives* named clauses — its parameters bind positionally today, and that is an unanswered
+design question, not an implementation detail.
+
+**The pressure is off**: D102's `defmacro` can already spell these surfaces, because it runs before the
+parser has an opinion.
 
 ### `std/math/fft` is blocked, and its draft is gone
 

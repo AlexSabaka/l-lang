@@ -428,13 +428,30 @@ const CASES: Case[] = [
       "the comptime fn was deleted and the unfoldable call left behind -> ReferenceError at run time, reported by nothing",
   },
 
-  // --- defmacro: D3 rules macros OUT, and demands a located error, "never a silent call". ---
+  // --- defmacro: BUILT as of D102. This case is RE-AIMED, not deleted.
+  //
+  // It was written when D3 ruled macros OUT and demanded "a located error, never a silent call". The
+  // tier exists now, so a well-formed `defmacro` compiles -- and the case's real subject was never
+  // "macros are refused", it was "this must not be a raw crash". That still has a live instance: the
+  // expander finds declarations by MATCHING BRACKETS (it must -- a file using a macro may not parse
+  // until after expansion), so a form without the `(defmacro name [params] body…)` shape is skipped
+  // and reaches the parser as a `macro-def` node nothing models. LL0023 names exactly that now.
   {
-    name: "defmacro is a located error, not a crash",
-    source: `(defmacro my-macro [x] (+ x 1))
+    name: "a defmacro the expander cannot read is located and named, not a crash",
+    source: `(defmacro)
 (console.log "unreachable")`,
     expectDiagnostic: /LL0023/,
     wasBroken: "a raw parse error under grammar_v2; invalid JS under PEG. D3 wants it located and named",
+  },
+  // ...and the well-formed one EXPANDS. `x` arrives as the token vector ["7"], so `list` splices it
+  // back out and the emitted program computes 8. The pair is the point: refused when unreadable,
+  // applied when read.
+  {
+    name: "a well-formed defmacro expands (D102)",
+    source: `(defmacro inc-it [x] (list "(" "+" x "1" ")"))
+(console.log (inc-it 7))`,
+    expect: ["8"],
+    wasBroken: "there was no token tier at all -- `defmacro` was refused by name (LL0023), so no call site could ever expand",
   },
 
   // --- quote: emits the AST as a JSON STRING, so it cannot be indexed or walked. ---

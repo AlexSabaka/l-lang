@@ -389,12 +389,12 @@
     ]
   },
   {
-    "probe": "LL0023 defmacro is reserved",
+    "probe": "LL0023 a defmacro the expander cannot read",
     "diagnostics": [
       {
         "code": "LL0023",
         "severity": "error",
-        "text": "'defmacro' is not implemented in 0.x. Macros are planned, and the keyword is reserved -- 'foo' is not defined. Metaprogramming today is ':comptime' (compile-time evaluation) and 'defmodifier' (a decorator)."
+        "text": "this 'defmacro' could not be read by the macro expander, so it was never applied. A 'defmacro' is '(defmacro name [params] body…)'; the expander finds it by matching brackets before the parser runs, and skips anything that does not have that shape."
       }
     ]
   },
@@ -509,14 +509,8 @@
     ]
   },
   {
-    "probe": "LL0023 defmacro is still reserved, defsyntax is not",
-    "diagnostics": [
-      {
-        "code": "LL0023",
-        "severity": "error",
-        "text": "'defmacro' is not implemented in 0.x. Macros are planned, and the keyword is reserved -- 'm' is not defined. Metaprogramming today is ':comptime' (compile-time evaluation) and 'defmodifier' (a decorator)."
-      }
-    ]
+    "probe": "silent: a well-formed defmacro is consumed, not refused",
+    "diagnostics": []
   },
   {
     "probe": "LL0110 an unquote outside a quasiquote",

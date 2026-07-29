@@ -4,6 +4,7 @@ import path from "node:path";
 import { LLangLexer } from "./grammar_v2/tokens";
 import { parser as v2Parser } from "./grammar_v2/Parser";
 import { LLangAstBuilder } from "./grammar_v2/AstBuilder";
+import { expandTokenMacros } from "./expandTokenMacros";
 
 // EXPORTED as of D95: the `defsyntax` expansion stage rebuilds parts of the tree, and every node it
 // introduces arrives with no `_parent` at all. That chain is not decoration -- `SymbolTable.scopeOf`
@@ -98,6 +99,17 @@ export class AstProvider {
    * EXCLUSIVE, which `getSource()` and the source-map emitter both rely on.
    */
   private parseWithGrammarV2(source: string, filePath: string): ast.ProgramNode {
+    // `defmacro` -- the TOKEN tier (D95). It runs between LEX and PARSE, which is the seam that makes
+    // it different from `defsyntax`: a handler rewrites tokens, so a file using one may not parse
+    // until after the expansion. Nothing in it may depend on the grammar accepting the file, which is
+    // why it bracket-matches rather than parses. `parseBody` is handed in so that module never
+    // imports the parser it runs before.
+    try {
+      source = expandTokenMacros(source, (text) => this.parseWithGrammarV2(`(${text})`, filePath).program);
+    } catch (e) {
+      throw new Error(`${filePath}: ${(e as any)?.message ?? e}`);
+    }
+
     const lexResult = LLangLexer.tokenize(source);
     if (lexResult.errors.length > 0) {
       const e = lexResult.errors[0];

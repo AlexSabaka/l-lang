@@ -305,7 +305,15 @@ const PROBES: Probe[] = [
     source: "(let xs [1 2])\n(let ys [3 4])\n(for :each x :from xs :from ys :then (console.log x))",
   },
   { name: "LL0018 missing for clause", source: "(for :each x :then (console.log x))" },
-  { name: "LL0023 defmacro is reserved", source: "(defmacro foo [] 1)" },
+  {
+    // D102 RE-AIMED THIS. `defmacro` is implemented now, so a well-formed one is CONSUMED by the token
+    // expander and never reaches the parser. What still reaches it is a form the expander could not
+    // READ -- it matches brackets rather than parsing, because a file using a macro may not parse
+    // until after expansion, so anything without the `(defmacro name [params] body…)` shape is
+    // skipped. `(defmacro)` with no name is exactly that.
+    name: "LL0023 a defmacro the expander cannot read",
+    source: "(defmacro)",
+  },
   {
     name: "LL0029 mid-list rest is not trailing",
     source: "(match [1 2 3] { [a ...mid z] => (console.log a) _ => (console.log 0) })",
@@ -377,10 +385,11 @@ const PROBES: Probe[] = [
     source: "(defsyntax five [x] 5)\n(console.log (five 1))",
   },
   {
-    // `defmacro` is UNCHANGED: it receives tokens and needs a pre-parse stage, so D95 leaves it
-    // refused by name while `defsyntax` becomes real. The two must not drift into each other.
-    name: "LL0023 defmacro is still reserved, defsyntax is not",
-    source: "(defmacro m [] 1)",
+    // Both tiers are BUILT now (D95-a `defsyntax`, D102 `defmacro`). A well-formed `defmacro` with no
+    // call site is consumed silently -- the declaration has done its job and nothing downstream models
+    // it -- so this probe asserts SILENCE, which is what "the tier exists" looks like from here.
+    name: "silent: a well-formed defmacro is consumed, not refused",
+    source: "(defmacro m [x] (list x))",
   },
   {
     // D96. `~x` is a HOLE and needs a template around it. Before the rule it reached CODEGEN and

@@ -570,6 +570,23 @@ const OPERATORS: Record<string, Builtin> = {
  * the host's `Math` in scope.
  */
 const FLOOR_BUILTINS: Record<string, Builtin> = {
+  // -- sequence primitives, so a `defmacro` handler can BUILD its answer (D102).
+  //
+  // These are the floor's OWN names and signatures (`floor.ts`: head/tail/empty/list/get) -- not new
+  // surface invented for the tier. The token tier hands a handler a vector of token images and expects
+  // one back, and until these existed a handler could index a vector and never assemble one: a macro
+  // that cannot construct its output is not a macro. `list` is the variadic constructor, so
+  // `(list ...)` concatenates by splicing, which is how a handler joins two token runs.
+  "head": (a) => (Array.isArray(a[0]) && a[0].length ? a[0][0] : null),
+  "tail": (a) => (Array.isArray(a[0]) ? a[0].slice(1) : []),
+  "empty": (a) => (Array.isArray(a[0]) ? a[0].length === 0 : a[0] === null),
+  "list": (a) => a.flatMap((x) => (Array.isArray(x) ? x : [x])),
+  "get": (a) => {
+    const [c, k] = a;
+    if (!Array.isArray(c)) return null;
+    const i = typeof k === "bigint" ? Number(k) : typeof k === "number" ? k : -1;
+    return i >= 0 && i < c.length ? c[i] : null;
+  },
   "Math.abs": (a) => (typeof a[0] === "bigint" ? (a[0] < ZERO ? -a[0] : a[0]) : Math.abs(asReal(a[0]))),
   "Math.sqrt": (a) => Math.sqrt(asReal(a[0])),
   "Math.log": (a) => Math.log(asReal(a[0])),

@@ -256,13 +256,22 @@ export const SyntaxDiagnostics = {
       "quasiquote -- '`(if ~c nil ~body)' -- rather than returning a value."
   ),
 
+  // LL0023 -- RE-AIMED by D102. It used to mean "macros are not implemented"; both tiers are built
+  // now (D95-a `defsyntax`, D102 `defmacro`), so that message became false.
+  //
+  // It is NOT retired, because it is still reachable and still useful. The token expander reads a
+  // `defmacro` by BRACKET MATCHING -- it must, since a file using one may not parse until after the
+  // expansion -- and a form it cannot read is left alone. That form then reaches the parser as a
+  // `macro-def` node, which nothing downstream models. Measured: `(defmacro)` with no name does
+  // exactly this. So the code now says what the situation actually is, which is a malformed
+  // declaration rather than a missing feature.
   MacroNotImplemented: def<{ keyword: string; name?: string }>(
     "LL0023",
     Error,
     (p) =>
-      `'${p.keyword}' is not implemented in 0.x. Macros are planned, and the keyword is ` +
-      `reserved${p.name ? ` -- '${p.name}' is not defined` : ""}. ` +
-      `Metaprogramming today is ':comptime' (compile-time evaluation) and ` +
-      `'defmodifier' (a decorator).`
+      `this '${p.keyword}' could not be read by the macro expander, so it was never applied` +
+      `${p.name ? ` -- '${p.name}' is not defined` : ""}. A '${p.keyword}' is ` +
+      `'(${p.keyword} name [params] body…)'; the expander finds it by matching brackets before the ` +
+      `parser runs, and skips anything that does not have that shape.`
   ),
 };

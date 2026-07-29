@@ -471,6 +471,11 @@ export const C_PASSING: readonly string[] = [
   // no compiler change. GENERIC: the walk is driven by `child-fields-of`, so the nested `if` is
   // special-cased nowhere. That is what M2's schema was generated for, two phases before it was needed.
   "80-adversarial/cons_view.lisp",
+  // D102: `defmacro`, the TOKEN tier -- the only one that can introduce SURFACE. The `:then` clause in
+  // this file is a PARSE ERROR for `defsyntax` (measured) and works here, because the expansion runs
+  // before the parser has an opinion. Also pins inspection (a handler branching on how many tokens it
+  // was handed, which a function cannot do -- by call time the spelling is gone) and the fixed point.
+  "80-adversarial/defmacro.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

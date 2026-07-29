@@ -3,7 +3,7 @@
 Rulings on l-lang's language surface. **D1–D16 were taken 2026-07-12** following a full compiler
 audit (161 agents, 148 verified findings across grammar, types, codegen, analysis passes,
 stdlib/runtime, docs conformance, examples, and hygiene); the document has grown by ruling ever
-since, and runs to **D101** as of 2026-07-29. Every ruling was made with a native backend in front of
+since, and runs to **D102** as of 2026-07-29. Every ruling was made with a native backend in front of
 it — several are not stylistic preferences, they are things that cannot be retrofitted later without
 breaking every existing program.
 
@@ -63,7 +63,7 @@ touches; **bold** marks the one to read first.
 | **nil, Void, and optionality** | **D9** (what `nil` is — ruled twice), **D94** (a statement's value is `nil`, *typed* `Nil`), D49 (Void, void-in-value) |
 | **numbers** | **D88** (the tower: literals, promotion, `..`), **D92** (n-ary folds to binary), **D93** (`...` binds by adjacency), D8 (number literals), D71 (`_` separators, `0o`), D61 (bit operators), D43, D85 (division by zero), D89 (`Ring`), D90 (dimensions) |
 | **strings and text** | **D98** (`f"…"` is the only formatted string; `'` quotes), D67 (`r"…"` raw, `f"…"` formatted, the regex engine), D74, D52 (codepoints — see D50–D55) |
-| **metaprogramming** | **D101** (homoiconicity: AST datum is truth, cons/list derived), **D69** (the three tiers — *what each receives*), **D95** (the three tiers — *when each runs*), **D96** (quasiquote `` ` `` and its holes `~x`), D3 + D3b/D3c/D3d, D73 (the in-house comptime interpreter), **D75** (`defmodifier` is flat), D68 (`:foo` is three roles), D72 (`defattribute`) |
+| **metaprogramming** | **D102** (`defmacro` built: the token tier, the only one that adds SURFACE), **D101** (homoiconicity: AST datum is truth, cons/list derived), **D69** (the three tiers — *what each receives*), **D95** (the three tiers — *when each runs*), **D96** (quasiquote `` ` `` and its holes `~x`), D3 + D3b/D3c/D3d, D73 (the in-house comptime interpreter), **D75** (`defmodifier` is flat), D68 (`:foo` is three roles), D72 (`defattribute`) |
 | **modules, packages, visibility** | **D35** (the package is the compilation unit), D6, D20–D22 (export, naming, layout), D7 (the stdlib boundary) |
 | **errors and conditions** | **D87** (the failure taxonomy), D82 (data is catchable, a contract violation is not), D62 (the typed error tower), **D47** (conditions / restarts), D85 |
 | **generators and async** | **D31** (`:gen` + `yield`), D32 (`Awaitable` / `Task`), D58 (coroutine lowering), D60 (`:async` stays C-refused), D33 (LINQ) |
@@ -7346,6 +7346,21 @@ the token tier carrying it alone. It is real work with a real conflict — the `
 range live in that same rule, and modifier parsing is adjacent — so it is its own ruling, with the
 measurement above already gathered for it.
 
+> **MEASURED 2026-07-29, and it is NOT one production change.** The grammar half is trivial and works:
+> five lines (`MANY2(ModKeyword expression)` after the `..` option), Chevrotain accepts it with no
+> ambiguity error, `(myform :then 1)` parses, the `:of` guard still resolves, and the corpus stays at
+> 289/0. **The BUILDER half is the whole job, and without it the change is a silent-wrong-answer
+> generator**: `LLangAstBuilder.list` has nowhere to put a clause, so it drops the keyword and merges
+> the operand into the ordinary argument list. Measured, `(f :then 7)` returns **70** — byte-identical
+> to `(f 7)`, with the `:then` gone and nothing said. That is the outcome D93's note calls the one
+> thing worse than an error, so the probe was reverted rather than landed.
+>
+> Doing it properly means carrying clauses into the AST (a node shape, or a field on `ListNode`),
+> teaching every consumer that reads a list — `classifyList`, the checker, the HIR, both codegens —
+> what a clause-bearing list is, and deciding how a `defsyntax` handler RECEIVES named clauses, since
+> its parameters bind positionally today. That last is a design question nobody has answered.
+> **D102's `defmacro` can already spell these surfaces**, so the pressure to rush this is off.
+
 ### BUILT (D95-a) — `defsyntax` is implemented; `defmacro` is not, and the asymmetry is the point
 
 The tier is real: `DefSyntaxKw`, a `syntaxDefDecl` production, a `SyntaxDefNode`, and an expansion
@@ -7629,3 +7644,60 @@ run earlier, which it is not.
 which is a phase of its own and not a stdlib function. Quote is the representation half of
 homoiconicity and that half is now complete on the reference backend; nothing here makes a form
 executable.
+
+---
+
+## D102 — `defmacro` is built: the token tier, and the only one that can introduce SURFACE (2026-07-29)
+
+**Ruling.** `defmacro` is implemented. A handler runs **between lex and parse** (D95's seam), receives
+its arguments as a **vector of token images**, and returns one. The expansion rewrites the source and
+the result is re-lexed, so a call site need not parse *before* it expands — which is the entire point.
+
+### What it buys that `defsyntax` cannot buy at any price
+
+D95 measured the limit: of **28** keyword-headed productions, only **5** have a surface a user could
+reproduce. `:keyword` clauses, `(:else …)` arms, bare-keyword infix and `match` braces are welded to
+heads the grammar already knows, and are parse errors on any other. An AST-level tier can only
+recombine surfaces the parser already accepts.
+
+**Exercised, not argued.** `80-adversarial/defmacro.lisp` defines `(unless-kw c :then body)`. The
+identical clause written for `defsyntax` is a parse error — measured, `Expecting token of type -->
+RParen` — and works here. That is D95's argument for the tier, made falsifiable.
+
+### A token is its IMAGE, and that is a decision
+
+D101 names three representations and warns against conflating them; this is the third. A handler sees
+`":then"` as a **string** and an argument as a vector of them, so it works with the vector and string
+operations the comptime evaluator already had — **no new `CTValue` case, no token object model** that
+would then have to be kept in step with the lexer.
+
+**The cost is stated rather than hidden**: a handler cannot ask a token what *kind* it is. Adding that
+means designing a token datatype, which nobody has ruled, and doing it here would smuggle one in.
+
+### What had to be added, and it was the floor's own names
+
+A handler that can index a vector but not build one is not a macro. The comptime evaluator gained
+`head`, `tail`, `empty`, `list` and `get` — **the floor's existing entries** (`floor.ts`), not surface
+invented for this tier. `list` is the variadic constructor and splices, which is how a handler joins
+two token runs.
+
+### It bracket-matches; it does not parse
+
+A file using a macro may not parse until after the expansion, so nothing in the expander may depend on
+the grammar accepting the file. Declarations and call sites are found by matching brackets over the
+token stream.
+
+**LL0023 is RE-AIMED rather than retired.** It used to mean "macros are not implemented", which is now
+false. It is still reachable and still useful: a form the expander cannot *read* — `(defmacro)` with no
+name — is left alone and arrives at the parser as a `macro-def` node nothing downstream models. The
+code now says that.
+
+### Refusals, and where they live
+
+Redefinition, arity, runaway (two budgets — depth and total, as `ExpandSyntaxAstVisitor` has, and for
+the same reason), a handler that fails, and one that answers a non-vector. They are thrown as
+**located parse-stage errors**, matching the lexer and parser at this seam, and deliberately not
+`LLxxxx`: parse-stage diagnostics are not coded as a class — D99 records the same for a stray comma —
+and coding these alone would say macros are special.
+
+**Not claimed: hygiene.** Neither tier has it, and neither corpus file pretends otherwise.
