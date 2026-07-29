@@ -700,7 +700,9 @@ division-erasure and stacked-decorator ones below. This one is open, verified in
     the fault was in how the inner layer was *called*, not in the layer. See below.
 *   ~~**A boxed int `/0` yields `Infinity`** instead of trapping.~~ — **CLOSED**, and the `Infinity`
     was a symptom: the *quotient* was wrong too. See below.
-*   **Deep non-tail recursion SIGSEGVs** where JS raises a catchable stack overflow.
+*   **Deep non-tail recursion SIGSEGVs** where JS raises a catchable stack overflow. **Re-measured
+    2026-07-30, and NOT fixed on purpose** — it needs a ruling and a cost Sabaka should choose. See
+    the entry below.
 
 **And four divergences that need a RULING, not a fix** — in each, C is at least as defensible as JS,
 so none should be "corrected" before it is decided:
@@ -880,6 +882,48 @@ Guarded by `80-adversarial/stacked_rest_decorators.lisp`: three layers deep (so 
 the first hop stops after the second), a fixed-parameter decorator stacked under a rest one (so
 "pack everything" would fail), and a nullary under a rest decorator (`__argc == 0`, the clamp's
 edge, and the NULL-argv call at the same time). It printed one line before the trap.
+
+### Deep recursion SIGSEGVs — measured, costed, and DELIBERATELY NOT FIXED
+
+The last of the audit's six. It is not left because it is hard to write; it is left because **both of
+its answers are Sabaka's**, and shipping either one quietly would be the wrong kind of progress.
+
+**Reproduced 2026-07-30.** `(fn depth [n] (if (== n 0) 0 (+ 1 (depth (- n 1)))))` at `n = 10^7`:
+
+| | C | JS |
+|---|---|---|
+| output | *nothing* | `caught: Maximum call stack size exceeded`, then `after` |
+| exit | 1 (SIGSEGV) | 0 |
+
+**Question one — is stack exhaustion catchable?** JS's answer is yes, but it was inherited from the
+host, not designed (D85 makes the same observation about `(/ 1 0)` there). D82 rules that a *data*
+error is catchable and a *contract violation* is not, and puts `OutOfMemory` on the fatal side
+explicitly, because building the error object allocates the very resource that ran out. Stack
+exhaustion is the same shape. So the D82-consistent answer is a **loud, reported panic** — which is a
+much smaller change than a catchable one, and diverges from JS on purpose.
+
+**Question two — what does the guard cost?** The obvious implementation is a stack-depth probe at
+every user function entry: record the base in `main`, compare `&local` against a limit. Measured with
+a C micro-benchmark (`fib(38)`, 5 runs, best of):
+
+| | plain | guarded | overhead |
+|---|---|---|---|
+| `-O0` | 0.134 s | 0.141 s | **4.8 %** |
+| `-O2` | 0.064 s | 0.113 s | **76 %** |
+
+The `-O2` number is the real one and it is not a rounding error: taking the address of a local
+**forces a stack frame**, so the guard defeats exactly the leaf-call optimisation that makes small
+functions cheap. A 76 % tax on call-heavy code, to catch a case that ends the program either way, is
+not a trade to make silently.
+
+**The cheaper design, if the tax is the objection:** guard only functions that can actually recurse.
+Direct self-recursion is a one-line check in the emitter (does the body call its own `cName`);
+mutual recursion needs a call graph over the module's top-level functions, which the backend already
+has the pieces for. Then leaf and iterative code pays nothing. It is more machinery, and it is
+**untested against the corpus** — no claim here about how many functions it would cover, because
+that number has not been measured.
+
+Nothing about this is blocked. It is written down, costed, and waiting on which answer is wanted.
 
 ### ~~Arithmetic is only checked at arity two~~ — **CLOSED (D92)**
 
