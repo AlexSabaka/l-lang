@@ -497,6 +497,13 @@ export const C_PASSING: readonly string[] = [
   // that happened to be zero, and `LL_NIL == 0`) -- the assertion there is that the answer is DEFINED,
   // not that it changed. Arity IS checked statically when the callee is known; that is LL0211.
   "80-adversarial/under_applied_closure.lisp",
+  // `==` walked a value graph as if it were a TREE. The JS shim opens `__ll_deep_eq` with `a === b`;
+  // C had no counterpart, so `(== a a)` on a self-referential object SIGSEGV'd where the oracle
+  // answered `true` -- the whole file printed nothing and exited 1. Identity closes that and decides
+  // nothing new. The TWINS case (two distinct self-referential values) is NOT decided here: it
+  // refuses under a depth budget, which the file asserts as catchable-and-continues rather than as an
+  // answer, because the two backends' messages differ and the ruling is open in roadmap.
+  "80-adversarial/cyclic_equality.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

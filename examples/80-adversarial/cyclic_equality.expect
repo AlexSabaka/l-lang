@@ -1,0 +1,7 @@
+self identical : true
+twins          : refused, and the program continued
+distinct equal : true
+distinct differ: false
+finite chain   : true
+same vector    : true
+done

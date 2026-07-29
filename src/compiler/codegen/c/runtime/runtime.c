@@ -1243,7 +1243,49 @@ static void ll_console_error(int n, ll_value *vals) { ll_console_write(stderr, n
 
 /* -- equality (D9: one nil; JS number semantics across Int/Real) --------------------------------- */
 
-static bool ll_deep_eq(ll_value a, ll_value b) {
+/* THE SAME OBJECT, not merely an equal one. The JS shim opens `__ll_deep_eq` with `if (a === b)
+   return true;` and this had no counterpart, so a structure that reaches itself recursed forever:
+   `(== a a)` on a self-referential object was a SIGSEGV on C where the oracle answered `true`.
+   Identity implying equality decides nothing that was not already decided -- it is the one case where
+   the recursive walk is provably redundant. */
+static bool ll_same_ref(ll_value a, ll_value b) {
+  if (a.tag != b.tag) return false;
+  switch (a.tag) {
+    case LL_STR: return a.as.s == b.as.s;
+    case LL_VEC: return a.as.v == b.as.v;
+    case LL_MAP: return a.as.m == b.as.m;
+    case LL_OBJ: return a.as.o == b.as.o;
+    case LL_CLOSURE: return a.as.fn == b.as.fn;
+    default: return false;
+  }
+}
+
+/* How deep the walk may go before it gives up. Identity closes the self-comparison case above, but
+   TWO DISTINCT structures that each reach themselves still have no finite walk -- and whether they
+   are EQUAL is an open question (co-inductive equality would say yes; nothing here has ruled it).
+   So this refuses rather than answering: a bounded, catchable, located failure in place of a stack
+   overflow, and no claim either way about the pair. The oracle blows its own call stack on the same
+   program, so it is not deciding this either.
+
+   10000 is far past any structure a program builds by nesting -- the recursion is per LEVEL, not per
+   element, so a million-element vector is depth 1 -- and far short of the C stack this frame would
+   need to exhaust it. */
+#define LL_EQ_MAX_DEPTH 10000
+
+static bool ll_deep_eq_at(ll_value a, ll_value b, int depth);
+
+static bool ll_deep_eq(ll_value a, ll_value b) { return ll_deep_eq_at(a, b, 0); }
+
+static bool ll_deep_eq_at(ll_value a, ll_value b, int depth) {
+  if (ll_same_ref(a, b)) return true;
+  /* RangeError and not ValueError, for TWO reasons and only one of them is taste. D82 makes a trap
+     catchable by finding a CLASS of the kind's name in the emitted module, and `ValueError` is not in
+     the ambient tower -- so the first spelling of this stayed fatal, escaping a `catch e :of Error`
+     that caught it perfectly on JS. `RangeError` is ambient, and it is also what the oracle's own
+     host raises when the same program exhausts its call stack, so the two backends now fail the same
+     way as well as reporting the same shape. */
+  if (depth > LL_EQ_MAX_DEPTH)
+    ll_trap("RangeError", "deep equality exceeded the maximum structure depth -- the values may be cyclic");
   if (a.tag == LL_NIL || b.tag == LL_NIL) return a.tag == LL_NIL && b.tag == LL_NIL;
   /* Int vs Int compares as int64. Widening BOTH to double -- which this did -- collapses every pair
      that differs above 2^53 onto the same value, so `9007199254740993 == 9007199254740992` was true.
@@ -1265,7 +1307,7 @@ static bool ll_deep_eq(ll_value a, ll_value b) {
     case LL_VEC: {
       if (a.as.v->len != b.as.v->len) return false;
       for (size_t i = 0; i < a.as.v->len; i++) {
-        if (!ll_deep_eq(a.as.v->items[i], b.as.v->items[i])) return false;
+        if (!ll_deep_eq_at(a.as.v->items[i], b.as.v->items[i], depth + 1)) return false;
       }
       return true;
     }
@@ -1275,7 +1317,7 @@ static bool ll_deep_eq(ll_value a, ll_value b) {
         bool found = false;
         for (size_t j = 0; j < b.as.m->len; j++) {
           if (ll_str_eq(a.as.m->keys[i], b.as.m->keys[j])) {
-            if (!ll_deep_eq(a.as.m->vals[i], b.as.m->vals[j])) return false;
+            if (!ll_deep_eq_at(a.as.m->vals[i], b.as.m->vals[j], depth + 1)) return false;
             found = true;
             break;
           }
@@ -1287,7 +1329,7 @@ static bool ll_deep_eq(ll_value a, ll_value b) {
     case LL_OBJ: {
       if (a.as.o->cls != b.as.o->cls) return false;
       for (size_t i = 0; i < a.as.o->cls->field_count; i++) {
-        if (!ll_deep_eq(a.as.o->fields[i], b.as.o->fields[i])) return false;
+        if (!ll_deep_eq_at(a.as.o->fields[i], b.as.o->fields[i], depth + 1)) return false;
       }
       return true;
     }

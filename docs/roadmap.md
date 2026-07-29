@@ -680,20 +680,22 @@ Six modules in one round, each ruled before it was written.
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
-### The four surviving C defects from the 2026-07-27 adversarial audit
+### The three surviving C defects from the 2026-07-27 adversarial audit
 
 The audit reported 29 findings; its triage adjudicated them to **11 distinct defects** behind a
-premise the audit had inverted (it named JS the oracle; D86 says C is the specification). **Seven are
+premise the audit had inverted (it named JS the oracle; D86 says C is the specification). **Eight are
 closed** — #1/#2 by D84's injective mangling, #3 by D85's division ruling, #4/#5 by commit `b466f71`
-turning six bare emitter throws into located LL0106s, and the NUL and `argv` ones below. These four
-are open, verified in source on 2026-07-28, and were recorded nowhere but the triage until now:
+turning six bare emitter throws into located LL0106s, and the NUL, `argv` and cyclic-equality ones
+below. These three are open, verified in source on 2026-07-28, and were recorded nowhere but the
+triage until now:
 
 *   ~~**Embedded NUL truncates a string literal, and two strings sharing a NUL prefix compare
     EQUAL.**~~ — **CLOSED**, and it was the one the triage named to fix first. See below.
 *   ~~**An under-applied closure reads past `argv`.**~~ — **CLOSED**, and it was worse than recorded:
     a *nullary* dynamic call dereferences a NULL `argv` and SIGSEGVs. See below.
-*   **Deep structural equality has no cycle guard and no pointer-identity short-circuit.** A
-    self-referential vector crashes C (no output, rc=1); JS answers `true`.
+*   ~~**Deep structural equality has no cycle guard and no pointer-identity short-circuit.**~~ —
+    the crash is **CLOSED**; whether two *distinct* cyclic values are equal is now an **open
+    ruling**, listed below. See both entries.
 *   **Stacked `...args` decorators trap** — `TypeError: expected a Vector` on C, correct on JS. Not
     stale against D75: the flat contract landed and two layers still break.
 *   **A boxed int `/0` yields `Infinity`** instead of trapping, so the `catch` never fires. A
@@ -703,6 +705,12 @@ are open, verified in source on 2026-07-28, and were recorded nowhere but the tr
 **And four divergences that need a RULING, not a fix** — in each, C is at least as defensible as JS,
 so none should be "corrected" before it is decided:
 
+*   **Are two DISTINCT cyclic values equal?** New, and raised by fixing the crash beside it.
+    Co-inductive equality (a memo of the pairs already being compared) answers **yes**, and is what
+    Node's `assert.deepStrictEqual` and Python's `==` both do. A depth budget answers **"cannot
+    tell"**, which is what ships today. Nothing else in the language has an opinion, and the oracle
+    has none either — it exhausts its own call stack on the program. Deciding it is a one-line
+    change either way; deciding it *silently* is what the budget exists to avoid.
 *   **Non-exhaustive match fall-through.** C traps a typed error; JS propagates **nil** into an
     `Int`- or `String`-typed slot. D9 exists to forbid exactly that in-band lie, so C looks right.
 *   **Closure capture of a loop-mutated `mut`.** JS gives `3 3 3` (one shared cell), C gives `0 1 2`
@@ -778,6 +786,37 @@ and then not extended to the fixed parameters next to it.
 
 Cost is one compare per parameter per *dynamic* call; a statically resolved call passes typed C
 arguments and never touches argv. Guarded by `80-adversarial/under_applied_closure.lisp`.
+
+### ~~`==` on a value that reaches itself crashed~~ — **CLOSED**, and it raised a ruling
+
+`ll_deep_eq` walked a value graph as if it were a **tree**. The JS shim opens `__ll_deep_eq` with
+`if (a === b) return true;`; the C one had no counterpart at all.
+
+| measured | C, before | C, after | JS |
+|---|---|---|---|
+| `(== a a)`, `a.next == a` | **SIGSEGV, exit 1** | `true` | `true` |
+| `(== a b)`, two such | SIGSEGV | catchable `RangeError` | catchable host stack overflow |
+
+**Identity implying equality decides nothing** — it is the one case where the recursive walk is
+provably redundant — so that half is a plain fix, `ll_same_ref` ahead of everything else.
+
+**The second row is not an answer and is not meant to be.** Two distinct structures that each reach
+themselves have no finite walk, and whether they are *equal* is undecided (see the ruling list
+above). A depth budget of 10000 — the recursion is per **level**, not per element, so a
+million-element vector is depth 1 — turns an unbounded recursion into a bounded, catchable, located
+failure. That is a safety property; it makes no claim about the pair, and swapping it for a
+pair-memo later is a one-line change.
+
+**The first spelling of the trap was still uncatchable, which is the part worth remembering.** D82
+makes a trap catchable by finding a **class of the kind's name** in the emitted module, and
+`ValueError` is not in the ambient tower — so `catch e :of Error` handled it perfectly on JS and it
+stayed fatal on C. A fix that trades one uncatchable failure for another is not a fix. `RangeError`
+is ambient, and is what the host raises for the same condition, so the backends now fail alike.
+
+Guarded by `80-adversarial/cyclic_equality.lisp`, which asserts the *shape* both backends share
+(caught, and execution continues) rather than the message, since those legitimately differ. It also
+pins that the short-circuit did not quietly turn `==` into `is`: distinct-but-equal values are still
+equal, differing ones still are not, and a finite chain still walks.
 
 ### ~~Arithmetic is only checked at arity two~~ — **CLOSED (D92)**
 
