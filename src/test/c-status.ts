@@ -466,6 +466,11 @@ export const C_PASSING: readonly string[] = [
   // (its `:step` cannot survive a coroutine split in a C `for(...)` update slot), and composition with
   // `take`, which a statement `for` could never do.
   "80-adversarial/loop_sequence.lisp",
+  // D101: the cons/list layer is DERIVED from the AST datum, demonstrated rather than asserted --
+  // `["+" 1 2]` in twenty lines of l-lang over quote's datum (M1) and the generated schema (M2), with
+  // no compiler change. GENERIC: the walk is driven by `child-fields-of`, so the nested `if` is
+  // special-cased nowhere. That is what M2's schema was generated for, two phases before it was needed.
+  "80-adversarial/cons_view.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

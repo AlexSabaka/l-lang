@@ -3,7 +3,7 @@
 Rulings on l-lang's language surface. **D1–D16 were taken 2026-07-12** following a full compiler
 audit (161 agents, 148 verified findings across grammar, types, codegen, analysis passes,
 stdlib/runtime, docs conformance, examples, and hygiene); the document has grown by ruling ever
-since, and runs to **D100** as of 2026-07-29. Every ruling was made with a native backend in front of
+since, and runs to **D101** as of 2026-07-29. Every ruling was made with a native backend in front of
 it — several are not stylistic preferences, they are things that cannot be retrofitted later without
 breaking every existing program.
 
@@ -63,7 +63,7 @@ touches; **bold** marks the one to read first.
 | **nil, Void, and optionality** | **D9** (what `nil` is — ruled twice), **D94** (a statement's value is `nil`, *typed* `Nil`), D49 (Void, void-in-value) |
 | **numbers** | **D88** (the tower: literals, promotion, `..`), **D92** (n-ary folds to binary), **D93** (`...` binds by adjacency), D8 (number literals), D71 (`_` separators, `0o`), D61 (bit operators), D43, D85 (division by zero), D89 (`Ring`), D90 (dimensions) |
 | **strings and text** | **D98** (`f"…"` is the only formatted string; `'` quotes), D67 (`r"…"` raw, `f"…"` formatted, the regex engine), D74, D52 (codepoints — see D50–D55) |
-| **metaprogramming** | **D69** (the three tiers — *what each receives*), **D95** (the three tiers — *when each runs*), **D96** (quasiquote `` ` `` and its holes `~x`), D3 + D3b/D3c/D3d, D73 (the in-house comptime interpreter), **D75** (`defmodifier` is flat), D68 (`:foo` is three roles), D72 (`defattribute`) |
+| **metaprogramming** | **D101** (homoiconicity: AST datum is truth, cons/list derived), **D69** (the three tiers — *what each receives*), **D95** (the three tiers — *when each runs*), **D96** (quasiquote `` ` `` and its holes `~x`), D3 + D3b/D3c/D3d, D73 (the in-house comptime interpreter), **D75** (`defmodifier` is flat), D68 (`:foo` is three roles), D72 (`defattribute`) |
 | **modules, packages, visibility** | **D35** (the package is the compilation unit), D6, D20–D22 (export, naming, layout), D7 (the stdlib boundary) |
 | **errors and conditions** | **D87** (the failure taxonomy), D82 (data is catchable, a contract violation is not), D62 (the typed error tower), **D47** (conditions / restarts), D85 |
 | **generators and async** | **D31** (`:gen` + `yield`), D32 (`Awaitable` / `Task`), D58 (coroutine lowering), D60 (`:async` stays C-refused), D33 (LINQ) |
@@ -7577,3 +7577,55 @@ its synthesized generator is nested by construction.
 
 **Only a loop BOUND to a name.** A loop as a call argument or a `return` operand is still D94's `nil` —
 `(+ (while …) 1)` is still LL0204. That line is an increment, not a principle, and roadmap says so.
+
+---
+
+## D101 — homoiconicity: the AST datum is the source of truth, cons/list is derived (2026-07-29)
+
+**Ruling.** A quoted form is the **AST datum** — a map carrying the node's `_type` and its own fields.
+The **cons/list** reading (`'(+ 1 2)` as `["+" 1 2]`) is a **derived layer**: an ordinary library over
+that datum, not a second representation the compiler maintains.
+
+This is the ruling taken **2026-07-22** and it is finally given a number. It has spent a year as a
+string in `src/test/manifest.ts` — the governing decision for the project's headline feature, stored
+in a test ledger.
+
+### It is derived, and that is now demonstrated rather than asserted
+
+`80-adversarial/cons_view.lisp` builds the cons view in **twenty lines of ordinary l-lang**, over
+quote's datum (D3d, and on the C backend as of **M1**) plus the generated schema in `std/llang/ast`
+(**M2**). No compiler change, no new primitive, no `eval`. `(to-cons '(+ 1 2))` is `["+" 1 2]` — the
+exact shape `12-quote-macros/00_quoting.lisp` has asked for in its own comment since it was written,
+while treating the map as the thing standing in its way. It was not in the way.
+
+**And the walk is GENERIC**, which is what makes "derived" a fact rather than a demo: it is driven by
+`child-fields-of`, so it converts a node kind it was never told about. The nested `if` in that file is
+special-cased nowhere. Which fields of a kind hold *nodes* is not derivable from the datum itself —
+that is precisely what M2's schema was generated for, two phases before anything needed it.
+
+### Why the ruling needed a number NOW
+
+D69 distinguishes the tiers by what each handler receives, and **D95** placed them in the pipeline.
+That turned a parked question into a load-bearing one: `defsyntax` receives the AST datum, and
+`defmacro` is specified to receive *a cons list of tokens*.
+
+**Those are not the same "cons list", and the distinction is the point.** There are three
+representations in play, and only naming them keeps the tiers honest:
+
+| | what it is | status |
+|---|---|---|
+| the **AST datum** | quote's map, `_type` + fields | **built**, both backends (M1) |
+| the **cons view** | a reading of that datum | **derivable today** as a library (this ruling) |
+| a **token list** | the pre-parse stream `defmacro` receives (D69/D95) | not built; a *third* thing |
+
+A token list is not the cons view with the parser removed — it is a different object at a different
+stage, and `defmacro` reads it precisely because textual rewriting should be honest about operating
+below the grammar. Conflating the two would make `defmacro` look like a `defsyntax` that happens to
+run earlier, which it is not.
+
+### What is still missing
+
+**The return trip.** `(eval x)` is **LL0236** on both backends: it needs a runtime AST interpreter,
+which is a phase of its own and not a stdlib function. Quote is the representation half of
+homoiconicity and that half is now complete on the reference backend; nothing here makes a form
+executable.

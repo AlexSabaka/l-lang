@@ -799,6 +799,25 @@ same-named bindings in one frame share an entry and an uncaptured one can inheri
 That is a cost, not a wrong answer — but only while the declaration, every read and every write agree,
 which is exactly what the third defect above broke. The corpus file pins that case.
 
+### ~~The homoiconicity ruling has no D-number~~ — **CLOSED (D101)**
+
+It had spent a year as a string in `src/test/manifest.ts` — the governing decision for the project's
+headline feature, stored in a test ledger. **D101** gives it a number, and D95 is why it needed one
+now: `defsyntax` receives the AST datum and `defmacro` is specified to receive *a cons list of
+tokens*, so "cons/list is a derived layer" had to say which cons list it meant.
+
+**Three representations, and only naming them keeps the tiers honest**: the AST datum (built, both
+backends), the cons *view* of it (derivable today as a library), and a *token* list (not built; a
+different object at a different stage). A token list is not the cons view with the parser removed.
+
+**Derived is now demonstrated rather than asserted.** `80-adversarial/cons_view.lisp` builds
+`["+" 1 2]` — the exact shape `00_quoting.lisp` has asked for since it was written — in twenty lines
+of l-lang over quote's datum and the generated schema, with no compiler change. And genericly: the
+walk is driven by `child-fields-of`, so the nested `if` is special-cased nowhere. That is what M2's
+schema was generated for, two phases before anything needed it.
+
+**Still missing: the return trip.** `(eval x)` is LL0236 on both backends.
+
 ### ~~`quote` has no C lowering~~ — **CLOSED (M1)**, and homoiconicity's return trip is what is left
 
 `'form` was `ELL0106 special:quote, no lowering exists` on the **reference** backend (D86), so the

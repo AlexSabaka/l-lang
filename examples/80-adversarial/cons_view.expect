@@ -1,0 +1,6 @@
+sum:    ["+" 1 2]
+data:   [1 2 3]
+nested: [["if" [">" "x" 10] "big" "small"]]
+kind:   list
+head:   +
+done

@@ -166,7 +166,11 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "CONS/LIST representation -- its own comment says `'(+ 1 2)` should be `[\"+\", 1, 2]` -- and " +
       "quote emits the AST datum, `{_type:'list', nodes:[...]}`. Which of those homoiconicity means " +
       "is a language decision, not a bug; the ruling taken 2026-07-22 is BOTH, with the AST datum as " +
-      "the source of truth and cons/list a derived layer. (2) It wants `(eval logic)`. RE-MEASURED " +
+      "the source of truth and cons/list a derived layer -- which is **D101** now, and this string " +
+      "was for a year the only place that ruling existed. DERIVED is no longer an assertion: " +
+      "`80-adversarial/cons_view.lisp` builds `[\"+\" 1 2]` in twenty lines of l-lang over the datum " +
+      "and the generated schema, GENERICALLY, with no compiler change. So (1) is not a blocker at " +
+      "all; it is a library this file could import. (2) It wants `(eval logic)`. RE-MEASURED " +
       "after S-a4: this is now a clean LL0236 on BOTH backends naming the missing runtime AST " +
       "interpreter, where it used to compile to the HOST's eval on JS -- evaluating JavaScript, not " +
       "l-lang -- and refuse with LL0107 on C. So the file's remaining failure is one honest " +
