@@ -23,12 +23,12 @@
         memo[n]
     )
 
-    (console.log '"Fib 10: {(fib 10)}") 
-    (console.log '"Fib 33: {(fib 33)}") 
-    (console.log '"Fib 33: {(fib 33)}") 
-    (console.log '"Fib 10 again: {(fib 10)}") 
+    (console.log f"Fib 10: {(fib 10)}") 
+    (console.log f"Fib 33: {(fib 33)}") 
+    (console.log f"Fib 33: {(fib 33)}") 
+    (console.log f"Fib 10 again: {(fib 10)}") 
 
-    (console.log '"Fib Base 10: {(fib-base 10)}") 
-    (console.log '"Fib Base 31: {(fib-base 31)}") 
-    (console.log '"Fib Base 10 again: {(fib-base 10)}") 
+    (console.log f"Fib Base 10: {(fib-base 10)}") 
+    (console.log f"Fib Base 31: {(fib-base 31)}") 
+    (console.log f"Fib Base 10 again: {(fib-base 10)}") 
 )

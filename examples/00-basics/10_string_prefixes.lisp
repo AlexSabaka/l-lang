@@ -43,8 +43,8 @@
     (console.log f"{count} of them")
 
     ;; The alias means the same thing, exactly.
-    (console.log '"hello {name}")
-    (console.log "aliases agree:" (== f"hello {name}" '"hello {name}"))
+    (console.log f"hello {name}")
+    (console.log "aliases agree:" (== f"hello {name}" f"hello {name}"))
 
     ;; -- the prefix is not a keyword ----------------------------------------------------------------
 

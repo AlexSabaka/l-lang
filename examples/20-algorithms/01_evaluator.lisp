@@ -18,5 +18,5 @@
     ))
 
     (let program <- Expr ["+" 10 ["*" 5 ["-" 10 8]]])
-    (console.log '"Result should be 20: {(eval-expr program)}")
+    (console.log f"Result should be 20: {(eval-expr program)}")
 )

@@ -19,7 +19,7 @@
     ;; nil-or-value as a STABLE string, so the golden does not depend on how a nil Int prints.
     (fn show [s <- String] -> String (
         (let r (try-parse-int s))
-        (return (if (== r nil) "nil" '"{(r)}"))
+        (return (if (== r nil) "nil" f"{(r)}"))
     ))
 
     ;; 1-5. char classes, fed real codepoints via `codepoint-at`.

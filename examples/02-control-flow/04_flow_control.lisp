@@ -22,6 +22,6 @@
         (i := (- i 1))
     ))
 
-    (console.log '"Factorial of 5: {(factorial 5)}")
-    (console.log '"Status 200 is: {(check-status 200)}")
+    (console.log f"Factorial of 5: {(factorial 5)}")
+    (console.log f"Status 200 is: {(check-status 200)}")
 )

@@ -191,7 +191,7 @@ const CASES: SmokeCase[] = [
   },
   {
     name: "formatted string interpolation mode push/pop",
-    source: '(let greeting \'"Hello, {name}!")',
+    source: '(let greeting f"Hello, {name}!")',
     check: ({ ast }) => {
       const variable = unwrapList(ast.program[0]);
       const value = variable.value;

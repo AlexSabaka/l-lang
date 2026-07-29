@@ -12,7 +12,7 @@
         ;; Await Expression
         (let data (await (fetch-fake-data 42)))
         
-        (console.log '"Received: {(data)}")
+        (console.log f"Received: {(data)}")
         (return data)
     ))
 

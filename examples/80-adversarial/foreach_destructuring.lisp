@@ -47,29 +47,29 @@
     )
 
     ;; 1. the index-loop arm.
-    (for :each [a b] :from [[1 2] [3 4]] :then (console.log '"idx {(a)},{(b)}"))
+    (for :each [a b] :from [[1 2] [3 4]] :then (console.log f"idx {(a)},{(b)}"))
 
     ;; 2. the protocol arm.
-    (for :each [k v] :from (PairFeed 0) :then (console.log '"proto {(k)},{(v)}"))
+    (for :each [k v] :from (PairFeed 0) :then (console.log f"proto {(k)},{(v)}"))
 
     ;; 3. more NAMES than members -- the tail is nil, not a trap. Tested as `(== r nil)` rather than
     ;;    by printing `r`: the two backends RENDER the bottom value differently in interpolation
     ;;    (C's ToString says "null", JS's `${undefined}` says "undefined"), which is a real divergence
     ;;    but a different one, and pinning it here would make this guard fail for the wrong reason.
-    (for :each [p q r] :from [[7 8]] :then (console.log '"short {(p)},{(q)} r-nil={(== r nil)}"))
+    (for :each [p q r] :from [[7 8]] :then (console.log f"short {(p)},{(q)} r-nil={(== r nil)}"))
 
     ;; 4. more MEMBERS than names -- the extras are dropped.
-    (for :each [s t] :from [[1 2 3]] :then (console.log '"long {(s)},{(t)}"))
+    (for :each [s t] :from [[1 2 3]] :then (console.log f"long {(s)},{(t)}"))
 
     ;; 5. `:else` sees the final bindings, which is why they are not declared in the loop body.
     (for
         :each [m n]
         :from [[1 2] [5 6]]
-        :then (console.log '"loop {(m)},{(n)}")
-        :else (console.log '"after {(m)},{(n)}")
+        :then (console.log f"loop {(m)},{(n)}")
+        :else (console.log f"after {(m)},{(n)}")
     )
 
     ;; 6. kebab-case names mangle on the way to C.
     (for :each [item-name item-qty] :from [["bolt" 4]] :then (
-        (console.log '"kebab {(item-name)} x{(item-qty)}")))
+        (console.log f"kebab {(item-name)} x{(item-qty)}")))
 )

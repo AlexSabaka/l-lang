@@ -12,7 +12,7 @@
         )
 
         (fn str [] -> String
-            (return '"{(this.real)} + {(this.imag)}i")
+            (return f"{(this.real)} + {(this.imag)}i")
         )
     )
 

@@ -341,7 +341,7 @@ to-string(v)        the `+` string-concat context, and ONLY that context. JS ToS
                     vec comma-joined, map "[object Object]".
 
 display(v)          every human-facing rendering: `console.log`, `print`'s {N} substitution, and
-                    `'"...{(expr)}"` interpolation.
+                    `f"...{(expr)}"` interpolation.
                       = the raw characters, if v is a String at the TOP level
                       = inspect(v, 0) otherwise
                     The top-level-bare rule is what keeps `(print "Hello, {0}!" "World")` printing

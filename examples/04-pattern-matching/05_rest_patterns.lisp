@@ -8,14 +8,14 @@
 (
     (fn describe [xs] (
         (match xs {
-            [a ...rest]   => '"head {(a)} tail-len {(rest.length)} tail0 {(rest[0])}"
+            [a ...rest]   => f"head {(a)} tail-len {(rest.length)} tail0 {(rest[0])}"
             _             => "no match"
         })
     ))
 
     (fn pair-then-rest [xs] (
         (match xs {
-            [a b ...rest] => '"a {(a)} b {(b)} rest-len {(rest.length)}"
+            [a b ...rest] => f"a {(a)} b {(b)} rest-len {(rest.length)}"
             _             => "too short"
         })
     ))

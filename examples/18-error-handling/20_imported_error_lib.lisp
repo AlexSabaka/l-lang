@@ -4,7 +4,7 @@
     (defclass Rejected :extends Error (let :ctor message <- String))
     (fn parse-or-throw [s <- String] -> Int (
         (if (== s "42") (return 42))
-        (throw (new Rejected '"bad: {(s)}"))
+        (throw (new Rejected f"bad: {(s)}"))
     ))
     (export Rejected parse-or-throw)
 )

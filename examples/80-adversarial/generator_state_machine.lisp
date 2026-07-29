@@ -51,7 +51,7 @@
     ;; 3. two live instances, interleaved -- each carries its own frame.
     (let ia (iter (count-up 3)))
     (let ib (iter (count-up 3)))
-    (console.log '"a{(next ia)} b{(next ib)} a{(next ia)} a{(next ia)} b{(next ib)}")
+    (console.log f"a{(next ia)} b{(next ib)} a{(next ia)} a{(next ia)} b{(next ib)}")
 
     ;; 4. `(return)` ends the sequence early.
     (fn :gen upto-stop [n <- Int] -> Iterator<Int> (
@@ -64,5 +64,5 @@
 
     ;; 5. pulling PAST exhaustion keeps answering nil, rather than restarting the tail.
     (let it (iter (count-up 1)))
-    (console.log '"{(next it)} {(== (next it) nil)} {(== (next it) nil)}")
+    (console.log f"{(next it)} {(== (next it) nil)} {(== (next it) nil)}")
 )

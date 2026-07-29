@@ -18,5 +18,5 @@
     
     ;; 4. Vector methods (assuming std lib shim)
     (let first-food (head sloth-profile.foods))
-    (console.log '"First food: {(first-food)}")
+    (console.log f"First food: {(first-food)}")
 )

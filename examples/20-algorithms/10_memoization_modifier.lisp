@@ -38,18 +38,18 @@
 
     ;; Test manual memoization
     (console.log "=== Manual Memoization Test ===")
-    (console.log '"Manual Fib 10: {(fib-manual 10)}") ;; Calc
-    (console.log '"Manual Fib 15: {(fib-manual 15)}") ;; Calc
-    (console.log '"Manual Fib 15: {(fib-manual 15)}") ;; Should be instant (cached)
-    (console.log '"Manual Fib 10 again: {(fib-manual 10)}") ;; Should be instant (cached)
+    (console.log f"Manual Fib 10: {(fib-manual 10)}") ;; Calc
+    (console.log f"Manual Fib 15: {(fib-manual 15)}") ;; Calc
+    (console.log f"Manual Fib 15: {(fib-manual 15)}") ;; Should be instant (cached)
+    (console.log f"Manual Fib 10 again: {(fib-manual 10)}") ;; Should be instant (cached)
 
     ;; Test base function (no memoization)
     (console.log "=== Base Function Test (No Memoization) ===")
-    (console.log '"Base Fib 10: {(fib-base 10)}") ;; Always calculates
-    (console.log '"Base Fib 15: {(fib-base 15)}") ;; Always calculates
+    (console.log f"Base Fib 10: {(fib-base 10)}") ;; Always calculates
+    (console.log f"Base Fib 15: {(fib-base 15)}") ;; Always calculates
 
     ;; Test automatic memoization (will work once modifier evaluation is implemented)
     (console.log "=== Automatic Memoization Test ===")
-    (console.log '"Auto Fib 10: {(fib-auto 10)}") ;; Will be memoized when :memoized is implemented
-    (console.log '"Auto Fib 15: {(fib-auto 15)}") ;; Will be memoized when :memoized is implemented
+    (console.log f"Auto Fib 10: {(fib-auto 10)}") ;; Will be memoized when :memoized is implemented
+    (console.log f"Auto Fib 15: {(fib-auto 15)}") ;; Will be memoized when :memoized is implemented
 )

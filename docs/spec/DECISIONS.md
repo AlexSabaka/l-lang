@@ -3,7 +3,7 @@
 Rulings on l-lang's language surface. **D1–D16 were taken 2026-07-12** following a full compiler
 audit (161 agents, 148 verified findings across grammar, types, codegen, analysis passes,
 stdlib/runtime, docs conformance, examples, and hygiene); the document has grown by ruling ever
-since, and runs to **D96** as of 2026-07-29. Every ruling was made with a native backend in front of
+since, and runs to **D98** as of 2026-07-29. Every ruling was made with a native backend in front of
 it — several are not stylistic preferences, they are things that cannot be retrofitted later without
 breaking every existing program.
 
@@ -62,7 +62,7 @@ touches; **bold** marks the one to read first.
 | **control flow and `return`** | D12 (control forms), **D40** (`return` returns from the function), **D94** (every form yields a value; `break` does not exist), D83 |
 | **nil, Void, and optionality** | **D9** (what `nil` is — ruled twice), **D94** (a statement's value is `nil`, *typed* `Nil`), D49 (Void, void-in-value) |
 | **numbers** | **D88** (the tower: literals, promotion, `..`), **D92** (n-ary folds to binary), **D93** (`...` binds by adjacency), D8 (number literals), D71 (`_` separators, `0o`), D61 (bit operators), D43, D85 (division by zero), D89 (`Ring`), D90 (dimensions) |
-| **strings and text** | D67 (`r"…"` raw, `f"…"` formatted, the regex engine), D74, D52 (codepoints — see D50–D55) |
+| **strings and text** | **D98** (`f"…"` is the only formatted string; `'` quotes), D67 (`r"…"` raw, `f"…"` formatted, the regex engine), D74, D52 (codepoints — see D50–D55) |
 | **metaprogramming** | **D69** (the three tiers — *what each receives*), **D95** (the three tiers — *when each runs*), **D96** (quasiquote `` ` `` and its holes `~x`), D3 + D3b/D3c/D3d, D73 (the in-house comptime interpreter), **D75** (`defmodifier` is flat), D68 (`:foo` is three roles), D72 (`defattribute`) |
 | **modules, packages, visibility** | **D35** (the package is the compilation unit), D6, D20–D22 (export, naming, layout), D7 (the stdlib boundary) |
 | **errors and conditions** | **D87** (the failure taxonomy), D82 (data is catchable, a contract violation is not), D62 (the typed error tower), **D47** (conditions / restarts), D85 |
@@ -945,7 +945,7 @@ Another declared-type-is-a-lie, in the family of `TypeDefNode` (Phase 2) and `Cl
 (P7a). Normalised to PEG's shape, which preserves the structure. Fixing the declared type immediately
 caught a consumer that had assumed the array and was emitting `'((+ 1 2))` — a different program.
 
-`'"Hello {(name)}"` is **not** a quote — it is a `formatted-string`, split off by a negative lookahead
+`f"Hello {(name)}"` is **not** a quote — it is a `formatted-string`, split off by a negative lookahead
 (`/'(?!")/`) in both frontends. They share a leading `'` and nothing else. Pinned by a harness case.
 
 **This is code as DATA, not code as CODE.** There is no `eval`.
@@ -7446,3 +7446,43 @@ its job. One per-alternative ambiguity suppression in the `expression` rule, bec
 operator-name character and `~[…]` is a prefix path of `assignmentOrExpr` as well; suppressed on the
 **alternative** rather than the rule, since that rule's ambiguity detection is what caught the
 `quoteExpr` defect its own comment records.
+
+---
+
+## D98 — `f"…"` is the only formatted string; `'` quotes and nothing else (2026-07-29)
+
+**Ruling.** `'"…"` is **retired**. `f"…"` is the sole interpolated-string spelling, and `'` is the
+quote reader-macro with no exceptions — `'"abc"` is now the quoted **string datum**, exactly as `'x`
+is the quoted identifier and `'(a b)` the quoted list.
+
+### Reversing D67, and on what grounds
+
+D67 retained `'"…"` as an alias, and the argument was correct as far as it went: `'` and `"` are the
+same key under shift while `f` and `"` are not, and `'` is already the quote reader-macro, so `'"`
+reads as a Lisp shorthand rather than as debt.
+
+What made it debt anyway is that **`'` then meant two unrelated things, decided by a negative
+lookahead** — `/'(?!")/` for quote against `/(?:'|f)"/` for interpolation. One character, two
+grammars, disambiguated by what followed it. And the language grew a *third* `'`-adjacent operator
+while that was true: D96's quasiquote sits next to it in the same visual family.
+
+Removing the alias also let the lookahead go, which closed a hole nobody had noticed: with the alias
+retired but the lookahead kept, `'"` tokenized as **nothing at all** and surfaced as a raw lexer
+throw. `'` matches everything now, and `'"abc"` means the obvious thing.
+
+### The migration, and why it was not a `sed`
+
+**347 rewrites across 90 files**, driven by the **lexer** rather than by a regex, because `'"` is an
+opener only when the `'` is not already inside something. Two counter-examples were live in the tree:
+
+*   `(strlen "cafe'")` — the `'` is the string's last character and the `"` closes it. A blind
+    rewrite yields `"cafef"`: silently wrong, no diagnostic.
+*   `;; \`'"{(f 1 2 3)}"\` on a one-parameter f…` — prose *about* the syntax, which is not source.
+
+**37 such sites were correctly left alone.** The token comment D67 left behind predicted the sweep's
+size exactly (*"a 384-site sweep"* — 347 + 37 = 384) and named the trap: *"embedded in TypeScript test
+sources (the trap that bit the P3a `<-` migration)"*. Nine of those turned out to be real embedded
+l-lang inside template literals and were migrated by hand; the rest are TypeScript string literals
+like `ch === '"'`, which a sed would have corrupted.
+
+The corpus did not move: **JS 286 / C 281**, `test:codegen` 312/0, before and after.

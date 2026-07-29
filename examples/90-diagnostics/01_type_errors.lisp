@@ -8,7 +8,7 @@
 ;; Now it can, and this asserts the CODES rather than an output that should never have existed.
 (
     (fn add-integers [a <- Int b <- Int] -> Int (+ a b))
-    (fn concat-strings [a <- String b <- Any] -> String '"{(a)}{(b)}")
+    (fn concat-strings [a <- String b <- Any] -> String f"{(a)}{(b)}")
 
     ;; Int where a String is declared.
     (console.log (concat-strings 2 3))

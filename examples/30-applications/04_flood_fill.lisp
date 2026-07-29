@@ -140,7 +140,7 @@
     (console.log "revealed by a flood fill from corner (0,0):")
     (do-reveal 0 0)
     (print-grid false)
-    (console.log '"cells revealed: {(revealed-count)}")
+    (console.log f"cells revealed: {(revealed-count)}")
 
     (console.log "--- same board, all mines shown ---")
     (print-grid true)

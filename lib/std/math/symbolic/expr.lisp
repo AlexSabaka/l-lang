@@ -345,13 +345,13 @@
             "var" => (return e.sym)
             "unary" => (
                 (let s (to-string e.args[0]))
-                (if (== e.sym "neg") (return '"-({(s)})"))
-                (return '"{(e.sym)}({(s)})")
+                (if (== e.sym "neg") (return f"-({(s)})"))
+                (return f"{(e.sym)}({(s)})")
             )
             "binary" => (
                 (let a (to-string e.args[0]))
                 (let b (to-string e.args[1]))
-                (return '"({(a)} {(binop-symbol e.sym)} {(b)})")
+                (return f"({(a)} {(binop-symbol e.sym)} {(b)})")
             )
             "call" => (
                 (mut out "")
@@ -361,7 +361,7 @@
                     (out := (+ out (to-string e.args[i])))
                     (i := (+ i 1))
                 ))
-                (return '"{(e.sym)}({(out)})")
+                (return f"{(e.sym)}({(out)})")
             )
             _ => (return "?")
         }))

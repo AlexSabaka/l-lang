@@ -196,7 +196,7 @@
     (fn print-state [label <- String] -> Void
         (console.log label)
         (print-board)
-        (console.log '"moves {(world.moves)}  pushes {(world.pushes)}  undo-depth {(undo-stack.length)}  solved {(solved)}")
+        (console.log f"moves {(world.moves)}  pushes {(world.pushes)}  undo-depth {(undo-stack.length)}  solved {(solved)}")
         (console.log ""))
 
     ;; A move plus a one-line verdict of whether it was accepted.

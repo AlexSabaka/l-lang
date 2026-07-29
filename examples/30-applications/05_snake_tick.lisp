@@ -157,7 +157,7 @@
         (let hx h[0])
         (let hy h[1])
         (let len world.snake.length)
-        (console.log '"{(label)}  dir={(dir-name world.dir)}  head=[{(hx)},{(hy)}]  len={(len)}  score={(world.score)}  alive={(world.alive)}"))
+        (console.log f"{(label)}  dir={(dir-name world.dir)}  head=[{(hx)},{(hy)}]  len={(len)}  score={(world.score)}  alive={(world.alive)}"))
 
     (fn tick-with [label <- String d <- Any] -> Void
         (world.nextdir := d)
@@ -212,8 +212,8 @@
     (print-status "start ")
 
     (console.log "-- try-turn is pure; current heading is right --")
-    (console.log '"  steer left -> {(dir-name (try-turn Direction:left))}   (180 reversal rejected)")
-    (console.log '"  steer up   -> {(dir-name (try-turn Direction:up))}      (accepted)")
+    (console.log f"  steer left -> {(dir-name (try-turn Direction:left))}   (180 reversal rejected)")
+    (console.log f"  steer up   -> {(dir-name (try-turn Direction:up))}      (accepted)")
 
     (console.log "-- ticks --")
     (tick-with "t1 in=right" Direction:right)
@@ -224,5 +224,5 @@
 
     (console.log "-- final frame --")
     (render)
-    (console.log '"final snake: {(body-str)}")
+    (console.log f"final snake: {(body-str)}")
 )

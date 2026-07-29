@@ -11,8 +11,8 @@
         (return (is-even (- n 1))) ;; Calls function defined above
     ))
 
-    (console.log '"10 is even? {(is-even 10)}")
-    (console.log '"11 is even? {(is-even 11)}")
+    (console.log f"10 is even? {(is-even 10)}")
+    (console.log f"11 is even? {(is-even 11)}")
 
 
     (let numbers [1 2 3 4 5 6])
@@ -25,5 +25,5 @@
     ))
 
     (let sum (reduce-rec numbers 0 (fn [acc x] (+ acc x))))
-    (console.log '"Sum (should be 21): {(sum)}")
+    (console.log f"Sum (should be 21): {(sum)}")
 )

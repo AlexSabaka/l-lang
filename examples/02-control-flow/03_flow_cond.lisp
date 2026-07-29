@@ -8,8 +8,8 @@
         )
     )
 
-    (console.log '"95 is: {(get-grade 95)}")
-    (console.log '"85 is: {(get-grade 85)}")
-    (console.log '"75 is: {(get-grade 75)}")
-    (console.log '"50 is: {(get-grade 50)}")
+    (console.log f"95 is: {(get-grade 95)}")
+    (console.log f"85 is: {(get-grade 85)}")
+    (console.log f"75 is: {(get-grade 75)}")
+    (console.log f"50 is: {(get-grade 50)}")
 )

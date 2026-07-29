@@ -18,7 +18,7 @@
     (let colors ["red" "green" "blue"])
     (mut idx 0)
     (for :each color :from colors :then (
-        (console.log '"Color {(idx)}: {(color)}")
+        (console.log f"Color {(idx)}: {(color)}")
         (idx := (+ idx 1))
     ))
 
@@ -40,7 +40,7 @@
     ])
     
     (for :each user :from users :then (
-        (console.log '"Name: {(user.name)}, Age: {(user.age)}")
+        (console.log f"Name: {(user.name)}, Age: {(user.age)}")
     ))
 
     ;; 5. Nested for-each

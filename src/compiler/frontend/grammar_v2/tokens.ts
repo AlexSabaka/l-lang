@@ -391,15 +391,23 @@ export const RawString = createToken({
 });
 // Formatted String Tokens (lexer mode switching)
 //
-// `f"…"` is the canonical formatted string as of D67, and `'"…"` is RETAINED as an alias rather than
-// deprecated: Sabaka's objection is ergonomic and correct -- `'` and `"` are the same key under shift
-// while `f` and `"` are not -- and `'` is already the quote reader-macro, so `'"` reads as a Lisp
-// shorthand rather than as debt. Keeping both also avoids a 384-site sweep across lib, examples, the
-// games repo and the scratchpads, two of which are embedded in TypeScript test sources (the trap that
-// bit the P3a `<-` migration). Retiring `'"` later is one sed, so this is the reversible order.
+// D98 -- `f"…"` is the ONLY formatted string. `'` is quoting, and nothing else.
+//
+// `'"…"` was RETAINED as an alias by D67 on an ergonomic argument that was correct as far as it went:
+// `'` and `"` are the same key under shift while `f` and `"` are not, and `'` is already the quote
+// reader-macro, so `'"` reads as a Lisp shorthand rather than as debt. What made it debt anyway is
+// that `'` then meant two unrelated things decided by a NEGATIVE LOOKAHEAD -- `/'(?!")/` for quote,
+// `/(?:'|f)"/` here -- and the language grew a third `'`-adjacent operator (D96's quasiquote) while
+// that was true.
+//
+// The migration was 347 rewrites across 90 files and was driven by THIS LEXER rather than by a sed,
+// because `'"` is an opener only when the `'` is not already inside something: `(strlen "cafe'")`
+// contains `'"` where the quote is the string's last character, and a blind rewrite silently yields
+// `"cafef"`. 37 such sites were correctly left alone. The old comment here predicted the size of the
+// sweep exactly ("a 384-site sweep") and named the trap ("embedded in TypeScript test sources").
 export const FormattedStringStart = createToken({
   name: "FormattedStringStart",
-  pattern: /(?:'|f)"/,
+  pattern: /f"/,
   push_mode: "formatted_string_mode",
 });
 export const FormattedStringEnd = createToken({
@@ -422,7 +430,12 @@ export const StringContent = createToken({
   pattern: /(?:[^"\\{]|\\["\\/bfnrtu{]|\\u[0-9a-fA-F]{4})+/,
   line_breaks: true,
 });
-export const Quote = createToken({ name: "Quote", pattern: /'(?!")/ }); // Not followed by "
+// D98 -- `'` QUOTES, with no exceptions. The negative lookahead is gone with the `'"…"` alias it
+// existed to carve out: `'` meant two unrelated things and a lookahead decided which. `'"abc"` is now
+// what it reads as -- the quoted STRING datum -- exactly as `'x` is the quoted identifier and
+// `'(a b)` the quoted list. Leaving the lookahead in place made `'"` tokenize as NOTHING, which
+// surfaced as a raw lexer throw rather than as any kind of answer.
+export const Quote = createToken({ name: "Quote", pattern: /'/ });
 // D96 -- QUASIQUOTE. A template: quoted like `'`, except that a tight `~x` inside it is an UNQUOTE
 // and splices `x`'s value in. Backtick was measured free before it was taken: it is not a token, and
 // its only occurrences in the corpus and stdlib are inside comments.

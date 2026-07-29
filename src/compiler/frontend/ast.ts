@@ -194,7 +194,7 @@ export interface ListNode extends ASTNode<"list"> {
  * Another declared-type-is-a-lie, in the same family as `TypeDefNode` (Phase 2) and `ClassNode.generics`
  * (P7a). Normalised to PEG's shape, which is the one that preserves the structure.
  *
- * NOTE `'"Hello {(name)}"` is NOT a quote -- it is a `formatted-string`, split off by a negative
+ * NOTE `f"Hello {(name)}"` is NOT a quote -- it is a `formatted-string`, split off by a negative
  * lookahead (`/'(?!")/`) in both frontends. Quote and string interpolation share a leading `'` and
  * nothing else.
  */

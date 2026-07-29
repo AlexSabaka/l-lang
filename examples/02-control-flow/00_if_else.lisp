@@ -31,7 +31,7 @@
                 "C"
                 "F"))))
     
-    (console.log '"Score {(score)} is grade {(grade)}")
+    (console.log f"Score {(score)} is grade {(grade)}")
 
     ;; 4. if without else (returns nil if condition false)
     (let message (if (> age 30)

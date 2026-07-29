@@ -81,7 +81,7 @@
     )
     (defstruct Robot :implements Greeter
         (let :ctor id <- String)
-        (fn greet [] -> String (return '"beep {(this.id)}"))
+        (fn greet [] -> String (return f"beep {(this.id)}"))
     )
     (fn hail [g <- Greeter] -> String (return (g.greet)))
     (console.log (hail (Robot "R2")))

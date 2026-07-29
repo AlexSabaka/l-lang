@@ -68,10 +68,10 @@
     (let sched (Scheduler sc))
     (mut log <- String[] [])
 
-    (sched.every (ms 100) (fn [] -> Void (log.push '"tick@{(/ (sc.now) 1000000)}")))
-    (sched.after (ms 250) (fn [] -> Void (log.push '"once@{(/ (sc.now) 1000000)}")))
+    (sched.every (ms 100) (fn [] -> Void (log.push f"tick@{(/ (sc.now) 1000000)}")))
+    (sched.after (ms 250) (fn [] -> Void (log.push f"once@{(/ (sc.now) 1000000)}")))
     (sched.after (ms 350) (fn [] -> Void (
-        (log.push '"stop@{(/ (sc.now) 1000000)}")
+        (log.push f"stop@{(/ (sc.now) 1000000)}")
         (sched.stop))))
     (sched.run)
     (console.log "fired:  " log)

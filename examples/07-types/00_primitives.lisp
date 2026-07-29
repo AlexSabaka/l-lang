@@ -3,7 +3,7 @@
     (fn add-integers [a <- Int b <- Int] -> Int (+ a b))
 
     ;; This function concatenates two strings
-    (fn concat-strings [a <- String b <- Any] -> String '"{(a)}{(b)}")
+    (fn concat-strings [a <- String b <- Any] -> String f"{(a)}{(b)}")
 
     ;; No errors here
     (console.log (concat-strings "Hello, " "world!"))

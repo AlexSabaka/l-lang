@@ -33,13 +33,13 @@
             (if (!= current nil) (
                 ;; Check goal (value 9)
                 (if (== grid[current.y, current.x] 9)
-                    (return '"Found goal at {(current.x)}, {(current.y)}")
-                    (console.log '"Visiting {(current.x)}, {(current.y)}"))
+                    (return f"Found goal at {(current.x)}, {(current.y)}")
+                    (console.log f"Visiting {(current.x)}, {(current.y)}"))
 
                 (for :each m :from moves :then (
                     (let next-x (+ current.x m[0]))
                     (let next-y (+ current.y m[1]))
-                    (let key '"{(next-x)},{(next-y)}")
+                    (let key f"{(next-x)},{(next-y)}")
 
                     ;; Check bounds and walls.
                     ;;

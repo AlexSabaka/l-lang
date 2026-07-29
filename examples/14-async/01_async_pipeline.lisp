@@ -24,7 +24,7 @@
     (fn :async fetch-row [id <- Int] -> Task<String>
         (let rows ["ada:1815" "alan:1912" "grace:1906"])
         (when (>= id (length rows)) :then
-            (throw (Error '"no row with id {(id)}")))
+            (throw (Error f"no row with id {(id)}")))
         (return rows[id]))
 
     ;; --- Stage 2: parse ----------------------------------------------------
@@ -40,7 +40,7 @@
         (let rec (await (parse-row id)))
         (let name rec[0])
         (let year rec[1])
-        (return '"{(name)} was born in {(year)}"))
+        (return f"{(name)} was born in {(year)}"))
 
     ;; --- Driver ------------------------------------------------------------
     (fn :async main [] -> Task<Void>

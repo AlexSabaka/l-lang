@@ -24,7 +24,7 @@
         (fn :operator == [o <- Vec2] -> Boolean
             (return (&& (== this.x o.x) (== this.y o.y))))
 
-        (fn show [] -> String (return '"({(this.x)},{(this.y)})")))
+        (fn show [] -> String (return f"({(this.x)},{(this.y)})")))
 
     ;; An :extension over the nominal struct type.
     (fn :extension manhattan [self <- Vec2 o <- Vec2] -> Int
@@ -38,16 +38,16 @@
     (let b (Vec2 3 4))
     (let sum (+ a b))
 
-    (console.log '"a       = {(a.show)}")
-    (console.log '"b       = {(b.show)}")
-    (console.log '"a + b   = {(sum.show)}")
+    (console.log f"a       = {(a.show)}")
+    (console.log f"b       = {(b.show)}")
+    (console.log f"a + b   = {(sum.show)}")
 
     ;; Overloaded == is structural, not reference identity.
-    (console.log '"a == a       = {(== a a)}")
-    (console.log '"a == b       = {(== a b)}")
-    (console.log '"a+b == (4,6) = {(== sum (Vec2 4 6))}")
+    (console.log f"a == a       = {(== a a)}")
+    (console.log f"a == b       = {(== a b)}")
+    (console.log f"a+b == (4,6) = {(== sum (Vec2 4 6))}")
 
     ;; manhattan is called as a method on its first argument.
-    (console.log '"manhattan(a, a+b) = {(a.manhattan sum)}")
-    (console.log '"manhattan(a, b)   = {(a.manhattan b)}")
+    (console.log f"manhattan(a, a+b) = {(a.manhattan sum)}")
+    (console.log f"manhattan(a, b)   = {(a.manhattan b)}")
 )

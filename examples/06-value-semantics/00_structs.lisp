@@ -3,7 +3,7 @@
         (let :ctor x <- Real 0)
         (let :ctor y <- Real 0)
 
-        (fn str [] -> String (return '"({(this.x)}, {(this.y)})"))
+        (fn str [] -> String (return f"({(this.x)}, {(this.y)})"))
         (fn length [] -> Real (return (Math.sqrt (+ (* this.x this.x) (* this.y this.y)))))
     
     )
@@ -16,7 +16,7 @@
     (let v2 <- vec2 (vec2 1.0 2.0))
     (let v3 <- vec2 (+ v1 v2))
 
-    (console.log '"v1: {(v1.str)}, length: {(v1.length)}")
-    (console.log '"v2: {(v2.str)}, length: {(v2.length)}")
-    (console.log '"v3: {(v3.str)}, length: {(v3.length)}")
+    (console.log f"v1: {(v1.str)}, length: {(v1.length)}")
+    (console.log f"v2: {(v2.str)}, length: {(v2.length)}")
+    (console.log f"v3: {(v3.str)}, length: {(v3.length)}")
 )

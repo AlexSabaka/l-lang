@@ -36,7 +36,7 @@
     (let evens (filter numbers (fn [x] (== (% x 2) 0))))
     (let sum (reduce numbers (fn [acc x] (+ acc x)) 0))
 
-    (console.log '"Squares (should be [1, 4, 9, 16, 25, 36]): {(squares)}")
-    (console.log '"Evens (should be [2, 4, 6]): {(evens)}")
-    (console.log '"Sum (should be 21): {(sum)}")
+    (console.log f"Squares (should be [1, 4, 9, 16, 25, 36]): {(squares)}")
+    (console.log f"Evens (should be [2, 4, 6]): {(evens)}")
+    (console.log f"Sum (should be 21): {(sum)}")
 )

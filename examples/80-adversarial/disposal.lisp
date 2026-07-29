@@ -93,9 +93,9 @@
     (console.log "6 generator parking:")
     (fn :gen nats [] -> Iterator<Int> ((mut k 0) (while true ((yield k) (k := (+ k 1))))))
     (let g (nats))
-    (console.log '"  first={(next g)}")
+    (console.log f"  first={(next g)}")
     (dispose g)
-    (console.log '"  after-dispose-nil={(== (next g) nil)}")
+    (console.log f"  after-dispose-nil={(== (next g) nil)}")
 
     ;; 7. THE NEGATIVE HALF: a source with no `dispose` survives the same operators.
     (console.log "7 no-dispose source:")

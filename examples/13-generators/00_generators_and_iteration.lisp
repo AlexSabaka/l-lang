@@ -78,7 +78,7 @@
     ;;    a hand-written iterator in lockstep, stopping the moment EITHER runs out.
     (console.log "--- zip: generator + struct ---")
     (for :each [up down] :from ((count-up 5) |> (zip (new Countdown 3))) :then (
-        (console.log '"{(up)} <-> {(down)}")
+        (console.log f"{(up)} <-> {(down)}")
     ))
 
     ;; 6. The raw cursor underneath all of it. (iter src) works over any Iterable - array,
@@ -87,7 +87,7 @@
     (let it (iter (count-up 3)))
     (mut v (next it))
     (while (!= v nil) (
-        (console.log '"pulled {(v)}")
+        (console.log f"pulled {(v)}")
         (v := (next it))
     ))
     (console.log "cursor exhausted")

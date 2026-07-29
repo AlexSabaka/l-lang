@@ -10,8 +10,8 @@
     (let radius 10)
     (let area (* pi (* radius radius)))
 
-    (console.log '"Circle Area: {(area)}")
-    (console.log '"Counter should be 1: {(counter)}")
+    (console.log f"Circle Area: {(area)}")
+    (console.log f"Counter should be 1: {(counter)}")
 
     ;; 4. Nested expressions
     (let complex-calc 

@@ -27,7 +27,7 @@
         (mut :ctor hp   <- Int 3)
 
         (fn glyph    [] -> String (return this.mark))
-        (fn describe [] -> String (return '"{(this.name)} (hp {(this.hp)})"))
+        (fn describe [] -> String (return f"{(this.name)} (hp {(this.hp)})"))
         (fn blocks   [] -> Boolean (return true)))
 
     ;; ---- Item: another NOMINAL Entity ----
@@ -49,7 +49,7 @@
 
     ;; Polymorphic over the interface: any Entity, nominal or structural.
     (fn describe-entity [e <- Entity] -> Void
-        (console.log '"  {(e.glyph)}  {(e.describe)}  (blocks: {(e.blocks)})"))
+        (console.log f"  {(e.glyph)}  {(e.describe)}  (blocks: {(e.blocks)})"))
 
     ;; An :extension over the interface. Dispatch is NOMINAL, so it resolves
     ;; on Monster/Item; a merely structural Chest is NOT :extension-dispatchable.
@@ -66,7 +66,7 @@
     (console.log "Extension dispatch (nominal only):")
     (let goblin (new Monster "goblin" "g" 3))
     (let torch  (new Item "torch" "!"))
-    (console.log '"  goblin passable? {(goblin.passable)}")
-    (console.log '"  torch passable?  {(torch.passable)}")
+    (console.log f"  goblin passable? {(goblin.passable)}")
+    (console.log f"  torch passable?  {(torch.passable)}")
     ;; (chest.passable) would NOT compile: Chest is structural, not nominal.
 )

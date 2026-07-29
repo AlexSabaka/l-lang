@@ -144,15 +144,15 @@
                 (let dv (- rem (* q 10.0)))        ;; the last digit, an exact 0.0..9.0
                 (let ch (digit-of dv))
                 (if (< idx n)
-                    (frac := '"{ch}{frac}")
-                    (ipart := '"{ch}{ipart}"))
+                    (frac := f"{ch}{frac}")
+                    (ipart := f"{ch}{ipart}"))
                 (rem := q)
                 (idx := (+ idx 1))
             ))
         (if (== ipart "") (ipart := "0"))         ;; a pure fraction still has a leading "0"
         (let sgn (if neg "-" ""))
-        (if (<= n 0) (return '"{sgn}{ipart}"))
-        (return '"{sgn}{ipart}.{frac}"))
+        (if (<= n 0) (return f"{sgn}{ipart}"))
+        (return f"{sgn}{ipart}.{frac}"))
 
     ;; Hyperbolic sine/cosine, needed by the complex trig identities. Exponential form: accurate to a
     ;; few ulp for moderate |x|, but `rsinh` near 0 loses precision to the `e^x - e^-x` cancellation
@@ -382,8 +382,8 @@
         (fn show [n <- Int] -> String
             (let rs (real-fixed this.re n))
             (if (< this.im 0.0)
-                (return '"{rs}-{(real-fixed (- 0.0 this.im) n)}i")
-                (return '"{rs}+{(real-fixed this.im n)}i")))
+                (return f"{rs}-{(real-fixed (- 0.0 this.im) n)}i")
+                (return f"{rs}+{(real-fixed this.im n)}i")))
 
         ;; The default rendering: four decimals, enough to read a phase without pretending at precision
         ;; the value does not have.

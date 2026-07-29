@@ -1192,7 +1192,7 @@ const CASES: Case[] = [
             `(\n` +
             `  (import "std/math/vector")\n` +
             `  (fn rect [x <- Int y <- Int w <- Int h <- Int r <- Int] -> String\n` +
-            `      (return '"rect {(x)} {(y)} {(w)} {(h)} {(r)}"))\n` +
+            `      (return f"rect {(x)} {(y)} {(w)} {(h)} {(r)}"))\n` +
             `  (export rect)\n` +
             `)\n`,
           "main.lisp": `(\n  (import "bind.lisp")\n  (console.log (rect 1 2 3 4 5))\n)\n`,

@@ -6,7 +6,7 @@
     (defclass NoKey :extends SeqFault (let :ctor key <- String))
 
     (fn at [xs <- Int[] i <- Int] -> Int (
-        (if (>= i xs.length) (throw (new Oob '"index {(i)} out of range" i)))
+        (if (>= i xs.length) (throw (new Oob f"index {(i)} out of range" i)))
         (return xs[i])
     ))
     (export SeqFault Oob NoKey at)

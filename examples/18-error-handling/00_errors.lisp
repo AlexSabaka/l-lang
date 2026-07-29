@@ -14,9 +14,9 @@
 
     (fn test-try-catch [error-type]
         (try (console.log (risky-operation error-type))
-         catch err :of CustomError (console.log '"Caught custom error: {(err.message)}")
-         catch err :of SpecificError (console.log '"Caught specific error: {(err.message)}")
-         catch (console.log '"Caught generic error")
+         catch err :of CustomError (console.log f"Caught custom error: {(err.message)}")
+         catch err :of SpecificError (console.log f"Caught specific error: {(err.message)}")
+         catch (console.log f"Caught generic error")
          finally (console.log "Cleanup operation executed."))
     )
 

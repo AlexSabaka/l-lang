@@ -52,21 +52,21 @@
         (return (/ (Math.round (* x 1000.0)) 1000.0)))
 
     (fn vstr [v <- Vec3] -> String
-        (return '"({(r3 v.x)},{(r3 v.y)},{(r3 v.z)})"))
+        (return f"({(r3 v.x)},{(r3 v.y)},{(r3 v.z)})"))
 
     ;; ---- three fixed vectors ----
     (let a (new Vec3 3 4 0))
     (let b (new Vec3 1 2 2))
     (let zero (new Vec3 0 0 0))
 
-    (console.log '"mag-sq {(vstr a)} -> {(r3 (mag-sq a))}")
-    (console.log '"normalize {(vstr a)} -> {(vstr (normalize a))}")
-    (console.log '"normalize {(vstr b)} -> {(vstr (normalize b))}")
-    (console.log '"normalize {(vstr zero)} -> {(vstr (normalize zero))}")
-    (console.log '"dist {(vstr a)} {(vstr b)} -> {(r3 (dist a b))}")
-    (console.log '"limit {(vstr a)} 3 -> {(vstr (limit a 3))}")
-    (console.log '"limit {(vstr a)} 10 -> {(vstr (limit a 10))}")
-    (console.log '"set-mag {(vstr a)} 10 -> {(vstr (set-mag a 10))}")
-    (console.log '"heading {(vstr a)} -> {(r3 (heading a))}")
-    (console.log '"heading {(vstr b)} -> {(r3 (heading b))}")
+    (console.log f"mag-sq {(vstr a)} -> {(r3 (mag-sq a))}")
+    (console.log f"normalize {(vstr a)} -> {(vstr (normalize a))}")
+    (console.log f"normalize {(vstr b)} -> {(vstr (normalize b))}")
+    (console.log f"normalize {(vstr zero)} -> {(vstr (normalize zero))}")
+    (console.log f"dist {(vstr a)} {(vstr b)} -> {(r3 (dist a b))}")
+    (console.log f"limit {(vstr a)} 3 -> {(vstr (limit a 3))}")
+    (console.log f"limit {(vstr a)} 10 -> {(vstr (limit a 10))}")
+    (console.log f"set-mag {(vstr a)} 10 -> {(vstr (set-mag a 10))}")
+    (console.log f"heading {(vstr a)} -> {(r3 (heading a))}")
+    (console.log f"heading {(vstr b)} -> {(r3 (heading b))}")
 )

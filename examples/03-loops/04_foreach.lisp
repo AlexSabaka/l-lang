@@ -7,8 +7,8 @@
     (for
         :each f
         :from fruits
-        :then (console.log '"I like {(f)}")
-        :else (console.log '"Last item was {(f)} (Should be Cherry)")
+        :then (console.log f"I like {(f)}")
+        :else (console.log f"Last item was {(f)} (Should be Cherry)")
     )
 
     ;; Iterating over a computed vector
@@ -16,5 +16,5 @@
     (for :each n :from [10 20 30] :then (
         (total := (+ total n))
     ))
-    (console.log '"Total: {(total)} (Should be 60)")
+    (console.log f"Total: {(total)} (Should be 60)")
 )

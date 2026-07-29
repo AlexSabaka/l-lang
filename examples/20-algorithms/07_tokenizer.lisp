@@ -110,12 +110,12 @@
     ))
 
     ;; 6. Rendering: one line per token, "pos <tab> KIND <tab> text".
-    (fn render [t] -> String '"{(t.pos)}\t{(kind-name t.kind)}\t{(t.text)}")
+    (fn render [t] -> String f"{(t.pos)}\t{(kind-name t.kind)}\t{(t.text)}")
 
     (let source "12 + 3 * (40 - 5)")
     (let tokens (tokenize source))
 
-    (console.log '"source: {(source)}")
+    (console.log f"source: {(source)}")
     (console.log "--- tokens ---")
     (console.log (join (map render tokens) "\n"))
 
@@ -125,7 +125,7 @@
     (let numbers (filter (fn [t] (== t.kind TokenKind:NUMBER)) tokens))
     (let literal-sum (reduce (fn [acc t] (+ acc t.value)) 0 numbers))
 
-    (console.log '"tokens: {(length tokens)}")
-    (console.log '"numbers: {(length numbers)}")
-    (console.log '"literal sum: {(literal-sum)}")
+    (console.log f"tokens: {(length tokens)}")
+    (console.log f"numbers: {(length numbers)}")
+    (console.log f"literal sum: {(literal-sum)}")
 )

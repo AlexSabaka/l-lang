@@ -16,9 +16,9 @@
     (let empty [])
     (let m { :a 1 :b 2 })
 
-    (console.log '"ints:   {(nums)}")     ;; [1 2 3]              | C: 1,2,3
-    (console.log '"nested: {(nested)}")   ;; [[1 2] [3 4]]        | C: 1,2,3,4
-    (console.log '"words:  {(words)}")    ;; ["a" "b" "c"]        | C: a,b,c
-    (console.log '"empty:  {(empty)}")    ;; []                   | C: (empty)
-    (console.log '"map:    {(m)}")        ;; {:a 1 :b 2}          | C: [object]/shapeless
+    (console.log f"ints:   {(nums)}")     ;; [1 2 3]              | C: 1,2,3
+    (console.log f"nested: {(nested)}")   ;; [[1 2] [3 4]]        | C: 1,2,3,4
+    (console.log f"words:  {(words)}")    ;; ["a" "b" "c"]        | C: a,b,c
+    (console.log f"empty:  {(empty)}")    ;; []                   | C: (empty)
+    (console.log f"map:    {(m)}")        ;; {:a 1 :b 2}          | C: [object]/shapeless
 )

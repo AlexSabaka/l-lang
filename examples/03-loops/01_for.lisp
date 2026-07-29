@@ -6,8 +6,8 @@
         :init (mut i 0)
         :cond (< i 5)
         :step (i := (+ i 1))
-        :then (console.log '"Index: {(i)}")
-        :else (console.log '"For loop ended at {(i)}")
+        :then (console.log f"Index: {(i)}")
+        :else (console.log f"For loop ended at {(i)}")
     )
 
 
@@ -21,7 +21,7 @@
         :cond (call check-j)
         :step (call inc-j)
         :then (sum := (+ sum j))
-        :else (console.log '"Sum 1..10 is: {(sum)}")
+        :else (console.log f"Sum 1..10 is: {(sum)}")
     )
 
     (for
@@ -35,7 +35,7 @@
                 :step (j := (+ j 1))
                 :then (
                     (let linear-index (+ (* i 3) j))
-                    (console.log '"i = {(i)}, j = {(j)}, Linear index: {(linear-index)}")
+                    (console.log f"i = {(i)}, j = {(j)}, Linear index: {(linear-index)}")
                 )
             )
         )

@@ -11,7 +11,7 @@
     (console.log "Result 1:" result)
 
     ;; 2. When with expression
-    (let message (when (== value 42) :then '"The answer to everything"))
+    (let message (when (== value 42) :then f"The answer to everything"))
     (console.log "Result 2:" message)
 
     ;; 3. When has NO else -- a false condition yields nil.

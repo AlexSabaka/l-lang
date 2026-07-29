@@ -29,10 +29,10 @@
     (console.log (banner "geometry report"))
 
     (for :each r :from rects :then (
-        (console.log (row (r.kind) '"{(r.w)}x{(r.h)}" (area-of r) (diagonal r)))))
+        (console.log (row (r.kind) f"{(r.w)}x{(r.h)}" (area-of r) (diagonal r)))))
 
     ;; A circle has no diagonal; the column is still drawn so the table lines up.
-    (console.log (row (disc.kind) '"r={(disc.r)}" (area-of disc) 0))
+    (console.log (row (disc.kind) f"r={(disc.r)}" (area-of disc) 0))
 
     (console.log (total-line (total-area rects)))
 

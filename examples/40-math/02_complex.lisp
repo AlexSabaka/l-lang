@@ -24,18 +24,18 @@
         (let w (Complex 1.0 -2.0))
 
         (console.log "-- construction --")
-        (console.log '"z            = {(z.show 4)}")
-        (console.log '"w            = {(w.show 4)}")
+        (console.log f"z            = {(z.show 4)}")
+        (console.log f"w            = {(w.show 4)}")
         ;; polar(2, pi/3): 2cos60 = 1, 2sin60 = sqrt(3) = 1.732051
         (let p (polar 2.0 1.0471975511965976))
-        (console.log '"polar(2,60d) = {(p.show 6)}")
+        (console.log f"polar(2,60d) = {(p.show 6)}")
 
         (console.log "-- parts --")
-        (console.log '"re, im       = {(sc (z.real) 4)} {(sc (z.imag) 4)}")
-        (console.log '"abs |z|      = {(sc (z.abs) 4)}")
-        (console.log '"abs2 |z|^2   = {(sc (z.abs2) 4)}")
+        (console.log f"re, im       = {(sc (z.real) 4)} {(sc (z.imag) 4)}")
+        (console.log f"abs |z|      = {(sc (z.abs) 4)}")
+        (console.log f"abs2 |z|^2   = {(sc (z.abs2) 4)}")
         (let onei (Complex 1.0 1.0))
-        (console.log '"arg(1+i)     = {(sc (onei.arg) 6)}")
+        (console.log f"arg(1+i)     = {(sc (onei.arg) 6)}")
 
         (console.log "-- operators --")
         (let s (+ z w))
@@ -43,51 +43,51 @@
         (let m (* z w))
         (let q (/ z w))
         (let ng (- z))
-        (console.log '"z + w        = {(s.show 4)}")   ;; 4+2i
-        (console.log '"z - w        = {(d.show 4)}")   ;; 2+6i
-        (console.log '"z * w        = {(m.show 4)}")   ;; 11-2i
-        (console.log '"z / w        = {(q.show 4)}")   ;; -1+2i
-        (console.log '"-z           = {(ng.show 4)}")  ;; -3-4i
+        (console.log f"z + w        = {(s.show 4)}")   ;; 4+2i
+        (console.log f"z - w        = {(d.show 4)}")   ;; 2+6i
+        (console.log f"z * w        = {(m.show 4)}")   ;; 11-2i
+        (console.log f"z / w        = {(q.show 4)}")   ;; -1+2i
+        (console.log f"-z           = {(ng.show 4)}")  ;; -3-4i
 
         (console.log "-- elementary --")
         (let eipi (polar 1.0 3.141592653589793))       ;; exp(i*pi) = -1
-        (console.log '"exp(i*pi)    = {(eipi.show 6)}")
+        (console.log f"exp(i*pi)    = {(eipi.show 6)}")
         (let li (I.log))                                ;; log(i) = i*pi/2
-        (console.log '"log(i)       = {(li.show 6)}")
+        (console.log f"log(i)       = {(li.show 6)}")
         (let r1 (z.sqrt))                               ;; sqrt(3+4i) = 2+i
-        (console.log '"sqrt(3+4i)   = {(r1.show 4)}")
+        (console.log f"sqrt(3+4i)   = {(r1.show 4)}")
         (let nfour (Complex -4.0 0.0))
         (let r2 (nfour.sqrt))                           ;; sqrt(-4) = 2i
-        (console.log '"sqrt(-4)     = {(r2.show 4)}")
+        (console.log f"sqrt(-4)     = {(r2.show 4)}")
         (let e8 (onei.powi 8))                          ;; (1+i)^8 = 16
-        (console.log '"(1+i)^8      = {(e8.show 4)}")
+        (console.log f"(1+i)^8      = {(e8.show 4)}")
         (let two (Complex 2.0 0.0))
         (let twoi (two.pow I))                          ;; 2^i = cos(ln2)+i sin(ln2)
-        (console.log '"2^i          = {(twoi.show 6)}")
+        (console.log f"2^i          = {(twoi.show 6)}")
 
         (console.log "-- trig --")
         (let si (I.sin))                                ;; sin(i) = i*sinh(1)
-        (console.log '"sin(i)       = {(si.show 6)}")
+        (console.log f"sin(i)       = {(si.show 6)}")
         (let ci (I.cos))                                ;; cos(i) = cosh(1)
-        (console.log '"cos(i)       = {(ci.show 6)}")
+        (console.log f"cos(i)       = {(ci.show 6)}")
         (let qpi (Complex 0.7853981633974483 0.0))
         (let tq (qpi.tan))                              ;; tan(pi/4) = 1
-        (console.log '"tan(pi/4)    = {(tq.show 6)}")
+        (console.log f"tan(pi/4)    = {(tq.show 6)}")
 
         (console.log "-- equality --")
         (let zc (Complex 3.0 4.0))
         (let zl (Complex 3.0005 4.0))
         (let zf (Complex 3.02 4.0))
-        (console.log '"eq exact     = {(z.eq zc)}")
-        (console.log '"near 5e-4    = {(z.near zl 0.001)}")
-        (console.log '"near 2e-2    = {(z.near zf 0.001)}")
+        (console.log f"eq exact     = {(z.eq zc)}")
+        (console.log f"near 5e-4    = {(z.near zl 0.001)}")
+        (console.log f"near 2e-2    = {(z.near zf 0.001)}")
 
         (console.log "-- glyphs --")
         (let cg (z.†))
-        (console.log '"norm  glyph  = {(sc (z.‖) 4)}")   ;; |z| via the ‖ delegate
-        (console.log '"arg   glyph  = {(sc (I.∠) 6)}")   ;; arg(i) via the angle delegate
-        (console.log '"conj  glyph  = {(cg.show 4)}")    ;; conj via the dagger delegate
-        (console.log '"near  glyph  = {(z.≈ zc)}")       ;; tolerant equality via the almost-equal delegate
+        (console.log f"norm  glyph  = {(sc (z.‖) 4)}")   ;; |z| via the ‖ delegate
+        (console.log f"arg   glyph  = {(sc (I.∠) 6)}")   ;; arg(i) via the angle delegate
+        (console.log f"conj  glyph  = {(cg.show 4)}")    ;; conj via the dagger delegate
+        (console.log f"near  glyph  = {(z.≈ zc)}")       ;; tolerant equality via the almost-equal delegate
 
         (console.log "-- overflow safety --")
         ;; Smith division and the hypot magnitude at 1e200: the naive (ac+bd)/(cc+dd) and
@@ -95,9 +95,9 @@
         (let big (Complex 3.0e200 4.0e200))
         (let unit (Complex 1.0e200 0.0))
         (let bq (/ big unit))                           ;; 3+4i
-        (console.log '"smith 1e200  = {(bq.show 4)}")
+        (console.log f"smith 1e200  = {(bq.show 4)}")
         (let bm (big.abs))                              ;; 5e200; print /1e200 = 5
-        (console.log '"hypot 1e200  = {(sc (/ bm 1.0e200) 4)}"))
+        (console.log f"hypot 1e200  = {(sc (/ bm 1.0e200) 4)}"))
 
     (main)
 )

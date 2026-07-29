@@ -213,7 +213,7 @@
         (fn near [o <- Vec2 tol <- Real] -> Boolean
             (return (and (<= (absr (- this.x o.x)) tol) (<= (absr (- this.y o.y)) tol))))
 
-        (fn to-string [] -> String (return '"({(this.x)}, {(this.y)})"))
+        (fn to-string [] -> String (return f"({(this.x)}, {(this.y)})"))
 
         ;; -- notation -------------------------------------------------------------------------------
         ;; OPTIONAL glyph synonyms, one-line delegates to the ASCII names above. They exist only in
@@ -293,7 +293,7 @@
                          (and (<= (absr (- this.y o.y)) tol)
                               (<= (absr (- this.z o.z)) tol)))))
 
-        (fn to-string [] -> String (return '"({(this.x)}, {(this.y)}, {(this.z)})"))
+        (fn to-string [] -> String (return f"({(this.x)}, {(this.y)}, {(this.z)})"))
 
         ;; -- notation -- see the Vec2 notation note. `.` dot, `x` cross (U+2A2F, not U+00D7), `||` norm.
         (fn ⋅ [o <- Vec3] -> Real (return (this.dot o)))
@@ -450,10 +450,10 @@
             (mut s <- String "(")
             (mut i <- Int 0)
             (while (< i n) (
-                (if (> i 0) (s := '"{s}, "))
-                (s := '"{s}{(this.comps[i])}")
+                (if (> i 0) (s := f"{s}, "))
+                (s := f"{s}{(this.comps[i])}")
                 (i := (+ i 1))))
-            (return '"{s})")))
+            (return f"{s})")))
 
         ;; -- notation -- see the Vec2 notation note. `.` dot, `||` norm.
         (fn ⋅ [o <- Vec] -> Real (return (this.dot o)))

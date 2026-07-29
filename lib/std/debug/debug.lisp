@@ -29,21 +29,21 @@
 
     ;; Print a value to STDERR and RETURN it -- so `(f (dbg x))` logs x and still passes it to f.
     (fn dbg [x <- Any] -> Any (
-        (write-string-err '"[dbg] {x}\n")
+        (write-string-err f"[dbg] {x}\n")
         (return x)))
 
     ;; The labeled twin: `[dbg] label = <value>`. (No arg defaults yet, so it is its own function.)
     (fn dbg-at [label <- String x <- Any] -> Any (
-        (write-string-err '"[dbg] {label} = {x}\n")
+        (write-string-err f"[dbg] {label} = {x}\n")
         (return x)))
 
     ;; A value's type name + its display form, as a String (returned, not printed): `Int: 42`.
     (fn inspect [x <- Any] -> String
-        (return '"{(name-of x)}: {x}"))
+        (return f"{(name-of x)}: {x}"))
 
     ;; Print inspect(x) to stderr and return x.
     (fn dump [x <- Any] -> Any (
-        (write-string-err '"{(inspect x)}\n")
+        (write-string-err f"{(inspect x)}\n")
         (return x)))
 
     ;; -- dev panics: END THE PROCESS ---------------------------------------------------------------
@@ -53,22 +53,22 @@
     ;; and both backends behave identically because both already have `write-string-err` and `exit`.
 
     (fn panic [msg <- String] -> Void (
-        (write-string-err '"panic: {msg}\n")
+        (write-string-err f"panic: {msg}\n")
         (exit 1)))
 
     ;; The condition is the CLAIM; the message says what was being claimed. False means the program is
     ;; wrong about itself, so there is nothing to hand back to a caller.
     (fn assert [condition <- Boolean msg <- String] -> Void
-        (if (! condition) (panic '"assertion failed: {msg}")))
+        (if (! condition) (panic f"assertion failed: {msg}")))
 
     (fn unreachable [msg <- String] -> Void
-        (panic '"unreachable: {msg}"))
+        (panic f"unreachable: {msg}"))
 
     (fn todo [] -> Void
         (panic "not yet implemented (todo)"))
 
     (fn unimplemented [msg <- String] -> Void
-        (panic '"unimplemented: {msg}"))
+        (panic f"unimplemented: {msg}"))
 
     (export dbg dbg-at inspect dump panic assert unreachable todo unimplemented)
 )

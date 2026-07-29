@@ -65,7 +65,7 @@
 
     (fn :internal parser-expect [parser <- RegexParser expected <- String] -> Void (
         (let actual (parser-take parser))
-        (if (!= actual expected) (fail '"regex: expected {expected}, got {actual}"))
+        (if (!= actual expected) (fail f"regex: expected {expected}, got {actual}"))
     ))
 
     (fn :internal parse-expression [parser <- RegexParser] -> RegexNode (
@@ -157,7 +157,7 @@
             ch => (
                 (parser-take parser)
                 (if (|| (== ch "*") (== ch "+") (== ch "?") (== ch ")"))
-                    (fail '"regex: unexpected character {ch}"))
+                    (fail f"regex: unexpected character {ch}"))
                 (RegexNode "literal" ch [] false 0 0)
             )
         })
@@ -285,7 +285,7 @@
             ))
             (return out)
         ))
-        (throw (Error '"regex: unknown node kind {node.kind}"))
+        (throw (Error f"regex: unknown node kind {node.kind}"))
         (return out)
     ))
 

@@ -10,7 +10,7 @@
         
         ;; Method Override
         (fn speak [] (
-            (console.log '"{(this.name)} the {(this.breed)} says Woof!")
+            (console.log f"{(this.name)} the {(this.breed)} says Woof!")
         ))
     )
 

@@ -3758,7 +3758,7 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       // An INTERPOLATION IS AN EXPRESSION, and this used to be the one place in the language where
       // that was not true. A formatted string is a String -- that part was always right -- but the
       // case returned it WITHOUT DESCENDING, so every `{...}` segment was never inferred and, because
-      // the checker's reports ride inference, never checked. `'"{(f 1 2 3)}"` on a one-parameter `f`
+      // the checker's reports ride inference, never checked. `f"{(f 1 2 3)}"` on a one-parameter `f`
       // compiled clean; so did an undefined name, a String passed where an Int was declared, and a
       // name the file's import list never bound (which is how this was found).
       //
@@ -3767,11 +3767,11 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       // different things depending on whether it was written inside quotes:
       //
       //     (+ 9007199254740992 1)          9007199254740993      D51: Int is int64
-      //     '"{(+ 9007199254740992 1)}"'    9007199254740992      untyped -> f64, lossy
+      //     'f"{(+ 9007199254740992 1)}"'    9007199254740992      untyped -> f64, lossy
       //     (nums.includes 2)               true                  D51 via the literal's Int type
-      //     '"{(nums.includes 2)}"'         false                 untyped -> host Number vs BigInt
+      //     'f"{(nums.includes 2)}"'         false                 untyped -> host Number vs BigInt
       //     (/ 7 2)                         3                     D49d: Int / Int truncates
-      //     '"{(/ 7 2)}"'                   3.5                   untyped -> Real division
+      //     'f"{(/ 7 2)}"'                   3.5                   untyped -> Real division
       //
       // The first two are JS-only, so a parity guard could have caught them. The THIRD IS WRONG ON
       // BOTH BACKENDS -- C reads the same missing static types and makes the same choice -- so no

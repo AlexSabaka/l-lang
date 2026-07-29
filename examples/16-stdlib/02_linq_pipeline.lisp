@@ -36,7 +36,7 @@
     ;; 2. EARLY EXIT. skip/take page through a sequence without materialising it.
     (console.log "--- Page 2: (skip 1) then (take 2) ---")
     (for :each e :from (employees |> (filter is-eng) |> (skip 1) |> (take 2)) :then (
-        (console.log '"{(e.name)}: {(e.salary)}")
+        (console.log f"{(e.name)}: {(e.salary)}")
     ))
 
     ;; 3. TERMINALS collapse a sequence into a value: `count` tallies, `reduce` folds.
@@ -44,14 +44,14 @@
     (let head-count (employees |> (filter is-eng) |> count))
     (let payroll (employees |> (filter is-eng) |> (map salary-of) |> (reduce (fn [a b] (+ a b)) 0)))
     (let top (employees |> (map salary-of) |> (reduce (fn [a b] (if (> a b) (return a) (return b))) 0)))
-    (console.log '"engineers: {(head-count)}")
-    (console.log '"eng payroll: {(payroll)}")
-    (console.log '"top salary: {(top)}")
+    (console.log f"engineers: {(head-count)}")
+    (console.log f"eng payroll: {(payroll)}")
+    (console.log f"top salary: {(top)}")
 
     ;; 4. enumerate pairs each element with its index as [i x]; the loop variable destructures it.
     (console.log "--- Ranked (enumerate) ---")
     (for :each [i e] :from (employees |> (filter is-eng) |> (take 3) |> enumerate) :then (
-        (console.log '"{(i)}. {(e.name)} ({(e.salary)})")
+        (console.log f"{(i)}. {(e.name)} ({(e.salary)})")
     ))
 
     ;; 5. THE METHOD SURFACE. The operators are `:extension` functions whose receiver IS their
@@ -71,5 +71,5 @@
     ))
     (let two (employees |> (map peek) |> (take 2) |> (map name-of) |> to-list))
     (console.log (two.join ", "))
-    (console.log '"touched all 6 records? {(== touched 6)}")
+    (console.log f"touched all 6 records? {(== touched 6)}")
 )

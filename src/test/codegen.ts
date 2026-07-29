@@ -454,7 +454,7 @@ const CASES: Case[] = [
   {
     name: "string interpolation is NOT a quote and must not regress",
     source: `(let name "Sloth")
-(console.log '"Hello, {(name)}!")`,
+(console.log f"Hello, {(name)}!")`,
     expect: ["Hello, Sloth!"],
     wasBroken: "not broken -- a guard. `'\"` is a formatted-string, split from `'` by a negative lookahead",
   },
@@ -1351,14 +1351,14 @@ const CASES: Case[] = [
     // D1's ANSWER, and the case that decides it. `(x)` is NOT always a call.
     //
     // Measured: EVERY "grouping" use of `(x)` in the corpus is a variable inside a string
-    // interpolation -- `'"Squares: {(squares)}"`. Every other zero-arg `(x)` is a genuine call. So
+    // interpolation -- `f"Squares: {(squares)}"`. Every other zero-arg `(x)` is a genuine call. So
     // the rule is not "always call" (which breaks these) and not "always group" (which breaks
     // `(solve-maze)`). It is: A CALL IFF THE NAME IS A FUNCTION. The symbol table separates them,
     // wherever either is declared.
     name: "Fa/D1: `(x)` on a VARIABLE reads its value (the interpolation idiom)",
     source: `(let squares [1 4 9])
 (fn total [] -> Int (return 14))
-(console.log '"squares: {(squares)} total: {(total)}")`,
+(console.log f"squares: {(squares)} total: {(total)}")`,
     // `[ 1, 4, 9 ]`, not `1,4,9`: an interpolated value goes through the runtime's
     // `__ll_format_object`, not JS's bare `${}` stringification. Not what this case is about, but it
     // is what the language actually prints, and a golden says what IS.
@@ -1415,12 +1415,12 @@ const CASES: Case[] = [
   {
     // THE GUARD THAT KEEPS D1 HONEST. A variable of any OTHER type still READS.
     //
-    // This is the whole corpus idiom -- `'"Squares: {(squares)}"` -- and it is what makes "always a
+    // This is the whole corpus idiom -- `f"Squares: {(squares)}"` -- and it is what makes "always a
     // call" the wrong rule. `(x)` is a call iff `x` is a function: DECLARED as one, or HOLDING one.
     name: "D1: `(x)` on a non-function variable still READS (guard)",
     source: `(let squares [1 4 9])
 (let n 7)
-(console.log '"squares: {(squares)} n: {(n)}")`,
+(console.log f"squares: {(squares)} n: {(n)}")`,
     expect: ["squares: [1 4 9] n: 7"],
     wasBroken:
       "not broken -- the guard. If lambda inference ever typed a non-function as a function, or if " +
@@ -1586,7 +1586,7 @@ const CASES: Case[] = [
   //   - PEG's `Char` rule decodes (`"n" { return "\n"; }`) -- but `RawString` is written `$Char*`,
   //     and `$` takes the RAW MATCHED TEXT and throws the actions away.
   //   - grammar_v2's `formattedString()` calls `unescapeString()`; `string()` does `.slice(1,-1)`.
-  // Which is why `'"a\n b"` (interpolated) decoded and `"a\n b"` (plain) did not. Same escape, two
+  // Which is why `f"a\n b"` (interpolated) decoded and `"a\n b"` (plain) did not. Same escape, two
   // answers, in one language.
   // ===============================================================================================
   {
@@ -1659,7 +1659,7 @@ const CASES: Case[] = [
   {
     name: "escapes: an INTERPOLATED string decodes the same way",
     source: `(let n 5)
-(console.log '"a\\nb {(n)}")`,
+(console.log f"a\\nb {(n)}")`,
     expect: ["a", "b 5"],
     wasBroken:
       "NOT broken -- a GUARD. The interpolated path was the one that ALREADY worked, in both frontends, " +
@@ -3423,10 +3423,10 @@ catch b ((console.log "two")))`,
   },
 
   // ===============================================================================================
-  // Vd / AF-045 -- `'"{(x)}"` called a PARAMETER because a function shared its name.
+  // Vd / AF-045 -- `f"{(x)}"` called a PARAMETER because a function shared its name.
   //
   //     (defclass Box (fn area [] -> Int (return 7)))
-  //     (fn show [area <- Int diag <- Int] -> String (return '"area={(area)} diag={(diag)}"))
+  //     (fn show [area <- Int diag <- Int] -> String (return f"area={(area)} diag={(diag)}"))
   //
   //       ->  `area=${__ll_format_object(area())} diag=${__ll_format_object(diag)}`
   //                                       ^^^^^^ a CALL
@@ -3449,7 +3449,7 @@ catch b ((console.log "two")))`,
     source: `(defclass Box
   (fn area [] -> Int (return 7)))
 (fn show [area <- Int diag <- Int] -> String
-  (return '"area={(area)} diag={(diag)}"))
+  (return f"area={(area)} diag={(diag)}"))
 (console.log (show 3 4))`,
     expect: ["area=3 diag=4"],
     // The INTERPOLATION site specifically. A bare /area\(\)/ also matches the class's own method
@@ -3465,7 +3465,7 @@ catch b ((console.log "two")))`,
     // still call. D1's rule is "`(x)` is a CALL iff `x` names a FUNCTION" -- not "never".
     name: "Vd/AF-045: an interpolated `(f)` still CALLS a real function",
     source: `(fn seven [] -> Int (return 7))
-(console.log '"n={(seven)}")`,
+(console.log f"n={(seven)}")`,
     expect: ["n=7"],
     wasBroken:
       "NOT broken -- a GUARD. Deleting the name-list fallback outright would make every `{(f)}` a " +

@@ -57,7 +57,7 @@
         (let :ctor text <- String)
         (fn label [] -> String (return this.text))
     )
-    (fn :extension shout [n <- Named] -> String (return '"{(n.label)}!"))
+    (fn :extension shout [n <- Named] -> String (return f"{(n.label)}!"))
     (fn hail [n <- Named] -> String (return (n.shout)))
     (console.log (hail (Tag "hi")))
 
@@ -67,7 +67,7 @@
     )
     (defstruct Parrot :implements Speaker
         (let :ctor word <- String)
-        (fn describe [] -> String (return '"method:{(this.word)}"))
+        (fn describe [] -> String (return f"method:{(this.word)}"))
     )
     (fn :extension describe [s <- Speaker] -> String (return "extension"))
     (fn ask [s <- Speaker] -> String (return (s.describe)))

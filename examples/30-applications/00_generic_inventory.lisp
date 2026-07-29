@@ -46,22 +46,22 @@
     ;; T is inferred as String from the seed element. A `(new Inventory [])`
     ;; would leave T unbound, so we start the pack armed.
     (mut pack (new Inventory ["rusty dagger"]))
-    (console.log '"seeded, count = {(pack.count)}")
+    (console.log f"seeded, count = {(pack.count)}")
 
     (pack.add "short sword")
     (pack.add "healing potion")
-    (console.log '"after 2 adds, count = {(pack.count)}")
+    (console.log f"after 2 adds, count = {(pack.count)}")
 
-    (console.log '"at 0 = {(show-opt (pack.at 0))}")
-    (console.log '"at 2 = {(show-opt (pack.at 2))}")
-    (console.log '"at 5 = {(show-opt (pack.at 5))}")
+    (console.log f"at 0 = {(show-opt (pack.at 0))}")
+    (console.log f"at 2 = {(show-opt (pack.at 2))}")
+    (console.log f"at 5 = {(show-opt (pack.at 5))}")
 
     ;; take removes and returns; the array closes up behind it.
     (let taken (pack.take 1))
-    (console.log '"take 1 -> {(show-opt taken)}")
-    (console.log '"after take, count = {(pack.count)}")
-    (console.log '"at 1 now = {(show-opt (pack.at 1))}")
+    (console.log f"take 1 -> {(show-opt taken)}")
+    (console.log f"after take, count = {(pack.count)}")
+    (console.log f"at 1 now = {(show-opt (pack.at 1))}")
 
     (let oob (pack.take 9))
-    (console.log '"take 9 -> {(show-opt oob)}")
+    (console.log f"take 9 -> {(show-opt oob)}")
 )

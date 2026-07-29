@@ -75,7 +75,7 @@
     (fn advance [ctx e] (
         (let ns (next-state ctx.state e))
         (let n (+ ctx.tick 1))
-        (console.log '"{(n)}. {(state-name ctx.state)} --{(event-name e)}--> {(state-name ns)} : {(effect ctx.state e ns)}")
+        (console.log f"{(n)}. {(state-name ctx.state)} --{(event-name e)}--> {(state-name ns)} : {(effect ctx.state e ns)}")
         (return {
             :state ns
             :tick n
@@ -91,7 +91,7 @@
     (let final (reduce advance { :state State:LOCKED :tick 0 :coins 0 :entries 0 } events))
 
     (console.log "--- summary ---")
-    (console.log '"final state: {(state-name final.state)}")
-    (console.log '"coins taken: {(final.coins)}")
-    (console.log '"entries: {(final.entries)}")
+    (console.log f"final state: {(state-name final.state)}")
+    (console.log f"coins taken: {(final.coins)}")
+    (console.log f"entries: {(final.entries)}")
 )

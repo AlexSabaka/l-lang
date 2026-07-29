@@ -21,15 +21,15 @@
     ;; Each throws an AssertionError on failure, carrying a message that renders the offending values via
     ;; display. Inside a `test`, `run-tests` catches it and counts a failure; outside, it propagates.
     (fn assert [condition <- Boolean msg <- String] -> Void
-        (if (! condition) (throw (AssertionError '"assertion failed: {msg}"))))
+        (if (! condition) (throw (AssertionError f"assertion failed: {msg}"))))
 
     (fn assert-eq [expected <- Any actual <- Any msg <- String] -> Void
         (if (! (== expected actual))
-            (throw (AssertionError '"{msg}: expected {expected}, got {actual}"))))
+            (throw (AssertionError f"{msg}: expected {expected}, got {actual}"))))
 
     (fn assert-ne [a <- Any b <- Any msg <- String] -> Void
         (if (== a b)
-            (throw (AssertionError '"{msg}: expected {a} != {b}"))))
+            (throw (AssertionError f"{msg}: expected {a} != {b}"))))
 
     ;; -- the registrar + runner ----------------------------------------------------------------------
     ;; `test` registers a named zero-arg thunk; `run-tests` runs each, prints a per-test line and a
@@ -46,11 +46,11 @@
             (try (
                     (call t[1])
                     (passed := (+ passed 1))
-                    (console.log '"ok   {name}"))
+                    (console.log f"ok   {name}"))
                 catch e :of Error (
                     (failed := (+ failed 1))
-                    (console.log '"FAIL {name}: {e.message}")))))
-        (console.log '"{passed} passed, {failed} failed")
+                    (console.log f"FAIL {name}: {e.message}")))))
+        (console.log f"{passed} passed, {failed} failed")
         (if (> failed 0) (exit 1))))
 
     (export AssertionError assert assert-eq assert-ne test run-tests)

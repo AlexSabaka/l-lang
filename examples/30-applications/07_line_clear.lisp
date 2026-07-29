@@ -52,12 +52,12 @@
     (fn show-row [row <- Any] -> String
         (mut s "")
         (for :each v :from row :then (
-            (if (== v EMPTY) (s := (+ s ".")) (s := (+ s '"{(v)}")))))
+            (if (== v EMPTY) (s := (+ s ".")) (s := (+ s f"{(v)}")))))
         (return s))
 
     (fn print-board [] -> Void
         (for :each r :from board :then (
-            (console.log '"  {(show-row r)}"))))
+            (console.log f"  {(show-row r)}"))))
 
     ;; Line clearing reads naturally as a lazy filter, and here the
     ;; source is a fresh array (not a shared cursor), so `to-list` is
@@ -83,10 +83,10 @@
 
     ;; ---- the scoring cond, standalone ----
     (console.log "line-score table:")
-    (console.log '"  1 -> {(line-score 1)}")
-    (console.log '"  2 -> {(line-score 2)}")
-    (console.log '"  3 -> {(line-score 3)}")
-    (console.log '"  4 -> {(line-score 4)}")
+    (console.log f"  1 -> {(line-score 1)}")
+    (console.log f"  2 -> {(line-score 2)}")
+    (console.log f"  3 -> {(line-score 3)}")
+    (console.log f"  4 -> {(line-score 4)}")
 
     ;; ---- hand-built board: rows 3 and 5 are full, the rest are not ----
     (board := [
@@ -102,7 +102,7 @@
 
     (let cleared (clear-lines))
 
-    (console.log '"cleared {(cleared)} rows -> score {(score)}, lines {(lines)}, level {(level)}")
+    (console.log f"cleared {(cleared)} rows -> score {(score)}, lines {(lines)}, level {(level)}")
     (console.log "after:")
     (print-board)
 )

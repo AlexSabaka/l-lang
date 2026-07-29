@@ -28,8 +28,8 @@
     )
 
     (fn print-shape-info [s <- Shape] (
-        (console.log '"Shape Area: {(s.area)}")
-        (console.log '"Shape Perim: {(s.perimeter)}")
+        (console.log f"Shape Area: {(s.area)}")
+        (console.log f"Shape Perim: {(s.perimeter)}")
     ))
 
     (let r (Rectangle))

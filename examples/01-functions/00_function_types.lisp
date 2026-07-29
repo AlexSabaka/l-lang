@@ -13,7 +13,7 @@
 
     ;; 2. Function with multiple parameter types
     (fn greet [name <- String age <- Int] -> String (
-        (return '"Hello, {(name)}! You are {(age)} years old.")
+        (return f"Hello, {(name)}! You are {(age)} years old.")
     ))
 
     ;; 3. Function returning nothing (void)

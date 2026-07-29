@@ -46,7 +46,7 @@
 
     ;; 1. `for :each` drives a type that declares `Iterator<T>`.
     (mut seen "")
-    (for :each x :from (new Countdown 3) :then (seen := (+ seen '"{(x)}")))
+    (for :each x :from (new Countdown 3) :then (seen := (+ seen f"{(x)}")))
     (console.log "1" seen)
 
     ;; 2. IDENTITY -- the cursor of a cursor is itself.
@@ -66,7 +66,7 @@
     ;; 5. A fresh cursor per call, so a source can be walked more than once.
     (mut first "")
     (mut second "")
-    (for :each v :from arr :then (first := (+ first '"{(v)}")))
-    (for :each v :from arr :then (second := (+ second '"{(v)}")))
+    (for :each v :from arr :then (first := (+ first f"{(v)}")))
+    (for :each v :from arr :then (second := (+ second f"{(v)}")))
     (console.log "5" first second)
 )

@@ -25,11 +25,11 @@
     (fn row [label <- String dims <- String size <- Number diag <- Number] -> String
         (return (+ (pad-right label 8)
                    (pad-right dims 8)
-                   (pad-right '"area={(size)}" 12)
-                   '"diag={(diag)}")))
+                   (pad-right f"area={(size)}" 12)
+                   f"diag={(diag)}")))
 
     (fn total-line [n <- Int] -> String
-        (return '"total rect area: {(n)}"))
+        (return f"total rect area: {(n)}"))
 
     (export banner row total-line)
 )

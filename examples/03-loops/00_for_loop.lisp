@@ -52,6 +52,6 @@
                 :init (mut col 1)
                 :cond (<= col 3)
                 :step (col := (+ col 1))
-                :then (console.log '"[{(row)},{(col)}]"))
+                :then (console.log f"[{(row)},{(col)}]"))
         ))
 )

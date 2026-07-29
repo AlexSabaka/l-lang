@@ -64,7 +64,7 @@
 
     (console.log "--- Using Inline Function ---")
     (ij-loop-inline 3 3 (fn [i j] (
-        (console.log '"Inline Loop - i: {(i)}, j: {(j)}")
+        (console.log f"Inline Loop - i: {(i)}, j: {(j)}")
     )))
 
     (console.log "--- Direct Implementation ---")
@@ -85,7 +85,7 @@
         :cond (continue)
         :step (forward)
         :then (
-            (console.log '"i: {(i)}, j: {(j)}")
+            (console.log f"i: {(i)}, j: {(j)}")
         )
     )
 )

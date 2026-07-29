@@ -166,8 +166,8 @@
         ;; reduction guarantees den = 1 names an integer.
         (fn str [] -> String
             (if (== this.den 1)
-                (return '"{this.num}")
-                (return '"{this.num}/{this.den}")))
+                (return f"{this.num}")
+                (return f"{this.num}/{this.den}")))
 
         ;; D88: `format` is what the floor's display path calls, so `1/2` PRINTS as `1/2` rather than
         ;; as `Rational{:num 1 :den 2}`. That matters more than it looks: a numeric LITERAL that does

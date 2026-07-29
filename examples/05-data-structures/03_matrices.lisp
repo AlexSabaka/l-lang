@@ -12,6 +12,6 @@
 
     ;; 2. Accessing (Grammar has 'Indexer')
     ;; Note: Indexer rule supports [expr, expr] for multi-dimensional access
-    (console.log '"Top Left: {(matrix-2x2[0, 0])}") 
-    (console.log '"Bottom Right: {(matrix-2x2[1, 1])}")
+    (console.log f"Top Left: {(matrix-2x2[0, 0])}") 
+    (console.log f"Bottom Right: {(matrix-2x2[1, 1])}")
 ) 

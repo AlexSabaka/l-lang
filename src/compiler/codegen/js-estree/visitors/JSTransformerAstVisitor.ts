@@ -2700,7 +2700,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
    * last corner of D1, and `test_stdlib` had to write `(call c5)` to get round it.
    *
    * A variable of any OTHER type still reads as a value, which is what keeps the corpus's string
-   * interpolation idiom working: `'"Squares: {(squares)}"` reads `squares`, an array.
+   * interpolation idiom working: `f"Squares: {(squares)}"` reads `squares`, an array.
    */
   private isFunctionName(head: ast.ASTNode): boolean {
     if (this.declarationKindOf(head) === "function") return true;
@@ -3177,7 +3177,7 @@ export class JSTransformerAstVisitor extends BaseAstVisitor {
       //
       // THE GATE MATTERS. Without it the fallback also answered for a SIMPLE identifier, where
       // `memberName` is just the name -- and `this.functions` is a flat list of every function NAME
-      // in the program, with no scope in it at all. So `'"{(area)}"` inside `(fn show [area <- Int])`
+      // in the program, with no scope in it at all. So `f"{(area)}"` inside `(fn show [area <- Int])`
       // emitted `area()` purely because some class had an `area` method, and the JS parameter then
       // shadowed the function it was trying to call: `TypeError: area is not a function` (AF-045).
       //

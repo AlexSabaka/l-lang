@@ -26,5 +26,5 @@
     (console.log (handle-request HttpMethod:GET))
     (console.log (handle-request HttpMethod:DELETE))
 
-    (console.log '"Point {(p.x)}, {(p.y)}")
+    (console.log f"Point {(p.x)}, {(p.y)}")
 )

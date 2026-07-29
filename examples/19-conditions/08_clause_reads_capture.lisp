@@ -16,7 +16,7 @@
             ((signal (Alert "a"))
              (signal (Alert "b")))
             (:on Alert [c]
-                (console.log '"{(tag)} {(c.message)}")
+                (console.log f"{(tag)} {(c.message)}")
                 (count := (+ count 1))))
         (console.log count)
     ))

@@ -12,10 +12,10 @@
              (print "Big")
              (print "Small")))
 
-    (console.log '"Simple List: {(simple-list)}")
-    (console.log '"Expression structure: {(expr)}")
-    (console.log '"First element of expr: {(head expr.nodes.nodes)}") ;; Should be "+"
+    (console.log f"Simple List: {(simple-list)}")
+    (console.log f"Expression structure: {(expr)}")
+    (console.log f"First element of expr: {(head expr.nodes.nodes)}") ;; Should be "+"
 
     (let x 4)
-    (console.log '"Expression structure: {(eval logic)}")
+    (console.log f"Expression structure: {(eval logic)}")
 )

@@ -34,15 +34,21 @@ The forms that yield *nothing* — `while`, `for`, `for :each` and assignment �
 
 But **l-lang is not a Lisp with types bolted on**, and it is worth being honest about that up front.
 A Lisp decides what a list means by looking up its head; l-lang decides by **parsing**. The grammar
-declares 98 productions and 51 keyword tokens, and **23 of those productions are pure type
+declares 101 productions and 51 keyword tokens, and **23 of those productions are pure type
 machinery** — `deftype`, `defcast`, refinements, dimensions, unions, intersections, tuples,
 generics, variance. Remove the parentheses and what is left reads closer to Kotlin or Rust than to
 Scheme.
 
-The corollary matters when you write l-lang: reach for the type system, not for macros. There are no
-macros — `defmacro` is refused by name (**LL0023**) and `defsyntax` is not yet even a token. The
-tiers are designed: D69 rules what each handler receives, D95 rules when each one runs. Neither
-expansion tier is built.
+The corollary matters when you write l-lang, and it has changed: **`defsyntax` is built** (D95-a).
+A handler receives its argument FORMS unevaluated and returns a form, built with D96's quasiquote:
+
+```lisp
+(defsyntax unless [c body] `(if ~c nil ~body))
+```
+
+`defmacro` is still refused by name (**LL0023**) — it receives TOKENS and needs a pre-parse stage,
+which `defsyntax` did not. D69 rules the tiers by what each handler receives, D95 by when each runs.
+Hygiene is **not** claimed: a template that introduces a binding can capture one at the use site.
 
 That "decides by parsing" line has a consequence worth knowing before you plan around macros. A form
 the parser does not already know can only be a **plain application** — `(f a b c)`, with vectors,
@@ -220,10 +226,15 @@ Generics are **real, not erased** — they are inferred by solving, then checked
 
 ```lisp
 "plain"
-'"interpolated {(name)}"      ;; alias for f"…"
-f"interpolated {(name)}"
+f"interpolated {(name)}"      ;; the ONE interpolated spelling (D98)
 r"a raw\string"               ;; no escape processing — the regex spelling (D67)
+'sym                          ;; `'` QUOTES, with no exceptions (D98)
+'"abc"                        ;; …so this is the quoted STRING datum, not an interpolation
 ```
+
+**`'"…"` was retired** (D98). D67 kept it as an alias for `f"…"` on an ergonomic argument, but it
+made `'` mean two unrelated things decided by a negative lookahead — and the language has since grown
+a third `'`-adjacent operator in D96's quasiquote. 347 sites migrated across 90 files.
 
 Escapes decode identically everywhere, including inside a match pattern (D74).
 

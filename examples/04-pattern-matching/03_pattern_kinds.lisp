@@ -23,8 +23,8 @@
     ;; 3. Map destructuring
     (let user { :name "Alice" :age 30 :role "admin" })
     (let user-info (match user {
-        { :name n :role "admin" } => '"Admin: {(n)}"
-        { :name n :age a }        => '"User {(n)} age {(a)}"
+        { :name n :role "admin" } => f"Admin: {(n)}"
+        { :name n :age a }        => f"User {(n)} age {(a)}"
         _                         => "Unknown user"
     }))
     (console.log user-info)
@@ -48,7 +48,7 @@
 
     (let location (match person {
         { :address { :city "NYC" } } => "Lives in New York"
-        { :address { :city c } }     => ('"Lives in {(c)}")
+        { :address { :city c } }     => (f"Lives in {(c)}")
         _                            => "Unknown location"
     }))
     (console.log location)

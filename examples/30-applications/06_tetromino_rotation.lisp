@@ -59,17 +59,17 @@
     (fn show-cells [cells <- [Int Int][]] -> String
         (mut s "")
         (for :each c :from cells :then (
-            (s := (+ s '"({(c[0])},{(c[1])}) "))))
+            (s := (+ s f"({(c[0])},{(c[1])}) "))))
         (return (s.trimEnd)))
 
     ;; Walk the enum from Kind:i (0) to Kind:l (6); print each kind at
     ;; all four rotations.
     (mut kind Kind:i)
     (while (<= kind Kind:l) (
-        (console.log '"=== {(NAMES[kind])} (box {(box-size kind)}) ===")
+        (console.log f"=== {(NAMES[kind])} (box {(box-size kind)}) ===")
         (mut rot 0)
         (while (< rot 4) (
-            (console.log '"  rot {(rot)}: {(show-cells (piece-cells kind rot))}")
+            (console.log f"  rot {(rot)}: {(show-cells (piece-cells kind rot))}")
             (rot := (+ rot 1))))
         (kind := (+ kind 1))))
 )

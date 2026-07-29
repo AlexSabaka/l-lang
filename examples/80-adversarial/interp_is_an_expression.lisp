@@ -31,16 +31,16 @@
 (
     ;; -- D51: an Int is a wrapping 64-bit integer, exact past 2^53.
     (console.log "int64 plain: " (+ 9007199254740992 1))
-    (console.log '"int64 interp: {(+ 9007199254740992 1)}")
+    (console.log f"int64 interp: {(+ 9007199254740992 1)}")
 
     ;; -- D51 at the host boundary: the literal must cross as an Int, not a host Number.
     (let nums [1 2 3])
     (console.log "includes plain: " (nums.includes 2))
-    (console.log '"includes interp: {(nums.includes 2)}")
+    (console.log f"includes interp: {(nums.includes 2)}")
 
     ;; -- D49d: Int / Int is integer division, decided by the STATIC types of the operands.
     (console.log "intdiv plain: " (/ 7 2))
-    (console.log '"intdiv interp: {(/ 7 2)}")
+    (console.log f"intdiv interp: {(/ 7 2)}")
 
     ;; Deliberately NOT measured here: a CONTAINER in an interpolation. C's interpolation lowers
     ;; through `ll_to_string_sb` (a comma-join) and never reaches `ll_inspect_sb`, so `{(nums)}` is

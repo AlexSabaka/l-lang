@@ -37,7 +37,7 @@
     ;; by the runtime -- which is the half that was diverging.
     (fn describe [v <- Any] -> String
         (let t (type v))
-        (return '"{t.name}/{t.kind}"))
+        (return f"{t.name}/{t.kind}"))
 
     (console.log "string:  " (describe "hi"))
     (console.log "int:     " (describe 7))
@@ -67,4 +67,4 @@
     ;; key that is not there, answering nil. See `reserved_word_map_keys.lisp`, which pins it.
     (let p3 (type (Point3 1 2 3)))
     (let parent (type-by-name p3["extends"]))
-    (console.log "parent:  " '"{parent.name}/{parent.kind}"))
+    (console.log "parent:  " f"{parent.name}/{parent.kind}"))
