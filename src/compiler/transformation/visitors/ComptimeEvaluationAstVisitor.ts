@@ -184,10 +184,23 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
     return newNode;
   }
 
+  /**
+   * A COMPILE-TIME CONSTANT -- what LL0099 means when it says a `:comptime` argument must be a literal.
+   *
+   * `quote` joins the set as of M3, and it belongs there on the rule's own terms rather than as an
+   * exception to it. The rule exists because the interpreter models no runtime state: every evaluation
+   * has to start from something already finished. A quoted form is already finished -- more finished
+   * than `3`, which at least had to be produced -- because quote's entire semantics is that its
+   * operand is NOT evaluated (D3d). Passing one costs the evaluator nothing and can fail in no way.
+   *
+   * This is what lets a handler RECEIVE a form, which D69's `defsyntax` tier requires and which was
+   * impossible while every argument had to be a scalar.
+   */
   private isLiteral(node: ast.ASTNode): boolean {
     return [
-      "integer-number", "float-number", "string", "boolean", "null", 
-      "hex-number", "octal-number", "binary-number"
+      "integer-number", "float-number", "string", "boolean", "null",
+      "hex-number", "octal-number", "binary-number",
+      "quote",
     ].includes(node._type);
   }
 
@@ -226,6 +239,23 @@ export class ComptimeEvaluationAstVisitor extends BaseAstTreeWalker {
   }
 
   private createLiteralNode(value: any, original: ast.ASTNode): ast.ASTNode {
+    // A FORM folds back to a QUOTE, not to spliced code. M3.
+    //
+    // The evaluator can hold an AST now, so a `:comptime` function can be handed `'(+ 1 2)` and give a
+    // form back. What that fold must NOT do is drop the form into the tree as CODE -- that is macro
+    // EXPANSION, it is `defsyntax`'s job (D69), and `:comptime` doing it by accident would collapse
+    // two of the three tiers into one without anybody ruling it.
+    //
+    // Re-wrapping in `quote` keeps `:comptime` what its row in D69's table says it is: it receives
+    // nothing and folds a VALUE. The value here happens to be a form, and stays data.
+    if (ast.isAstNode(value)) {
+      return {
+        _type: "quote",
+        nodes: value,
+        _location: original._location,
+        _parent: original._parent,
+      } as any;
+    }
     // An Int arrives as a BIGINT and keeps its exact decimal text. `match` is the lossless copy every
     // downstream reader wants -- `ResolveHirToCir` reads it precisely because `value` as a JS number
     // has already rounded past 2^53, which is the bug the vm path shipped: `(inc 9007199254740992)`

@@ -459,6 +459,26 @@
     ]
   },
   {
+    "probe": "LL0099 a form's _parent is not readable at compile time",
+    "diagnostics": [
+      {
+        "code": "LL0099",
+        "severity": "error",
+        "text": "Cannot evaluate 'esc' at compile time: '_parent' is not readable at compile time -- it is cyclic"
+      }
+    ]
+  },
+  {
+    "probe": "LL0099 a mutable binding is still not a comptime argument",
+    "diagnostics": [
+      {
+        "code": "LL0099",
+        "severity": "error",
+        "text": "Cannot evaluate 'f' at compile time: argument is a 'simple-identifier', not a compile-time constant. A ':comptime' function can only be called with literals -- that is what asking for compile-time evaluation means."
+      }
+    ]
+  },
+  {
     "probe": "LL0217 unresolved import",
     "diagnostics": [
       {

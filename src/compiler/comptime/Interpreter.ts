@@ -28,7 +28,20 @@ import { FLOOR } from "../floor/floor";
 /** A comptime value. `bigint` is an Int and `number` is a Real -- D51's split, kept end to end. */
 const ZERO = BigInt(0);
 
-export type CTValue = bigint | number | string | boolean | null | CTValue[];
+/**
+ * A comptime value. `bigint` is an Int and `number` is a Real -- D51's split, kept end to end.
+ *
+ * `ast.ASTNode` is here as of M3, and it is what makes a SYNTAX tier possible at all. Until it was
+ * added this type ran `bigint | number | string | boolean | null | CTValue[]` -- scalars and arrays --
+ * so the evaluator could not hold a form even in principle, and D69's `defsyntax` ("receives a full
+ * AST") could not have been written in it.
+ *
+ * It does NOT weaken what makes this interpreter tractable. The header above credits the literal-only
+ * argument rule (LL0099) for that, and a QUOTED FORM IS A LITERAL in exactly the sense meant: it needs
+ * no evaluation, it IS the constant. `'(+ 1 2)` is as finished a value as `3` is -- more so, since 3
+ * had to be computed. So the subset stays "every evaluation starts from constants and ends in one".
+ */
+export type CTValue = bigint | number | string | boolean | null | CTValue[] | ast.ASTNode;
 
 /** Raised for anything the interpreter declines to evaluate. Carries the node so the caller can locate it. */
 export class ComptimeError extends Error {
@@ -126,9 +139,84 @@ export class ComptimeInterpreter {
         return this.evalMatch(node as ast.MatchNode, env);
       case "list":
         return this.evalList(node as ast.ListNode, env);
+
+      // `'(+ 1 2)` -- THE OPERAND IS NOT EVALUATED. That is the whole of quote (D3d), and it is why a
+      // quoted form costs this interpreter nothing: there is no work to do, only a datum to hand back.
+      case "quote":
+        return (n as ast.QuoteNode).nodes;
+
+      // `expr._type`, `expr.nodes` -- a dotted read. The head is resolved as a binding and the
+      // remaining parts are walked as FIELDS, which for an AST value is the same map-shaped access the
+      // emitted backends give it (M1).
+      case "composite-identifier": {
+        const parts: string[] = (n as ast.CompositeIdentifierNode).parts ?? [];
+        if (parts.length === 0) throw new ComptimeError("an empty dotted name", node);
+        let cur: CTValue = this.lookup(parts[0], node, env);
+        for (const p of parts.slice(1)) cur = this.field(cur, p, node);
+        return cur;
+      }
+
+      // `xs[0]` -- an index into a vector, or into a node's array-valued field.
+      case "indexer":
+        return this.evalIndexer(node as ast.IndexerNode, env);
     }
 
     throw new ComptimeError(`'${node._type}' cannot be evaluated at compile time`, node);
+  }
+
+  /**
+   * One FIELD read off a comptime value -- `n._type`, `n.nodes`.
+   *
+   * TOTAL, and deliberately: an absent field answers nil rather than raising, which is exactly what
+   * the two backends already do for the same read on a quoted form (measured on both, M2). A syntax
+   * handler branching on shape asks for fields a given kind does not have on every other line, and a
+   * raising read would make that unwritable.
+   *
+   * `_parent` is refused rather than answered. It is CYCLIC -- the quote lowering drops it for that
+   * reason -- and returning it would let a handler walk out of its own form and into the enclosing
+   * program, which is not a thing a macro should be able to do by accident.
+   */
+  private field(recv: CTValue, name: string, node: ast.ASTNode): CTValue {
+    if (recv === null || recv === undefined) return null;
+    if (name === "_parent") {
+      throw new ComptimeError("'_parent' is not readable at compile time -- it is cyclic", node);
+    }
+    if (Array.isArray(recv)) {
+      // `.length` is the one field a vector answers; anything else is not a field of a vector.
+      return name === "length" ? BigInt(recv.length) : null;
+    }
+    if (typeof recv === "object") {
+      const v = (recv as any)[name];
+      return v === undefined ? null : (v as CTValue);
+    }
+    return null;
+  }
+
+  /** `xs[0]`, `n.nodes[1]` -- the suffix chain, walked left to right. */
+  private evalIndexer(node: ast.IndexerNode, env: Env): CTValue {
+    let cur: CTValue = this.evalNode(node.id as ast.ASTNode, env);
+    const members = (node as any).members as boolean[] | undefined;
+    node.indices.forEach((step, i) => {
+      for (const idx of step) {
+        // A `.name` suffix is a FIELD; a `[expr]` suffix is an INDEX. They emit identically on the
+        // backends and mean different things here, which is the same distinction D1 draws.
+        if (members?.[i] && (idx as any)._type === "string") {
+          cur = this.field(cur, String((idx as any).value), node);
+          continue;
+        }
+        const k = this.evalNode(idx, env);
+        if (typeof k === "string") { cur = this.field(cur, k, node); continue; }
+        if (typeof k !== "bigint" && typeof k !== "number") {
+          throw new ComptimeError(`an index must be an Int or a field name, got ${typeof k}`, node);
+        }
+        const at = Number(k);
+        if (!Array.isArray(cur)) {
+          throw new ComptimeError("indexing something that is not a vector at compile time", node);
+        }
+        cur = at >= 0 && at < cur.length ? cur[at] : null;
+      }
+    });
+    return cur;
   }
 
   private lookup(name: string, node: ast.ASTNode, env: Env): CTValue {

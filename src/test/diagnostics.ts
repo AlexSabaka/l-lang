@@ -348,6 +348,20 @@ const PROBES: Probe[] = [
     stage: "codegen",
   },
 
+  {
+    // M3. A quoted form is now a legal `:comptime` ARGUMENT (it is a compile-time constant in exactly
+    // the sense LL0099 means -- quote does not evaluate its operand, so there is nothing to fail). A
+    // form's `_parent` is still refused, and deliberately: it is CYCLIC, and reading it would let a
+    // handler walk out of its own form into the enclosing program.
+    name: "LL0099 a form's _parent is not readable at compile time",
+    source: "(fn :comptime esc [f <- Any] -> Any (return f._parent))\n(console.log (esc '(+ 1 2)))",
+  },
+  {
+    // ...and the literal rule itself is unchanged for everything that is not a constant.
+    name: "LL0099 a mutable binding is still not a comptime argument",
+    source: "(fn :comptime f [x <- Int] -> Int (return x))\n(mut n 5)\n(console.log (f n))",
+  },
+
   // --- module band (LL0217): import resolution runs early, so stage "types" is enough ---
   { name: "LL0217 unresolved import", source: '(import "no_such_xyz_module.lisp")' },
 

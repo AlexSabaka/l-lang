@@ -1,0 +1,10 @@
+kind: list
+head: +
+arity: 3
+list has :cond? false
+inner op: >
+returned kind: list
+still data: +
+int node: integer-number
+real node: float-number
+done

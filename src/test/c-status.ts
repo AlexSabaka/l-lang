@@ -436,6 +436,12 @@ export const C_PASSING: readonly string[] = [
   // fields hold nodes (`for` declares six; five do, and `duplicateClauses` is a Boolean a naive walker
   // would try to descend into). Node counts hand-derived from the source forms: 4 and 7.
   "80-adversarial/ast_schema.lisp",
+  // M3: the comptime evaluator holds an AST, so a `:comptime` function can RECEIVE a form and walk it.
+  // Everything here folds before codegen -- the emitted C carries `ll_str_lit("list")` and `INT64_C(3)`
+  // as literals and no call survives -- so this grades the compiler's own evaluator, not a library.
+  // Pins the tier boundary too: a returned form re-wraps as `quote` and stays DATA rather than being
+  // spliced as code, which would be `defsyntax`'s job (D69).
+  "80-adversarial/comptime_form.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

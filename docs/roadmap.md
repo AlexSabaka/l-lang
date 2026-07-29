@@ -842,6 +842,30 @@ One heuristic, stated because it is where this can silently go stale: a field is
 declared type mentions a node-bearing name, resolved through type aliases to a fixed point (which is
 what makes `BindingTarget = IdentifierNode | VectorPatternNode | MapPatternNode` come out right).
 
+### The comptime evaluator holds an AST — **M3**
+
+`CTValue` ran `bigint | number | string | boolean | null | CTValue[]` — scalars and arrays — so the
+interpreter could not hold a form even in principle, and D69's `defsyntax` ("receives a full AST")
+could not have been written in it at any price. It now includes `ast.ASTNode`, `quote` evaluates to its
+un-evaluated operand, and dotted reads and indexing work over a form.
+
+**A quoted form is a compile-time constant on LL0099's own terms, not as an exception to it.** That
+rule exists because the interpreter models no runtime state: every evaluation must start from something
+already finished. A quoted form is already finished — more so than `3`, which at least had to be
+produced — because quote's whole semantics is that its operand is not evaluated. So the subset stays
+*"every evaluation starts from constants and ends in one"*, which is what the interpreter's own header
+credits for making it tractable.
+
+**The tier boundary is enforced rather than assumed.** A `:comptime` fold whose result is a form
+re-wraps it in `quote` and keeps it as *data*. Splicing a returned form into the tree is macro
+**expansion** — `defsyntax`'s job — and `:comptime` doing it by accident would collapse two of D69's
+three tiers with nobody ruling it.
+
+Field reads are **total** (an absent field is nil, matching what both backends already do for the same
+read), and `_parent` is refused: it is cyclic, and reading it would let a handler walk out of its own
+form into the enclosing program. Both refusals pinned in `test:diagnostics`; guarded end-to-end by
+`80-adversarial/comptime_form.lisp`, whose every line folds to a literal before codegen.
+
 ### A module-level `map` literal in an IMPORTED module has no C lowering
 
 `ELL0106 Cannot generate C for 'map': no lowering exists (resolveAstExpr)`. The same literal inside a
