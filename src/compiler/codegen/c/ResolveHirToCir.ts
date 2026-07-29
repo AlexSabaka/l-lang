@@ -209,6 +209,9 @@ export class ResolveHirToCir {
   private readonly importedValues = new Set<string>();
   /** Their initializers, spliced in FRONT of `main` -- an import is evaluated before the importer. */
   private readonly importedInits: CStmt[] = [];
+  /** D75 decorator SETUP initializers, spliced after the imports and before the module body: the
+   *  slot runs ONCE at decoration time, which is before any call the module body can make. */
+  private readonly decoratorInits: CStmt[] = [];
   /** Lexical scope stack of local bindings (by C name). scope[0] is the module/main body. */
   private readonly scopes: Map<string, VarInfo>[] = [new Map()];
   /** Names (C names) that must be heap cells in the CURRENT function scope (mutable-captured). */
@@ -360,7 +363,7 @@ export class ResolveHirToCir {
     this.cellVars = this.computeCellVars([root]);
     const resolvedMain = body ? this.resolveBlock(body) : { stmts: [] };
     // An imported binding initializes BEFORE this module's own body -- the order the import implies.
-    const main = { stmts: [...this.importedInits, ...resolvedMain.stmts] };
+    const main = { stmts: [...this.importedInits, ...this.decoratorInits, ...resolvedMain.stmts] };
     if (this.refused) return null;
     // DEDUPED by descriptor identity, not by key. `this.classes` is keyed by the name a program
     // SPELLS, and an aliased import (`{ Widget :as Gadget }`) deliberately points two keys at one
@@ -2326,6 +2329,30 @@ export class ResolveHirToCir {
           elements: (v.values ?? []).map((e) => this.resolveAstExpr(e)),
         };
       }
+      case "map": {
+        // A raw map leaf, the twin of `vector` above -- and it was simply MISSING, so every path that
+        // re-drives raw AST refused `ELL0106 'map': no lowering exists`. Two live reports were the
+        // same absence: a module-level map literal in an IMPORTED module (whose initializer is
+        // resolved from the AST, not the HIR), and D75's decorator SETUP slot, whose `(let cache {})`
+        // is resolved the same way. `vector` in the identical position had always been here.
+        //
+        // Mirrors `HMap`'s lowering entry for entry: a `simple-identifier` key is a literal key
+        // string, anything else is an expression. A non-`key-value` entry is refused rather than
+        // skipped -- dropping one would silently shrink the map.
+        this.ledger.record("A2", "raw-map", node, "map literal reached codegen as a raw leaf (not HMap)");
+        const m = node as ast.MapNode;
+        const entries: CMapEntry[] = (m.values ?? []).map((e) => {
+          if (e?._type !== "key-value") throw this.refuse(e ?? node, `map-entry:${e?._type ?? "?"}`, "resolveAstExpr");
+          const kv = e as ast.KeyValueNode;
+          return {
+            key: kv.key?._type === "simple-identifier"
+              ? (kv.key as ast.SimpleIdentifierNode).id
+              : this.resolveAstExpr(kv.key),
+            value: this.resolveAstExpr(kv.value),
+          };
+        });
+        return { src: node, ctype: { k: "map" }, kind: "c-map", entries };
+      }
       case "indexer": {
         // A raw indexer leaf (it can arrive inside rebuilt call operands).
         this.ledger.record("A2", "raw-indexer", node, "indexer reached codegen as a raw leaf (not HIndex)");
@@ -3690,11 +3717,17 @@ export class ResolveHirToCir {
   ): { setup: ast.ASTNode[]; wrapper: ast.FunctionNode } | undefined {
     const def = this.modifierDefs.get(modName);
     if (!def?.body?.length) return undefined;
-    const last = this.unwrapExpr(def.body[def.body.length - 1]);
+    // D83: A COMMENT OCCUPIES NO SLOT. Filtered before the body is split, because BOTH halves of this
+    // split are positional -- a trailing `;;` would make `last` a comment and refuse the whole
+    // decorator as mis-shaped, and one anywhere earlier would arrive in `setup` as a statement to
+    // hoist. The same ruling, and the same reason, as `listForm.listNodes`.
+    const body = def.body.filter((n) => n?._type !== "comment");
+    if (!body.length) return undefined;
+    const last = this.unwrapExpr(body[body.length - 1]);
     if (last?._type !== "function") return undefined;
     const w = last as ast.FunctionNode;
     if (!(w.params ?? []).length) return undefined;   // must take `original` at least
-    return { setup: def.body.slice(0, -1), wrapper: w };
+    return { setup: body.slice(0, -1), wrapper: w };
   }
 
   /**
@@ -3726,26 +3759,106 @@ export class ResolveHirToCir {
       this.refuse(fn, `decorator-shape:${bad.mod.modifier} on '${name}'`, "collectDecorated");
       return true;
     }
-    // Decoration-time SETUP hoisting is the next step; refused by name meanwhile rather than dropped,
-    // because dropping it silently would give every call a fresh cache.
-    const stateful = shapes.find((s) => s.shape!.setup.length > 0);
-    if (stateful) {
-      this.refuse(fn, `decorator-setup:${stateful.mod.modifier} on '${name}'`, "collectDecorated");
-      return true;
-    }
-
     this.emitLayer(fn, `${name}__w0`, fn, undefined);
     let prev = `${name}__w0`;
+    let refusedSetup = false;
     shapes.forEach((s, i) => {
+      if (refusedSetup) return;
       const layer = i === shapes.length - 1 ? name : `${name}__w${i + 1}`;
+      // D75's SETUP slot runs ONCE, at decoration time -- so it is hoisted to module scope, keyed by
+      // this LAYER, before the wrapper that closes over it is emitted.
+      const setup = this.hoistDecoratorSetup(fn, layer, s.shape!.setup, s.mod.modifier);
+      if (!setup) { refusedSetup = true; return; }
       this.emitLayer(fn, layer, s.shape!.wrapper, {
         prev,
         mod: s.mod,
         modParams: this.modifierDefs.get(s.mod.modifier)!.params ?? [],
+        setup,
       });
       prev = layer;
     });
     return true;
+  }
+
+  /**
+   * D75's SETUP slot: `(defmodifier memoized [] (let cache {}) (fn [original n] …))`.
+   *
+   * The setup runs ONCE, at decoration time -- that is the whole reason the slot exists, and it is
+   * why dropping it silently would be worse than refusing: every call would get a fresh cache and a
+   * memoizer would memoize nothing while appearing to work.
+   *
+   * A decorator layer is unfolded into an ORDINARY TOP-LEVEL C FUNCTION (D75), and a C function
+   * cannot see `main`'s locals -- the same obstruction `computeGlobals` solves for module-level
+   * bindings. So each setup binding becomes a file-scope global, initialised at the top of `main`
+   * before the module body runs, and the wrapper's prologue binds the source name to it.
+   *
+   * KEYED BY LAYER, not by modifier name. `:memoized` on two different functions must get two
+   * different caches; sharing one would make `(square 8)` and `(cube 8)` collide on the key `8` and
+   * answer each other's results. `<layer>__setup_<binding>` is unique because the layer name already
+   * carries the decorated function's name and its position in the stack.
+   *
+   * ONLY A REFERENCE-TYPED BINDING IS ACCEPTED, and the rest is refused BY NAME rather than
+   * half-supported. The prologue binds the name by copying the global into a local, which shares the
+   * pointee for a vec/map/obj and would NOT share an int or a bool -- so `(mut count 0)` in a setup
+   * slot would count per call and reset every time, silently. That is precisely the failure this
+   * function exists to prevent, so it refuses instead. Making it work needs the binding to be a heap
+   * cell (the C2 machinery); nothing in the corpus or stdlib asks for it today -- the only setup slot
+   * in the tree is `(let cache {})`.
+   *
+   * The initializer is resolved in an ISOLATED scope: it belongs to the modifier's own body and must
+   * not see the decorated function's locals. It therefore cannot read a module-level binding declared
+   * LATER in `main` either, since these inits are spliced in front of the module body -- a boundary
+   * worth stating rather than discovering.
+   */
+  private hoistDecoratorSetup(
+    src: ast.FunctionNode,
+    layerName: string,
+    setup: ast.ASTNode[],
+    modName: string
+  ): { cName: string; ctype: CType; globalCName: string }[] | undefined {
+    const out: { cName: string; ctype: CType; globalCName: string }[] = [];
+    for (const raw of setup) {
+      // Peeled the same way `decoratorShape` peels the wrapper: a lone form in a `defmodifier` body
+      // arrives inside one or more single-element lists. Reading the wrapper through `unwrapExpr` and
+      // the setup through the raw node made `(let cache {})` present as a `list`, and the refusal
+      // named the wrapping rather than anything the author wrote.
+      const stmt = this.unwrapExpr(raw);
+      if (stmt?._type === "comment") continue; // D83, again -- a comment nested inside a wrapping list
+      if (stmt?._type !== "variable") {
+        this.refuse(src, `decorator-setup-form:${stmt?._type ?? "?"} in '${modName}'`, "hoistDecoratorSetup");
+        return undefined;
+      }
+      const v = stmt as ast.VariableNode;
+      const nm = v.name as ast.ASTNode | undefined;
+      if (!nm || (nm._type !== "simple-identifier" && nm._type !== "composite-identifier")) {
+        this.refuse(src, `decorator-setup-binder in '${modName}'`, "hoistDecoratorSetup");
+        return undefined;
+      }
+      const srcName = ast.symbolName(nm as ast.IdentifierNode);
+      let init: CExpr | null = null;
+      this.isolated(src, () => { init = v.value ? this.resolveAstExpr(v.value) : null; });
+      if (!init) {
+        this.refuse(src, `decorator-setup-uninitialized:${srcName} in '${modName}'`, "hoistDecoratorSetup");
+        return undefined;
+      }
+      const ctype = (init as CExpr).ctype;
+      if (ctype.k !== "vec" && ctype.k !== "map" && ctype.k !== "obj") {
+        this.refuse(src, `decorator-setup-not-shared:${srcName}:${ctype.k} in '${modName}'`, "hoistDecoratorSetup");
+        return undefined;
+      }
+      const globalCName = mangleC(`${layerName}__setup_${srcName}`);
+      if (!this.globalDeclared.has(globalCName)) {
+        this.globalDeclared.add(globalCName);
+        this.globalDecls.push({ cName: globalCName, ctype });
+        this.decoratorInits.push({
+          src, ctype: C_VOID, kind: "c-assign",
+          target: { kind: "name", cName: globalCName, ctype }, value: init as CExpr,
+        });
+      }
+      this.ledger.record("new", "decorator-setup", src, `'${modName}' setup binding '${srcName}' hoisted to a C global for layer '${layerName}' (decoration-time state, D75)`);
+      out.push({ cName: mangleC(srcName), ctype, globalCName });
+    }
+    return out;
   }
 
   /** One unfolded layer. `bind` is absent for the undecorated body and present for each wrapper. */
@@ -3753,7 +3866,13 @@ export class ResolveHirToCir {
     src: ast.FunctionNode,
     cname: string,
     shapeFn: ast.FunctionNode,
-    bind: { prev: string; mod: ast.ModifierNode; modParams: ast.ParameterNode[] } | undefined
+    bind: {
+      prev: string;
+      mod: ast.ModifierNode;
+      modParams: ast.ParameterNode[];
+      /** D75 SETUP bindings, already hoisted to file-scope globals by `hoistDecoratorSetup`. */
+      setup?: { cName: string; ctype: CType; globalCName: string }[];
+    } | undefined
   ): void {
     // A wrapper's own parameters are `...args` -- everything after `original`, which is bound below
     // rather than passed.
@@ -3777,6 +3896,18 @@ export class ResolveHirToCir {
         const oc = mangleC(ast.symbolName((shapeFn.params ?? [])[0].name as ast.IdentifierNode));
         this.declareLocal(oc, C_VALUE);
         prologue.push({ src, ctype: C_VOID, kind: "c-decl", cName: oc, declCType: C_VALUE, init: this.functionValue(src, bind.prev), cell: false });
+        // A SETUP binding is the layer's decoration-time state. It lives in a file-scope global (a C
+        // function cannot see `main`'s locals) and the source name is bound to it here, so the
+        // wrapper body reads `cache` and gets the one that was created once. The declaration copies a
+        // POINTER -- which is why `hoistDecoratorSetup` accepts only vec/map/obj and refuses anything
+        // whose copy would not be shared.
+        for (const s of bind.setup ?? []) {
+          this.declareLocal(s.cName, s.ctype);
+          prologue.push({
+            src, ctype: C_VOID, kind: "c-decl", cName: s.cName, declCType: s.ctype,
+            init: { src, ctype: s.ctype, kind: "c-ref", cName: s.globalCName }, cell: false,
+          });
+        }
         // `:retry[4]` makes the modifier's own `times` the constant 4 -- the point of unfolding.
         bind.modParams.forEach((p, i) => {
           const argNode = bind.mod.args?.[i];

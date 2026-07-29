@@ -1579,6 +1579,46 @@ const CASES: Case[] = [
     },
   },
 
+  // S15.4 -- a module-level MAP literal in an imported module. `resolveAstExpr` had a `vector` case
+  // and no `map` case at all, so every path that re-drives raw AST refused `ELL0106 'map': no lowering
+  // exists`. An imported binding's initializer is resolved from the AST (not the HIR), which is how a
+  // map literal that compiles perfectly inside a function body failed at module scope in another file.
+  {
+    name: "S15.4: a module-level MAP literal in an imported module lowers on C",
+    why:
+      "The same absence also refused D75's decorator SETUP slot, whose `(let cache {})` is resolved " +
+      "the same way -- two reports, one missing switch case. The vector beside it is checked in the " +
+      "same fixture to prove the gap was maps specifically and not module-level literals in general.",
+    run: () => {
+      const files = {
+        "lib.lisp":
+          `(\n` +
+          `  (let SETTINGS {:host "localhost" :port 8080})\n` +
+          `  (let TAGS ["a" "b"])\n` +
+          `  (export SETTINGS TAGS)\n` +
+          `)\n`,
+        "main.lisp":
+          `(\n` +
+          `  (import "lib.lisp")\n` +
+          `  (console.log SETTINGS["host"] SETTINGS["port"] TAGS[1])\n` +
+          `)\n`,
+      };
+      const expected = "localhost 8080 b";
+
+      const js = build(fixture("imported-map-literal-js", files, "main.lisp"));
+      if (!js.compiled) return { ok: false, detail: `JS did not compile: ${js.diagnostics.join(", ") || "(none)"}` };
+      if (js.runtimeError) return { ok: false, detail: `JS runtime: ${js.runtimeError}` };
+      if (js.stdout !== expected) return { ok: false, detail: `JS expected ${JSON.stringify(expected)}, got ${JSON.stringify(js.stdout)}` };
+
+      const c = buildC(fixture("imported-map-literal-c", files, "main.lisp"));
+      if (!c.compiled) return { ok: false, detail: `C did not build (was: ELL0106 'map' no lowering): ${c.runtimeError ?? (c.diagnostics.join(", ") || "(none)")}` };
+      if (c.runtimeError) return { ok: false, detail: `C runtime: ${c.runtimeError}` };
+      if (c.stdout !== expected) return { ok: false, detail: `C expected ${JSON.stringify(expected)}, got ${JSON.stringify(c.stdout)}` };
+
+      return { ok: true, detail: `imported module-level map + vector literals resolve on both backends: ${expected}` };
+    },
+  },
+
 ];
 
 function main() {

@@ -525,6 +525,17 @@ export const C_PASSING: readonly string[] = [
   // nested one yielded the closure. Pins D1's other half too -- `(n)` on a non-function local stays a
   // read -- which is why the fix is gated on the local's C type being a closure.
   "80-adversarial/pipeline_head_closure.lisp",
+  // D75's SETUP slot, hoisted. The state is keyed by LAYER, not by modifier -- which is the part that
+  // needed a guard: keyed by modifier, `:memoized` on two functions would share one cache, and since
+  // the key is the argument, `(cube 3)` would answer 9. Both functions are called with the SAME
+  // argument here, the only way that collision is observable. The absent "computing" lines are the
+  // persistence assertion; a setup slot re-run per call would still answer correctly.
+  "80-adversarial/decorator_setup_state.lisp",
+  // PROMOTED from refused: a stateful decorator stacked with a stateless one. Was `ELL0106
+  // decorator-setup:memoized`, then `ELL0106 'map'` once the hoist landed -- `resolveAstExpr` had a
+  // `vector` case and no `map` case, so the setup's `(let cache {})` had nowhere to go. Grades against
+  // the same golden JS uses, cache HIT and all.
+  "10-modifiers/05_multiple_modifiers.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

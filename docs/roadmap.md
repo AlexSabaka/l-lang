@@ -1098,14 +1098,56 @@ read), and `_parent` is refused: it is cyclic, and reading it would let a handle
 form into the enclosing program. Both refusals pinned in `test:diagnostics`; guarded end-to-end by
 `80-adversarial/comptime_form.lisp`, whose every line folds to a literal before codegen.
 
-### A module-level `map` literal in an IMPORTED module has no C lowering
+### ~~A module-level `map` literal in an IMPORTED module has no C lowering~~ — **CLOSED**
 
-`ELL0106 Cannot generate C for 'map': no lowering exists (resolveAstExpr)`. The same literal inside a
-function body compiles on C, and the same imported module compiles on JS — so this is an
-imported-module-level-binding path, not map literals in general. Found while building M2, whose schema
-was going to be a `(let AST-FIELDS { … })` constant; it is emitted as `match` arms returning vector
-literals instead, because a module about the compiler's own AST being JS-only would be absurd. Vectors
-in the same position are unaffected.
+`resolveAstExpr` had a `vector` case and **no `map` case at all**. Every path that re-drives raw AST
+therefore refused `ELL0106 'map': no lowering exists` — and an imported binding's initializer is
+resolved from the AST rather than the HIR, which is why a map literal that compiles perfectly inside a
+function body failed at module scope in another file.
+
+**Two open reports were the same missing switch case.** The other was D75's decorator **setup slot**,
+whose `(let cache {})` is resolved the same way (see below). Neither report mentioned the other, and
+neither named `resolveAstExpr`.
+
+Guarded by `test:imports` **S15.4**, which checks a vector in the same fixture — so the entry says
+"maps specifically", not "module-level literals in general", and can be falsified.
+
+M2's schema was written as `match` arms returning vector literals to work around this. That workaround
+is no longer forced; it is left alone because rewriting a generated file to prove a point is not worth
+a re-generation.
+
+### ~~D75's decorator SETUP slot has no C lowering~~ — **CLOSED**
+
+`(defmodifier memoized [] (let cache {}) (fn [original n] …))` — the setup slot runs **once, at
+decoration time**, which is the whole reason it exists: a decorator with no decoration-time state is
+just a function. C refused it by name (`ELL0106 decorator-setup:memoized`), correctly, because
+dropping it silently would give every call a fresh cache — a memoizer that memoizes nothing while
+appearing to work.
+
+A layer unfolds into an ordinary top-level C function (D75) and a C function cannot see `main`'s
+locals, so each setup binding becomes a **file-scope global** initialised before the module body runs
+— the same obstruction `computeGlobals` solves for module-level bindings.
+
+**Keyed by LAYER, not by modifier**, and that is the part that needed a guard: `:memoized` on two
+functions must get two caches. Keyed by modifier they would share one, and since the key is the
+argument, `(cube 3)` would answer `9` — the square's cached result, silently, and only for arguments
+both functions happen to have seen. `80-adversarial/decorator_setup_state.lisp` calls both with the
+same argument, which is the only way that collision is observable.
+
+**Only a reference-typed binding is accepted; the rest refuses by name.** The prologue binds the
+source name by copying the global, which shares the pointee for a vec/map/obj and would *not* share an
+`int` — so `(mut count 0)` in a setup slot would reset every call, silently. That is the exact failure
+this feature exists to prevent, so it refuses (`decorator-setup-not-shared:count:int`). Making it work
+needs the binding to be a heap cell (the C2 machinery); the only setup slot in the whole tree today is
+`(let cache {})`.
+
+**And writing the guard found a D83 bug one line up.** `decoratorShape` split `def.body` positionally
+without filtering comments, so a trailing `;;` made the last element a comment and refused the whole
+decorator as mis-shaped, while one earlier arrived in `setup` as a statement to hoist. *A comment
+occupies no slot* — filtered now, for the same reason `listForm.listNodes` filters.
+
+`10-modifiers/05_multiple_modifiers.lisp` moves from **refused to passing**, graded against the same
+golden JS uses, cache hit and all.
 
 ### ~~A nested `:gen` has no C lowering~~ — **CLOSED (C2)**
 
