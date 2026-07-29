@@ -118,6 +118,28 @@ if (exists(EBNF)) {
   }
 }
 
+// The AST schema module is generated from `ast.ts` for the same reason and with the same failure mode:
+// a node kind added to the compiler while the l-lang-side schema still describes the old set is a
+// mirror that lies, and nothing else would notice. Same shape as the EBNF check above.
+const ASTLISP = "lib/std/llang/ast.lisp";
+if (exists(ASTLISP)) {
+  const committed = fs.readFileSync(path.join(ROOT, ASTLISP), "utf8");
+  const before = fs.statSync(path.join(ROOT, ASTLISP)).mtimeMs;
+  execFileSync("npx", ["ts-node", "test/export-ast-stdlib.ts"], {
+    cwd: path.join(ROOT, "src"),
+    stdio: "ignore",
+  });
+  const regenerated = fs.readFileSync(path.join(ROOT, ASTLISP), "utf8");
+  if (committed !== regenerated) {
+    problems.push(
+      `AST     ${ASTLISP}: stale against src/compiler/frontend/ast.ts -- regenerated and it changed. ` +
+        `Run \`npm run ast:stdlib\` and commit the result.`
+    );
+    fs.writeFileSync(path.join(ROOT, ASTLISP), committed); // leave the tree as we found it
+    fs.utimesSync(path.join(ROOT, ASTLISP), before / 1000, before / 1000);
+  }
+}
+
 console.log("=== summary ===");
 console.log(`  documents : ${docs.length}`);
 console.log(`  problems  : ${problems.length}`);

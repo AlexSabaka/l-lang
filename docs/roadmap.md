@@ -822,6 +822,35 @@ and cons/list a derived layer"*, taken 2026-07-22 — **still has no D-number**;
 `manifest.ts`. D95 raised its stakes: with `defmacro` receiving tokens and `defsyntax` receiving an
 AST, that ruling now has to say how the two views relate.
 
+### The AST schema is in the stdlib and generated — **M2**
+
+`lib/std/llang/ast.lisp` mirrors `src/compiler/frontend/ast.ts` — **86 node kinds**, their declared
+fields, and which of those fields hold child nodes. Emitted by `npm run ast:stdlib`, and
+`npm run test:docs` regenerates and diffs it, so a kind added to the compiler while the l-lang-side
+mirror still describes the old set turns the build red. Same gate the EBNF grammar already had, against
+the same failure: a mirror that lies.
+
+**It declares no field accessors, deliberately.** A quoted form is a map (D3d) and `n.nodes` already
+reads it — and that read is already *total*, since an absent field answers nil rather than raising
+(measured, both backends). Eighty generated accessors over a working syntax would be ceremony.
+`std/llang/reflect` needs its accessors because a reflection descriptor's shape varies by kind and
+`t["extends"]` on a root class really does raise; the argument does not transfer. What the module adds
+is what member access cannot tell you — `kinds`, `fields-of`, and `child-fields-of`, the last of which
+is what a generic walker follows and nothing in l-lang could derive before.
+
+One heuristic, stated because it is where this can silently go stale: a field is child-bearing if its
+declared type mentions a node-bearing name, resolved through type aliases to a fixed point (which is
+what makes `BindingTarget = IdentifierNode | VectorPatternNode | MapPatternNode` come out right).
+
+### A module-level `map` literal in an IMPORTED module has no C lowering
+
+`ELL0106 Cannot generate C for 'map': no lowering exists (resolveAstExpr)`. The same literal inside a
+function body compiles on C, and the same imported module compiles on JS — so this is an
+imported-module-level-binding path, not map literals in general. Found while building M2, whose schema
+was going to be a `(let AST-FIELDS { … })` constant; it is emitted as `match` arms returning vector
+literals instead, because a module about the compiler's own AST being JS-only would be absurd. Vectors
+in the same position are unaffected.
+
 ### An l-lang comment containing `*/` emits invalid JavaScript
 
 `;; a comment containing */ a block-comment terminator` compiles and runs on C and is **LL0101** on JS

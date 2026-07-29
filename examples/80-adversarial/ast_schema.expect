@@ -1,0 +1,11 @@
+type: list
+is-list: true
+is-while: false
+kind count: 86
+known: true false
+for fields: ["initial" "condition" "step" "then" "else" "duplicateClauses"]
+for children: ["initial" "condition" "step" "then" "else"]
+unknown fields: []
+nodes in '(+ 1 2): 4
+nodes in nested: 7
+done

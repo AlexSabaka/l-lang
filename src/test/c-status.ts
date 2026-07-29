@@ -431,6 +431,11 @@ export const C_PASSING: readonly string[] = [
   // own, Int stays Int) rather than the serialisation, whose field order is `makeNode`'s insertion
   // order and is nobody's ruling. The return trip (`eval`) is still LL0236 and is not used here.
   "80-adversarial/quote_datum.lisp",
+  // M2: the AST SCHEMA, generated from `ast.ts` into `std/llang/ast` and freshness-gated by
+  // `test:docs`. Ends on the payoff -- a GENERIC form walker, which needs to know which of a kind's
+  // fields hold nodes (`for` declares six; five do, and `duplicateClauses` is a Boolean a naive walker
+  // would try to descend into). Node counts hand-derived from the source forms: 4 and 7.
+  "80-adversarial/ast_schema.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

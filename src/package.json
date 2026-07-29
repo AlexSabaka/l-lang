@@ -23,6 +23,7 @@
     "test:docs": "ts-node test/docs.ts",
     "test:repl": "ts-node test/repl.ts",
     "grammar:ebnf": "ts-node test/export-grammar.ts",
+    "ast:stdlib": "ts-node test/export-ast-stdlib.ts",
     "grammar:diagrams": "ts-node test/build-diagrams.ts",
     "gen:c-runtime": "ts-node compiler/codegen/c/runtime/gen-runtime-text.ts"
   },
