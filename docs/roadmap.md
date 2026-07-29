@@ -680,6 +680,26 @@ Six modules in one round, each ruled before it was written.
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
+### Destructuring: declarations are DONE, parameters are the remaining gap
+
+`(let [a b ...rest] xs)` and `(let {:user {:name n}} data)` were two names for one absence — each
+pattern arm bound `identifier-pattern` leaves and had no way to **descend**. Nesting is one recursive
+call; the tail is one clamped `ll_vec_slice`. Both land together because they are the same edit, and
+each level still binds a temp so its subject is evaluated exactly once.
+
+`04-pattern-matching/04_destructuring.lisp` is **still refused**, and the reason is now narrower and
+different: `ELL0106 param-destructuring` on `(fn print-point [[x y]] …)` at line 50. That is a
+separate seam and is **not** started.
+
+**Measured before touching it, which is why it is not started:** `declareParam` has **8 call sites**
+and only **4** of them build a prologue. A destructured parameter needs the pattern lowered into the
+function's prologue, so threading it through would either mean adding a prologue at four more sites
+or having those four **silently drop** the destructuring — which is this project's signature failure,
+not a shortcut. It wants one hook that every call site is forced to consume, and that is its own
+change.
+
+Guarded by `80-adversarial/destructure_rest_nested.lisp`.
+
 ### The one surviving C defect from the 2026-07-27 adversarial audit
 
 The audit reported 29 findings; its triage adjudicated them to **11 distinct defects** behind a

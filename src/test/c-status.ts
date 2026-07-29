@@ -536,6 +536,14 @@ export const C_PASSING: readonly string[] = [
   // `vector` case and no `map` case, so the setup's `(let cache {})` had nowhere to go. Grades against
   // the same golden JS uses, cache HIT and all.
   "10-modifiers/05_multiple_modifiers.lisp",
+  // A destructuring pattern NESTS, and its tail is a value. The C lowering bound `identifier-pattern`
+  // leaves and had no way to DESCEND, so `...rest` and a nested pattern were two names for one
+  // absence. Asserts `rest.length` and `rest[0]`, not just the printed form -- "the remaining
+  // elements" and "something that prints like a vector" are different claims. Pins both boundaries of
+  // the clamp (a pattern longer than its subject, and a tail taking exactly nothing) and the CROSSING
+  // case, a map pattern inside a vector one, which an arm that descended only into its own kind
+  // would fail while passing everything else.
+  "80-adversarial/destructure_rest_nested.lisp",
   "20-algorithms/00_bfs.lisp",
   // Conway, one generation of a blinker. Was xfail because the bounds check its own comment called a
   // "simplification" was simply absent, so `grid[(+ y dy)]` read index -1 and the emitted bounds check

@@ -1,0 +1,8 @@
+tail        : 1 2 [3 4 5] 3 3
+short       : 7 nil [] 0
+empty tail  : 9 [] 0
+map in map  : Ada 42 x
+vec in vec  : 1 2 3 4
+map in vec  : Ada Bob
+tail in map : 10 [20 30]
+done

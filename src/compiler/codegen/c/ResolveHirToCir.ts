@@ -1203,39 +1203,87 @@ export class ResolveHirToCir {
       out.push({ src: node, ctype: C_VOID, kind: "c-decl", cName, declCType: C_VALUE, init: value, cell: false });
     };
 
-    if (target._type === "vector-pattern") {
-      (target as ast.VectorPatternNode).elements.forEach((el, i) => {
-        if (el._type !== "identifier-pattern") {
-          throw this.refuse(node, `destructuring-element:${el._type}`, "resolveDestructuringDecl");
-        }
-        const idx: CExpr = { src: node, ctype: C_INT, kind: "c-lit", lit: "int", value: String(i) };
-        const len: CExpr = { src: node, ctype: C_INT, kind: "c-member", object: base, fieldName: "length", runtimeFn: "ll_dyn_length" };
-        const inRange: CExpr = { src: node, ctype: C_BOOL, kind: "c-binop", op: "<", mode: "int", lhs: idx, rhs: len };
-        const read: CExpr = { src: node, ctype: C_VALUE, kind: "c-index", base, index: idx, mode: "boxed", checked: false };
-        bind(mangleC(ast.symbolName((el as ast.IdentifierPatternNode).id)), {
-          src: node, ctype: C_VALUE, kind: "c-ternary",
-          test: inRange, then: read, else: { src: node, ctype: C_VALUE, kind: "c-nil" },
-        });
-      });
-      return out;
-    }
+    /** A boxed temp holding `value`, so a NESTED pattern reads its subject once rather than per leaf. */
+    const hold = (value: CExpr): CExpr => {
+      const t = `__ll_de_${this.tempCounter++}`;
+      this.declareLocal(t, C_VALUE);
+      out.push({ src: node, ctype: C_VOID, kind: "c-decl", cName: t, declCType: C_VALUE, init: value, cell: false });
+      return { src: node, ctype: C_VALUE, kind: "c-ref", cName: t };
+    };
 
-    if (target._type === "map-pattern") {
-      for (const pair of (target as ast.MapPatternNode).pairs) {
-        if (pair.pattern._type !== "identifier-pattern") {
-          throw this.refuse(node, `destructuring-element:${pair.pattern._type}`, "resolveDestructuringDecl");
-        }
-        // `{:name :age}` binds `name` from key "name"; `{:firstName first}` binds `first` from key
-        // "firstName". The KEY is the map lookup, the PATTERN is the binding -- they differ only in
-        // the renaming form, and the builder already made the shorthand explicit by filling the
-        // pattern in from the key.
-        bind(mangleC(ast.symbolName((pair.pattern as ast.IdentifierPatternNode).id)),
-             this.memberRead(node, base, ast.keyName(pair.key)));
+    /**
+     * One pattern against one subject, RECURSIVELY -- which is the whole of nesting.
+     *
+     * `(let {:user {:name n}} data)` was `ELL0106 destructuring-element:map-pattern` because each
+     * shape handled only `identifier-pattern` leaves and had no way to descend. Both arms now bind a
+     * temp for the sub-subject and re-enter, so a pattern nests as deeply as it is written and the
+     * subject of each level is still evaluated exactly once.
+     */
+    const emit = (pattern: ast.ASTNode, subject: CExpr): void => {
+      if (pattern._type === "identifier-pattern") {
+        bind(mangleC(ast.symbolName((pattern as ast.IdentifierPatternNode).id)), subject);
+        return;
       }
-      return out;
-    }
 
-    throw this.refuse(node, `destructuring-declaration:${target._type}`, "resolveVarDecl");
+      if (pattern._type === "vector-pattern") {
+        const elements = (pattern as ast.VectorPatternNode).elements;
+        elements.forEach((el, i) => {
+          const idx: CExpr = { src: node, ctype: C_INT, kind: "c-lit", lit: "int", value: String(i) };
+          const len: CExpr = { src: node, ctype: C_INT, kind: "c-member", object: subject, fieldName: "length", runtimeFn: "ll_dyn_length" };
+
+          // `[a ...rest]` -- the TAIL, and only ever the last element. `ast.RestPatternNode`'s own
+          // comment says "only meaningful as the final element", and a rest in the middle would make
+          // every element after it read from an index the slice already consumed -- so it is refused
+          // by position rather than quietly treated as the tail.
+          if (el._type === "rest-pattern") {
+            if (i !== elements.length - 1) {
+              throw this.refuse(node, "destructuring-rest-not-last", "resolveDestructuringDecl");
+            }
+            // `ll_vec_slice` CLAMPS, so a pattern longer than its subject gives an EMPTY rest rather
+            // than trapping -- which is what `let [a, b, ...r] = [1]` does on the oracle, and it
+            // matches the bounds-guarded ternary the fixed elements above already use.
+            const asVec: CExpr = { src: node, ctype: VEC_OF_VALUE, kind: "c-unbox", inner: subject, to: VEC_OF_VALUE };
+            const sliced: CExpr = {
+              src: node, ctype: VEC_OF_VALUE, kind: "c-call",
+              callee: { kind: "intrinsic", runtimeFn: "ll_vec_slice", variadic: false, params: [VEC_OF_VALUE, C_INT, C_INT], ret: VEC_OF_VALUE },
+              args: [asVec, idx, len],
+            };
+            bind(mangleC(ast.symbolName((el as ast.RestPatternNode).id)),
+                 { src: node, ctype: C_VALUE, kind: "c-box", inner: sliced, from: VEC_OF_VALUE });
+            return;
+          }
+
+          const inRange: CExpr = { src: node, ctype: C_BOOL, kind: "c-binop", op: "<", mode: "int", lhs: idx, rhs: len };
+          const read: CExpr = { src: node, ctype: C_VALUE, kind: "c-index", base: subject, index: idx, mode: "boxed", checked: false };
+          const guarded: CExpr = {
+            src: node, ctype: C_VALUE, kind: "c-ternary",
+            test: inRange, then: read, else: { src: node, ctype: C_VALUE, kind: "c-nil" },
+          };
+          emit(el, el._type === "identifier-pattern" ? guarded : hold(guarded));
+        });
+        return;
+      }
+
+      if (pattern._type === "map-pattern") {
+        for (const pair of (pattern as ast.MapPatternNode).pairs) {
+          // `{:name :age}` binds `name` from key "name"; `{:firstName first}` binds `first` from key
+          // "firstName". The KEY is the map lookup, the PATTERN is the binding -- they differ only in
+          // the renaming form, and the builder already made the shorthand explicit by filling the
+          // pattern in from the key.
+          const read = this.memberRead(node, subject, ast.keyName(pair.key));
+          emit(pair.pattern, pair.pattern._type === "identifier-pattern" ? read : hold(read));
+        }
+        return;
+      }
+
+      throw this.refuse(node, `destructuring-element:${pattern._type}`, "resolveDestructuringDecl");
+    };
+
+    if (target._type !== "vector-pattern" && target._type !== "map-pattern") {
+      throw this.refuse(node, `destructuring-declaration:${target._type}`, "resolveVarDecl");
+    }
+    emit(target, base);
+    return out;
   }
 
   private resolveUserAssign(node: ast.SimpleAssignmentNode | ast.CompoundAssignmentNode, rhs: CExpr): CStmt[] {
