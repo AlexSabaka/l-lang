@@ -4231,6 +4231,65 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         break;
       }
 
+      // A `when` YIELDS, and it was UNTYPED -- the fourth instance of this hole, after `if`'s
+      // condition, `match`'s arms and `try`. Measured against a control: `(let a <- String (f))` where
+      // `f -> Int` is LL0200, and the same annotation over `(when true (f))` was SILENT.
+      //
+      // Its type is `T?` and the `?` is not a hedge: an UNTAKEN `when` yields nil, measured
+      // identically on both backends -- `(when false 5)` is nil. So it is the same shape as the
+      // optional `try` (D110), reached by a different route.
+      //
+      // `then` is a BLOCK (an ASTNode[]), unlike `if`'s single node, so the value is the LAST
+      // statement's. Every statement is still inferred: that is what populates the type channel.
+      case "when": {
+        const w = node as ast.WhenNode;
+        this.inferExpressionType(w.condition);
+        const body = w.then ?? [];
+        let last: InferredType = TypeEnvironment.primitive("Void");
+        for (const st of body) last = this.inferExpressionType(st);
+        inferredType =
+          TypeChecker.findCommonType([last, TypeEnvironment.nil()]) ?? TypeEnvironment.unknown();
+        break;
+      }
+
+      // A `cond` is its ARMS' common type -- the same rule as `if` and `match`, and it was untyped
+      // for the same reason they were: no case existed. The fifth instance.
+      //
+      // NIL IS INCLUDED UNLESS AN `else` PROVES EXHAUSTIVENESS. `(cond (false 1))` yields nil,
+      // measured on both backends, so a cond without a default genuinely can produce one. Both
+      // spellings of the default count: `(:else body)` parses with NO condition (D12), and
+      // `(else body)` is a `simple-identifier` -- the same two the C backend already distinguishes
+      // in `resolveCond`. Reading only one of them would make an exhaustive cond spuriously optional.
+      case "cond": {
+        const c = node as ast.CondNode;
+        const cases = c.cases ?? [];
+        const armTypes: InferredType[] = [];
+        let exhaustive = false;
+        for (const arm of cases) {
+          const cond = (arm as any).condition;
+          // A clause that ALWAYS matches makes the cond exhaustive, and there are three spellings of
+          // one thing. `(:else b)` is SUGAR: `AstBuilder.condCase` rewrites it to a literal `true`
+          // condition, deliberately, so "codegen, the checker and every golden see one shape". So
+          // testing for the `:else` keyword here would find nothing -- it is gone by now -- and the
+          // real test is the literal. `(true b)` written out is the same clause and is equally
+          // exhaustive; D12 names the default's SPELLING, it does not forbid writing the condition.
+          // The bare identifier `(else b)` is the third, and is what `ResolveHirToCir` sniffs.
+          const alwaysMatches =
+            !cond ||
+            (cond._type === "boolean" && (cond as any).value === true) ||
+            (cond._type === "simple-identifier" && (cond as any).id === "else");
+          if (alwaysMatches) exhaustive = true;
+          if (cond) this.inferExpressionType(cond);
+          armTypes.push(this.inferExpressionType((arm as any).body));
+        }
+        if (!exhaustive) armTypes.push(TypeEnvironment.nil());
+        inferredType =
+          armTypes.length > 0
+            ? TypeChecker.findCommonType(armTypes) ?? TypeEnvironment.unknown()
+            : TypeEnvironment.unknown();
+        break;
+      }
+
       // A `try` is the common type of its TRY BLOCK and its CATCH ARMS -- the same rule as the `if`
       // above and the `match` below, because it is the same thing: a form that yields a value by one
       // of several routes.

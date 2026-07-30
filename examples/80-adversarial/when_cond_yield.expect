@@ -1,0 +1,13 @@
+when taken: 5
+when untaken: nil
+when block: 6
+block ran: 1
+cond first: 10
+cond else: 20
+cond none: nil
+cond :else: 2
+cond literal true: 2
+when in cond: 5
+cond in when: 42
+narrowed: was nil
+as an argument: 42

@@ -699,6 +699,30 @@ zero call sites, so nothing is waiting on it.
 The gap is general: it hits any user writing `deftype MyMap <- Map`, which is the obvious way to name
 a domain dictionary type.
 
+### `findCommonType` does not dedup a union — `Int | Int | String`
+
+Pre-existing, found while typing `cond` (D112) and confirmed NOT to be caused by it. Both the
+`match` and nested-`if` paths already do it:
+
+```
+(match n { 1 => 10  2 => 20  _ => "x" })   ->  Int | Int | String
+(if a 10 (if b 20 "x"))                    ->  Int | Int | String
+```
+
+Three arms of the same type collapse (`findCommonType` short-circuits when ALL are equal), so it only
+shows on a genuine mix. Not known to change assignability — it surfaces in diagnostic text — but a
+union type with duplicate members is malformed, and the function is core enough that widening a
+form-typing round into it was the wrong trade.
+
+### A `cond` clause spelled `(else b)` cannot exist, and the C backend tests for it
+
+`ResolveHirToCir` computes `isElse` as *"condition is a `simple-identifier` whose id is `else`"*. That
+shape never reaches it: `(cond (c 1) (else 2))` is `ELL0210 'else' is not defined` — an ordinary
+undefined identifier — and `AstBuilder.condCase` rewrites the real `(:else b)` spelling to a literal
+`true` condition, deliberately, so "codegen, the checker and every golden see one shape". So the test
+is dead code checking for a form the grammar does not produce. Harmless today; it misled the D112
+typing work into believing there were three default spellings when there are two.
+
 ### LL0240 cannot see a SIBLING collision — UNRULED, and it has produced a wrong answer
 
 The diagnostic for "two modules export the same name, and which one you get depends on module order"

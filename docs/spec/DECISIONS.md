@@ -8424,3 +8424,53 @@ to. `TypeEnvironment.map()` is a constructor the checker calls when inferring a 
 its own round — which is why `Dict` stays deleted.
 
 C 310 over 365, unmoved.
+
+## D112 — `when` and `cond` are EXPRESSIONS, and both were untyped (2026-07-30)
+
+The **fourth and fifth** instances of one hole. `if`'s condition, `match`'s arms and `try` (D110) were
+the first three, each found only when somebody happened to ask. This round asked the same question of
+every form with a case in `inferExpressionType` and every form without one — `when` and `cond` were
+the two value-yielding forms with no case at all.
+
+Measured against a control, where `f -> Int`:
+
+```
+(let a <- String (f))                    LL0200 cannot assign Int to String
+(let a <- String (if true (f) (f)))      LL0200        -- if is typed
+(let a <- String (when true (f)))        SILENT
+(let a <- String (cond (true (f))))      SILENT
+```
+
+Both **do** yield, identically on both backends: `(when true 5)` is `5`, `(when false 5)` is **nil**,
+`(cond (c 1) (:else 2))` is its clause, and a `cond` matching nothing is **nil**.
+
+### The two types are NOT the same shape
+
+- **`when` is `T?` unconditionally.** An untaken `when` yields nil, so the optional is not a hedge —
+  it is the form's actual range. This is the same shape as D110's optional `try`, reached by a
+  different route. Its `then` is a **block** (`ASTNode[]`, unlike `if`'s single node), so the value is
+  the last statement's; every statement is still inferred, which is what populates the type channel.
+- **`cond` is `T?` only when no clause always matches.** `(cond ((> n 100) 1))` genuinely yields nil.
+
+### `(:else b)` is sugar, and the keyword is gone before the checker sees it
+
+`AstBuilder.condCase` rewrites `(:else body)` to a clause with a **literal `true`** condition,
+deliberately — *"codegen, the checker and every golden see one shape and cannot disagree about it"*.
+So testing for the `:else` keyword in the checker would find nothing. The honest test is "a clause
+that always matches", which covers `(:else b)` and a written-out `(true b)` — and D12 names the
+default's *spelling*, it does not forbid writing the condition.
+
+> **A third spelling does not exist, and the C backend tests for it.** `ResolveHirToCir` computes
+> `isElse` from a `simple-identifier` whose id is `else`. That shape never arrives: `(cond (c 1)
+> (else 2))` is `ELL0210 'else' is not defined`. Dead code, recorded in `docs/roadmap.md` — it misled
+> this work into believing there were three default spellings.
+
+### Found and NOT fixed
+
+`findCommonType` does not dedup a union: `(match n { 1 => 10  2 => 20  _ => "x" })` is
+`Int | Int | String`, and a nested `if` is too. **Pre-existing** — confirmed on both paths before
+touching anything — and exposed here only because a `cond` can pass more than two arms. Recorded
+rather than fixed: the function is core to type identity, and widening a form-typing round into it was
+the wrong trade.
+
+C 310 → **311** over 366.

@@ -556,6 +556,13 @@ export const C_PASSING: readonly string[] = [
   // desugars to a nil-yielding catch arm. The `finally` rows were already correct and UNGUARDED --
   // nothing stopped a lowering change from making the finalizer supply the value. The last row is
   // the one that keeps the two forms distinct: `finally` without `catch` still PROPAGATES.
+  // D112 -- `when` and `cond` YIELD, and neither was typed. The fourth and fifth instances of one
+  // hole, after `if`'s condition, `match`'s arms and `try`. The two shapes differ and the file pins
+  // both: a `when` is `T?` ALWAYS (untaken yields nil), a `cond` is `T?` only when no clause always
+  // matches -- and `(:else b)` is SUGAR that `AstBuilder.condCase` rewrites to a literal `true`
+  // condition, so the keyword is gone before the checker sees it. Also pins the combinations, which
+  // is where a form-level rule usually breaks: nested each way, and in a call-argument position.
+  "80-adversarial/when_cond_yield.lisp",
   "80-adversarial/try_as_expression.lisp",
   "80-adversarial/trap_kinds_registered.lisp",
   "80-adversarial/iterator_done_flag.lisp",
