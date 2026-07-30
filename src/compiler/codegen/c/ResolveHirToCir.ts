@@ -1647,9 +1647,22 @@ export class ResolveHirToCir {
     const store = (cName: string, value: CExpr): CStmt =>
       ({ src: node, ctype: C_VOID, kind: "c-assign", target: { kind: "name", cName, ctype: C_VALUE }, value });
     this.ledger.record("A3", "generator-foreach", node, "for :each inside a :gen lowered to an explicit cursor loop (its cursor must be a frame slot)");
+    // TERMINATION IS `ll_iter_done`, NOT A NIL TEST -- the same predicate `EmitCirToC` emits for the
+    // ordinary `c-foreach`. This arm used to build `(el != nil)` by hand, so `for :each` had TWO
+    // lowerings and only one of them learned D108: a `:gen` whose yield sits inside a loop truncated
+    // at the first nil ELEMENT while the identical loop in an ordinary function walked it.
+    //
+    // Measured before the fix, on the same file: `(fn :gen wrap [c] (for :each x :from c (yield x)))`
+    // over `[1 nil 2 nil 3]` walked ONE element, while a generator with top-level yields walked all
+    // three -- and `std/iter/linq`'s `seq`/`map`/`filter` are exactly the first shape, which is why
+    // every straight-through operator truncated on C and not on JS.
     const test: CExpr = {
-      src: node, ctype: C_BOOL, kind: "c-binop", op: "!=", mode: "eq-deep",
-      lhs: ref(elName), rhs: { src: node, ctype: C_VALUE, kind: "c-nil" },
+      src: node, ctype: C_BOOL, kind: "c-unop", op: "!", mode: "bool",
+      operand: {
+        src: node, ctype: C_BOOL, kind: "c-call",
+        callee: { kind: "intrinsic", runtimeFn: "ll_iter_done", variadic: false, params: [C_VALUE, C_VALUE], ret: C_BOOL },
+        args: [ref(itName), ref(elName)],
+      },
     };
     // D11: the per-iteration copy the emitter's own for-each arm applies, kept explicit here.
     const bind = store(varCName, { src: node, ctype: C_VALUE, kind: "c-copy", inner: ref(elName) });

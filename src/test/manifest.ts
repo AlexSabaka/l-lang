@@ -250,6 +250,18 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "both backends and is graded on both in `indexed_method_call.lisp`, so the split is exactly the " +
       "native-member case and no wider.",
   },
+  "80-adversarial/iterator_done_flag.lisp": {
+    status: "test",
+    oracleDivergent:
+      "ONE ROW of six. D108 gives `Iterator<T>` a `done` member so exhaustion leaves the value space; " +
+      "C honours it for all three cursor kinds and JS honours it for none, because `__ll_js_iter` " +
+      "(`RuntimeProvider.ts`) adapts a user cursor's `next() -> T?` to JS's `{value, done}` with " +
+      "`v === null || v === undefined`, which is the sentinel rule D108 retires. Measured: `user " +
+      "cursor: 1` where C says 3. The other five rows AGREE -- a generator is natively iterable on " +
+      "JS, so `for...of` never reaches that adapter and JS was already right about generators " +
+      "(indeed it was RIGHT and C was wrong there before this round: `gen in loop` was C 1 / JS 5). " +
+      "Not fixed on JS: D66 freezes that path, and the one-line change would be a new feature on it.",
+  },
   "80-adversarial/int_division_erasure.lisp": {
     status: "test",
     oracleDivergent:

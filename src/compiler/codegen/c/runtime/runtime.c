@@ -2399,6 +2399,22 @@ static ll_value ll_next(ll_value it) {
   return ll_next(ll_iter(it));
 }
 
+/* The method a class -- or any ancestor -- answers to `name`, or NULL.
+ *
+ * Factored out for D108 rather than copied: `ll_dispose` already walked own-methods-then-parents, and
+ * `ll_iter_done` now needs the identical walk for `done`. Two copies of an inheritance rule is how
+ * the two would drift, and a `dispose` found on a parent while a `done` was not would be exactly the
+ * silent asymmetry this file keeps getting caught by. */
+typedef ll_value (*ll_method_fn)(ll_value self, int argc, ll_value *argv);
+static ll_method_fn ll_find_method(const ll_class *cls, const char *name) {
+  for (const ll_class *c = cls; c; c = c->parent ? ll_class_by_name(c->parent) : (const ll_class *)0) {
+    for (size_t i = 0; i < c->method_count; i++) {
+      if (strcmp(c->methods[i].name, name) == 0) return c->methods[i].fn;
+    }
+  }
+  return (ll_method_fn)0;
+}
+
 /* IS THE CURSOR EXHAUSTED? A FLAG, not a sentinel value.
  *
  * This function exists because the previous rule -- "nil means done" -- was wrong, and the comment
@@ -2420,15 +2436,38 @@ static ll_value ll_next(ll_value it) {
  *
  *   * A BUILT-IN cursor (vector, string) is a closure over `ll_cursor_env`, identified by its own
  *     step function -- so the flag is read straight off the env and a nil ELEMENT is just an element.
- *   * A USER cursor is an object implementing D30's `(fn next [] -> T?)`, where nil genuinely is the
- *     only signal the protocol offers. It keeps the old rule, which is correct FOR THAT PROTOCOL
- *     rather than a fallback: a user iterator that must yield nil has to say so in its own type, and
- *     changing `Iterator<T>`'s shape is a language decision this is not.
+ *   * A USER cursor is an object implementing D30's `Iterator<T>`. It used to keep the old rule --
+ *     "changing `Iterator<T>`'s shape is a language decision this is not" -- and D108 is that
+ *     decision: the interface now carries `(fn done [] -> Boolean)` beside `next`, so a user cursor
+ *     answers the same question the built-in one does, off its own state instead of off its value.
+ *     A cursor with no `done` member still falls back to the nil rule, which keeps this total for a
+ *     generator frame (no method table) and for any type predating the member.
  *
- * `last` is the value `ll_next` just produced, needed only for the second case. */
+ * THE SEMANTICS ARE POST-HOC, and they are chosen to MATCH the built-in cursor rather than to read
+ * nicely: `ll_cursor_step` sets `e->done` on the step that runs off the end and returns nil, so
+ * `done` means "the value `next` just produced was not an element", never "a further element
+ * exists". The loop is `v = next(it); if (done(it)) break; use v`. A lookahead `hasNext` would have
+ * been the more familiar shape and would have made the two cursor kinds disagree, which is the one
+ * thing this whole correction exists to prevent.
+ *
+ * `last` is the value `ll_next` just produced, needed only for the fallback. */
 static int ll_iter_done(ll_value it, ll_value last) {
   if (it.tag == LL_CLOSURE && it.as.fn->fn == ll_cursor_step) {
     return ((ll_cursor_env *)it.as.fn->env)->done;
+  }
+  /* A GENERATOR frame answers from its own state machine. Slot 0 is the state and -1 is terminal --
+   * the emitted step function stores it on natural completion (the last resume label falls through
+   * to `state = -1; return nil`), and `ll_dispose` parks an abandoned machine at the same value. So
+   * the flag already existed; nothing read it. This is the third cursor kind and it had the SAME
+   * defect as the other two: `(fn :gen g [] (yield 1) (yield nil) (yield 2))` walked ONE element on
+   * C while JS -- whose `function*` is natively iterable and never goes through the nil test --
+   * walked three. That divergence is closed here, in the direction of the JS answer. */
+  if (it.tag == LL_OBJ && it.as.o->cls->is_gen) {
+    return it.as.o->cls->field_count > 0 && ll_unbox_int(it.as.o->fields[0]) == -1;
+  }
+  if (it.tag == LL_OBJ) {
+    ll_method_fn d = ll_find_method(it.as.o->cls, "done");
+    if (d) return ll_truthy(d(it, 0, (ll_value *)0));
   }
   return last.tag == LL_NIL;
 }
@@ -2453,26 +2492,11 @@ static void ll_dispose(ll_value v) {
     if (cls->field_count > 0) v.as.o->fields[0] = ll_box_int(-1); /* GEN_DONE */
     return;
   }
-  for (size_t i = 0; i < cls->method_count; i++) {
-    if (strcmp(cls->methods[i].name, "dispose") == 0) {
-      cls->methods[i].fn(v, 0, (ll_value *)0);
-      return;
-    }
-  }
-  /* A parent's `dispose` counts too -- conformance is inherited, so the walk is the same one
-     `ll_dyn_method` performs rather than a shallower rule that would answer differently. */
-  const char *parent = cls->parent;
-  while (parent) {
-    const ll_class *p = ll_class_by_name(parent);
-    if (!p) break;
-    for (size_t i = 0; i < p->method_count; i++) {
-      if (strcmp(p->methods[i].name, "dispose") == 0) {
-        p->methods[i].fn(v, 0, (ll_value *)0);
-        return;
-      }
-    }
-    parent = p->parent;
-  }
+  /* A parent's `dispose` counts too -- conformance is inherited. `ll_find_method` IS that walk, and
+     it is shared with `ll_iter_done`'s `done` lookup (D108) so the two cannot answer differently
+     about inheritance. It used to be spelled out twice here, own-methods then a parent loop. */
+  ll_method_fn d = ll_find_method(cls, "dispose");
+  if (d) d(v, 0, (ll_value *)0);
 }
 
 /* -- generic boxed operators (the JS operator shim's NATIVE tail; user-overload registry is

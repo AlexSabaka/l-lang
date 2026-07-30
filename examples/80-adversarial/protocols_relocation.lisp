@@ -18,12 +18,14 @@
     ;; --- 1. DIRECT: a cursor declared against the contract's own module. -----------------------
     (defstruct Countdown :implements Iterator<Int>
         (mut :ctor n <- Int)
+        (mut :ctor spent <- Boolean false)
         (fn iterator [] -> Iterator<Int> (return this))
         (fn next [] -> Int? (
-            (if (<= this.n 0) (return nil))
+            (if (<= this.n 0) ((this.spent := true) (return nil)))
             (let v this.n)
             (this.n := (- v 1))
-            (return v))))
+            (return v)))
+        (fn done [] -> Boolean (return this.spent)))
 
     (mut sum 0)
     (for :each x :from (new Countdown 4) :then (sum := (+ sum x)))

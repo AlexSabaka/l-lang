@@ -8088,3 +8088,72 @@ example in the corpus already wrote the adjacent form, so the claim had been fal
 for its whole life.
 
 C 305 → **306** over 360.
+
+## D108 — `Iterator<T>` carries `done`: exhaustion is a FLAG, not the value (2026-07-30)
+
+**Ruling (Sabaka, 2026-07-30):** `Iterator<T>` gains `(fn done [] -> Boolean)` beside `next`. `next`
+still answers `T?` and still hands back the element; **`done` — not the value — says whether the
+sequence is exhausted.**
+
+This finishes a correction that was started and explicitly left half-done. The 2026-07-27 ruling that
+gave the built-in cursor a `done` flag says in its own text: *"a USER cursor keeps the nil rule …
+changing `Iterator<T>`'s shape is a language decision this is not."* This is that decision.
+
+### What was actually broken, measured
+
+`nil MEANS done` makes a nil ELEMENT indistinguishable from the end. Three cursor kinds, and the
+ruling had fixed one:
+
+| cursor kind | before | after |
+|---|---|---|
+| built-in (vector, string) | 3 | 3 — fixed 2026-07-27 |
+| **user** `:implements Iterator` | **1** | **3** |
+| **generator, top-level yields** | **1** | **3** |
+| **generator, yield inside a loop** | **1** | **5** |
+
+The last row is the one worth keeping. `for :each` has **two lowerings** — the ordinary one emits
+`ll_iter_done`, and `resolveForEachInGenerator` hand-built `(el != nil)`. So a `:gen` whose yield sits
+inside a loop truncated while the identical loop in an ordinary function did not, and **every
+straight-through `std/iter/linq` operator has exactly that shape**: `seq`, `map`, `filter`, `skip`,
+`enumerate` all answered 1 over a five-element source on C and 5 on JS. One rule, two implementations,
+one of them taught — the fourth instance recorded in this project, and the third this session.
+
+**And the generator half was a live oracle divergence the earlier ruling never mentioned.** JS was
+RIGHT there and C wrong, because a `function*` is natively iterable so `for...of` never reaches the
+nil-testing adapter. C now agrees with JS on generators; JS is now wrong about *user* cursors, for the
+same reason inverted (`__ll_js_iter` still adapts `next() -> T?` through `v === null`), and D66 freezes
+that path. One row of six, stated in the manifest.
+
+### The contract is POST-HOC, and that is chosen to match, not to read well
+
+`done` answers *"the value `next` just produced was not an element"*, never *"a further element
+exists"*. The consumer walks `v = next(it); if (done(it)) break; use v`.
+
+This matches `ll_cursor_step`, which sets its flag on the step that runs off the end — so both cursor
+kinds flip at the same moment. A lookahead `has-next` (Java's shape) would be more familiar and would
+make the kinds disagree about *when*, which is the single failure this whole correction exists to end.
+The cost is real and worth naming: an implementor must set a flag **inside `next`**, because
+recomputing exhaustion from state answers the lookahead question — `RangeCursor` has advanced past
+`stop` when it returns the last real element, so a recomputed `done` would drop it.
+
+### Fallback, and what it costs
+
+A cursor with no `done` member still terminates on nil. That keeps the runtime total, and it is what
+made this land without touching the JS backend or the generator ABI. `ll_find_method` — the
+own-methods-then-ancestors walk — was **factored out of `ll_dispose` rather than copied**, since two
+copies of an inheritance rule is how `dispose` found on a parent and `done` not would have become the
+next silent asymmetry.
+
+### Blast radius, smaller than estimated
+
+Priced at "9 `:implements` sites". The real number is **three**: `Iterable` requires only `iterator`,
+so only `Iterator` implementors owe a `done` — `RangeCursor`, and two corpus files. LL0209 named every
+one of them, and named them **for structs too**, which was only true as of B1 landing that morning.
+
+### Not closed here
+
+`take`, `take-while` and `zip` still truncate. They test the sentinel **in l-lang source**
+(`(if (== v nil) …)`, `linq-early.lisp`), so no runtime fix reaches them; they need rewriting against
+`done` and that is B4.
+
+C 306 → **307** over 361.

@@ -36,16 +36,31 @@
   ;; hand-written iterator satisfies it by returning `this` from `iterator()`, which every one already
   ;; does (the `Countdown` fixture, `std/iter`'s own conformance test).
   ;;
-  ;; `next` returns `T?`, and `nil` MEANS done. That folds onto D9 -- the same optional, the same
-  ;; forced-unwrap, the same flow-narrowing the rest of the language already has.
+  ;; `next` returns `T?` and hands back the element. **`done` -- not the value -- says whether the
+  ;; sequence is exhausted (D108).**
   ;;
-  ;; IT IS ALSO A MEASURED DEFECT, and B3 is where it gets ruled. A nil ELEMENT is indistinguishable
-  ;; from the end, so a user cursor over `[1 nil 2]` walks ONE element on both backends. The runtime
-  ;; already moved past this for BUILT-IN cursors -- `ll_iter_done` reads an out-of-band flag off the
-  ;; cursor env -- and the ruling that did so says in its own text that "a USER cursor keeps the nil
-  ;; rule". This interface is the half that was left behind.
+  ;; `nil` used to mean done, which folded neatly onto D9 and was wrong: a nil ELEMENT is then
+  ;; indistinguishable from the end, so a user cursor over `[1 nil 2]` walked ONE element, on both
+  ;; backends, silently. The runtime had already moved past it for BUILT-IN cursors -- `ll_iter_done`
+  ;; reads a flag off the cursor env -- and the ruling that did so said in its own text that "a USER
+  ;; cursor keeps the nil rule" because changing this interface was a language decision. This is it.
+  ;;
+  ;; THE CONTRACT IS POST-HOC, and it matches the built-in cursor exactly rather than reading most
+  ;; nicely. `done` answers *"the value `next` just produced was not an element"* -- never "a further
+  ;; element exists". A consumer walks:
+  ;;
+  ;;     (let v (next it))
+  ;;     (if (done it) ...stop...)   ;; v was past the end
+  ;;
+  ;; so an implementor sets its flag INSIDE `next`, on the call that runs out. A lookahead `has-next`
+  ;; would be the more familiar shape (Java's) and would make the two cursor kinds disagree about
+  ;; when the flag flips -- which is the single thing this correction exists to prevent.
+  ;;
+  ;; A cursor with no `done` member still terminates on nil: the runtime falls back, which keeps a
+  ;; generator frame (it carries no method table) and any pre-D108 type working.
   (definterface Iterator<T> :implements Iterable<T>
-    (fn next [] -> T?))
+    (fn next [] -> T?)
+    (fn done [] -> Boolean))
 
   ;; The DETERMINISTIC edge, and deliberately a SEPARATE interface rather than a member on
   ;; `Iterator<T>` (D58).

@@ -36,11 +36,17 @@
     ;; Declares the CURSOR interface, not the source interface -- the shape that used to break.
     (defclass Countdown :implements Iterator<Int>
         (mut :ctor n <- Int 3)
+        ;; D108: exhaustion is a FLAG, not the value. Defaulted, so every `(new Countdown 3)` below
+        ;; is untouched.
+        (mut :ctor spent <- Boolean false)
         (fn next [] -> Int? (
-            (if (<= this.n 0) (return nil))
+            (if (<= this.n 0) ((this.spent := true) (return nil)))
             (this.n := (- this.n 1))
             (return (+ this.n 1))
         ))
+        ;; POST-HOC: set by `next` on the call that runs out, never recomputed from `n` -- `n` is
+        ;; already 0 when the LAST real element is returned, so a recomputed `done` would drop it.
+        (fn done [] -> Boolean (return this.spent))
         (fn iterator [] -> Iterator<Int> (return this))
     )
 

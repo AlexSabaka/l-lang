@@ -36,16 +36,25 @@
     (mut :ctor stop <- Int)
     (mut :ctor step <- Int)
     (mut :ctor inclusive <- Boolean)
+    ;; D108's flag. A ctor field because `RangeCursor` has exactly one construction site (`Range`'s
+    ;; `iterator`, below), and because it must start FALSE: `done` is post-hoc, so a cursor that has
+    ;; not been stepped yet has not run off anything.
+    (mut :ctor spent <- Boolean)
     (fn iterator [] -> Iterator<Int> (return this))
     (fn next [] -> Int? (
       (let ascending (> this.step 0))
-      (let done (if ascending
+      (let past (if ascending
                     (if this.inclusive (> this.current this.stop) (>= this.current this.stop))
                     (if this.inclusive (< this.current this.stop) (<= this.current this.stop))))
-      (if done (return nil))
+      (if past ((this.spent := true) (return nil)))
       (let cur this.current)
       (this.current := (+ this.current this.step))
       (return cur)))
+    ;; POST-HOC, and it must not recompute the bound test. Recomputing would answer "would a FURTHER
+    ;; call be empty?" -- lookahead -- and on the last real element the cursor has already advanced
+    ;; past `stop`, so it would report done for a value that was genuinely there. `(0..2)` would walk
+    ;; 0 and 1 and drop 2. The flag is set by `next` on the call that runs out; nothing else sets it.
+    (fn done [] -> Boolean (return this.spent))
   )
 
   ;; The source: re-iterable (a FRESH cursor per `iterator` call). `step` is nil until `.by` sets a
@@ -60,7 +69,7 @@
       (let st this.step)
       (let magnitude (if (!= st nil) (if (< st 0) (- 0 st) st) 1))
       (let signed (if ascending magnitude (- 0 magnitude)))
-      (return (RangeCursor this.lo this.hi signed this.inclusive))))
+      (return (RangeCursor this.lo this.hi signed this.inclusive false))))
     ;; `.by n` -- set the step MAGNITUDE (sign still follows direction). Returns a new Range.
     ;; A zero step would never advance the cursor (an infinite walk), so it is rejected here.
     (fn by [n <- Int] -> Range (

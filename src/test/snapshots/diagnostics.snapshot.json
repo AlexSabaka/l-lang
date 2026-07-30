@@ -832,7 +832,7 @@
       {
         "code": "LL0209",
         "severity": "error",
-        "text": "'Liar' declares ':implements Iterator' but does not define the members 'next', 'iterator'. Declaring an interface is a PROMISE that callers rely on -- define them, or drop the ':implements Iterator'."
+        "text": "'Liar' declares ':implements Iterator' but does not define the members 'next', 'done', 'iterator'. Declaring an interface is a PROMISE that callers rely on -- define them, or drop the ':implements Iterator'."
       }
     ]
   },

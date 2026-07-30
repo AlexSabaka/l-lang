@@ -523,6 +523,15 @@ export const C_PASSING: readonly string[] = [
   // boundary, and `Disposable` is here on a type with no iteration in sight, which is the argument
   // for it having left `std/iter` at all.
   "80-adversarial/protocols_relocation.lisp",
+  // D108 -- EXHAUSTION IS A FLAG, across all three cursor kinds, and the third row is why this file
+  // exists. A user cursor and a top-level-yield generator were the obvious cases; `for :each` INSIDE
+  // a `:gen` is lowered by a separate method (`resolveForEachInGenerator`) that hand-built an
+  // `(el != nil)` test instead of the `ll_iter_done` the ordinary lowering emits -- so one rule had
+  // two implementations and only one was taught. That is what made every straight-through
+  // `std/iter/linq` operator truncate on C and not on JS. The last row is a CONTROL: a built-in
+  // cursor over the same data, fixed long before this, which must not move. If it ever disagrees
+  // with the rows above, the cursor kinds have drifted apart again.
+  "80-adversarial/iterator_done_flag.lisp",
   // ERASING A TYPE MUST NOT CHANGE THE ARITHMETIC. `binopMode` returned "real" for `/` BEFORE the
   // boxed check every other operator makes, so `(/ 7 2)` was 3 statically and 3.5 through an Unknown.
   // The audit recorded only the corner of this it could see -- boxed `(/ 1 0)` yielding Infinity
