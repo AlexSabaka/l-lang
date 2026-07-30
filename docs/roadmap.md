@@ -1478,10 +1478,19 @@ Eight of the ten Tier-1 modules shipped as D76–D80, D65, D67 and `std/test`. S
 
 *   [ ] `std/collections`, `std/math/fft`, `std/os/fs`, and seven Tier-2 floor entries
 *   [ ] the 12-operator LINQ shelf, and `std/seq`'s seven mirror holes
-*   [ ] **`std/fn` is a JS module wearing a portable module's clothes** — `partial`/`apply` are still
-      `func.apply` and `funcs.reduceRight` host calls. The spread-call blocker that justified this
-      has since been removed (`dc4df1a`, `c1bccb9`, `ff95b4f`), and `apply` still has no `runtime.c`
-      entry, so the module was never rewritten.
+*   [x] ~~**`std/fn` is a JS module wearing a portable module's clothes**~~ — **DONE**. `partial` and
+      the module-private `apply` were `func.apply null args`, a JavaScript method on a JavaScript
+      function object, so `TypeError: no such method on this value` on the reference backend. They are
+      `(func ...args)` now — D93's spread call, which is exactly what `func.apply` was imitating. The
+      blocker had been gone since `dc4df1a`/`c1bccb9`/`ff95b4f`; the module was simply never
+      rewritten. (`funcs.reduceRight` was never a host call — it is a real native method and
+      `compose` always worked.)
+
+      **It survived because nobody called it.** `16-stdlib/test_stdlib.lisp` exercises `identity`,
+      `constantly` and `compose`; `partial` had **no call site anywhere** in `examples/` or `lib/`.
+      This project's own question, inverted: not *"who calls it?"* but *"what does nobody call?"* —
+      an export with no caller is the one place a defect can sit at rest. Guarded by
+      `80-adversarial/std_fn_portable.lisp`.
 *   [ ] the `--portable` advisory, and the Bytes / text-only-I/O ruling
 
 ### Older entries

@@ -579,6 +579,13 @@ export const C_PASSING: readonly string[] = [
   // -Wextra: legal C that means something else. The values are 1/2/3 deliberately -- they ARE the
   // tags LL_INT/LL_REAL/LL_BOOL, and a guard written with round numbers would have passed.
   "80-adversarial/literal_element_boxing.lisp",
+  // `std/fn`'s `partial` was `func.apply null args` -- a JavaScript method on a JavaScript function
+  // object, so `TypeError: no such method on this value` on the reference backend. IT SURVIVED
+  // BECAUSE NOBODY CALLED IT: `16-stdlib/test_stdlib.lisp` exercises identity/constantly/compose, and
+  // `compose` uses `reduceRight`, a real native method. `partial` had no call site in `examples/` or
+  // `lib/` at all. Pins argument ORDER with a non-commutative operator (a reversed concat still
+  // answers 6 for `+`), the zero-fixed-args degenerate case, and a partial OF a partial.
+  "80-adversarial/std_fn_portable.lisp",
   // The NATIVE half of the same fix -- `.length`/`.toUpperCase` on an indexed receiver. oracleDivergent:
   // JS emits the member as a property and calls it (`__ll_index(...)["length"]()`), which is a codegen
   // bug in the frozen backend rather than a disagreement. Two `.length`s on different receiver types,
