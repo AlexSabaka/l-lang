@@ -8341,3 +8341,86 @@ codegen as raw `FractionNumberNode`s. The gate named both.
 
 C 309 → **310** over 364. `90-diagnostics/00_errors.lisp` loses `LL0007` from its `codes`; the line
 that raised it is now ordinary code.
+
+## D111 — types and values are separate namespaces (2026-07-30)
+
+**Ruling (Sabaka, 2026-07-30):** a type annotation may only name something that **declares a type** —
+`defclass`, `defstruct`, `definterface`, `defenum`, `deftype`. It may not name a value.
+
+`convertAstTypeCore` accepted `userType.inferredType || declaresAType(userType)`. The second clause is
+the real test; the first accepts **every value in the program**, because every value has an inferred
+type.
+
+### It was a wrong answer, not a lost check
+
+```lisp
+(fn ident [x <- Any] -> Any (return x))
+(let T (ident 0))                          ;; T is a VARIABLE whose type is Any
+(fn add1 [n <- T] -> Int (return (+ n 1)))
+(add1 "7")
+```
+
+| | control `n <- Int` | value-as-type `n <- T` |
+|---|---|---|
+| C | `ELL0203 expected Int, got String` | traps at run time |
+| **JS** | same `ELL0203` | **prints `71`**, exit 0 |
+
+**A compile-time type error became a silently wrong printed value** — string concatenation where the
+signature promised `Int`. That is precisely what `LL0231`'s own message text promises to prevent:
+*"it turns CHECKING OFF for the declaration… while looking exactly like a declaration that is
+checked."* It could not fire, because `T` resolves to something.
+
+Three more shapes, all measured:
+
+- **26 ambient `std/js` externs** — `Map`, `Array`, `Date`, `Set`, `Promise`, … are `(let :extern X)`
+  **variables**. Every one read as an annotation and was assignable from **nothing**:
+  `(let m <- Map {"a" 1})` reported the self-refuting `cannot assign Map to Map`. This is what
+  `Dict <- Object` was really hitting, and why the earlier `typesEqual` diagnosis was wrong — three
+  candidate fixes there were patched in and **changed nothing**.
+- **A value could shadow a PRIMITIVE.** `(let Int "x")` then `(let x <- Int 5)` gave
+  `cannot assign Int to Int`, because the symbol table is consulted *before* the primitive table.
+  Now the annotation means the primitive and the program compiles.
+- **D9's nil guard was defeated** — a `-> T` return annotated with a value skipped
+  `ELL0205 'c' is possibly nil`.
+
+### Both halves are required, and either alone is useless
+
+Measured by patching a compiler copy and sweeping all 435 `.lisp` files three ways:
+
+| patched | files with changed diagnostics |
+|---|---|
+| `convertAstTypeCore` alone | **0** |
+| `checkTypeNameResolves` alone | 1 |
+| both | 1 |
+
+Tightening the resolution alone turns a value-typed annotation into `Unknown` — **assignable from
+everything** — so the program stays silent and nothing is gained. The diagnostic has to come from
+`checkTypeNameResolves`, and the two predicates must agree or `LL0231` means one thing and the
+resolution another. The twin was already a known mirror: its comment says it *"MIRRORS
+`convertAstTypeCore`'s resolution chain exactly"* — it did, including the defect.
+
+### The cost, measured rather than estimated
+
+**One annotation in 435 files, and zero bytes of emitted C.** `examples/00-basics/05_whitespace.lisp`
+wrote `Array<String | Real | Boolean | Void>`; the array type this language has is `T[]`. Fixed in the
+commit *before* this one, so the tree was clean when the strictness went on — the only order that
+works, as D109 established.
+
+Nothing legitimate falls outside `declaresAType`: a generic parameter resolves **earlier**
+(`typeEnv`), the six primitives resolve **later**, and an imported type keeps its declaration's
+`_type`. Enums are covered — `visitEnum` calls `defineSymbol`.
+
+### The asymmetry this does NOT close
+
+`(x :of Array)` still works — `flatten` in `std/seq` depends on it, and it answers `true`/`false`
+correctly on both backends under the strict rule. The `:of` path does not route through annotation
+resolution, so `Array` is refused as an annotation and accepted as a type-test target. That is a real
+inconsistency and it is recorded rather than fixed: making `:of` strict is a separate measurement,
+and `std/seq` would need a different way to ask "is this an array".
+
+Also unclosed, and untouched by this: there is **no named `Map` type** for an annotation to resolve
+to. `TypeEnvironment.map()` is a constructor the checker calls when inferring a literal. So
+"give the type-ish externs real declarations" is a *creation* task, not an un-shadowing one, and it is
+its own round — which is why `Dict` stays deleted.
+
+C 310 over 365, unmoved.

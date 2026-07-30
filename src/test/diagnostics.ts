@@ -645,6 +645,34 @@ const PROBES: Probe[] = [
       "(deftype Loopy <- Real :satisfies (/ Loopy Meter))\n(console.log 1)",
     stage: "types",
   },
+  // LL0231 / D111 -- TYPES AND VALUES ARE SEPARATE NAMESPACES.
+  //
+  // An annotation used to accept any symbol carrying an `inferredType`, i.e. every value. The
+  // consequence was not merely a lost check: on JS `(add1 "7")` against a value-typed parameter
+  // PRINTED 71 where the `Int` control is ELL0203 on both backends. LL0231's own message promises
+  // exactly what was failing -- "it turns CHECKING OFF for the declaration".
+  {
+    name: "LL0231 a VALUE used as a type annotation",
+    source: "(let v 42)\n(let x <- v 1)\n(console.log x)",
+    stage: "types",
+  },
+  {
+    name: "LL0231 an ambient std/js extern used as a type",
+    source: '(let m <- Map {"a" 1})\n(console.log m)',
+    stage: "types",
+  },
+  {
+    name: "LL0231 a FUNCTION used as a type annotation",
+    source: "(fn g [] -> Int (return 1))\n(let x <- g 1)\n(console.log x)",
+    stage: "types",
+  },
+  // The GUARD half: a value may not shadow a primitive out of the type namespace. Before D111 the
+  // symbol table was consulted before the primitive table, so this read `cannot assign Int to Int`.
+  {
+    name: "LL0231 GUARD: a value named Int does not shadow the primitive",
+    source: '(let Int "not a number")\n(let x <- Int 5)\n(console.log x)',
+    stage: "types",
+  },
   // LL0249 -- `:implements` naming nothing reachable. The sibling of LL0209: that one asks whether
   // the claim is TRUE, this one whether there is anything to claim. Both spellings are probed
   // because `checkDeclaredInterfaces` was typed for class AND struct and wired only for class, so a

@@ -797,6 +797,40 @@
     ]
   },
   {
+    "probe": "LL0231 a VALUE used as a type annotation",
+    "diagnostics": [
+      {
+        "code": "LL0231",
+        "severity": "error",
+        "text": "'v' is not a type. An annotation naming a type that does not exist does not just lose information -- it turns CHECKING OFF for the declaration, because an unknown type is assignable to and from everything. Declare it, import it, or use one of the six primitives (Int, Real, String, Char, Boolean, Void)."
+      }
+    ]
+  },
+  {
+    "probe": "LL0231 an ambient std/js extern used as a type",
+    "diagnostics": [
+      {
+        "code": "LL0231",
+        "severity": "error",
+        "text": "'Map' is not a type. An annotation naming a type that does not exist does not just lose information -- it turns CHECKING OFF for the declaration, because an unknown type is assignable to and from everything. Declare it, import it, or use one of the six primitives (Int, Real, String, Char, Boolean, Void)."
+      }
+    ]
+  },
+  {
+    "probe": "LL0231 a FUNCTION used as a type annotation",
+    "diagnostics": [
+      {
+        "code": "LL0231",
+        "severity": "error",
+        "text": "'g' is not a type. An annotation naming a type that does not exist does not just lose information -- it turns CHECKING OFF for the declaration, because an unknown type is assignable to and from everything. Declare it, import it, or use one of the six primitives (Int, Real, String, Char, Boolean, Void)."
+      }
+    ]
+  },
+  {
+    "probe": "LL0231 GUARD: a value named Int does not shadow the primitive",
+    "diagnostics": []
+  },
+  {
     "probe": "LL0249 a class :implements something that does not exist",
     "diagnostics": [
       {

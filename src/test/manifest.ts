@@ -417,6 +417,16 @@ export const MANIFEST: Record<string, ManifestEntry> = {
     status: "negative", codes: ["LL0009"],
     reason: "a `defclass` inside a `definterface` body -> LL0009. Never-exercised code.",
   },
+  "90-diagnostics/ll0231_value_as_type.lisp": {
+    status: "negative", codes: ["LL0231"],
+    reason:
+      "D111. A type annotation accepted any symbol carrying an `inferredType` -- every VALUE in the " +
+      "program. Not merely a lost check: with a value-typed parameter, `(add1 \"7\")` was ELL0203 on " +
+      "both backends under the `Int` control and PRINTED 71 on JS under the value, so a compile-time " +
+      "type error became a silently wrong printed value. Three shapes here -- a variable, a function, " +
+      "and an ambient `std/js` extern. `Zorg` is deliberately absent: a name resolving to NOTHING was " +
+      "already caught, which is what made the hole look handled.",
+  },
   "90-diagnostics/ll0249_unresolved_implements.lisp": {
     status: "negative", codes: ["LL0231", "LL0249"],
     reason:

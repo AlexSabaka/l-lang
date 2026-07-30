@@ -210,8 +210,28 @@ function convertAstTypeCore(
     // A deferred type-ref is safe because it is RESOLVED LAZILY: `unwrapType` looks `refName` up at the
     // USE site, by which time V's collection is complete. A genuine typo still has no symbol at all and
     // still becomes Unknown below -- the gradual-typing behaviour the corpus depends on.
+    // TYPES AND VALUES ARE SEPARATE NAMESPACES (D111). An annotation may only name something that
+    // DECLARES a type -- class, struct, enum, interface, type-def. The old test also accepted any
+    // symbol carrying an `inferredType`, which is every VALUE in the program.
+    //
+    // That was not a cosmetic looseness. Measured, and the JS row is the whole argument:
+    //
+    //     (let T (ident 0))                      ;; T is a VARIABLE whose type is Any
+    //     (fn add1 [n <- T] -> Int (+ n 1))
+    //     (add1 "7")        control `n <- Int`:  ELL0203 expected Int, got String, BOTH backends
+    //                       with `n <- T`:       C traps at run time; JS PRINTS 71.
+    //
+    // A compile-time type error became a silently wrong printed value. `Map`, `Array`, `Date` and 23
+    // other ambient `std/js` externs are variables too, which is why `(let m <- Map {"a" 1})` said
+    // "cannot assign Map to Map" -- the annotation was the extern's `Unknown`, assignable from
+    // nothing. And a value could shadow a PRIMITIVE: `(let Int "x")` then `(let x <- Int 5)` read
+    // `cannot assign Int to Int`, because the symbol table is consulted before the primitive table.
+    //
+    // `declaresAType` alone loses nothing: a generic parameter resolves EARLIER (typeEnv), the six
+    // primitives resolve LATER, and imported types keep their declaration's `_type`. Measured over
+    // all 435 `.lisp` files in the tree: one annotation changed, zero bytes of emitted C.
     const userType = symbolTable.resolveSymbol(name);
-    if (userType && (userType.inferredType || declaresAType(userType))) {
+    if (userType && declaresAType(userType)) {
       // Stamp the ASKING SOURCE (T). This is the one place a type reference still has its AST node --
       // `unwrapType` resolves the deferred `refName` far downstream, where the node is gone, so it can
       // only prefer a directly-imported definition (S1b, for types) if the source rides along here.
@@ -2682,7 +2702,12 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
     const symbols = this.context.symbolTable ?? this.symbolTable;
     const entry = symbols.resolveSymbol(name, node);
-    if (entry && (entry.inferredType || declaresAType(entry))) return;
+    // D111, and this is the half that actually REPORTS. Loosening only `convertAstTypeCore` turns a
+    // value-typed annotation into `Unknown` -- which is assignable from everything, so the program
+    // stays silent and nothing is gained. Measured: the core change ALONE altered zero files. The
+    // diagnostic has to come from here, and the two predicates must agree or LL0231 means one thing
+    // and the resolution another.
+    if (entry && declaresAType(entry)) return;
 
     this.report(TD.UnknownTypeName, node, { name });
   }
