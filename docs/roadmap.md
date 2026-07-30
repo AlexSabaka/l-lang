@@ -680,6 +680,25 @@ Six modules in one round, each ruled before it was written.
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
+### A `deftype` over `Map` is unusable in BOTH positions — and it cost `std/core/types` an alias
+
+Found while fixing `std/core/types`'s broken aliases. `Str <- String`, `Bool <- Boolean`,
+`Number <- Int | Real` and `List <- Any[]` all work. A `Map`-based one does not, in either position:
+
+```
+(deftype D <- Map)
+(let d <- D {"a" 1})            LL0200 Type mismatch: cannot assign Map to D
+(fn f [d <- D] ...) (f {"a" 1}) LL0203 Argument 1 of 'f': expected D, got Map
+```
+
+It DECLARES fine, so the gap only shows at a use. `std/core/types` shipped `Dict <- Object` —
+`Object` is not a type the language has, so it was broken differently — and repointing it at `Map`
+would have replaced a wrong alias with an unusable one. `Dict` is deleted until this closes; it had
+zero call sites, so nothing is waiting on it.
+
+The gap is general: it hits any user writing `deftype MyMap <- Map`, which is the obvious way to name
+a domain dictionary type.
+
 ### LL0240 cannot see a SIBLING collision — UNRULED, and it has produced a wrong answer
 
 The diagnostic for "two modules export the same name, and which one you get depends on module order"

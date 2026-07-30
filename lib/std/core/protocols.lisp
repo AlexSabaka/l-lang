@@ -45,11 +45,35 @@
     (fn :operator * [other <- T] -> T))
 
   ;; -- generic compare: the one order sort/min/max route through ------------------------------------
+  ;; Is there a natural order for this value at all? Int/Real/String/Char have one; nothing else does.
+  ;; Private -- a helper, not part of the protocol surface.
+  (fn orderable [x <- Any] -> Boolean
+    (return (|| (|| (x :of Int) (x :of Real)) (|| (x :of String) (x :of Char)))))
+
   ;; Comparable when the receiver is; otherwise the natural order of a primitive (Int/Real/String/Char)
-  ;; via `<`/`>`. Comparing two values that are neither Comparable nor ordered primitives is a caller
-  ;; error (there is no order to give), and the runtime `<` says so.
+  ;; via `<`/`>`.
+  ;;
+  ;; THE UNORDERABLE CASE IS REFUSED EXPLICITLY, and it used to be a DIVERGENCE. This read
+  ;; "comparing two values that are neither Comparable nor ordered primitives is a caller error ...
+  ;; and the runtime `<` says so" -- true of C only. Measured on a class declaring `compare-to` but
+  ;; not `:implements Comparable`, so the nominal test misses:
+  ;;
+  ;;     C   TypeError: expected a number      (the `<` trap)
+  ;;     JS  0                                 (`<` and `>` are both false, so it fell through)
+  ;;
+  ;; Zero means EQUAL, and `std/seq`'s `sort`, `sort-by`, `min-by` and `max-by` all route through
+  ;; here -- so sorting such an array was fatal on one backend and silently order-preserving on the
+  ;; other. The fall-through cannot simply throw: `0` is also the right answer for two equal
+  ;; primitives, which is why the two cases have to be told apart before the comparison rather than
+  ;; after it.
+  ;;
+  ;; A catchable `ValueError` (D82 layer 1): this is DATA the caller handed in, wrong for reasons the
+  ;; author cannot see from the source, which is exactly the layer's definition. Not a panic -- the
+  ;; caller declared no contract that this breaks.
   (fn compare [a <- Any b <- Any] -> Int (
     (if (a :of Comparable) :then (return (a.compare-to b)))
+    (if (! (orderable a)) :then (throw (new ValueError "compare: no natural order for this value -- implement Comparable, or pass Int/Real/String/Char")))
+    (if (! (orderable b)) :then (throw (new ValueError "compare: no natural order for this value -- implement Comparable, or pass Int/Real/String/Char")))
     (if (< a b) :then (return -1))
     (if (> a b) :then (return 1))
     (return 0)))

@@ -73,7 +73,8 @@
     ;; `.by n` -- set the step MAGNITUDE (sign still follows direction). Returns a new Range.
     ;; A zero step would never advance the cursor (an infinite walk), so it is rejected here.
     (fn by [n <- Int] -> Range (
-      (if (== n 0) (throw (Error "Range.by: step cannot be 0")))
+      ;; A LEAF, not the tower root (D82 layer 1) -- a zero step is an ARGUMENT the caller passed.
+      (if (== n 0) (throw (new ValueError "Range.by: step cannot be 0")))
       (return (Range this.lo this.hi n this.inclusive))))
     ;; `.exclusive` -- drop the upper bound. Returns a new Range.
     (fn exclusive [] -> Range (return (Range this.lo this.hi this.step false)))

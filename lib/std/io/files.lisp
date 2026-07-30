@@ -118,7 +118,14 @@
     (fn read-lines [path <- String] -> String[] (
         (let text (read-file path))
         (if (== text "") (return []))
-        (let parts (text.split "\n"))
+        (let raw (text.split "\n"))
+        ;; DROP THE CARRIAGE RETURN, because the package sibling that answers the same question
+        ;; already does. `std/io/stream`'s `LineReader.read-line` calls `strip-cr` at both of its
+        ;; exits -- "so a file written on Windows reads the same" -- and this did not, so `std/io`
+        ;; answered one question two ways depending on which of its own functions you called.
+        ;; Measured on a CRLF file: every line here ended with a `\r` and the reader's did not.
+        ;; `strip-cr` is the sibling's, reached by package injection rather than re-implemented.
+        (let parts (raw.map (fn [l] (strip-cr l))))
         (let last (elem parts (- parts.length 1)))
         (if (== last "") (return (parts.slice 0 (- parts.length 1))))
         (return parts)

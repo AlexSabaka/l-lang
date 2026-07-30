@@ -11,12 +11,15 @@
   ;; It used to read `(&& (typeof window) (!= window nil))`. Two problems, and either one is fatal
   ;; outside a browser: `typeof window` yields the string "undefined", which is TRUTHY, so the `&&`
   ;; always proceeded -- and `(!= window nil)` then TOUCHES an undeclared `window`, which is a
-  ;; ReferenceError, not a false. `typeof` is the only operator that may name a binding that does not
-  ;; exist; that is the entire reason to reach for it here.
-  (fn alert [msg]
-    (if (!= (typeof window) "undefined")
-      (window.alert msg)
-      (console.log "ALERT:" msg)))
+  ;; `alert` WAS HERE AND IS GONE. It reached for `typeof window` to sniff a browser, and `typeof`
+  ;; has no C lowering -- so `(import "std/io")` plus `(alert "x")` was
+  ;; `ELL0106 Cannot generate C for 'special:typeof'`, reported INSIDE this library file rather than
+  ;; at the caller. A refusal by gap rather than by ruling, hidden in the most-imported I/O module,
+  ;; with zero call sites anywhere to reveal it. CLAUDE.md's claim that the reference backend declines
+  ;; nothing "because nobody built it" was false while this existed.
+  ;;
+  ;; Not replaced. A browser dialog is not something `std/io` can promise portably, and the JS backend
+  ;; that could host it is deprecated (D66).
 
-  (export print prn alert)
+  (export print prn)
 )

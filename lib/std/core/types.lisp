@@ -29,11 +29,23 @@
 (deftype Bool <- Boolean)
 (deftype Str <- String)
 
-;; Common data structures
-(deftype List <- Array)
-(deftype Dict <- Object)
+;; Common data structures.
+;;
+;; `List` was `<- Array` and `Dict` was `<- Object` -- two JS-isms in the module whose whole header is
+;; the story of removing JS-isms, and BOTH WERE BROKEN, not merely unused. Measured:
+;;
+;;     (let l <- List [1 2])     LL0200 cannot assign Int[] to List
+;;     (let d <- Dict {"a" 1})   LL0200 cannot assign Map to Dict
+;;
+;; `Any[]` is the array type the language actually has, and it works. `Dict` IS DELETED rather than
+;; repointed at `Map`, because a `Map`-based `deftype` is unusable in both positions today --
+;; `(let d <- D <- Map ...)` is LL0200 and `(f {"a" 1})` against a `D` parameter is LL0203. Shipping
+;; `Dict <- Map` would have replaced a wrong alias with an unusable one. The gap is general (it hits
+;; any user writing `deftype MyMap <- Map`) and is recorded in docs/roadmap.md; `Dict` comes back when
+;; it closes. Zero call sites either way.
+(deftype List <- Any[])
 
-(export Number Bool Str List Dict
+(export Number Bool Str List
         type-name type-kind
         is-nil is-int is-real is-number is-string is-bool is-array is-map
         is-function is-instance)

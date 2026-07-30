@@ -3351,25 +3351,20 @@ const CASES: Case[] = [
       "`_in(\"a\", o)` and `_delete(o.a)` -> ReferenceError. AF-006 names only typeof/instanceof; " +
       "these two sit on the same SPECIAL_FORMS line and were broken identically.",
   },
-  {
-    // AF-006's motivating case, and it needed TWO fixes -- one compiler, one library.
-    //
-    // With `_typeof` gone, `alert` still died. Its guard read `(&& (typeof window) (!= window nil))`:
-    // `typeof window` yields the STRING "undefined", which is truthy, so the `&&` always proceeded --
-    // and `(!= window nil)` then TOUCHES an undeclared `window`, which is a ReferenceError, not a
-    // false. Short-circuiting (Qc) does not save it; the left operand was never falsy.
-    //
-    // `typeof` is the only operator that may name a binding that does not exist, which is the whole
-    // reason to reach for it in a browser check. The guard now compares against the string.
-    name: "Vb/AF-006: std/io's exported `alert` is callable",
-    source: `(import "std/io")
-(alert "hello")`,
-    expect: ["ALERT: hello"],
-    wasBroken:
-      "ReferenceError, twice over: `_typeof is not defined`, and once that was fixed, `window is not " +
-      "defined` from the guard written to prevent exactly that. An EXPORTED stdlib function that " +
-      "could not be called at all -- Phase S ticked ✅ with nothing exercising it.",
-  },
+  // AF-006's motivating case WAS `std/io`'s `alert`, and the case that lived here is gone because
+  // `alert` is. It needed two fixes -- one compiler, one library -- and the library half is worth
+  // keeping written down: its guard read `(&& (typeof window) (!= window nil))`, and `typeof window`
+  // yields the STRING "undefined", which is TRUTHY, so the `&&` always proceeded and `(!= window nil)`
+  // then TOUCHED an undeclared `window`. A ReferenceError, from the guard written to prevent one.
+  // Short-circuiting does not save it; the left operand was never falsy. `typeof` is the only
+  // operator that may name a binding that does not exist -- which is still pinned, by the three
+  // `typeof`/`instanceof`/`in`/`delete` cases above.
+  //
+  // `alert` itself was deleted with the stdlib debt sweep. `typeof` has no C lowering, so
+  // `(import "std/io")` + `(alert "x")` was `ELL0106 Cannot generate C for 'special:typeof'` reported
+  // INSIDE the library file rather than at the caller -- a refusal by GAP rather than by ruling,
+  // hidden in the most-imported I/O module, with zero call sites anywhere to reveal it. This case
+  // could not see that: it is a JS-lane test, and the defect was C-only.
 
   // ===============================================================================================
   // Vc / AF-007 -- a filterless `catch e` CRASHED THE BACKEND, and took LL0008 with it.

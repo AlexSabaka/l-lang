@@ -24,6 +24,9 @@
 ;; backtracker suffers on that shape.
 (
     (import "std/core/string")
+    ;; For `unreachable` -- the D87 layer-2 panic used when this module's own parser hands its own
+    ;; matcher a node kind that cannot exist.
+    (import "std/debug")
 
     ;; One uniform node shape keeps the parser and the matcher uncomplicated. A tagged union would be
     ;; better typed and is not expressible here yet; `kind` is the tag.
@@ -50,7 +53,12 @@
 
     ;; A malformed pattern THROWS. The PoC used `assert` from `std/test`, which a library must not
     ;; depend on -- and a bad pattern is a real error rather than a failed expectation.
-    (fn :internal fail [msg <- String] -> Void (throw (Error msg)))
+    ;; A LEAF, not the tower root (D82 layer 1). This threw `Error` itself, so `catch :of ValueError`
+    ;; could not see a malformed pattern while every other module in the stdlib throws a leaf --
+    ;; `string`/`json`/`calendar` throw `ValueError`, `stream`/`files` `IOError`/`FileError`,
+    ;; `rational` `ArithmeticError`. Measured: `(is-match "[a-" "x")` was reachable only as `Error`.
+    ;; A malformed pattern is DATA the caller handed in, which is precisely layer 1.
+    (fn :internal fail [msg <- String] -> Void (throw (new ValueError msg)))
 
     ;; -- the parser --------------------------------------------------------------------------------
 
@@ -285,7 +293,11 @@
             ))
             (return out)
         ))
-        (throw (Error f"regex: unknown node kind {node.kind}"))
+        ;; D87 LAYER 2, NOT LAYER 1. The node was produced by THIS MODULE'S OWN PARSER, so an
+        ;; unknown kind is a broken internal invariant, not bad input -- and it was spelled as a
+        ;; catchable error, which means a broad `catch :of Error` up the stack would swallow "this
+        ;; cannot happen" and continue. That is the exact contradiction D87 removed from `std/debug`.
+        (unreachable f"regex: unknown node kind {node.kind}")
         (return out)
     ))
 
