@@ -680,6 +680,21 @@ Six modules in one round, each ruled before it was written.
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
+### `l-lang run` cannot read stdin on the JS path — WONTFIX by D66
+
+Found while fixing the same defect on the C path (D103's round). `echo hi | l-lang run f.lisp`, where
+`f.lisp` calls `read-line`, dies with **`ReferenceError: Buffer is not defined`**: `std/io/stream`'s
+reader allocates a `Buffer`, and `compiler/runtime/evalInScope.ts` seeds its sandbox with
+`console`/`JSON`/`Math`/`process`/`require`/timers/`fetch` and not `Buffer`.
+
+It is a one-line fix and it is **deliberately not applied**. D66 is explicit that no new fixes land on
+the JS path, and D103 has just made that lane an instrument rather than a gate — so the honest record
+is that `l-lang run` on the default backend cannot run a program that reads stdin. The C path, which is
+the reference, now can.
+
+*This is also the strongest single argument in the tree for flipping the CLI's default backend, which
+D103 deliberately did not rule.* `getCompilerOptions.ts` still reads `requested || "js"`.
+
 ### ~~Destructuring: rest, nesting, and parameters~~ — **CLOSED**
 
 Three refusals, two absences.

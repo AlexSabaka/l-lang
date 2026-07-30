@@ -9,7 +9,7 @@ import { getCompilerOptions } from "../getCompilerOptions";
 import evalInScope from "../../compiler/runtime/evalInScope";
 import { getTemporaryStdinFile } from "../getStdinTempFile";
 
-import { exec } from "child_process";
+import { spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { ccArgs } from "../../compiler/codegen/c/ccFlags";
@@ -70,24 +70,27 @@ export function run(file: string, command: Command) {
       // used `-std=c11 -fwrapv` and this call used neither, so the gate graded a program built with
       // different semantics than the one a user gets. `-w` stays local -- silencing warnings about
       // generated code the user did not write is a UX choice, not a semantic one.
-      exec(`cc ${ccArgs(cFile, executable, ["-w"]).join(" ")}`, (ccError, _ccOut, ccErr) => {
-        if (ccError) {
-          console.error(`Error compiling C code: ${ccError.message}`);
-          if (ccErr) process.stderr.write(ccErr);
-          process.exitCode = 1;
-          cleanup();
-          return;
-        }
-        // A successful `cc` may still have said something (notes, remarks) -- forward, don't abort.
-        if (ccErr) process.stderr.write(ccErr);
-        exec(path.join(process.cwd(), executable), (runError, runOut, runErr) => {
-          // Write raw: the program's own output already carries its newlines.
-          process.stdout.write(runOut);
-          process.stderr.write(runErr);
-          if (runError) process.exitCode = runError.code ?? 1;
-          cleanup();
-        });
-      });
+      //
+      // `spawnSync` with an ARGV, not `exec` with a shell string: the args reach `cc` verbatim, so a
+      // path containing a space no longer needs quoting that was never applied.
+      const cc = spawnSync("cc", ccArgs(cFile, executable, ["-w"]), { encoding: "utf-8" });
+      if (cc.status !== 0) {
+        console.error(`Error compiling C code: cc exited with ${cc.status}`);
+        if (cc.stderr) process.stderr.write(cc.stderr);
+        process.exitCode = 1;
+        cleanup();
+        return;
+      }
+      // A successful `cc` may still have said something (notes, remarks) -- forward, don't abort.
+      if (cc.stderr) process.stderr.write(cc.stderr);
+      // `stdio: "inherit"` is the whole fix, and it repairs two defects at once. `exec` opened a
+      // stdin PIPE it never wrote to and never closed, so any program that read stdin blocked
+      // forever -- `echo hi | l-lang run --backend c` hung rather than answering. And `exec`
+      // buffers: a long-running program's output appeared only at exit, never streamed. Inheriting
+      // gives the child the real stdin, stdout and stderr, which is what a `run` command means.
+      const proc = spawnSync(path.join(process.cwd(), executable), [], { stdio: "inherit" });
+      if (proc.status) process.exitCode = proc.status;
+      cleanup();
     }
   }
 }
