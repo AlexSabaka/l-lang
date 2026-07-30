@@ -797,6 +797,46 @@
     ]
   },
   {
+    "probe": "LL0249 a class :implements something that does not exist",
+    "diagnostics": [
+      {
+        "code": "LL0231",
+        "severity": "error",
+        "text": "'Bogusable' is not a type. An annotation naming a type that does not exist does not just lose information -- it turns CHECKING OFF for the declaration, because an unknown type is assignable to and from everything. Declare it, import it, or use one of the six primitives (Int, Real, String, Char, Boolean, Void)."
+      },
+      {
+        "code": "LL0249",
+        "severity": "error",
+        "text": "'K' declares ':implements Bogusable', but 'Bogusable' does not name an interface that is reachable here. Either it is misspelled, or the module declaring it is not imported -- and an unresolved ':implements' is not checked at all, so the conformance it promises is silently not enforced."
+      }
+    ]
+  },
+  {
+    "probe": "LL0249 a struct :implements something that does not exist",
+    "diagnostics": [
+      {
+        "code": "LL0231",
+        "severity": "error",
+        "text": "'Bogusable' is not a type. An annotation naming a type that does not exist does not just lose information -- it turns CHECKING OFF for the declaration, because an unknown type is assignable to and from everything. Declare it, import it, or use one of the six primitives (Int, Real, String, Char, Boolean, Void)."
+      },
+      {
+        "code": "LL0249",
+        "severity": "error",
+        "text": "'S' declares ':implements Bogusable', but 'Bogusable' does not name an interface that is reachable here. Either it is misspelled, or the module declaring it is not imported -- and an unresolved ':implements' is not checked at all, so the conformance it promises is silently not enforced."
+      }
+    ]
+  },
+  {
+    "probe": "LL0209 a STRUCT that claims an interface and implements none of it",
+    "diagnostics": [
+      {
+        "code": "LL0209",
+        "severity": "error",
+        "text": "'Liar' declares ':implements Iterator' but does not define the members 'next', 'iterator'. Declaring an interface is a PROMISE that callers rely on -- define them, or drop the ':implements Iterator'."
+      }
+    ]
+  },
+  {
     "probe": "LL0200 a Meter is not a Speed",
     "diagnostics": [
       {

@@ -120,6 +120,32 @@ export const TypeDiagnostics = {
       `${p.plural ? "define them" : "define it"}, or drop the ':implements ${p.iface}'.`
   ),
 
+  // LL0249 -- `:implements` naming something that is not a reachable interface.
+  //
+  // THE SIBLING OF LL0209, and the half that was missing. LL0209 asks "is this claim TRUE?"; nothing
+  // asked "is there anything here to claim?". `checkDeclaredInterfaces` skipped on
+  // `required.length === 0` with the comment `// unresolvable, or genuinely empty` -- two different
+  // facts collapsed into one `continue`, so `(defstruct C :implements Bogusable<Int>)` compiled
+  // silently, with no diagnostic on either backend.
+  //
+  // That is not a typo-catcher. `:implements` is only checked when the name RESOLVES, and an
+  // interface resolves only if its module is imported -- so a MISSING IMPORT silently turned every
+  // conformance guarantee off: LL0209 stopped firing, `:of` transitivity stopped holding, and
+  // nominal extension dispatch stopped resolving, all with a green build. Measured on the same file
+  // with and without `(import "std/iter")`: `isIterable` false, then true.
+  //
+  // Which is why this had to land BEFORE any contract moved between modules: relocating an interface
+  // and missing one import is otherwise indistinguishable from success.
+  UnresolvedInterface: def<{ type: string; iface: string }>(
+    "LL0249",
+    Error,
+    (p) =>
+      `'${p.type}' declares ':implements ${p.iface}', but '${p.iface}' does not name an interface ` +
+      `that is reachable here. Either it is misspelled, or the module declaring it is not imported ` +
+      `-- and an unresolved ':implements' is not checked at all, so the conformance it promises is ` +
+      `silently not enforced.`
+  ),
+
   // LL0236 -- `eval` names a feature that does not exist.
   //
   // A dedicated message rather than LL0210's "'eval' is not defined", because the name LOOKS like it

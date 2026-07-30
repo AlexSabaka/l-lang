@@ -645,6 +645,28 @@ const PROBES: Probe[] = [
       "(deftype Loopy <- Real :satisfies (/ Loopy Meter))\n(console.log 1)",
     stage: "types",
   },
+  // LL0249 -- `:implements` naming nothing reachable. The sibling of LL0209: that one asks whether
+  // the claim is TRUE, this one whether there is anything to claim. Both spellings are probed
+  // because `checkDeclaredInterfaces` was typed for class AND struct and wired only for class, so a
+  // struct's `:implements` was unverified entirely -- LL0209 included.
+  {
+    name: "LL0249 a class :implements something that does not exist",
+    source: "(defclass K :implements Bogusable<Int> (let :ctor v <- Int))\n(console.log 1)",
+    stage: "types",
+  },
+  {
+    name: "LL0249 a struct :implements something that does not exist",
+    source: "(defstruct S :implements Bogusable<Int> (mut :ctor v <- Int))\n(console.log 1)",
+    stage: "types",
+  },
+  // The GUARD on the pair: a struct that claims a real interface and implements none of it must be
+  // LL0209, not LL0249 -- and before this round it was neither.
+  {
+    name: "LL0209 a STRUCT that claims an interface and implements none of it",
+    source:
+      '(import "std/iter")\n(defstruct Liar :implements Iterator<Int> (mut :ctor v <- Int))\n(console.log 1)',
+    stage: "types",
+  },
   // The boundary is still nominal-by-DIMENSION: `Meter` is not `Meter/Second`, whatever it is called.
   {
     name: "LL0200 a Meter is not a Speed",

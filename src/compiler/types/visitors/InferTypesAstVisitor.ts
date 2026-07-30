@@ -3122,8 +3122,31 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       const ifaceName = impl?.type?.name;
       if (!ifaceName) continue;
 
+      // UNRESOLVABLE AND EMPTY ARE DIFFERENT FACTS (LL0249). This used to skip on
+      // `required.length === 0` with the comment "unresolvable, or genuinely empty", collapsing the
+      // two -- so a name that resolved to NOTHING was treated exactly like a real interface with no
+      // members, and `:implements Bogusable<Int>` compiled without a word. Since `:implements` is
+      // only verified when the name resolves, that silence meant a MISSING IMPORT turned LL0209,
+      // `:of` transitivity and nominal dispatch off together, with a green build.
+      //
+      // A type PARAMETER is not an unresolved interface: `(defclass Box<T> :implements T)` is
+      // nonsense of a different kind, and refusing it here would report the wrong thing.
+      const resolved: any = symbols.resolveSymbol(ifaceName, node)?.inferredType;
+      const isTypeParam = (node as any).generics?.some?.(
+        (g: any) => (g?.name?.name ?? g?.name) === ifaceName
+      );
+      if (!resolved || resolved.kind !== "interface") {
+        if (!isTypeParam) {
+          this.report(TD.UnresolvedInterface, node as ast.ASTNode, {
+            type: typeName,
+            iface: ifaceName,
+          });
+        }
+        continue;
+      }
+
       const required = TypeChecker.requiredInterfaceMembers(ifaceName, symbols, node);
-      if (required.length === 0) continue; // unresolvable, or genuinely empty -- Zg rules on that
+      if (required.length === 0) continue; // resolved, and genuinely empty -- Zg rules on that
 
       const missing = required
         .filter((r) => !own.some((m: any) => m.name === r.name))
@@ -3477,6 +3500,29 @@ class InferAndCheckPass extends BaseAstTreeWalker {
 
     // Similar to visitTypeDef, resolve any type references in struct members
     const structName = ast.symbolName(node.name);
+
+    // D42/Zf APPLIES TO STRUCTS TOO, and it never did. `checkDeclaredInterfaces` is typed
+    // `ClassNode | StructNode` -- written for both -- and was called from `visitClass` alone, so a
+    // struct's `:implements` was an unchecked claim for the whole life of the rule. Measured: a
+    // CLASS declaring `:implements Iterator<Int>` and defining neither member is LL0209; the same
+    // declaration as a `defstruct` compiled in silence.
+    //
+    // That is not a corner. `RangeCursor` and `Range` in `lib/std/iter` are structs, as are six of
+    // the seven `:implements Iterator/Iterable` sites in the corpus -- so the iteration protocol,
+    // the one D30 calls load-bearing, was the least verified thing in the language.
+    //
+    // The rule's own words are the argument: "Nominal WITHOUT verification is the worst cell of the
+    // matrix -- the tag costs the flexibility of structural typing and buys none of its safety."
+    //
+    // The visibility/unknown-name check is the SAME omission one layer up: `visitClass` runs
+    // `checkAnnotationVisible` over its `:implements` clauses (D20 -- you cannot claim to implement
+    // something another module keeps to itself, and LL0231 for a name that is not a type at all) and
+    // `visitStruct` never did. Measured on the same declaration: the class spelling reported LL0231
+    // + LL0249, the struct spelling reported only what this round added.
+    (node as any).implements?.forEach((i: any) =>
+      this.checkAnnotationVisible(i as unknown as ast.ASTNode, (node as any).generics)
+    );
+    this.checkDeclaredInterfaces(node, structName);
 
     const registeredType = this.typeEnv.resolveIdentifier(structName);
     

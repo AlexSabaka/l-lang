@@ -389,6 +389,17 @@ export const MANIFEST: Record<string, ManifestEntry> = {
     status: "negative", codes: ["LL0009"],
     reason: "a `defclass` inside a `definterface` body -> LL0009. Never-exercised code.",
   },
+  "90-diagnostics/ll0249_unresolved_implements.lisp": {
+    status: "negative", codes: ["LL0231", "LL0249"],
+    reason:
+      "`:implements` naming nothing reachable, in BOTH spellings. LL0209 asked whether the claim was " +
+      "TRUE and nothing asked whether there was anything to claim -- `checkDeclaredInterfaces` skipped " +
+      "on `required.length === 0` with the comment `unresolvable, or genuinely empty`, two facts " +
+      "collapsed into one `continue`. Since `:implements` is only verified when the name RESOLVES, a " +
+      "missing import silently turned LL0209, `:of` transitivity and nominal dispatch off together. " +
+      "The struct arm covers the second half: the check was typed for class AND struct and wired only " +
+      "for class, so a struct's `:implements` was unverified entirely.",
+  },
   "90-diagnostics/ll0010_iface_init.lisp": {
     status: "negative", codes: ["LL0010"],
     reason: "an initialized `let` in a `definterface` -> LL0010. Never-exercised code.",
