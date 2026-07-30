@@ -2398,11 +2398,25 @@ export class ResolveHirToCir {
       case "list":
         return this.resolveList(node as ast.ListNode);
       case "vector": {
+        // ELEMENTS ARE BOXED HERE, and the absence of that was a SILENT MISCOMPILE that `cc` accepted
+        // without a word. The declared element type is `C_VALUE`, but the elements were resolved and
+        // handed over raw -- so `([1 2 3].reduce …)` emitted
+        //
+        //     ll_vec_of(3, (ll_value[]){INT64_C(1), INT64_C(2), INT64_C(3)})
+        //
+        // and `ll_value`'s FIRST MEMBER IS THE TAG. A scalar brace-initializes it, so those three
+        // elements decoded as tag 1, 2, 3 -- `Int 0`, `Real 0.0`, `Bool false`. Zero warnings at
+        // `-Wall -Wextra`: the initializer is legal C that means something else entirely. It
+        // surfaced as `TypeError: expected a number` from adding the Bool, which points at the fold
+        // rather than at the literal.
+        //
+        // The HIR path never had this because `InsertCoercions` boxes for it; this is the raw-AST
+        // re-drive, which gets none of that -- the same family as the missing `map` case beside it.
         this.ledger.record("A2", "raw-vector", node, "vector literal reached codegen as a raw leaf (not HVector)");
         const v = node as ast.VectorNode;
         return {
           src: node, ctype: { k: "vec", elem: C_VALUE }, kind: "c-vector",
-          elements: (v.values ?? []).map((e) => this.resolveAstExpr(e)),
+          elements: (v.values ?? []).map((e) => this.boxed(this.resolveAstExpr(e))),
         };
       }
       case "map": {
@@ -2424,7 +2438,11 @@ export class ResolveHirToCir {
             key: kv.key?._type === "simple-identifier"
               ? (kv.key as ast.SimpleIdentifierNode).id
               : this.resolveAstExpr(kv.key),
-            value: this.resolveAstExpr(kv.value),
+            // Boxed for the same reason the vector above boxes: `ll_map_of` takes `ll_value*`, and a
+            // raw `int64_t` in that array brace-initializes the TAG. Every consumer reached so far
+            // happened to coerce on the way in (a class-field default is stored into a `value` slot),
+            // which is exactly the kind of luck that stops being lucky.
+            value: this.boxed(this.resolveAstExpr(kv.value)),
           };
         });
         return { src: node, ctype: { k: "map" }, kind: "c-map", entries };

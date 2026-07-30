@@ -572,6 +572,13 @@ export const C_PASSING: readonly string[] = [
   // dotted one would answer plausibly and wrongly. Pins D1's other half too: a BRACKET suffix stays a
   // read, which is what `IndexerNode.members` exists for.
   "80-adversarial/indexed_method_call.lisp",
+  // A container literal reaching codegen as RAW AST must box its elements. `resolveAstExpr`'s
+  // `vector` case declared `C_VALUE` elements and handed them over unboxed, so `([1 2 3].reduce …)`
+  // emitted `(ll_value[]){INT64_C(1), INT64_C(2), INT64_C(3)}` -- and `ll_value`'s FIRST MEMBER IS
+  // THE TAG, so those decoded as `Int 0`, `Real 0.0`, `Bool false`. ZERO diagnostics at -Wall
+  // -Wextra: legal C that means something else. The values are 1/2/3 deliberately -- they ARE the
+  // tags LL_INT/LL_REAL/LL_BOOL, and a guard written with round numbers would have passed.
+  "80-adversarial/literal_element_boxing.lisp",
   // The NATIVE half of the same fix -- `.length`/`.toUpperCase` on an indexed receiver. oracleDivergent:
   // JS emits the member as a property and calls it (`__ll_index(...)["length"]()`), which is a codegen
   // bug in the frozen backend rather than a disagreement. Two `.length`s on different receiver types,

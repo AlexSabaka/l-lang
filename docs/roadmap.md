@@ -1416,6 +1416,31 @@ This is the *frontend's* instance of the "who calls it?" failure mode: a token i
 Whether `:where`/`:is` should be wired (they read as refinement syntax) or removed is a language
 question, unruled and untouched here.
 
+### ~~A container literal reaching codegen as raw AST emitted UNBOXED elements~~ — **CLOSED**
+
+Found while measuring whether `std/fn` could be made portable, and it is the worst-shaped defect this
+session turned up: **`cc` accepted it without a word.**
+
+`resolveAstExpr`'s `vector` case declared its element type as `C_VALUE` and then handed the elements
+over raw. The HIR path never had this — `InsertCoercions` boxes for it — but the **raw-AST re-drive**
+gets none of that, and a method call on a literal receiver takes the raw path:
+
+```
+([1 2 3].reduce …)   ->   ll_vec_of(3, (ll_value[]){INT64_C(1), INT64_C(2), INT64_C(3)})
+```
+
+**`ll_value`'s first member is the tag.** A scalar brace-initializes it, so those three elements
+decoded as tag 1, 2, 3 — `Int 0`, `Real 0.0`, `Bool false`. **Zero diagnostics at `-Wall -Wextra`**:
+it is legal C that means something else entirely. It surfaced as `TypeError: expected a number` from
+folding the Bool, which points at the reduction rather than at the literal.
+
+The map twin was unboxed too. Every consumer reached so far happened to coerce on the way in — a
+class-field default stores into a `value` slot — which is the kind of luck that stops being lucky.
+
+Guarded by `80-adversarial/literal_element_boxing.lisp`, whose elements are **1, 2 and 3 on purpose**:
+they *are* the tags `LL_INT`/`LL_REAL`/`LL_BOOL`, so the miscompile is maximally visible. A guard
+written with round numbers would have passed — `[100 200]` is past the tag range and decodes as nil.
+
 ### ~~A method on an INDEXED receiver refused on C~~ — **CLOSED**
 
 `(gs[0].hi)` — the dispatch-table shape, and one of the two things blocking `std/math/fft`.

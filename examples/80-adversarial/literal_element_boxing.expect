@@ -1,0 +1,6 @@
+reduce : 6
+join   : 1-2-3
+map    : [10 20 30]
+as arg : 8
+map arg: 2
+done
