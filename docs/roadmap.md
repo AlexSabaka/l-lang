@@ -1416,6 +1416,25 @@ This is the *frontend's* instance of the "who calls it?" failure mode: a token i
 Whether `:where`/`:is` should be wired (they read as refinement syntax) or removed is a language
 question, unruled and untouched here.
 
+### `l-lang run` on the JS backend leaks the COMPILER's argv into the program
+
+Found while giving `std/sys/process` its first corpus file. Under the CLI:
+
+```
+l-lang run prog.lisp            args.length = 2, args = ["run", "prog.lisp"]
+l-lang run prog.lisp --backend c   args.length = 0
+```
+
+**Not a codegen bug, and not the floor's.** `sys-arg` on JS is `process.argv.slice(2)`, which is
+right for a compiled program run as `node out.js` — and that is exactly how `test/runner.ts` invokes
+it, which is why the corpus sees `0` on both backends and the new guard passes on both. The CLI's
+`run` is different: it evaluates the emitted JS **inside the compiler's own process** (`evalInScope`),
+so `process.argv` belongs to the compiler. C is unaffected because `run` execs a real binary.
+
+So a program that reads `args` behaves differently under `l-lang run` than as a built artifact, on one
+backend. Recorded rather than fixed: D66 freezes that backend, `--backend c` is correct today, and the
+fix is in the CLI's execution model rather than in anything the language rules.
+
 ### `this.field` arithmetic loses 64-bit Int on JS — and it broke `std/math/random`
 
 Found by asking **"what does nobody call?"** — the method that found `std/fn`'s `partial`. An audit of

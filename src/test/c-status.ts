@@ -597,6 +597,13 @@ export const C_PASSING: readonly string[] = [
   // SplitMix64 + xoshiro256** implementation -- a PRNG golden cannot be derived by inspection, so
   // capturing the compiler's output would freeze whatever it did. C reproduces the seeding words too.
   "80-adversarial/random_seeded_stream.lisp",
+  // `std/sys/process` had NO corpus file at all -- found by asking which stdlib MODULES no example
+  // imports. Pins the offset its own header calls a silent-wrong hazard: the harness runs a compiled
+  // program with no user arguments, so `args` must be EMPTY on both backends, and a backend leaking
+  // its own prefix answers 1 (C's program name) or 2 (node's interpreter + script). Asserts only the
+  // UNSET env direction -- `CHILD_ENV` inherits `process.env`, so a positive case would import the
+  // machine into the golden, against childEnv.ts's own hermeticity doctrine.
+  "80-adversarial/process_args_env.lisp",
   // The NATIVE half of the same fix -- `.length`/`.toUpperCase` on an indexed receiver. oracleDivergent:
   // JS emits the member as a property and calls it (`__ll_index(...)["length"]()`), which is a codegen
   // bug in the frozen backend rather than a disagreement. Two `.length`s on different receiver types,
