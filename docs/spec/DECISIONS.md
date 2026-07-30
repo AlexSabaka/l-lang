@@ -6677,6 +6677,41 @@ never become an error object. Both exclusions are correct — throwing needs an 
 corrupted unwind stack has nothing to unwind to — but this category **had no name**, which is how it
 reads as an inconsistency in the trap table rather than a deliberate third tier.
 
+> **AMENDED 2026-07-30 — this paragraph was WRONG, and the way it was wrong is the point.**
+>
+> It read: *"catchability does not depend on the error tower being imported … the D62 tower is
+> genuinely ambient, emitted into a bare program with no imports (verified: `__ll_class_RangeError`
+> is present in a four-line file's output)."*
+>
+> The verification was real and it generalised from ONE class to the tower. `ResolveHirToCir`
+> eagerly registered `Error`, `TypeError` and `RangeError`; the runtime also traps with **`ValueError`
+> and `KeyError`**, and `ll_trap_as_error` does `ll_class_by_name(kind); if (!cls) return;` before
+> falling through to `exit(70)`. So those two were **silently fatal**, and the hazard this paragraph
+> claimed to have ruled out was live for them:
+>
+> ```
+> (try m["zz"] catch e :of KeyError …)                     exit 70, the handler never ran
+> the same file + one unrelated (new KeyError "x" "x")     caught, exit 0
+> ```
+>
+> **The same source line, catchable in one program and fatal in another, decided by an unrelated
+> line elsewhere.** `(clock-ns "bogus")` was the same — this ruling's own "loose end" paragraph below
+> asserts it "raises a catchable `ValueError`", and it did not.
+>
+> **The invariant, stated properly:** *every kind string `ll_trap` can emit must be eagerly registered
+> by the C backend.* It is now **derived from `runtime.c`** by the runtime-text generator
+> (`trappableKinds`, minus the layer-3 exclusions) rather than written a second time in the emitter,
+> so a new `ll_trap` kind cannot be added without the registration following it — and `test:codegen`
+> already fails when the generated module and `runtime.c` drift.
+>
+> **Why nothing caught it for so long:** `80-adversarial/catchable_data_traps.lisp` exercises
+> `RangeError` **only** — one of the three that happened to be baked in. A guard that mentions a class
+> also registers it, so a file testing `KeyError` could not have seen this either.
+> `80-adversarial/trap_kinds_registered.lisp` constructs none of them on purpose.
+>
+> Two lists, one of them taught: the failure mode `CLAUDE.md` names, found here in a paragraph whose
+> whole job was to record that the question had been settled.
+
 **Checked and NOT a contradiction** (worth recording so it is not re-investigated): catchability does
 **not** depend on the error tower being imported. `ll_trap_as_error` falls back to fatal when
 `ll_class_by_name` finds nothing, which would make `xs[99]` catchable in one program and fatal in

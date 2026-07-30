@@ -2934,7 +2934,10 @@ class InferAndCheckPass extends BaseAstTreeWalker {
       }
     }
 
-    // D58/LL0237: `(yield)` with no operand TRUNCATES the sequence, because nil means done.
+    // D58/LL0237: `(yield)` with no operand yields nil, which TRUNCATES the sequence on JS -- its
+    // `next` still collapses `{value, done}` into `T?`. Since D108 the C backend reads the frame's
+    // state instead and would keep going, so the two backends would disagree about the same form.
+    // That is a better reason to refuse it than the original one, not a weaker one.
     for (const y of yields) {
       if (!y.value) this.report(TD.GenYieldNoValue, y.node);
     }

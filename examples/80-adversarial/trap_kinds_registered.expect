@@ -1,0 +1,5 @@
+KeyError: caught
+ValueError: caught
+RangeError: caught
+as Error: caught
+survived all four

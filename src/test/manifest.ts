@@ -250,6 +250,18 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "both backends and is graded on both in `indexed_method_call.lisp`, so the split is exactly the " +
       "native-member case and no wider.",
   },
+  "80-adversarial/trap_kinds_registered.lisp": {
+    status: "test",
+    oracleDivergent:
+      "C is right and JS is measurably wrong, on KeyError and ValueError. Measured per kind: " +
+      "`catch e :of RangeError` is TYPED on both backends, `catch e :of KeyError` is typed on C and " +
+      "only reachable as a plain `Error` on JS -- `__ll_index` throws `new Error(\"KeyError: zz\")`, a " +
+      "message with the kind in it rather than an instance of the tower class. So the file's first " +
+      "line propagates on JS and nothing after it runs. Frozen by D66. " +
+      "The RangeError row is the CONTROL and agrees, which is exactly how the C-side defect this file " +
+      "was written for stayed hidden: the previous guard (`catchable_data_traps.lisp`) exercises only " +
+      "RangeError, one of the three kinds the C emitter happened to register eagerly.",
+  },
   "80-adversarial/iterator_done_flag.lisp": {
     status: "test",
     oracleDivergent:

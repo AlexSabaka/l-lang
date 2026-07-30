@@ -33,6 +33,7 @@ import { buildTypesMetadata, conformedInterfaceNames } from "../../reflection/me
 import { buildExtensionTable, conformingExtensionFn, memberKindIn, receiverType, ExtCandidate } from "../../hir/extensionResolution";
 import { lowerCoroutine, CoroutineRefusal } from "../../hir/LowerCoroutines";
 import { promoteFrame, PromotedFrame, FramePromotionRefusal, STATE_SLOT, GEN_STATE_NAME } from "./promoteFrame";
+import { TRAPPABLE_KINDS } from "./runtime/runtimeText.generated";
 
 /** The state a generator parks in once it is exhausted. Any value the dispatch does not name works;
  *  it must not be 0, which means "not started" and would restart the body. */
@@ -447,7 +448,24 @@ export class ResolveHirToCir {
     // name up the :extends chain, `ll_trap` builds no object -- so this is observationally a no-op while
     // Error is message-only, and the enabler for `cause`. Fall back to synthetic only if the ambient
     // module is somehow absent.
-    for (const name of ["Error", "TypeError", "RangeError"]) {
+    // EVERY KIND `ll_trap` CAN THROW MUST BE REGISTERED, and the list is DERIVED from `runtime.c`
+    // rather than written here a second time.
+    //
+    // This used to read `["Error", "TypeError", "RangeError"]` while the runtime also traps with
+    // `ValueError` and `KeyError`. `ll_trap_as_error` does `ll_class_by_name(kind); if (!cls)
+    // return;` and then falls through to `exit(70)` -- so those two were SILENTLY FATAL instead of
+    // catchable, and the same source line changed meaning depending on whether an unrelated line in
+    // the same program happened to mention the class:
+    //
+    //     (try m["zz"] catch e :of KeyError ...)                  -> exit 70, handler never ran
+    //     (new KeyError "x" "x") anywhere in the file, + the same  -> caught, exit 0
+    //
+    // D87 recorded exactly this as "checked and NOT a contradiction", on evidence measured with
+    // `RangeError` -- one of the three that happened to be baked in -- and generalised to the tower.
+    // Deriving the list is what stops the two sites drifting again; `test:codegen` already asserts
+    // the generated module matches `runtime.c`, so a new `ll_trap` kind cannot be added without this
+    // list following it.
+    for (const name of ["Error", ...TRAPPABLE_KINDS]) {
       if (this.classes.has(name)) continue;
       if (this.ensureClassRegistered(name, root)) continue;
       this.registerSyntheticError(name);

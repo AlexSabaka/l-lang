@@ -531,6 +531,14 @@ export const C_PASSING: readonly string[] = [
   // `std/iter/linq` operator truncate on C and not on JS. The last row is a CONTROL: a built-in
   // cursor over the same data, fixed long before this, which must not move. If it ever disagrees
   // with the rows above, the cursor kinds have drifted apart again.
+  // EVERY TRAPPABLE KIND MUST BE REGISTERED (D87 amendment). `ll_trap_as_error` looks the kind up
+  // and falls through to `exit(70)` when it is absent, so `ValueError` and `KeyError` -- which the
+  // runtime traps with and the emitter did not register -- were SILENTLY FATAL. The same source line
+  // was catchable in one program and fatal in another, decided by whether an unrelated line happened
+  // to mention the class. This file deliberately CONSTRUCTS none of them, which is the property the
+  // previous guard lacked: `catchable_data_traps.lisp` covers RangeError only, one of the three that
+  // were baked in, so it stayed green throughout. The list is derived from `runtime.c` now.
+  "80-adversarial/trap_kinds_registered.lisp",
   "80-adversarial/iterator_done_flag.lisp",
   // ERASING A TYPE MUST NOT CHANGE THE ARITHMETIC. `binopMode` returned "real" for `/` BEFORE the
   // boxed check every other operator makes, so `(/ 7 2)` was 3 statically and 3.5 through an Unknown.

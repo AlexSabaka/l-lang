@@ -135,7 +135,11 @@ function rewriteSuspends(body: HBlock, states: number[]): HBlock {
     const y = s.expr;
     if (!y.argument) {
       // LL0237 already rejects `(yield)` at the checker; a valueless one reaching here would
-      // TRUNCATE the sequence, because nil means done.
+      // TRUNCATE the sequence on the JS backend, whose `next` still collapses `{value, done}` into
+      // `T?` (D108 left that path frozen under D66). On C it would no longer truncate -- the frame's
+      // own state answers exhaustion -- but the refusal stands: a valueless yield is refused by
+      // LL0237 at the checker, and a form whose meaning depends on the backend is worth refusing
+      // rather than making backend-specific.
       throw new CoroutineRefusal("valueless `(yield)`");
     }
     const state = states.length + 1;

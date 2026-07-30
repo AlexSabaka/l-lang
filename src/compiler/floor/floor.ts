@@ -338,7 +338,9 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   // elements on C and copy them on JS -- a divergence created by the act of naming the operation.
   ["deep-copy", fn("ll_deep_copy", [Any], Any)],
 
-  // -- D30's ITERATION PROTOCOL. `iter` gives a cursor, `next` advances it, nil means done.
+  // -- D30's ITERATION PROTOCOL. `iter` gives a cursor, `next` advances it, and `iter-done` below
+  // says whether it is exhausted. "nil means done" was the rule here until D108 and is no longer
+  // true on the reference backend: a nil ELEMENT is an element.
   //
   // These were JS-only, in the shim, on no floor -- and that is not a bookkeeping detail: the C
   // backend therefore had no protocol AT ALL. `resolveForEach` special-cased vec and str and boxed

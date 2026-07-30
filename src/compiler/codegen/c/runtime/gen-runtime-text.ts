@@ -28,6 +28,36 @@ const HERE = __dirname;
 export const C_SOURCE = path.join(HERE, "runtime.c");
 export const GENERATED = path.join(HERE, "runtimeText.generated.ts");
 
+/**
+ * Every class name `ll_trap` can be called with that `ll_trap_as_error` will actually THROW.
+ *
+ * DERIVED, not listed, and that is the point. `ll_trap_as_error` does `ll_class_by_name(kind); if
+ * (!cls) return;` and then falls through to `exit(70)` -- so a kind the emitter does not REGISTER is
+ * silently fatal instead of catchable. The emitter registered `Error`/`TypeError`/`RangeError` and
+ * the runtime traps with `ValueError` and `KeyError` too, so `(try m["zz"] catch e :of KeyError ...)`
+ * exited 70 with the handler never running -- while THE SAME FILE plus one unrelated
+ * `(new KeyError ...)` anywhere in it caught cleanly, because that mention registered the class.
+ * The same source line, catchable in one program and fatal in another.
+ *
+ * D87 recorded this as "checked and NOT a contradiction", on evidence that generalised from
+ * `RangeError` -- one of the three that happened to be baked in -- to the whole tower. Two lists,
+ * one of them taught: the failure this project keeps finding. So the list is EXTRACTED from
+ * `runtime.c` rather than written twice, and `test:codegen`'s existing "generated text matches
+ * runtime.c" assertion makes drift red by construction.
+ *
+ * `OutOfMemory` and `ControlError` are excluded here because `ll_trap_as_error` excludes them BY
+ * NAME -- D87 layer 3, never catchable: throwing needs an allocation, and a corrupted unwind stack
+ * has nothing to unwind to.
+ */
+export function trappableKinds(cSource: string): string[] {
+  const never = new Set(["OutOfMemory", "ControlError"]);
+  const found = new Set<string>();
+  for (const m of cSource.matchAll(/\bll_trap\s*\(\s*"([A-Za-z][A-Za-z0-9_]*)"/g)) {
+    if (!never.has(m[1])) found.add(m[1]);
+  }
+  return [...found].sort();
+}
+
 export function render(cSource: string): string {
   return [
     "// GENERATED FILE -- do not edit.",
@@ -37,6 +67,9 @@ export function render(cSource: string): string {
     "// drift, so this file cannot silently go stale the way the old `dist/` copy did.",
     "",
     `export const C_RUNTIME_TEXT: string = ${JSON.stringify(cSource)};`,
+    "",
+    "/** Kinds `ll_trap` can throw as a catchable error -- see `trappableKinds` in the generator. */",
+    `export const TRAPPABLE_KINDS: readonly string[] = ${JSON.stringify(trappableKinds(cSource))};`,
     "",
   ].join("\n");
 }
