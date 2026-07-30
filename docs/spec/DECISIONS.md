@@ -7797,3 +7797,66 @@ or it has not — and that is the measurement that makes deletion a finding rath
 
 Whether the JS backend is ever deleted. This ruling is deliberately not a step toward it or away from
 it; it removes the per-commit cost so the decision can be made on evidence instead of irritation.
+
+## D104 — C is the CLI's default backend (2026-07-30)
+
+**Ruling (Sabaka, 2026-07-30): "let's promote C backend as a default one."**
+
+`src/cli/getCompilerOptions.ts` read `requested || "js"` for the whole life of the CLI. So the
+**reference implementation** (D86) was the one you had to ask for by name, while the **deprecated
+oracle** (D66) was what you got by typing nothing — and `l-lang run` printed a deprecation warning
+about the backend it had just chosen for you. D103 recorded this as "the strongest single argument in
+the tree for flipping the default" and declined to rule it. This rules it.
+
+`run` compiles through `cc` and executes; `transform` writes a `.c` translation unit and no source
+map. `--backend js` still selects the oracle, still warns, still emits `.js` + `.js.map`.
+
+### The flip was gated on three defects, all of them found by looking
+
+This is the part worth keeping. The one-character change was correct; **shipping it alone would have
+been a data-loss bug**, and none of the three was visible from the diff.
+
+**1. `run` clobbered and deleted files in the user's working directory.** It wrote `<base>.c` and
+`<base>.out` into `process.cwd()` and then `rmSync`'d both, unconditionally. Measured: with a
+hand-written `p.c` beside `p.lisp`, `l-lang run p.lisp` printed the right answer, exited 0, and left
+the directory containing only `p.lisp`. That was survivable while `--backend c` was opt-in; making it
+the default would have promoted a **data-loss path to the thing that happens when you type `l-lang
+run`**. Artifacts now go in a private `mkdtemp`, which also makes two concurrent runs of the same
+basename independent — something the cwd scheme could not be. The child still inherits the CWD, so a
+program's own relative paths resolve where the user is standing.
+
+**2. `../l-lang-games/verify.sh` — a gate step — broke, and reported green while broken.** Its
+`compile_js` called `transform` with no backend flag and then checked that a `.js` appeared;
+`compile_c`, eleven lines below, passed `--language c` explicitly. **The sibling knew the rule and
+this one did not** — the third time that exact shape has been recorded here. The flip made
+`compile_js` emit a `.c`, and the `.js` existence check *still passed* against a **stale artifact from
+the previous run**: 8 of 15 targets reported PASS while compiling nothing. Cleaning the artifacts and
+re-running gave the true number, 0 of 15. Fixed by naming the backend, and re-verified 15/15 from a
+clean tree.
+
+**3. A missing C compiler said `cc exited with null`.** `spawnSync` reports ENOENT via `error` with
+`status === null`, and only `status` was read. Under this ruling that is the message *every user
+without a toolchain* gets from a plain `l-lang run`, so it now names the actual problem and the
+`--backend js` escape hatch.
+
+Two smaller ones fixed in passing: `command.run.ts` hardcoded the **JavaScript** syntax highlighter
+for `--stdout` while `command.transform.ts` eleven files away already keyed it off `isC` (the sibling
+shape again, latent until the default moved); and a signal-killed child exited **0** because only
+`status` was tested.
+
+### What did NOT have to change, and why that is the interesting half
+
+**No test harness moved.** Every one of them — `runner.ts`, `codegen.ts`, `imports.ts`,
+`type-errors.ts`, `ast-invariants.ts`, `diagnostics.ts`, `index.web.ts` — sets `language` itself
+rather than reading the CLI default, and `getCompilerOptions` has exactly three callers, all CLI
+commands. The corpus numbers were byte-identical across the flip. That insulation was not designed
+for this, but it is what made a user-facing default change cost the test suite nothing.
+
+`Context.ts` has no independent default either: `language` is a required field with no defaulting, so
+there was exactly one place to change.
+
+### Not ruled here
+
+The REPL, which is handled separately. `--output` resolving against the *input file's* directory
+rather than the cwd — surprising, pre-existing, and now more visible because the artifact is a `.c`
+someone may want to hand to `cc`; flagged, not absorbed.

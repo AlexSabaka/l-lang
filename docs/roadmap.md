@@ -688,12 +688,12 @@ reader allocates a `Buffer`, and `compiler/runtime/evalInScope.ts` seeds its san
 `console`/`JSON`/`Math`/`process`/`require`/timers/`fetch` and not `Buffer`.
 
 It is a one-line fix and it is **deliberately not applied**. D66 is explicit that no new fixes land on
-the JS path, and D103 has just made that lane an instrument rather than a gate — so the honest record
-is that `l-lang run` on the default backend cannot run a program that reads stdin. The C path, which is
-the reference, now can.
+the JS path, and D103 made that lane an instrument rather than a gate.
 
-*This is also the strongest single argument in the tree for flipping the CLI's default backend, which
-D103 deliberately did not rule.* `getCompilerOptions.ts` still reads `requested || "js"`.
+**D104 changed what this costs.** It was written when JS was the CLI default, so the sentence read
+"`l-lang run` on the default backend cannot read stdin" — the worst version of the gap. C is the
+default now, `read-line` works there, and reaching this defect takes an explicit `--backend js`. The
+gap is unchanged; its blast radius went from *everyone* to *whoever opts into the oracle*.
 
 ### ~~Destructuring: rest, nesting, and parameters~~ — **CLOSED**
 
@@ -1433,12 +1433,17 @@ question, unruled and untouched here.
 
 ### `l-lang run` on the JS backend leaks the COMPILER's argv into the program
 
-Found while giving `std/sys/process` its first corpus file. Under the CLI:
+Found while giving `std/sys/process` its first corpus file. Re-measured after **D104** made C the
+default, which inverts which invocation is the broken one:
 
 ```
-l-lang run prog.lisp            args.length = 2, args = ["run", "prog.lisp"]
-l-lang run prog.lisp --backend c   args.length = 0
+l-lang run prog.lisp                 args.length = 0          # C, the default
+l-lang run --backend js prog.lisp    args.length = 4,
+                                     args = ["run", "--backend", "js", "<abs path>/prog.lisp"]
 ```
+
+Note the leak swallows the FLAGS too, not just the subcommand and the file — the old transcript here
+read `["run", "prog.lisp"]` because it was taken from an invocation that passed no flags.
 
 **Not a codegen bug, and not the floor's.** `sys-arg` on JS is `process.argv.slice(2)`, which is
 right for a compiled program run as `node out.js` — and that is exactly how `test/runner.ts` invokes
@@ -1447,8 +1452,9 @@ it, which is why the corpus sees `0` on both backends and the new guard passes o
 so `process.argv` belongs to the compiler. C is unaffected because `run` execs a real binary.
 
 So a program that reads `args` behaves differently under `l-lang run` than as a built artifact, on one
-backend. Recorded rather than fixed: D66 freezes that backend, `--backend c` is correct today, and the
-fix is in the CLI's execution model rather than in anything the language rules.
+backend. Recorded rather than fixed: D66 freezes that backend, and the fix is in the CLI's execution
+model rather than in anything the language rules. **D104 made the correct path the default one**, so
+this is now reached only by opting into the oracle.
 
 ### `this.field` arithmetic loses 64-bit Int on JS — and it broke `std/math/random`
 

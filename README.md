@@ -116,25 +116,22 @@ cd l-lang
 # Install dependencies and build (note: package.json lives in src/)
 cd src && npm install && npm run build
 
-# Compile and run a file on the reference backend
-npx ts-node index.ts run --backend c ../examples/00-basics/00_vars.lisp
-
-# ...or on the JavaScript oracle (the default)
+# Compile and run a file — C is the default backend
 npx ts-node index.ts run ../examples/00-basics/00_vars.lisp
 
-# Emit C, or JavaScript, without running it
-npx ts-node index.ts transform --backend c ../examples/00-basics/00_vars.lisp
+# ...or on the deprecated JavaScript oracle
+npx ts-node index.ts run --backend js ../examples/00-basics/00_vars.lisp
 
-# Interactive REPL 🎨
-npx ts-node index.ts repl
+# Emit the C without running it
+npx ts-node index.ts transform ../examples/00-basics/00_vars.lisp
 
-# The corpus, on both backends
-npm test              # JavaScript — the oracle
-npm run test:c        # C — the reference
+# The corpus
+npm run test:c        # C — the reference, and the gate
 npm run test:c:o2     # the same, optimized (this fence catches setjmp clobbers -O0 cannot)
+npm test              # JavaScript — an instrument, not a gate (D103)
 ```
 
-Compiling to C needs a working `cc` on your PATH.
+`run` and `transform` both need a working `cc` on your PATH. `--backend js` does not.
 
 ### Interactive REPL
 
@@ -150,9 +147,9 @@ See [docs/repl.md](docs/repl.md) for complete documentation.
 
 ### Test Status
 
-**326 programs in `examples/`**, compiled and run by both backends and diffed against the same
-goldens. The live numbers are in the ledgers rather than transcribed here, because a number in a
-README goes stale and a ledger the suite reads cannot:
+**357 programs in `examples/`**, compiled and run against hand-derived goldens. The live numbers are
+in the ledgers rather than transcribed here, because a number in a README goes stale and a ledger the
+suite reads cannot:
 
 - `src/test/manifest.ts` — what every corpus file is (`test`, `library`, `fixture`, `xfail`, `negative`)
 - `src/test/c-status.ts` — what C must pass; an unlisted-but-passing file turns the build **red**

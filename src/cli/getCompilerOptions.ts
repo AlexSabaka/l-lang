@@ -65,7 +65,11 @@ export function getCompilerOptions(
   // `--backend` is the preferred spelling; `--language` is kept as the historical alias. Commander
   // stores them under separate keys, so both must be read or the newer flag silently does nothing.
   const requested = opts.backend || opts.language;
-  const language: CompilationLanguage = requested || "js";
+  // **C is the default backend (D104).** It was `"js"` for the whole life of the CLI, which meant the
+  // reference implementation (D86) was the one you had to ask for by name while the deprecated oracle
+  // (D66) was what you got. `run` now compiles and executes through `cc`; `transform` now writes a
+  // `.c` translation unit and no source map. `--backend js` still selects the oracle.
+  const language: CompilationLanguage = requested || "c";
   if (!VALID_LANGUAGES.includes(language)) {
     throw new Error(
       `Invalid --backend '${requested}'. Valid values are: ${VALID_LANGUAGES.join(", ")}`

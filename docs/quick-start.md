@@ -22,9 +22,9 @@ npm install
 npm run build
 ```
 
-Compiling to C shells out to `cc`, so you need a working C compiler on your PATH (Apple clang, gcc
-and clang are all fine). If you only ever use the JavaScript backend you don't need one — but you
-will be on the deprecated path.
+**You need a working C compiler on your PATH** (Apple clang, gcc and clang are all fine). C is the
+default backend as of D104, so `run` and `transform` both go through `cc` unless you ask otherwise.
+`--backend js` opts out and needs no compiler — but it is the deprecated path (D66) and says so.
 
 ---
 
@@ -38,10 +38,10 @@ will be on the deprecated path.
 )
 ```
 
-### 2. Run it on the reference backend
+### 2. Run it
 
 ```bash
-npx ts-node index.ts run --backend c hello.lisp
+npx ts-node index.ts run hello.lisp
 ```
 
 ```
@@ -49,23 +49,25 @@ Hello, l-lang! 👋
 ```
 
 Behind that: l-lang → AST → symbols → desugar → types → HIR → C, then `cc`, then the binary runs.
+The translation unit and the executable are built in a private temp directory and removed after —
+`run` leaves nothing behind and overwrites nothing you own.
 
 ### 3. Or look at the C it emits
 
 ```bash
-npx ts-node index.ts transform --backend c hello.lisp   # writes hello.c
+npx ts-node index.ts transform hello.lisp   # writes hello.c
 ```
 
-Drop `--backend c` from either command and you get JavaScript instead — plus a deprecation warning,
+Add `--backend js` to either command and you get JavaScript instead — plus a deprecation warning,
 which is the compiler telling you the truth rather than a bug.
 
 ---
 
 ## 📚 Learn by Example
 
-`examples/` holds **326 programs**, and every one of them is a test: compiled and run by both
-backends, diffed against the same golden. They are the most reliable documentation in the repo,
-because a wrong one turns the build red.
+`examples/` holds **357 programs**, and every one of them is a test: compiled and run against a
+hand-derived golden. They are the most reliable documentation in the repo, because a wrong one turns
+the build red.
 
 | you want | look at |
 |---|---|
@@ -83,7 +85,7 @@ because a wrong one turns the build red.
 Run any of them:
 
 ```bash
-npx ts-node index.ts run --backend c ../examples/01-functions/04_pipelines.lisp
+npx ts-node index.ts run ../examples/01-functions/04_pipelines.lisp
 ```
 
 ---
@@ -94,14 +96,13 @@ All from `src/`.
 
 | command | what it does |
 |---|---|
-| `npx ts-node index.ts run FILE` | compile and execute (JS backend, the default) |
-| `npx ts-node index.ts run --backend c FILE` | compile to C, build with `cc`, execute |
-| `npx ts-node index.ts transform --backend c FILE` | emit `FILE.c` and stop |
-| `npx ts-node index.ts repl` | interactive session |
+| `npx ts-node index.ts run FILE` | compile to C, build with `cc`, execute — the default |
+| `npx ts-node index.ts run --backend js FILE` | run on the deprecated oracle instead |
+| `npx ts-node index.ts transform FILE` | emit `FILE.c` and stop |
 | `npx ts-node index.ts run --stage types FILE` | stop after a stage (`parse`, `syntax`, `symbols`, `desugar`, `types`, `codegen`) |
 | `npx ts-node index.ts run --perf FILE` | per-phase timings |
-| `npm test` | the corpus on the JS oracle |
 | `npm run test:c` | the corpus on the C reference |
+| `npm test` | the corpus on the JS oracle — an instrument, not a gate (D103) |
 | `npm run grammar:ebnf` | regenerate `docs/spec/GRAMMAR.ebnf` from the parser |
 
 ---
@@ -164,8 +165,8 @@ npx ts-node index.ts run --stage types   hello.lisp   # after inference
 **"Command not found: ts-node"** — you skipped `npm install`, or you are not in `src/`. `npx`
 resolves it from the local `node_modules`.
 
-**A deprecation warning on every compile** — that is the JavaScript backend telling you it is the
-oracle, not the target. Pass `--backend c`.
+**A deprecation warning on a compile** — you passed `--backend js`. That is the JavaScript backend
+telling you it is the oracle, not the target. Drop the flag and you are on C.
 
 **`cc` not found, or a compile error in the emitted C** — the C backend needs a C compiler on your
 PATH. If `cc` is present and the emitted C fails to build, that is a compiler bug worth reporting:

@@ -102,7 +102,10 @@ function compiledPathFor(lispPath: string): string {
   return path.join(COMPILED_DIR, rel);
 }
 
-// Mirrors the CLI's defaults for `transform <file>` with no flags (see getCompilerOptions.ts).
+// The harness picks its OWN backend per invocation (`BACKEND`, above) and never reads the CLI's
+// default. That independence is deliberate and is what let D104 flip the CLI to C without moving a
+// single number here -- but the comment used to say this "mirrors the CLI's defaults", which would
+// have made the flip look like it should have changed the suite.
 // logger is a no-op: the old execSync-based runner discarded the compile step's own stdout/stderr
 // entirely (stdio: ['ignore','pipe','pipe']), so warnings never surfaced through the test suite.
 const COMPILE_OPTIONS: CompilerOptions = {

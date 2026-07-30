@@ -25,7 +25,7 @@ There is **no `package.json` at the repository root**. Every `npm run` is from `
 src/            the compiler (TypeScript). package.json lives HERE.
 lib/std/        the standard library, written in l-lang — 17 packages, 39 modules
 examples/       357 .lisp programs. This is the end-to-end suite, not a demo folder.
-docs/spec/      DECISIONS.md is the spec. Rulings D1–D103.
+docs/spec/      DECISIONS.md is the spec. Rulings D1–D104.
 ```
 
 `cd src` before any npm command. Every path in this file is relative to the repo root.
@@ -100,11 +100,15 @@ two-implementation differential bought (four are named rulings: D78, D80, D84, D
 would make a hand-run report 9 known failures as noise. What ended is the *obligation to add new ones*:
 a C-correct feature that JS gets wrong is now simply left wrong.
 
-Both backends are graded against the **same** `.expect`. That is the entire parity instrument — one
-golden, two implementations, and a divergence has nowhere to hide. Giving a file two goldens would
-make every entry green and measure nothing. A file where C is right and the frozen JS backend is
-measurably wrong gets `oracleDivergent` on its manifest entry, whose string states the JS defect, so
-the skip is a recorded measurement rather than a shrug.
+When both backends are run they are graded against the **same** `.expect` — one golden, two
+implementations, and a divergence has nowhere to hide. Giving a file two goldens would make every
+entry green and measure nothing. A file where C is right and the frozen JS backend is measurably
+wrong gets `oracleDivergent` on its manifest entry, whose string states the JS defect, so the skip is
+a recorded measurement rather than a shrug.
+
+**Read "when both are run" literally.** The harness grades one backend per invocation and has never
+compared the two (`runner.ts:29`); the parity instrument is a *hand-run*, and since D103 it is not
+part of the commit path at all.
 
 ## Never bless a golden
 

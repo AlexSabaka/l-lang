@@ -12,7 +12,8 @@ const program = new Command();
 program
   .name("l-lang compiler")
   .description("A l-lang compiler")
-  // Honoured by `transform` only; `run` builds its C artifacts beside the process cwd.
+  // Honoured by `transform` only; `run` builds its C artifacts in a private temp directory and
+  // removes them, so it has nothing to place and nothing to clobber (D104).
   .option("-o, --output <dir>", "output directory (default: the input file's directory)")
   .option("-L, --log-level <level>", "log level")
   .option("-l, --log-file <file>", "log file")
@@ -21,7 +22,7 @@ program
   // TODO: CollectTypesPass and InferTypesAstVisitor dominate the debug log. No other contributors.
   .option("-d, --debug", "debug mode")
   .option("-s, --silent", "silent mode")
-  .option("--backend <lang>", "target backend: js (default), llang, c")
+  .option("--backend <lang>", "target backend: c (default), js (deprecated oracle), llang")
   .option("--language <lang>", "alias for --backend")
   .option(
     "-I, --lib <dir>",
@@ -29,10 +30,10 @@ program
     (dir: string, acc: string[]) => acc.concat(dir),
     [] as string[]
   )
-  .option("--no-map", "disable source map generation")
+  .option("--no-map", "disable source map generation (--backend js only; C emits no map)")
   .option("--stdin", "read input from stdin (or pipe) instead of a file")
-  .option("--stdout", "output compiled JavaScript to stdout")
-  .option("--runtime-shim", "include runtime shim in compiled output")
+  .option("--stdout", "print the compiled output to stdout")
+  .option("--runtime-shim", "include runtime shim in compiled output (--backend js only)")
   .option("--stage <stage>", "compilation stage to stop at (parse, syntax, symbols, desugar, types, codegen)")
   .option("--perf", "enable performance metrics and reporting")
   .option("--strict-phases", "enforce strict separation between compilation phases")

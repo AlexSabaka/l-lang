@@ -123,8 +123,9 @@ readable — if you add a type kind, teach it there too.
 npx ts-node index.ts run --stage parse   FILE   # the raw AST
 npx ts-node index.ts run --stage symbols FILE   # the symbol table, with types
 npx ts-node index.ts run --stage types   FILE   # after inference
-npx ts-node index.ts transform --backend c FILE # the emitted C
-npx ts-node index.ts run --perf FILE            # per-phase timings
+npx ts-node index.ts transform FILE             # the emitted C (C is the default, D104)
+npx ts-node index.ts run --perf FILE            # per-phase timings -- compile only; `cc` and the
+                                                # binary's own runtime are outside the report
 ```
 
 **`__ll_member` is a thermometer.** Where the checker cannot type a receiver, `(obj.m)` dispatches at
