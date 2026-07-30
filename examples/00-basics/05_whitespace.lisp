@@ -8,7 +8,10 @@
     (fn messy-signature [
         x <- String | Real
         y <- Boolean|Void
-    ] -> Array<String | Real | Boolean | Void> (
+    ;; `(U)[]`, not `Array<U>`. `Array` is an ambient `:extern` VARIABLE from `std/js`, never a type
+    ;; -- it only looked like one because a type annotation used to accept any symbol carrying an
+    ;; inferred type (D111). The array type this language has is `T[]`.
+    ] -> (String | Real | Boolean | Void)[] (
         (return [x y])
     ))
 
