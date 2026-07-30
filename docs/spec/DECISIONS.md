@@ -2552,6 +2552,23 @@ A bare `T` that still reaches `isAssignable` is *genuinely* unsolved — inside 
 
 ## D23 — REPL semantics: what a session is, and what enters history
 
+> **DORMANT as of D105, which retired the REPL — not superseded, and not deleted.** Every clause
+> below that scopes itself to a *session* (cells, the absent outer wrapper, REPL0001, `.delete`,
+> history admission, `var X = class X`) simply has no subject any more; several derive from
+> `vm.Context` realm semantics and so were JS-backend artifacts to begin with. This ruling stays
+> because it is the record of *why* the REPL was built the way it was, and a future REPL hosted on C
+> or on an interpreter will need most of these questions answered again — differently.
+>
+> **One clause is NOT dormant, and it is the one that outlived its subject.** The LL0212 ruling below
+> is a statement about the *compiler*, true whether or not a REPL exists. Its stated enforcement —
+> "`test:repl` pins it" — went away with that suite, so it is now pinned by name in
+> **`test/diagnostics.ts`** (the sibling spelling, source written verbatim, recorded as the empty
+> diagnostic list) and **`test/type-errors.ts`** (the block spelling, whose harness wraps). It had in
+> fact been pinned in `diagnostics.ts` by accident for some time, under a name that claimed the
+> opposite of what it measured; D105 renamed it to say what it holds.
+>
+> `docs/repl.md`, cited below, was removed with the REPL.
+
 > **Renumbered on merge.** The `repl-refactor` stream minted this as *D17* while `dev` was
 > independently minting **D17** (`(x |> (.m a))` is a method call) and D18–D22. Two branches, one
 > register, no lock — the numbers collided. This ruling is unchanged; only its label moved. Any
@@ -2577,7 +2594,8 @@ every rebinding into a hard LL0212. It is one character away and it is wrong.
 **LL0212 (duplicate declaration) is a BLOCK-scope check, and stays one.** It is tested in
 `visitList`, not `visitProgram`. Two cells are two lists, so `(let x 1)` then `(let x 2)` is not a
 duplicate — while inside a file's single top-level block, a redeclaration remains an error. Both are
-correct. *Moving this check to `visitProgram` would make the REPL unusable.* `test:repl` pins it.
+correct. *Moving this check to `visitProgram` would make the REPL unusable.* ~~`test:repl` pins it.~~
+**Pinned since D105 by `test/diagnostics.ts` and `test/type-errors.ts` — see the banner above.**
 
 **A binding's TYPE is fixed at first declaration, and the REPL enforces that itself (REPL0001).**
 `(let x 1)` followed by `(let x "hi")` is refused — **whether or not anything depends on `x`.**
@@ -7780,14 +7798,18 @@ Deletion is separately blocked, and three of the four blockers are rulings rathe
    zero. D69's other blocker — `:comptime` evaluating through `node:vm` — **is now closed** by D73, and
    that had gone unrecorded; but D69 measured *three* importers of the JS transformer and only that one
    was removed.
-2. **The REPL is the importer nobody killed.** `src/cli/repl/ReplSession.ts` still evaluates every cell
-   with `vm.runInContext`. There is no C REPL and nothing to build one on, so deleting the backend
-   deletes the REPL — 1,278 LOC of user-facing feature, with no replacement.
+2. ~~**The REPL is the importer nobody killed.**~~ **DISCHARGED by D105**, which retired the REPL
+   rather than rehosting it. `src/cli/repl/ReplSession.ts` evaluated every cell with
+   `vm.runInContext`; there was no C REPL and nothing to build one on, so this blocker was real until
+   the feature itself was withdrawn. Of D69's three JS-transformer importers, two are now gone (D73
+   took the comptime evaluator, D105 took this) and only `codegen/index.ts` — the backend selector —
+   remains, which is not a blocker but the thing being selected.
 3. **D60 pins l-lang's own await-ordering specification** to `14-async/01_async_pipeline.expect` and says
    "No `.c.expect`, ever." Deletion makes the spec's async golden unexecutable by any implementation.
-4. `l-lang run` defaults to JS and evaluates in-process; `test:memory`'s JS side is the scientific
-   *control*; 29 `negative` files grade only on JS; the games' `verify.sh` asserts `js == c == golden`
-   and 7 p5/TTY drivers have no C target at all.
+4. ~~`l-lang run` defaults to JS and evaluates in-process~~ — **fixed by D104**; the rest of this
+   blocker stands: `test:memory`'s JS side is the scientific *control*; 29 `negative` files grade only
+   on JS; the games' `verify.sh` asserts `js == c == golden` and 7 p5/TTY drivers have no C target at
+   all.
 
 **Demotion is also the move that generates the evidence deletion needs.** Deleting now closes the
 question permanently. Ungrading now means that in some months the hand-run has either been reached for
@@ -7860,3 +7882,70 @@ there was exactly one place to change.
 The REPL, which is handled separately. `--output` resolving against the *input file's* directory
 rather than the cwd — surprising, pre-existing, and now more visible because the artifact is a `.c`
 someone may want to hand to `cc`; flagged, not absorbed.
+
+## D105 — the REPL is retired, not frozen (2026-07-30)
+
+**Ruling (Sabaka, 2026-07-30): "as for the repl, I think it should be gone too (or frozen) until every
+supporting infrastructure will be working."** Measured both dispositions; **gone** is the right one,
+and the measurement is why.
+
+`l-lang repl`, `src/cli/repl/` (5 files, 1,278 lines), `src/cli/commands/command.repl.ts` (192),
+`src/test/repl.ts` (762), its fixture, `docs/repl.md`, and the `test:repl` script are removed. 2,232
+lines of code.
+
+### Why not frozen
+
+A frozen REPL is **dead code that is also permanently red**, which is this project's signature failure
+mode wearing a second hat. The `test:repl` suite was 5 of 26 failing and had never been in the gate, so
+it was already rotting unobserved. The five split two ways and **neither half can be repaired**:
+
+- **Three are one defect, and D66 forbids the fix.** `ReplSession.newSandbox()` injects a capturing
+  `console`, then loads the runtime shim — and `inspectJs.ts:165` declares its own `var console` over
+  a sink that writes straight to the host, so every cell's output went to the real terminal and
+  `this.output` stayed empty. That `var console` is a **deliberate two-backend parity change**
+  ("console.log is now a LAYER over the sink, not a host call… same rule as `runtime.c`'s
+  `ll_console_write`"). The REPL broke *because the JS floor was brought into line with C*. Repairing
+  it means fighting a parity fix or adding a JS-backend seam for a deprecated backend's only consumer.
+- **Two are stale against D102.** Both drive `(defmacro m [x] x)` and expect `LL0023` — "macros are
+  not implemented". `defmacro` was built. The suite had not been maintained since.
+
+So freezing would preserve a feature that cannot be made to work, in a lane no gate watches, whose
+only possible repairs are ruled out. Git preserves it either way, and the return path is cheap because
+it is now written down (below).
+
+### What a future REPL starts from, measured rather than guessed
+
+Of the 1,278 lines, **135 (10.6%) are reusable verbatim** — `readiness.ts` (86; a pure bracket/string
+scanner with no imports at all) and `MultiLineBuffer.ts` (49). **~226 more need light edits**:
+`ReplRenderer` is neutral except a `js()` highlighter and a host-value type switch, and
+`ReplCompleter` needs a one-line swap from `RuntimeProvider.SYMBOL_MAP`'s keys to the backend-neutral
+`FLOOR` — a migration `docs/inbox/compiler-notes-from-repl.md` had already logged as half-landed. The
+**840-line `ReplSession` is a rewrite**: `node:vm`, `JSTransformerAstVisitor`, `astring`, and a
+subsystem that rewrites top-level lexical bindings to `var` so they land on a contextified global.
+D23's *policy* is worth keeping; not one line of its *mechanism* survives a backend change.
+
+### The one thing this removal could have broken, and did not
+
+`src/test/repl.ts` was the sole stated pin for **D23's LL0212 block-scope invariant** — a rule about
+the *compiler*, not the REPL: the duplicate-declaration check lives in `visitList`, not
+`visitProgram`, so two sibling top-level forms are not a duplicate while the same two inside one block
+are. Deleting the suite would have silently unpinned a live language rule.
+
+Re-pinned first, in both directions, and the search for a home was itself the finding:
+
+- `test/type-errors.ts` **wraps every case** in the conventional outer list, so the sibling spelling
+  cannot be written there at all. Its existing case for this was marked `pending` while asserting
+  `LL0212` for the *sibling* source — i.e. asking for exactly what D23 forbids. It never fired, so
+  `pending` hid the conflict instead of tracking work; anyone "finishing" it would have moved the
+  check to `visitProgram`. It is now the honest block-scoped case, and no longer pending.
+- `test/diagnostics.ts` writes probe source **verbatim**, so it holds the sibling half — and it turns
+  out it *already did*, by accident, under the name "LL0212 duplicate declaration" while recording
+  **zero** diagnostics. A pin nobody can identify does not survive the removal of the thing it was
+  mistakenly credited to. Renamed to state what it holds; the snapshot diff is one line, the name.
+
+### Consequence for the JS backend
+
+This **discharges blocker 2 of D103's four** against ever deleting the JS backend. Two of D69's three
+JS-transformer importers are now gone (D73, D105); the third is the backend selector. The remaining
+blockers are the absent differential fuzzer, D60's async golden, and D103's fourth. Deletion is
+closer, and still not ruled.

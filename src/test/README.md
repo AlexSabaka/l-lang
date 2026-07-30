@@ -60,7 +60,6 @@ The other suites, each with its own entry point in `package.json`:
 | `test:memory` | no leaks in the C runtime |
 | `test:ast-invariants` | the tree holds its shape between passes |
 | `test:grammar-v2-smoke` | the parser accepts what it should |
-| `test:repl` | session semantics (D23) |
 
 ---
 

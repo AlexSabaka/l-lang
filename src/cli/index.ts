@@ -4,7 +4,6 @@ import { Command } from "commander";
 import { VERSION as COMPILER_VERSION } from "../compiler";
 import { transform } from "./commands/command.transform";
 import { run } from "./commands/command.run";
-import { repl } from "./commands/command.repl";
 import { clean } from "./commands/command.clean";
 
 const program = new Command();
@@ -69,9 +68,8 @@ program
   .argument("[file]", "the l-lang file to run")
   .action((file) => run(file, program));
 
-program
-  .command("repl")
-  .description("run a l-lang REPL")
-  .action(() => repl(program));
+// There is no `repl` command. It was retired by D105: it evaluated every cell through `node:vm` on
+// the deprecated backend, so D66 forbade repairing it, and it was the last thing keeping the JS
+// backend load-bearing outside the test harness.
 
 program.parse();

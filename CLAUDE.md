@@ -25,7 +25,7 @@ There is **no `package.json` at the repository root**. Every `npm run` is from `
 src/            the compiler (TypeScript). package.json lives HERE.
 lib/std/        the standard library, written in l-lang — 17 packages, 39 modules
 examples/       357 .lisp programs. This is the end-to-end suite, not a demo folder.
-docs/spec/      DECISIONS.md is the spec. Rulings D1–D104.
+docs/spec/      DECISIONS.md is the spec. Rulings D1–D105.
 ```
 
 `cd src` before any npm command. Every path in this file is relative to the repo root.

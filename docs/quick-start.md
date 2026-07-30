@@ -2,10 +2,10 @@
 
 Get l-lang running, and get a program onto the **reference backend**, in about five minutes.
 
-> **There are two backends.** C is the reference implementation — that's what gets fixed and
-> extended. JavaScript is kept as a differential-testing oracle and is **deprecated**: it prints a
-> warning on every compile telling you to pass `--backend c`. This guide targets C. See
-> [DECISIONS.md](spec/DECISIONS.md) D66 and D86 for why.
+> **There are two backends.** C is the reference implementation and, since D104, the **default** —
+> that's what gets fixed and extended. JavaScript is kept as a differential-testing oracle and is
+> **deprecated**: reach it with `--backend js` and it prints a warning saying so. See
+> [DECISIONS.md](spec/DECISIONS.md) D66, D86 and D103 for why.
 
 ---
 
@@ -104,20 +104,6 @@ All from `src/`.
 | `npm run test:c` | the corpus on the C reference |
 | `npm test` | the corpus on the JS oracle — an instrument, not a gate (D103) |
 | `npm run grammar:ebnf` | regenerate `docs/spec/GRAMMAR.ebnf` from the parser |
-
----
-
-## 🐚 Interactive REPL
-
-```bash
-npx ts-node index.ts repl
-```
-
-Syntax highlighting, tab completion, multi-line input with bracket balancing, and a persistent
-session. `.help` lists the commands. Full documentation: **[repl.md](repl.md)**.
-
-> The REPL evaluates through the JavaScript path regardless of `--backend`. That is a known
-> limitation, not a statement about which backend is the reference.
 
 ---
 

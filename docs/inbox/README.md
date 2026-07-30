@@ -9,7 +9,7 @@ reason expires.
 | `adversarial-probe-2026-07-27-triage.md` | the adjudication of the 2026-07-27 audit. Six of its eleven defects are open, and four divergences are still unruled | the six are pinned by files in `examples/80-adversarial/` and the four get D-numbers |
 | `hir-brief.md` | **the compiler cites it.** Its R1–R6 are named by five source comments in `src/compiler/hir/` and `codegen/` | never, unless those five comments move in the same commit |
 | `hir-llvm-consumption-spec.md` | **the compiler cites it.** Its A1–A9 taxonomy is what the live `GapLedger.ts` records dips in | never, on the same terms |
-| `compiler-notes-from-repl.md` | **eight source comments cite its path**, and two of its items are still open | those two close and the eight citations are repointed |
+| `compiler-notes-from-repl.md` | **three source comments cite its path** (was eight; D105 deleted the REPL and its suite, taking five with them), and two of its items are still open | those two close and the three citations are repointed |
 | `language-ideas.md` | the only register of ideas that are parked but not ruled | each remaining idea is ruled or dropped |
 
 Everything else that used to live here is in [`../_archive/`](../_archive/README.md), with a banner

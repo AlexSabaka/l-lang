@@ -21,7 +21,6 @@
     "test:memory": "ts-node test/memory.ts",
     "test:codegen": "ts-node test/codegen.ts",
     "test:docs": "ts-node test/docs.ts",
-    "test:repl": "ts-node test/repl.ts",
     "grammar:ebnf": "ts-node test/export-grammar.ts",
     "ast:stdlib": "ts-node test/export-ast-stdlib.ts",
     "grammar:diagrams": "ts-node test/build-diagrams.ts",

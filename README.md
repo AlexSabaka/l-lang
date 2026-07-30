@@ -10,7 +10,7 @@
 
 Most Lisps are dynamic typing in nature, but I see static typing as a basic necessity. Most enterprise languages are way over verbose _imo_. With **l-lang** I try to marry expressiveness of lisps with static typing and to compile down to native code.
 
-It's a general-purpose language with **two backends**. The **C backend is the reference implementation** — that's the one that gets fixed and extended. The JavaScript backend is kept as a *differential-testing oracle*: every program in the test corpus is compiled by both and graded against **one** golden, so a disagreement has nowhere to hide.
+It's a general-purpose language with **two backends**. The **C backend is the reference implementation** — that's the one that gets fixed and extended, and the one the gate runs. The JavaScript backend is kept as a *differential-testing oracle*: both grade against **one** golden, so a disagreement has nowhere to hide. Since D103 that comparison is a hand-run instrument rather than a per-commit step — it earned its keep (~17–20 C defects) but the ledger it filled was growing faster than the bugs it found.
 
 - **Static types, checked:** generics, interfaces, union types, tuples, records. Types are **nominal**; interfaces conform **structurally** (the Go model). Static safety without the verbosity tax.
 - **Refinement newtypes:** `(deftype uint8 <- Int :satisfies (0..255))` — a distinct type with bounds the compiler checks at every boundary, not a comment.
@@ -24,7 +24,9 @@ It's a general-purpose language with **two backends**. The **C backend is the re
 - **Packages & visibility:** a `package.yaml` compilation unit with package-scoped `public`/`internal`/`private`.
 - **Extension methods:** `(fn :extension area [self <- Rectangle] ...)` so `(rect.area)` dispatches to a free function — compile-time and nominal.
 
-**What it deliberately isn't:** there are no macros. `defmacro` and `defsyntax` are *reserved and refused* (LL0023) — the tiers are designed (D69) and the grammar is not built. There is no `eval`; it needs a runtime AST interpreter, which is a phase of its own, and asking for one is a clean LL0236 rather than a silent fallthrough to the host's. `quote` gives you the AST datum, so code-is-data holds and code-as-code does not — yet.
+- **Macros, in two tiers:** `defsyntax` rewrites a full AST (D95-a) and `defmacro` rewrites a cons list of *tokens* (D102) — the only tier that can introduce new surface syntax. Both expand statically, module-locally, under depth and step budgets. Neither claims hygiene.
+
+**What it deliberately isn't:** there is no `eval`; it needs a runtime AST interpreter, which is a phase of its own, and asking for one is a clean LL0236 rather than a silent fallthrough to the host's. `quote` gives you the AST datum (D101), so code-is-data holds and code-as-code does not — yet. There is no REPL: the one that existed ran only on the deprecated backend and was retired by D105.
 
 ---
 
@@ -96,12 +98,11 @@ See the [roadmap](docs/roadmap.md) for what's built, what's left, and what's bro
 
 **Going deeper:**
 - **[What l-lang is, and is not](docs/spec/IDENTITY.md)** 🧭 - The shape of the language, its refusals, and where the design is currently incoherent.
-- **[Decisions log](docs/spec/DECISIONS.md)** - Every ruling, D1–D90, with the measurement behind it. Start at its topic index.
+- **[Decisions log](docs/spec/DECISIONS.md)** - Every ruling, D1–D105, with the measurement behind it. Start at its topic index.
 - **[Compiler](docs/language-compiler.md)** 🏗️ - The compilation pipeline
 - **[The intrinsic floor](docs/spec/FLOOR.md)** - The runtime contract the backends must not diverge on
 - **[Grammar](docs/spec/GRAMMAR.ebnf)** - Generated from the parser, so it cannot drift
 - **[Roadmap](docs/roadmap.md)** 🗺️ - Phases, status, and the known gaps
-- **[REPL](docs/repl.md)** - Interactive REPL features
 - **[Changelog](docs/changelog.md)** - What changed
 
 **For contributors:** read **[Contributing](docs/CONTRIBUTING.md)** 🤝 and **[CLAUDE.md](CLAUDE.md)** (the working contract — the gate, the ledgers, and why a golden is never blessed from output).
@@ -132,18 +133,6 @@ npm test              # JavaScript — an instrument, not a gate (D103)
 ```
 
 `run` and `transform` both need a working `cc` on your PATH. `--backend js` does not.
-
-### Interactive REPL
-
-**Features:**
-- 🎨 Syntax highlighting
-- 🔍 Tab-based autocomplete (keywords, symbols, member access)
-- 💾 Persistent context across evaluations
-- 📝 Multi-line input with bracket balancing
-- ⌨️ Command history (↑/↓ arrows)
-- 🔧 Built-in commands (`.help`, `.symbols`, `.types`, `.reset`)
-
-See [docs/repl.md](docs/repl.md) for complete documentation.
 
 ### Test Status
 

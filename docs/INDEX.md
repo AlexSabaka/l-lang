@@ -10,7 +10,6 @@ describes a JavaScript-only project — where a document and the tree disagree, 
 ## 🚀 Start here
 
 *   **[Quick Start](quick-start.md)** — install, first program, on the reference backend.
-*   **[REPL](repl.md)** — the interactive session.
 
 ## 📖 Learning the language
 
