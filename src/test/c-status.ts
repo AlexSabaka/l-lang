@@ -538,6 +538,16 @@ export const C_PASSING: readonly string[] = [
   // to mention the class. This file deliberately CONSTRUCTS none of them, which is the property the
   // previous guard lacked: `catchable_data_traps.lisp` covers RangeError only, one of the three that
   // were baked in, so it stayed green throughout. The list is derived from `runtime.c` now.
+  // TWO QUESTIONS, ONE NAME, ONE PACKAGE -- a wrong answer decided by import order. `std/llang/ast`
+  // and `std/llang/reflect` are siblings, so importing either injects both, and they shared five
+  // predicate names asking different questions (`n._type` vs `t.kind`). Measured: `(is-class d)` on
+  // the SAME descriptor answered true under one import and false under the other, and flipped on
+  // import ORDER when both were present, with zero diagnostics. LL0240 is the diagnostic for exactly
+  // this and does not fire for siblings -- they arrive by injection, not import -- which is an open
+  // question in the roadmap rather than something a rename settles. The AST side carries `-node` now
+  // (it had zero callers; every caller in the tree wanted reflect's meaning). This file pins that the
+  // two stay DISTINGUISHABLE: merge them again and its two columns become identical.
+  "80-adversarial/sibling_name_collision.lisp",
   "80-adversarial/trap_kinds_registered.lisp",
   "80-adversarial/iterator_done_flag.lisp",
   // ERASING A TYPE MUST NOT CHANGE THE ARITHMETIC. `binopMode` returned "real" for `/` BEFORE the

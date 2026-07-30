@@ -82,8 +82,26 @@ kinds.sort((a, b) => a.kind.localeCompare(b.kind));
 // --- emit ---------------------------------------------------------------------------------------
 const vec = (xs: string[]) => `[${xs.map((x) => JSON.stringify(x)).join(" ")}]`;
 // A kind name is not always a legal l-lang identifier tail, so predicates mangle exactly one way:
-// `simple-identifier` -> `is-simple-identifier`. Kinds are already kebab-case, so this is identity.
-const predName = (kind: string) => `is-${kind}`;
+// `simple-identifier` -> `is-simple-identifier-node`. Kinds are already kebab-case, so the only
+// transformation is the affixes.
+//
+// THE `-node` SUFFIX IS NOT DECORATION -- it settles a collision that produced a WRONG ANSWER.
+//
+// These predicates ask about an AST NODE (`n._type`). `std/llang/reflect`'s ask about a runtime TYPE
+// DESCRIPTOR (`t.kind`). Five names were shared -- `is-class`, `is-struct`, `is-interface`,
+// `is-function`, `is-enum` -- and the two modules are PACKAGE SIBLINGS, so both are injected into any
+// importer of either and the winner is decided by module order. Measured, same descriptor, same
+// question, zero diagnostics:
+//
+//     (import "std/llang/reflect")                 -> (is-class d)  true
+//     (import "std/llang/ast")                     -> (is-class d)  false
+//     (import ast) then (import reflect)           -> false
+//     (import reflect) then (import ast)           -> true
+//
+// Two different questions cannot share one name in one package. The AST side moves because every
+// caller in the tree uses the REFLECT meaning -- these had zero call sites -- and because a
+// suffix that names the subject is what the collision was missing in the first place.
+const predName = (kind: string) => `is-${kind}-node`;
 
 const L: string[] = [];
 L.push(";; std/llang/ast -- the l-lang AST SCHEMA, in l-lang.");

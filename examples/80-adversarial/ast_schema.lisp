@@ -19,13 +19,20 @@
 
     ;; -- the kinds are named, so a typo is not a silently-false comparison -------------------------
     ;;
-    ;; `(== n._type "lst")` is false forever and nothing complains. `(is-list n)` is a call to a
+    ;; `(== n._type "lst")` is false forever and nothing complains. `(is-list-node n)` is a call to a
     ;; function that either exists or does not.
+    ;;
+    ;; The `-node` suffix says what the predicate asks ABOUT, and it is not decoration: these five
+    ;; used to be `is-class`/`is-struct`/`is-interface`/`is-function`/`is-enum`, colliding with
+    ;; `std/llang/reflect`'s predicates of the same names -- which ask about a runtime TYPE
+    ;; DESCRIPTOR, not an AST node. Package siblings are injected into any importer of either, so the
+    ;; winner was decided by module order and `(is-class d)` answered `true` or `false` for the SAME
+    ;; descriptor depending on which module you imported first, with no diagnostic.
 
     (let expr '(+ 1 2))
     (console.log "type:" (node-type expr))
-    (console.log "is-list:" (is-list expr))
-    (console.log "is-while:" (is-while expr))
+    (console.log "is-list:" (is-list-node expr))
+    (console.log "is-while:" (is-while-node expr))
 
     ;; -- the schema is the whole node set, and it is generated -------------------------------------
     ;;

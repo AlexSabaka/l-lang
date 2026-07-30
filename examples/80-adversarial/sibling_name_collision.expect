@@ -1,0 +1,5 @@
+descriptor is-class: true
+descriptor is-class-node: false
+form is-list-node: true
+form is-class-node: false
+form is-class: false

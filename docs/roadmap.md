@@ -680,6 +680,36 @@ Six modules in one round, each ruled before it was written.
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
+### LL0240 cannot see a SIBLING collision — UNRULED, and it has produced a wrong answer
+
+The diagnostic for "two modules export the same name, and which one you get depends on module order"
+fires for two DIRECTLY IMPORTED modules and **never** for package siblings — a sibling arrives by
+injection, not by import, so it is not in the set `ambiguousDirectImports` examines.
+
+Measured, and it is not theoretical. `std/llang/ast` and `std/llang/reflect` shared five predicate
+names asking different questions (`n._type` on an AST node vs `t.kind` on a runtime type descriptor):
+
+```
+(import "std/llang/reflect")          (is-class d)  ->  true
+(import "std/llang/ast")              (is-class d)  ->  false     same descriptor
+ast then reflect                                    ->  false     decided by ORDER
+reflect then ast                                    ->  true
+```
+
+Zero diagnostics in all four. LL0240's own text describes precisely this hazard — *"which one that is
+depends on module processing order — so a program that reads correctly today can change meaning when
+an import is added"* — and it cannot see the case.
+
+**That instance is fixed by renaming** (the AST predicates carry `-node`; they had zero callers, and
+every caller in the tree wanted reflect's meaning), pinned by
+`80-adversarial/sibling_name_collision.lisp`. **The general question is not**: two live cases remain —
+`min`/`max`/`abs`/`floor`/`ceil`/`round`/`PI`/`E`/`TAU` across `math/math`, `math/elementary` and
+`math/constants`, and `read-lines` at arity 0 in `io/console` versus arity 1 in `io/files`.
+
+Ruling needed: is a same-package duplicate export an ERROR, a warning, or legal-and-ordered? Making
+it an error is the only option that cannot produce a silent wrong answer, and it is also the only one
+that would refuse code in the tree today.
+
 ### Should a MODULE import drag in its package siblings? — UNRULED, and it has a measured price
 
 Surfaced by fixing `std/sys` from a phantom package into a real one (B0 of the stdlib sweep). The fix
