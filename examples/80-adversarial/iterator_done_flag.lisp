@@ -53,6 +53,15 @@
     (console.log "linq seq:" ((xs |> seq) |> count))
     (console.log "linq map:" ((xs |> (map (fn [x] x))) |> count))
 
+    ;; 4b. THE EARLY-EXIT operators. These drive their cursors BY HAND -- `take` must pull exactly
+    ;;     `n` and never the (n+1)th, and `zip` advances two sources in lockstep, neither of which
+    ;;     `for :each` can express -- so they tested `(== v nil)` in l-lang SOURCE and no runtime fix
+    ;;     could reach them. They ask `iter-done` now (D108/B4).
+    (console.log "linq take:" ((xs |> (take 5)) |> count))
+    (console.log "linq takewhile:" ((xs |> (take-while (fn [x] true))) |> count))
+    (let ys <- Any [10 20 nil])
+    (console.log "linq zip:" ((xs |> (zip ys)) |> count))
+
     ;; 5. THE CONTROL. A built-in cursor over the same data -- fixed long before D108, and it must
     ;;    not move. If this ever disagrees with the rows above, the cursor kinds have drifted apart
     ;;    again, which is the whole failure this ruling exists to end.

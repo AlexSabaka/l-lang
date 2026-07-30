@@ -3,4 +3,7 @@ gen toplevel: 3
 gen in loop: 5
 linq seq: 5
 linq map: 5
+linq take: 5
+linq takewhile: 5
+linq zip: 3
 builtin: 5

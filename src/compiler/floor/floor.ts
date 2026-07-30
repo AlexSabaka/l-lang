@@ -353,6 +353,27 @@ export const FLOOR: ReadonlyMap<string, FloorEntry> = new Map<string, FloorEntry
   ["iter", fn("ll_iter", [Any], Any)],
   ["next", fn("ll_next", [Any], Any)],
 
+  // D108's third operation, and the one that makes the protocol EXPRESSIBLE IN L-LANG. `next`
+  // answers the element; this answers whether the sequence is exhausted, and the two are separate
+  // questions because a nil ELEMENT is otherwise indistinguishable from the end.
+  //
+  // It takes the cursor AND the value `next` just produced. The value is not redundant: it is what
+  // the fallback reads for a cursor that offers no better signal, which keeps the operation total
+  // over all three cursor kinds. POST-HOC, matching `ll_cursor_step` -- "the value just produced was
+  // not an element", never "a further element exists".
+  //
+  // WHY IT HAD TO REACH THE FLOOR. `for :each` already terminated correctly, but `take`,
+  // `take-while` and `zip` drive their cursors BY HAND -- `take` because it must pull exactly `n`
+  // and never the (n+1)th, `zip` because it advances two cursors in lockstep, neither of which
+  // `for :each` can express. They tested `(== v nil)` in l-lang SOURCE, so no runtime fix could
+  // reach them, and they were the last three operators still truncating after D108.
+  //
+  // The JS half is the NIL RULE, deliberately. JS's `next` collapses `{value, done}` into `T?` at
+  // the point of the call, so the flag is already gone by the time this could be asked -- recovering
+  // it means changing `next` on a path D66 freezes. So both backends implement the floor entry and
+  // they differ in FIDELITY, which is D86's expected case rather than a gap.
+  ["iter-done", fn("ll_iter_done", [Any, Any], Bool)],
+
   // D58/D30's third protocol operation: release a sequence source that is being ABANDONED rather
   // than exhausted. `take`, `take-while` and `zip` all stop early -- that is what they are for -- so
   // "the sequence ended" and "the consumer walked away" are different events, and only the second

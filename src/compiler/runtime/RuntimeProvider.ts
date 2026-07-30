@@ -819,6 +819,17 @@ function __ll_is_type(val, type) {
     : r;
 };`,
 
+    // D108's exhaustion flag. THE NIL RULE HERE, DELIBERATELY, and it is the honest implementation
+    // rather than a stub: `next` above collapses `{value, done}` into `T?` at the point of the call,
+    // so by the time this could be asked the flag has already been thrown away. Recovering it means
+    // changing `next`, which is a behaviour change on the path D66 freezes.
+    //
+    // So both backends implement the floor entry and they differ in FIDELITY: C reads a real flag off
+    // a built-in cursor, a `done` member off a user cursor, and the frame state off a generator,
+    // while this answers the old question. That is D86's expected case, and the one row it costs is
+    // stated in `manifest.ts` on `80-adversarial/iterator_done_flag.lisp`.
+    "iter-done": `const iter2ddone = (it, last) => last === null || last === undefined;`,
+
     // D58: release an ABANDONED sequence source (`take`, `take-while` and `zip` all stop early --
     // that is what they are for). TOTAL: a value with no \`dispose\` member is left alone, so a
     // consumer can call it unconditionally on whatever it was handed.

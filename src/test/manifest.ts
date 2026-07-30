@@ -253,14 +253,16 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   "80-adversarial/iterator_done_flag.lisp": {
     status: "test",
     oracleDivergent:
-      "ONE ROW of six. D108 gives `Iterator<T>` a `done` member so exhaustion leaves the value space; " +
-      "C honours it for all three cursor kinds and JS honours it for none, because `__ll_js_iter` " +
-      "(`RuntimeProvider.ts`) adapts a user cursor's `next() -> T?` to JS's `{value, done}` with " +
-      "`v === null || v === undefined`, which is the sentinel rule D108 retires. Measured: `user " +
-      "cursor: 1` where C says 3. The other five rows AGREE -- a generator is natively iterable on " +
-      "JS, so `for...of` never reaches that adapter and JS was already right about generators " +
-      "(indeed it was RIGHT and C was wrong there before this round: `gen in loop` was C 1 / JS 5). " +
-      "Not fixed on JS: D66 freezes that path, and the one-line change would be a new feature on it.",
+      "FOUR ROWS of nine, and the split is exactly the design. D108 takes exhaustion out of the value " +
+      "space; C honours it for all three cursor kinds and JS honours it for none, because JS\'s `next` " +
+      "COLLAPSES `{value, done}` into `T?` at the point of the call -- the flag is gone before anything " +
+      "could ask -- and recovering it means changing `next` on the path D66 freezes. So the `iter-done` " +
+      "floor entry is implemented on both backends and they differ in FIDELITY, which is D86\'s expected " +
+      "case rather than a gap. Divergent: `user cursor` (1 vs 3) and the three EARLY-EXIT operators " +
+      "`take`/`take-while`/`zip`, which ask `iter-done` in l-lang source. AGREEING: both generator rows " +
+      "and every straight-through operator -- a `function*` is natively iterable on JS, so `for...of` " +
+      "never reaches the adapter, and JS was RIGHT about generators while C was wrong before this round " +
+      "(`gen in loop` was C 1 / JS 5). The control row agrees too, which is the point of it.",
   },
   "80-adversarial/int_division_erasure.lisp": {
     status: "test",

@@ -29,7 +29,11 @@
     (mut i 0)
     (while (< i n) (
       (let v (next it))
-      (if (== v nil)
+      ;; D108: EXHAUSTION IS A FLAG. This read `(== v nil)`, which cannot tell a nil ELEMENT from the
+      ;; end -- so `take` truncated at the first nil in the source. `for :each` was fixed in the
+      ;; runtime, but this loop drives its cursor BY HAND (it must pull exactly `n` and never the
+      ;; (n+1)th), so no runtime fix could reach it.
+      (if (iter-done it v)
         (i := n)          ;; exhausted -- stop without pulling again
         (
           (yield v)
@@ -43,7 +47,9 @@
   (fn :extension :gen take-while<T> [coll <- Iterable<T> pred] -> Iterator<T>
     (let it (iter coll))
     (mut v (next it))
-    (while (&& (!= v nil) (pred v)) (
+    ;; D108, as in `take`. `&&` short-circuits, so `pred` is never handed the value that ran off the
+    ;; end -- which matters more now that the value may legitimately BE nil.
+    (while (&& (not (iter-done it v)) (pred v)) (
       (yield v)
       (v := (next it))))
     ;; Abandoned at the first element that fails the predicate (D58).
@@ -56,7 +62,9 @@
     (let ib (iter b))
     (mut x (next ia))
     (mut y (next ib))
-    (while (&& (!= x nil) (!= y nil)) (
+    ;; D108. Two cursors, each asked about its own exhaustion -- `zip` is the operator `for :each`
+    ;; cannot express at all, since it advances two sources in lockstep.
+    (while (&& (not (iter-done ia x)) (not (iter-done ib y))) (
       (yield [x y])
       (x := (next ia))
       (y := (next ib))))

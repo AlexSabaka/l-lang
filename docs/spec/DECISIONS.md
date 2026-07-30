@@ -8150,10 +8150,29 @@ Priced at "9 `:implements` sites". The real number is **three**: `Iterable` requ
 so only `Iterator` implementors owe a `done` — `RangeCursor`, and two corpus files. LL0209 named every
 one of them, and named them **for structs too**, which was only true as of B1 landing that morning.
 
-### Not closed here
+### The floor gains `iter-done`, because three operators drive their cursors by hand
 
-`take`, `take-while` and `zip` still truncate. They test the sentinel **in l-lang source**
-(`(if (== v nil) …)`, `linq-early.lisp`), so no runtime fix reaches them; they need rewriting against
-`done` and that is B4.
+`for :each` terminates correctly, but `take`, `take-while` and `zip` do not use it and **cannot**:
+`take` must pull exactly `n` and never the (n+1)th (so the pull is gated inside the loop), and `zip`
+advances two cursors in lockstep. Both shapes are outside what `for :each` expresses. They tested
+`(== v nil)` in l-lang **source**, so no runtime fix could reach them, and they were the last three
+operators still truncating.
+
+So the protocol becomes expressible in the language: **`(iter-done it v)`** joins `iter` and `next` on
+the floor. It takes the cursor *and* the value `next` just produced — the value is not redundant, it
+is what the fallback reads for a cursor offering no better signal, which keeps the operation total
+across all three cursor kinds.
+
+**The JS half is the nil rule, deliberately, and that is honest rather than a stub.** JS's `next`
+collapses `{value, done}` into `T?` *at the point of the call*, so the flag is already gone before
+anything could ask; recovering it means changing `next` on the path D66 freezes. Both backends
+implement the entry and differ in **fidelity** — D86's expected case. The floor↔shim coverage check
+therefore stays green, which was the constraint that shaped this: a floor entry with no JS
+implementation is red by construction, and that check exists because `iter`/`next` were once a
+JS-only protocol the C backend did not have at all.
+
+Measured after the rewrite, over `[1 nil 2 nil 3]`: `take` `take-while` 1 → **5**, `zip` over a
+three-element pair 1 → **3**. The divergence record on `iterator_done_flag.lisp` moves from one row of
+six to **four of nine**, and names which four and why the other five agree.
 
 C 306 → **307** over 361.
