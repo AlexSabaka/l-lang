@@ -7949,3 +7949,76 @@ This **discharges blocker 2 of D103's four** against ever deleting the JS backen
 JS-transformer importers are now gone (D73, D105); the third is the backend selector. The remaining
 blockers are the absent differential fuzzer, D60's async golden, and D103's fourth. Deletion is
 closer, and still not ruled.
+
+## D106 — a comment leaves the token stream at the LEXER (2026-07-30)
+
+**D83 ruled that a comment occupies no slot. It was not enforced anywhere — it was re-implemented, by
+hand, at seven sites**, one of which says `// D83, again`. The eighth site is `ifExpr`, which does not
+implement it, and that was a silent wrong answer in the most-used conditional in the language.
+
+Found while sweeping the stdlib for the `Iterator` gap, as the cause of a spurious element past the
+end of a `take`.
+
+### The defect
+
+`Comment` was an ordinary token in the parser's stream, and `Parser.ts`'s `ifExpr` is three **fixed**
+`OPTION` slots:
+
+```
+if :cond? condition   :then? then   :else? else
+```
+
+A comment matches `expression`, so it **ate a slot and shifted every slot after it**. The form pushed
+off the end was not dropped — it fell out to the enclosing list and ran **unconditionally**:
+
+```lisp
+(if (== x 1)
+    (r := 10)
+    ;; an ordinary comment
+    (r := 20))        ; f(1) answered 20. Ten is the answer.
+```
+
+Measured on **both backends**, with no diagnostic. All three comment positions inside `if` were
+affected — before the condition, before the then-branch, and between then and else. `when` and
+`while` were never affected: they carry `MANY` bodies, and a repetition cannot be displaced.
+
+> **The differential could never have caught this.** Both backends agree and both are wrong — the
+> *shared wrongness* class D103 recorded the oracle as structurally blind to, and the third instance
+> after D73's comptime precision fold and D74's undecoded match escapes.
+
+### The fix, and why not at desugar
+
+**Sabaka's instinct — "strip all the comments" — is right; the phase was one too late.** By desugar
+the damage is already done and is not repairable there: the displaced form is *no longer part of the
+`if` node*. The enclosing list rule consumed it as a sibling, so there is nothing left in the `if` to
+put back. For the same reason `AstBuilder.positionalExpressions`'s existing comment filter did not
+save it — the filter is correct and runs *after* the slots are assigned, which converts "the else is
+a comment" into "there is no else".
+
+So the comment must never reach a rule. `Comment` gains `group: "comments"`, which keeps it out of
+`lexResult.tokens` while leaving it in `lexResult.groups` for any tool that wants it. **D83 becomes
+structural rather than remembered**, and the seven hand-written filters become unreachable rather
+than load-bearing.
+
+### What it costs, measured
+
+The JS backend emitted block comments into its output; it no longer can. **That ENDS a divergence
+rather than creating one** — the C backend already dropped every comment (`ResolveHirToCir`,
+`case "comment": return []`), so "block comments survive" was JS-only behaviour against the reference
+implementation. Nothing in the gate round-trips comments, and the `llang` pretty-printer is the only
+consumer that would want them back; it can read the group when someone spends that instrument.
+
+### The guard that was watching this and could not see it
+
+`test/codegen.ts`'s `Zb` case already knew about the theft — its note reads *"the positional comment
+WAS emitted before, as the `then` branch it had stolen"* — and it fixed the **emission** symptom
+while leaving the theft. Then it guarded the result with `(if true …)`, under which "ran as the
+then-branch" and "escaped the `if` and ran unconditionally" are **the same observation**. Its
+`expect: ["1"]` was satisfied *by* the defect.
+
+Rewritten to take a false arm, and generalised into
+`examples/80-adversarial/comment_occupies_no_slot.lisp`: all three positions, two comments in one
+form, a nested `if` whose inner comment must not steal the outer else, and `when`/`while` as the
+controls that must not move if the fix ever over-reaches.
+
+C 304 → **305** over 358.

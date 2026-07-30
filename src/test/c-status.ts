@@ -504,6 +504,14 @@ export const C_PASSING: readonly string[] = [
   // refuses under a depth budget, which the file asserts as catchable-and-continues rather than as an
   // answer, because the two backends' messages differ and the ruling is open in roadmap.
   "80-adversarial/cyclic_equality.lisp",
+  // A COMMENT OCCUPIED A SLOT, AND THE DISPLACED FORM ESCAPED THE `if` (D83 -> D106). `ifExpr` has
+  // three FIXED `OPTION` slots and a comment was an ordinary token, so it ATE one and shifted the
+  // rest; the pushed-out else-branch was not dropped -- it fell out to the enclosing list and ran
+  // UNCONDITIONALLY. Measured 20 for 10 on BOTH backends, no diagnostic: shared wrongness, which the
+  // differential could never have surfaced. Every `if` here is written with a false-taking arm on
+  // purpose -- the previous guard used `(if true ...)`, under which "ran as then" and "escaped and
+  // ran unconditionally" are the same observation, so it passed while the defect was live.
+  "80-adversarial/comment_occupies_no_slot.lisp",
   // ERASING A TYPE MUST NOT CHANGE THE ARITHMETIC. `binopMode` returned "real" for `/` BEFORE the
   // boxed check every other operator makes, so `(/ 7 2)` was 3 statically and 3.5 through an Unknown.
   // The audit recorded only the corner of this it could see -- boxed `(/ 1 0)` yielding Infinity

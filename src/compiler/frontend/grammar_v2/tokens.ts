@@ -18,6 +18,17 @@ export const WhiteSpace = createToken({
 export const Comment = createToken({
   name: "Comment",
   pattern: /;[^\n\r]*/,
+  // D83 says a comment occupies no slot. It used to be an ORDINARY token in the parser's stream, and
+  // the rule was then re-implemented by hand at seven separate sites -- one of which said "D83,
+  // again". `ifExpr` has three FIXED `OPTION` slots, so a comment matched `expression`, ATE a slot,
+  // and shifted everything after it: `(if c (then) ;;x (else))` parsed `;;x` as the else and left the
+  // real else-form to the enclosing list, where it ran UNCONDITIONALLY. A silent wrong answer on both
+  // backends.
+  //
+  // A group keeps them out of `lexResult.tokens` -- so no rule can consume one and D83 is structural
+  // rather than remembered -- while leaving them in `lexResult.groups.comments` for any tool that
+  // wants them.
+  group: "comments",
 });
 
 // ============================================================================

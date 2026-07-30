@@ -4216,27 +4216,38 @@ catch b ((console.log "two")))`,
   {
     // THE TRADE, pinned so it is a decision and not a surprise.
     //
-    // A comment in a BLOCK still reaches the output -- that path is untouched. A comment in a
-    // POSITIONAL SLOT is dropped from the output: it is not a value, so it has no slot to be emitted
-    // from. It used to survive only by BEING the then-branch, which is the bug.
+    // REWRITTEN. The previous version of this case dropped the stolen comment from the OUTPUT and
+    // called that the fix, leaving the THEFT itself in place -- and then guarded it with `(if true
+    // ...)`, a condition under which "ran as the then-branch" and "escaped the `if` entirely and ran
+    // unconditionally" are INDISTINGUISHABLE. Its `expect: ["1"]` was satisfied BY the defect.
     //
-    // Losing it costs a comment in the emitted JS, which nobody reads; keeping it cost an inverted
-    // `if`, which everybody runs. The source still has it. If trivia ever needs to round-trip (the
-    // llang -> llang emitter is the only consumer that would care), that is attachment machinery and
-    // a phase of its own -- not a slot.
-    name: "Zb: a block comment is still emitted; a positional one is dropped",
-    source: `(fn f [] -> Int (
+    // The real defect: a comment was an ordinary token, `ifExpr` has three FIXED `OPTION` slots, so
+    // the comment ATE one and shifted every slot after it. The displaced form was not dropped -- it
+    // fell out to the enclosing list and ran unconditionally. `f(1)` answered 20 for `10`, on BOTH
+    // backends, with no diagnostic. Comments now leave the parser's stream at the lexer (D106), so
+    // no slot can be occupied and D83 is structural rather than re-implemented per site.
+    //
+    // The condition below is deliberately FALSE-taking, so the two behaviours differ: if the else
+    // ever escapes again this prints `20` instead of `10`.
+    name: "Zb: a comment occupies no slot in `if`, and does not displace the else (D83/D106)",
+    source: `(fn f [x <- Int] -> Int (
   ;; a block comment
-  (return 1)
+  (mut r 0)
+  (if (== x 1)
+      (r := 10)
+      ; a positional comment
+      (r := 20))
+  (return r)
 ))
-(if true
-    ; a positional comment
-    (console.log (f)))`,
-    expect: ["1"],
-    emitted: { must: [/a block comment/], mustNot: [/a positional comment/] },
+(console.log (f 1))`,
+    expect: ["10"],
+    // No comment reaches the AST any more, so neither is emitted. That also ENDS a divergence: the
+    // C backend already dropped every comment (`ResolveHirToCir` `case "comment": return []`), so
+    // "block comments survive" was JS-only behaviour against the reference backend.
+    emitted: { mustNot: [/a block comment/, /a positional comment/] },
     wasBroken:
-      "NOT broken -- a GUARD on the trade. The positional comment WAS emitted before, as the `then` " +
-      "branch it had stolen.",
+      "BROKEN, and the previous guard could not see it: the else-branch was displaced out of the " +
+      "`if` and ran unconditionally. Measured 20 for 10 on both backends before D106.",
   },
 
   // ===============================================================================================
