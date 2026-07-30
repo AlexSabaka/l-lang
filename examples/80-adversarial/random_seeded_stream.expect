@@ -1,0 +1,9 @@
+n1  : 1546998764402558742
+n2  : 6990951692964543102
+n3  : -5902157311460992607
+real: 0.08386297105988216
+1..6: 4
+bool: false
+same seed agrees: true
+seeds differ    : true
+done

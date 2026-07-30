@@ -1416,6 +1416,51 @@ This is the *frontend's* instance of the "who calls it?" failure mode: a token i
 Whether `:where`/`:is` should be wired (they read as refinement syntax) or removed is a language
 question, unruled and untouched here.
 
+### `this.field` arithmetic loses 64-bit Int on JS — and it broke `std/math/random`
+
+Found by asking **"what does nobody call?"** — the method that found `std/fn`'s `partial`. An audit of
+all **534 stdlib exports** against every call site in `examples/` and `lib/` left **10 with no caller
+anywhere**; `default-random` was one, and pulling that thread found this.
+
+**D51 makes Int a 64-bit two's-complement value that wraps.** JS represents it as a BigInt, so every
+arithmetic site needs wrapping back. It does that for a local and for a plain field store — both
+measured — and **not** for `this.field` inside a method:
+
+| | C | JS |
+|---|---|---|
+| one step | `-7046029254386353131` | `-7046029254386353000` |
+| two steps | `4354685564936845354` | `-14092058508772706000` |
+
+**Two defects in one value.** `…353000` is not a wrapped `…353131`, it is a *rounded* one — the operand
+went through `Number`, whose mantissa is 53 bits, so the low digits are gone. The second is the missing
+wrap: `-14092058508772706000` is past `INT64_MIN` and was never reduced mod 2^64.
+
+**The consequence is a stdlib module that does not do what its header says.** `std/math/random` seeds
+with SplitMix64 via exactly this shape, so **the same seed produces a different stream on each
+backend** — against a module whose stated design is *"seeded determinism is the API… a program that
+seeds it is a golden of itself."* **Nothing in `examples/` called `Random` at all**, which is why
+neither was ever caught.
+
+**C is verified against the algorithm, not against itself.** An independent Python implementation of
+SplitMix64 + xoshiro256** reproduces C's four seeding words and its first three outputs exactly. That
+is the only honest way to golden a PRNG: its output cannot be derived by inspection, so capturing what
+the compiler printed would freeze whatever it happened to do.
+
+Guarded by `80-adversarial/int_field_arithmetic.lisp` (the root cause, four lines, with the local as
+the control that localises it to the receiver) and `random_seeded_stream.lisp` (the consequence, plus
+the reproducibility property itself). Both C-only; **D66 freezes the JS path**, so this is recorded
+rather than fixed there.
+
+**What the other nine were, exactly.** Six are functions and were probed on both backends —
+`skip-while`, `dump`, `dbg-at`, `try-open` and `default-random` itself all behave identically; `alert`
+and `read-line` need a host or stdin and were **not** exercised, so no claim is made about them. Three
+(`Dict`, `Str`, `Disposable`) are TYPES, where "no call site" only means no annotation mentions them —
+a much weaker signal than an uncalled function, and not evidence of anything.
+
+So the audit's yield was **one real defect out of ten candidates**, and it was in the place the method
+predicted: an export nothing exercises. The method is cheap enough to re-run whenever the stdlib
+grows — 534 exports, one script — and its value is that it looks where the corpus structurally cannot.
+
 ### ~~A container literal reaching codegen as raw AST emitted UNBOXED elements~~ — **CLOSED**
 
 Found while measuring whether `std/fn` could be made portable, and it is the worst-shaped defect this

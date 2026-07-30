@@ -219,6 +219,27 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "the tower's two halves part company: the LITERALS are portable (they desugar to ordinary " +
       "constructions and both backends run them), and PROMOTION is not.",
   },
+  "80-adversarial/int_field_arithmetic.lisp": {
+    status: "test",
+    oracleDivergent:
+      "D51 makes Int a 64-bit two's-complement value that WRAPS. JS represents it as a BigInt, so " +
+      "every arithmetic site needs wrapping back -- which it does for a local and for a plain field " +
+      "store, and NOT for `this.field` inside a method. Measured: `-7046029254386353000` where C says " +
+      "`-7046029254386353131` (the operand went through Number, losing the low digits to a 53-bit " +
+      "mantissa), then `-14092058508772706000`, which is past INT64_MIN and so was never reduced mod " +
+      "2^64. Two defects in one value. The same arithmetic through a LOCAL agrees on both backends, " +
+      "which is what localises it to the receiver. D66 freezes this path.",
+  },
+  "80-adversarial/random_seeded_stream.lisp": {
+    status: "test",
+    oracleDivergent:
+      "The CONSEQUENCE of `int_field_arithmetic.lisp`: `std/math/random` seeds with SplitMix64 via " +
+      "`(this.sm := (+ this.sm …))`, so the deprecated backend computes a DIFFERENT STREAM from the " +
+      "same seed -- breaking the module's stated design that a seeded generator is reproducible. " +
+      "Every value in the golden comes from an INDEPENDENT implementation of SplitMix64 + " +
+      "xoshiro256**, not from this compiler, and C reproduces all of it including the four seeding " +
+      "words. Nothing in examples/ called `Random` at all, which is why neither was ever caught.",
+  },
   "80-adversarial/indexed_native_member.lisp": {
     status: "test",
     oracleDivergent:

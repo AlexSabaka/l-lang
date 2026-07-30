@@ -586,6 +586,17 @@ export const C_PASSING: readonly string[] = [
   // `lib/` at all. Pins argument ORDER with a non-commutative operator (a reversed concat still
   // answers 6 for `+`), the zero-fixed-args degenerate case, and a partial OF a partial.
   "80-adversarial/std_fn_portable.lisp",
+  // `this.field` arithmetic inside a method must stay 64-bit (D51). Isolates a JS defect in four
+  // lines -- a local and a plain field store both wrap there, `this.field` does not -- and pins TWO
+  // faults in one value: precision loss to a 53-bit mantissa, and no reduction mod 2^64. The local
+  // case is the control that localises it to the receiver.
+  "80-adversarial/int_field_arithmetic.lisp",
+  // Its consequence, and the reason it was found: `std/math/random`'s seeded stream. The module's
+  // header claims a seeded generator is reproducible; NOTHING IN examples/ CALLED `Random`, so the
+  // claim was never checked and was false across backends. Every golden value is from an INDEPENDENT
+  // SplitMix64 + xoshiro256** implementation -- a PRNG golden cannot be derived by inspection, so
+  // capturing the compiler's output would freeze whatever it did. C reproduces the seeding words too.
+  "80-adversarial/random_seeded_stream.lisp",
   // The NATIVE half of the same fix -- `.length`/`.toUpperCase` on an indexed receiver. oracleDivergent:
   // JS emits the member as a property and calls it (`__ll_index(...)["length"]()`), which is a codegen
   // bug in the frozen backend rather than a disagreement. Two `.length`s on different receiver types,
