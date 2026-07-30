@@ -9,6 +9,10 @@
 ;; (1) RECOGNITION IS DUCK-TYPED, not a type test. D58 said consumers would "dispose what is
 ;;     `Disposable`, leave the rest alone" -- but `(x :of SomeInterface)` answers FALSE on both
 ;;     backends today, even for a type that declares `:implements`, so the mechanism it named does not
+;;     [STALE as of 2026-07-31 -- measured, `:of` now answers TRUE for a declared interface, for the
+;;      SECOND of two, and transitively. See `interface_conformance_of.lisp`. The duck-typing below is
+;;      therefore a workaround for a defect that no longer exists; whether to make it nominal is a
+;;      ruling, recorded in docs/roadmap.md, because THESE TWO TYPES would stop being disposed.]
 ;;     exist to call. `dispose` checks for a callable `dispose` member instead. It is TOTAL: a value
 ;;     without one is left alone, which is what lets a consumer call it unconditionally on whatever it
 ;;     was handed. Lines 1-2 pin the totality, because a `dispose` that trapped on an array would make

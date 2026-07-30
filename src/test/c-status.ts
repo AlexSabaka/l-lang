@@ -571,6 +571,14 @@ export const C_PASSING: readonly string[] = [
   // stopped covering a captured mutable, the scalar guard would not notice. NO DEFECT was found
   // writing this -- every row agrees at -O0 and -O2 today, which is exactly what makes it a guard
   // for a class the contract says only an optimised run can falsify.
+  // `:of` AGAINST A DECLARED INTERFACE, in three shapes nothing pinned -- single, the SECOND of two
+  // on one declaration, and transitive (`Iterator<T> :implements Iterable<T>`), plus an undeclared
+  // negative. All true on both backends. This file exists because a PREMISE went stale: D58's
+  // amendment and `disposal.lisp` both still said `:of` answers false for a declared interface, and
+  // the gap ledger said `:implements A B` records only the first. Neither is true, and nothing in the
+  // corpus asked, which is why nobody noticed. The live consequence -- `ll_dispose` still duck-types
+  // on that expired premise -- is a ruling, recorded in docs/roadmap.md, not taken here.
+  "80-adversarial/interface_conformance_of.lisp",
   "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",
   "80-adversarial/try_as_expression.lisp",

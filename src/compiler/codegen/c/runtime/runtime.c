@@ -2475,9 +2475,20 @@ static int ll_iter_done(ll_value it, ll_value last) {
 /* D58: release an ABANDONED sequence source. Total -- a value with no `dispose` member is left
  * alone, which is what lets `take` call it unconditionally on whatever it was handed.
  *
- * DUCK-TYPED rather than a `Disposable` type test, and that is an amendment to D58 rather than a
- * shortcut: `(x :of SomeInterface)` answers false on BOTH backends today, even for a type that
- * declares `:implements`, so the nominal test the ruling named does not exist to call. A member
+ * DUCK-TYPED rather than a `Disposable` type test, and THE PREMISE FOR THAT HAS EXPIRED. It read:
+ * "`(x :of SomeInterface)` answers false on BOTH backends today, even for a type that declares
+ * `:implements`, so the nominal test the ruling named does not exist to call."
+ *
+ * Measured 2026-07-31, and every part of that is now false: a single declared interface, the SECOND
+ * of two on one declaration, and a transitive one (`Iterator<T> :implements Iterable<T>`) all answer
+ * TRUE on both backends -- pinned by `80-adversarial/interface_conformance_of.lisp`. The companion
+ * gap-ledger note that "`:implements A B` records only the first interface" is stale with it.
+ *
+ * So the duck-typing is now a workaround for a defect that no longer exists, and D58's own text rules
+ * the other way -- "dispose what is `Disposable`, leave everything else alone". It is NOT changed
+ * here: two corpus types carry a `dispose` member and declare only `:implements Iterable`, so a
+ * nominal test would stop disposing them. That is a semantic change wanting a D-number, recorded in
+ * docs/roadmap.md rather than taken. A member
  * check needs no type-system work and cannot be broken by that defect or by the one where
  * `:implements A B` records only the first interface (both in the gap ledger).
  *

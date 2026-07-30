@@ -1,0 +1,5 @@
+single: true
+first of two: true
+second of two: true
+transitive: true
+undeclared: false

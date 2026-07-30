@@ -699,6 +699,33 @@ zero call sites, so nothing is waiting on it.
 The gap is general: it hits any user writing `deftype MyMap <- Map`, which is the obvious way to name
 a domain dictionary type.
 
+### Should `dispose` recognise its target NOMINALLY? — the premise for duck-typing has expired
+
+`ll_dispose` finds its target by looking for a callable `dispose` MEMBER, not by testing `Disposable`.
+That was an amendment to D58, and its stated reason was:
+
+> `(x :of SomeInterface)` answers false on BOTH backends today, even for a type that declares
+> `:implements`, so the nominal test the ruling named does not exist to call.
+
+**Measured 2026-07-31: every part of that is now false.** A single declared interface, the SECOND of
+two on one declaration, and a transitive one (`Iterator<T> :implements Iterable<T>`) all answer
+`true`, on both backends — pinned by `80-adversarial/interface_conformance_of.lisp`. The companion
+gap-ledger note that *"`:implements A B` records only the first interface"* is stale with it.
+
+D58's own text rules the other way — *"A consumer type-tests instead: dispose what is `Disposable`,
+leave everything else alone."* So the duck-typing is a workaround for a defect that no longer exists.
+
+**It is not changed, because it is not free.** `80-adversarial/disposal.lisp`'s `Res` and `Letters`
+each carry a `dispose` member and declare only `:implements Iterable` — under a nominal test they
+would stop being disposed, and the file's whole subject is that they are. So this is a semantic change
+to what disposal recognises, wanting a D-number:
+
+* **nominal** — D58 as ruled; `Disposable` stops being decorative; two corpus types must declare it.
+* **duck-typed** — today's behaviour; then `Disposable` is documentation and should say so, since
+  nothing consults it.
+* **both** — dispose anything with the member, and make `:implements Disposable` without one an
+  LL0209 error, so the interface at least constrains its implementors.
+
 ### A runtime quasiquote is refused as "no lowering exists", which misreads as a gap
 
 `` `(+ 1 ~n) `` outside a `:comptime` context is `ELL0106 Cannot generate C for 'quasiquote': no
