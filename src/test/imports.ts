@@ -822,6 +822,103 @@ const CASES: Case[] = [
     },
   },
   {
+    name: "a package import's SURFACE is the union of its modules' exports (named form)",
+    why:
+      "The wildcard form already behaved this way -- `(import \"std/math\")` reaches `mean`, declared " +
+      "in the sibling `stats.lisp`, because a package injects its siblings. The NAMED form asked only " +
+      "the one file `resolve` picked and answered `ELL0235 'mean' is not defined in 'math.lisp'`: two " +
+      "spellings of one import disagreeing about what a package offers. And which file `resolve` " +
+      "picks is largely an accident of filenames -- it takes the source matching the package name's " +
+      "last segment, else the first alphabetically, so `std/io` resolves to `io.lisp`, which exports " +
+      "only `print` and `prn`.",
+    run: () => {
+      const root = path.join(TMP, "pkgsurface-root");
+      fs.rmSync(root, { recursive: true, force: true });
+      const pkgDir = path.join(root, "surf");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "package.yaml"), `name: surf\nsources: ["*.lisp"]\n`);
+      // `surf.lisp` is what `resolve` picks (basename matches the package name).
+      fs.writeFileSync(
+        path.join(pkgDir, "surf.lisp"),
+        `(\n  (fn from-entry [] -> Int (return 1))\n  (export from-entry)\n)\n`
+      );
+      // The name we import by NAME lives here, in a sibling the importer never names.
+      fs.writeFileSync(
+        path.join(pkgDir, "extra.lisp"),
+        `(\n  (fn from-sibling [] -> Int (return 41))\n  (export from-sibling)\n)\n`
+      );
+
+      const entry = fixture(
+        "pkgsurface-consumer",
+        {
+          "main.lisp":
+            `(\n  (import { from-entry from-sibling } from "surf")\n` +
+            `  (console.log (+ (from-entry) (from-sibling)))\n)\n`,
+        },
+        "main.lisp"
+      );
+
+      PackageRegistry.clear();
+      const ctx = new Context(entry, {
+        ...options(),
+        libPaths: [root, ...ModuleResolver.defaultLibPaths()],
+      });
+      let result: any;
+      try {
+        result = ctx.process(entry);
+      } catch (e: any) {
+        return { ok: false, detail: `crash: ${String(e?.message ?? e).split("\n")[0]}` };
+      }
+      const codes = ctx.results.all.map((m: any) => m.code);
+      if (codes.includes("LL0235")) {
+        return { ok: false, detail: `LL0235 on a name the PACKAGE offers: ${codes.join(",")}` };
+      }
+      if (!result?.code) return { ok: false, detail: `did not compile: ${codes.join(",") || "no code"}` };
+      const js = entry.replace(/\.lisp$/, ".js");
+      fs.writeFileSync(js, result.code);
+      const run = spawnSync("node", [js], { encoding: "utf-8", timeout: 10_000, env: CHILD_ENV });
+      return (run.stdout ?? "").trim() === "42"
+        ? { ok: true, detail: "a named import sees the whole package's surface, as the wildcard form does" }
+        : { ok: false, detail: `expected "42", got ${JSON.stringify((run.stdout ?? "").trim())}` };
+    },
+  },
+  {
+    name: "GUARD: a name NO module in the package offers is still LL0235",
+    why:
+      "Widening the named form to the package surface must not turn the diagnostic off. This is the " +
+      "half that makes the widening safe rather than merely permissive.",
+    run: () => {
+      const root = path.join(TMP, "pkgsurface-guard-root");
+      fs.rmSync(root, { recursive: true, force: true });
+      const pkgDir = path.join(root, "surfg");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "package.yaml"), `name: surfg\nsources: ["*.lisp"]\n`);
+      fs.writeFileSync(path.join(pkgDir, "surfg.lisp"), `(\n  (fn a [] -> Int (return 1))\n  (export a)\n)\n`);
+      fs.writeFileSync(path.join(pkgDir, "other.lisp"), `(\n  (fn b [] -> Int (return 2))\n  (export b)\n)\n`);
+
+      const entry = fixture(
+        "pkgsurface-guard",
+        { "main.lisp": `(\n  (import { nowhere-at-all } from "surfg")\n  (console.log 1)\n)\n` },
+        "main.lisp"
+      );
+
+      PackageRegistry.clear();
+      const ctx = new Context(entry, {
+        ...options(),
+        libPaths: [root, ...ModuleResolver.defaultLibPaths()],
+      });
+      try {
+        ctx.process(entry);
+      } catch (e: any) {
+        return { ok: false, detail: `crash: ${String(e?.message ?? e).split("\n")[0]}` };
+      }
+      const codes = ctx.results.all.map((m: any) => m.code);
+      return codes.includes("LL0235")
+        ? { ok: true, detail: "a name absent from every module in the package is still reported" }
+        : { ok: false, detail: `expected LL0235, got ${codes.join(",") || "no diagnostics"}` };
+    },
+  },
+  {
     name: "LL0301: two modules in one package may not offer the same name",
     why:
       "A package INJECTS its siblings into every importer, so a duplicate is not shadowing-by-choice " +

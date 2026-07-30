@@ -141,7 +141,29 @@ export class BuildDependencyGraphAstVisitor extends BaseAstTreeWalker {
 
       // What the module OFFERS, which under `(export a :as b)` is not what it DECLARES. Asking
       // `resolveSymbol` here would report an aliased export as missing and accept its private name.
-      const entry = table.moduleOffering(resolvedFile, name);
+      let entry = table.moduleOffering(resolvedFile, name);
+
+      // A PACKAGE IMPORT'S SURFACE IS THE UNION OF ITS MODULES' EXPORTS, and the NAMED form did not
+      // know that while the wildcard form did. `(import "std/math")` reaches `mean` -- declared in
+      // the sibling `stats.lisp` -- because the package injects its siblings; `(import { mean } from
+      // "std/math")` answered `ELL0235 'mean' is not defined in 'math.lisp'`. Two spellings of one
+      // import disagreeing about what a package offers.
+      //
+      // `resolve` picks ONE entry file for a package (the source matching the last name segment, else
+      // the first alphabetically), so "the module" a package import names is largely an accident of
+      // filenames -- `std/io` resolves to `io.lisp`, which exports only `print` and `prn`. Asking the
+      // whole package is what the name `(import "std/math")` already means everywhere else.
+      if (entry === undefined) {
+        const registry = PackageRegistry.forPaths(this.context.libPaths);
+        const pkgName = registry.packageOf(resolvedFile);
+        const pkg = pkgName ? registry.get(pkgName) : undefined;
+        for (const member of pkg?.files ?? []) {
+          if (path.resolve(member) === path.resolve(resolvedFile)) continue;
+          const memberTable = this.context.getModule(member)?.symbols;
+          const offered = memberTable?.moduleOffering(member, name);
+          if (offered !== undefined) { entry = offered; break; }
+        }
+      }
 
       if (entry === undefined) {
         // Distinguish "no such name" from "there, but withheld". `moduleOffering` answers undefined
