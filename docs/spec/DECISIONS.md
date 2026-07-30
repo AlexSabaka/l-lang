@@ -7701,3 +7701,99 @@ the same reason), a handler that fails, and one that answers a non-vector. They 
 and coding these alone would say macros are special.
 
 **Not claimed: hygiene.** Neither tier has it, and neither corpus file pretends otherwise.
+
+## D103 — the JS lane is an INSTRUMENT, not a gate: ungraded, hand-run, retained (2026-07-30)
+
+**Ruling (Sabaka, 2026-07-30): "get rid of JS again, as it still causes frictions."** Measured before
+ruling, and the measurement redirected the ruling — the friction is real and its source is not where it
+looked. `npm test` leaves the mandatory gate. **Nothing is deleted.**
+
+### The measurement that redirected it
+
+The premise on the table was that the oracle no longer earns its keep — that every divergence resolves
+as *JS is wrong, C is right*, which is exactly what D86 says and what all 9 `oracleDivergent` entries
+say. **That reading is survivorship bias, and the ledger is biased in precisely the direction that
+makes the oracle look useless.** A C-at-fault divergence gets FIXED and leaves the ledger; a JS-at-fault
+one is frozen by D66 and stays forever. The ledger is the residue, not the history.
+
+Against the history: **~17–20 C defects were surfaced by comparing the two backends.** The sharpest
+single number is the 2026-07-27 triage's own scoreboard — **11 distinct confirmed C defects against 2
+JS-defective** from one deliberate differential run, the inverse of the ledger's ratio.
+
+Two of those could not have been found any other way, because both produced a **plausible wrong answer
+with no diagnostic on either side**: the `mangleC` collision answering `10` where JS said `116` (D84),
+and `for :each` over a boxed container truncating `[1 nil 2]` to `[1]` (`473f481`→`7682084`).
+
+> **What the differential is blind to, recorded so it is not re-argued.** A second implementation
+> catches *divergence*, not *shared wrongness*. Three defects were invisible to it because both backends
+> agreed and were both wrong — the `:comptime` fold losing precision past 2^53 (D73), a `match` pattern
+> never decoding its escapes so the arm silently never fired (D74), and a folded `Math.random` baking one
+> build's constant into the artefact (D73). Each was found by writing a program nobody had written
+> before. That is the argument for the fuzzer, and it stands on its own.
+
+**And parity-chasing has itself introduced C defects, twice** — `ll_is_type` collapsed Int and Real to
+"mirror JS `__ll_is_type`", discarding tags C had and JS lacked (`3144972` names this "A-0 upside
+down"), and D49d found a `binopMode` branch contradicting D43 "on the grounds that the golden (JS)
+semantics win — a backend conditional deciding a language question."
+
+### The finding that makes demotion, not deletion, the answer
+
+**The harness has never compared the two backends.** `src/test/runner.ts:29` selects one backend per
+invocation and grades it against the golden; there is no differential comparator anywhere in the gate.
+Every real JS↔C comparison in this project's history was **run by hand**, in a deliberate session.
+
+So value and cost are attached to different things and separate cleanly:
+
+| | attached to | measured |
+|---|---|---|
+| the **value** | the JS backend *existing*, runnable on demand | ~17–20 C defects, all found by hand |
+| the **friction** | the JS lane being *graded every commit* | `oracleDivergent` **3 → 9 in two days**, monotonic, never shrunk; 3 of the last 10 commits paid hard extra cost; 10 of 10 carry a mandatory `Gate: JS N->M` line |
+
+Gate time was never the cost: the JS lane is **14.4 s** median (n=5) against C's **68.5 s**. The cost is
+ceremony per commit. Ungrading the lane removes all of it and removes none of the capability.
+
+### What is demoted, exactly
+
+**`npm test` only** — the JS *corpus parity* run. That is the lane that grades a frozen backend against
+357 goldens now authored for C, so every C-correct feature forces either a JS fix (forbidden by D66) or
+a written divergence paragraph. That treadmill is the friction, and it stops.
+
+**`test:codegen` stays in the gate.** Its 314 executed micro-cases check *language* semantics with JS as
+the execution substrate; they generate no ledger entries and are not part of the treadmill. Demoting it
+would drop 314 behavioural checks for nothing. It is a future port target, not a current cost.
+
+**Both ledgers stay, and are not collapsed.** The 9 `oracleDivergent` strings are the surviving record
+of what a two-implementation differential bought — four are named rulings (D78, D80, D84, D85) — and
+deleting them would also make a hand-run report 9 known failures as noise, degrading the instrument this
+ruling exists to preserve. What stops is the *obligation to add new ones*.
+
+**The JS numbers become a timestamped observation, not a figure that must hold.** They are re-measured
+when the instrument is picked up, not maintained continuously. C's numbers are unchanged in status:
+they are the ones that must hold.
+
+### Why not deletion, given the friction is real
+
+Deletion is separately blocked, and three of the four blockers are rulings rather than code:
+
+1. **D69's own precondition is unmet.** *"The differential fuzzer already named as the remedy is the
+   replacement, and it lands before deletion rather than after."* `git grep -i fuzz` over `src/` returns
+   zero. D69's other blocker — `:comptime` evaluating through `node:vm` — **is now closed** by D73, and
+   that had gone unrecorded; but D69 measured *three* importers of the JS transformer and only that one
+   was removed.
+2. **The REPL is the importer nobody killed.** `src/cli/repl/ReplSession.ts` still evaluates every cell
+   with `vm.runInContext`. There is no C REPL and nothing to build one on, so deleting the backend
+   deletes the REPL — 1,278 LOC of user-facing feature, with no replacement.
+3. **D60 pins l-lang's own await-ordering specification** to `14-async/01_async_pipeline.expect` and says
+   "No `.c.expect`, ever." Deletion makes the spec's async golden unexecutable by any implementation.
+4. `l-lang run` defaults to JS and evaluates in-process; `test:memory`'s JS side is the scientific
+   *control*; 29 `negative` files grade only on JS; the games' `verify.sh` asserts `js == c == golden`
+   and 7 p5/TTY drivers have no C target at all.
+
+**Demotion is also the move that generates the evidence deletion needs.** Deleting now closes the
+question permanently. Ungrading now means that in some months the hand-run has either been reached for
+or it has not — and that is the measurement that makes deletion a finding rather than an argument.
+
+### Not ruled here
+
+Whether the JS backend is ever deleted. This ruling is deliberately not a step toward it or away from
+it; it removes the per-commit cost so the decision can be made on evidence instead of irritation.

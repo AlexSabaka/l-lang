@@ -25,7 +25,7 @@ There is **no `package.json` at the repository root**. Every `npm run` is from `
 src/            the compiler (TypeScript). package.json lives HERE.
 lib/std/        the standard library, written in l-lang — 17 packages, 39 modules
 examples/       357 .lisp programs. This is the end-to-end suite, not a demo folder.
-docs/spec/      DECISIONS.md is the spec. Rulings D1–D102.
+docs/spec/      DECISIONS.md is the spec. Rulings D1–D103.
 ```
 
 `cd src` before any npm command. Every path in this file is relative to the repo root.
@@ -35,7 +35,6 @@ docs/spec/      DECISIONS.md is the spec. Rulings D1–D102.
 Green before **every** commit, all of it, from `src/`:
 
 ```
-npm test                     # JS backend — the oracle
 npm run test:c               # C backend — the reference
 npm run test:c:o2            # the same, at -O2
 npm run test:codegen
@@ -50,10 +49,20 @@ npx tsc --noEmit
 ../l-lang-games/verify.sh    # from the repo root — the games parity suite, both backends
 ```
 
-Baseline to hold, measured at `7dc5159` (2026-07-30): **JS 303 passing / 0 failing / 9
-oracle-divergent / 8 xfail. C 304 passing / 0 failing / 2 refused / 0 not-yet.** Both over the same
-357-file total (13 library, 1 fixture, 29 negative). Any movement is a finding — report the number,
-do not adjust it silently.
+**`npm test` is NOT on that list, as of D103.** The JS lane is an *instrument*, not a gate: it is run by
+hand, in a deliberate differential session, and its result never blocks a commit. That is where its
+value always came from — `runner.ts:29` grades one backend per invocation against the golden and has
+never compared the two, so every JS↔C comparison in this project's history was a hand-run. What stopped
+is the per-commit ceremony, not the capability. See D103 for the measurement, including why the ledger
+made the oracle look useless when it had in fact surfaced ~17–20 C defects.
+
+Baseline to hold, measured at `7dc5159` (2026-07-30): **C 304 passing / 0 failing / 2 refused / 0
+not-yet**, over a 357-file total (13 library, 1 fixture, 29 negative). Any movement is a finding —
+report the number, do not adjust it silently.
+
+The JS lane's figures are a **timestamped observation, not a figure that must hold** — re-measure when
+you pick the instrument up. Last measured at `b102475` (2026-07-30): JS 303 passing / 0 failing / 9
+oracle-divergent / 8 xfail, over the same 357.
 
 **Both remaining C refusals are `:async`, refused by RULING (D60), not by gap.** There is no longer a
 construct the reference backend declines because nobody built it — so a new refusal is a regression,
@@ -64,7 +73,8 @@ between the old figure and the new one was reported in a commit message, and eac
 added since `b948330` is named in `c-status.ts` with what it measures.
 
 **CI is not the gate.** `.github/workflows/ci.yml` runs `npm ci`, `npm run build`, `npm test` — the
-deprecated backend, and nothing else. Green CI means almost nothing; run the list above.
+deprecated backend, and nothing else. Since D103 that is not merely thin, it is the one lane the gate
+no longer contains: CI grades an instrument. Green CI means almost nothing; run the list above.
 
 **`test:c:o2` is not redundant.** The C emitter marks locals `volatile` when they can be clobbered
 across a `setjmp` landing (C11 7.13.2.1p3, `src/compiler/codegen/c/volatiles.ts`). At `-O0` those
@@ -79,11 +89,16 @@ above zero, silently, for the whole life of the corpus before it.
 |---|---|---|
 | `src/test/manifest.ts` | every `.lisp` that is not an ordinary golden test | an undeclared, goldenless file exists at all — **hard error**, never a skip |
 | `src/test/c-status.ts` | files the C backend **must** pass | listed and failing → regression · **unlisted and PASSING → RATCHET** |
-| `src/test/js-status.ts` | files the JS backend is **known** to fail | listed and failing is fine · **listed and PASSING → RATCHET** |
+| `src/test/js-status.ts` | files the JS backend is **known** to fail | *instrument-side since D103* — red only during a hand-run |
 
 The C list is an allowlist that **grows** as the backend advances; the JS list **shrinks** as gaps
-close. So a newly-passing C file turns the build red until it is added, and a newly-passing JS file
-turns it red until it is removed. A ratchet without teeth decays.
+close. So a newly-passing C file turns the build red until it is added. A ratchet without teeth decays.
+
+**D103 moved the JS row out of the commit path.** `js-status.ts` and `manifest.ts`'s 9 `oracleDivergent`
+entries are both **retained and not collapsed** — those strings are the surviving record of what a
+two-implementation differential bought (four are named rulings: D78, D80, D84, D85), and dropping them
+would make a hand-run report 9 known failures as noise. What ended is the *obligation to add new ones*:
+a C-correct feature that JS gets wrong is now simply left wrong.
 
 Both backends are graded against the **same** `.expect`. That is the entire parity instrument — one
 golden, two implementations, and a divergence has nowhere to hide. Giving a file two goldens would
