@@ -221,7 +221,14 @@ const CASES: Case[] = [
   { name: "variadic call is NOT flagged", source: '(fn p [m <- String ...rest] -> Void (console.log m))\n(p "a" 1 2 3)', silent: true },
   { name: "compound assignment", source: '(mut x <- Int 1)\n(x := "str")', expect: /LL0202/ },
   { name: "return type", source: '(fn f [] -> Int (return "str"))', expect: /LL0213/ },
-  { name: "duplicate declaration", source: "(let d 1)\n(let d 2)", expect: /LL0212/, pending: true },
+  // This harness WRAPS every case in the conventional outer list (see the `writeFileSync` below), so
+  // the two declarations arrive as one BLOCK and LL0212 fires. It stopped being pending some time
+  // before D105 and nobody re-measured; the label was tracking work that was already done.
+  //
+  // The other half of D23's rule -- that the same two forms as SIBLINGS are *not* a duplicate --
+  // cannot be written here at all, precisely because of that wrapper. It is pinned in
+  // `test/diagnostics.ts`, which writes its probe source verbatim.
+  { name: "duplicate declaration (one block)", source: "(let d 1)\n(let d 2)", expect: /LL0212/ },
 
   // --- LL0210: unresolved identifiers. Unblocked by P6's scope-aware resolution. ---
   { name: "unresolved identifier", source: "(undefined-fn 1)", expect: /LL0210/ },

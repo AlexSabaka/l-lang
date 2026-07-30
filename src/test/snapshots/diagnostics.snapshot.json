@@ -210,7 +210,7 @@
     ]
   },
   {
-    "probe": "LL0212 duplicate declaration",
+    "probe": "LL0212 is NOT raised across sibling top-level forms (D23)",
     "diagnostics": []
   },
   {

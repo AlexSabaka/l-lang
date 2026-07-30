@@ -262,7 +262,18 @@ const PROBES: Probe[] = [
       "(defstruct M (let :ctor a <- Int 0)\n" +
       "  (fn :operator + [x <- M y <- M] -> M (return x)))",
   },
-  { name: "LL0212 duplicate declaration", source: "(let d 1)\n(let d 2)" },
+  // D23'S BLOCK-SCOPE INVARIANT, AND THIS PROBE IS ITS PIN -- named properly as of D105.
+  //
+  // LL0212 is checked in `visitList`, not `visitProgram`. Two SIBLING top-level forms are therefore
+  // two lists and NOT a duplicate; the same two inside one block are. This probe writes its source
+  // verbatim (no wrapper), so it is the sibling spelling, and its recorded value is the EMPTY
+  // diagnostic list. Move the check to `visitProgram` and this snapshot flips from `[]` to LL0212.
+  //
+  // It has been that pin by accident and under a name that said the opposite -- "LL0212 duplicate
+  // declaration", recording zero diagnostics. D23 credited `test:repl` instead, and D105 retired
+  // that suite; a pin nobody can identify does not survive the removal of the thing it was
+  // mistakenly attributed to. The block-scoped half is in `test/type-errors.ts`, whose harness wraps.
+  { name: "LL0212 is NOT raised across sibling top-level forms (D23)", source: "(let d 1)\n(let d 2)" },
   { name: "LL0221 for-each over non-iterable", source: "(for :each x :from 5 :then (console.log x))" },
   { name: "LL0222 yield outside :gen", source: "(fn f [] -> Int (yield 1))" },
   {
