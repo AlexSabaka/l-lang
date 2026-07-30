@@ -323,11 +323,22 @@ function runCTest(lispPath: string): TestResult {
   // `-fwrapv` is required by D51, not a nicety: `Int` is a WRAPPING two's-complement 64-bit integer,
   // and plain signed overflow in C is undefined behaviour -- which is not wrapping, it is whatever the
   // optimiser decides. Without it `(+ INT64_MAX 1)` is UB and can differ between -O0 and -O2.
-  const cc = spawnWithRetry('cc', ccArgs(cPath, binPath, COPT ? [`-${COPT}`] : []), { encoding: 'utf-8', timeout: 30000 });
+  // The budget is 90s and it used to be 30s. `-O2` on the largest translation unit in the corpus
+  // (`debug_panic_is_fatal`, 303 KB) measures **26.9s** against 0.35s at `-O0` -- a 77x optimiser
+  // cost that sat just under the old limit and tipped over it the moment the unit grew. What grew it
+  // was fixing `std/sys` from a phantom package into a real one: `std/debug` imports
+  // `std/sys/process`, and a real package injects its SIBLINGS, so `path.lisp` and `timers.lisp` are
+  // now compiled into every program that wanted `args`. 242 KB -> 303 KB, `cc -O2` 9.4s -> 26.9s.
+  //
+  // Raising the budget is the right move and NOT the whole answer: the drag-in is a real cost that
+  // nothing charges for, and whether a MODULE import should pull its package siblings at all is an
+  // open question recorded in the roadmap, not a rule invented here.
+  const CC_TIMEOUT_MS = 90_000;
+  const cc = spawnWithRetry('cc', ccArgs(cPath, binPath, COPT ? [`-${COPT}`] : []), { encoding: 'utf-8', timeout: CC_TIMEOUT_MS });
   if ((cc.error as any)?.code === 'ETIMEDOUT') {
     // Distinguished from a compile error: an empty stderr would otherwise be reported as
     // `cc failed: ` with nothing after it.
-    return { name: fileName, status: softStatus ?? 'error', message: 'cc timed out (30s), twice (retried)' };
+    return { name: fileName, status: softStatus ?? 'error', message: `cc timed out (${CC_TIMEOUT_MS / 1000}s), twice (retried)` };
   }
   if (cc.status !== 0) {
     const firstErr = (cc.stderr || '').split('\n').find((l) => l.includes('error')) ?? (cc.stderr || '').split('\n')[0];

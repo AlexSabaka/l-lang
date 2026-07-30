@@ -680,6 +680,36 @@ Six modules in one round, each ruled before it was written.
 
 Live, reproduced, and deliberately not yet fixed. Full evidence in `docs/spec/DECISIONS.md`.
 
+### Should a MODULE import drag in its package siblings? — UNRULED, and it has a measured price
+
+Surfaced by fixing `std/sys` from a phantom package into a real one (B0 of the stdlib sweep). The fix
+was correct and it turned on a behaviour nobody had been paying for:
+
+`std/debug` imports **`std/sys/process`** — one module, for `args`. Because a real package injects its
+siblings, `path.lisp` and `timers.lisp` are now compiled into every program that does so. Measured on
+`examples/80-adversarial/debug_panic_is_fatal.lisp`:
+
+| | emitted C | `cc -O2` |
+|---|---|---|
+| `std/sys` phantom (before) | 242,611 B | **9.4 s** |
+| `std/sys` a real package (after) | 303,490 B | **26.9 s** |
+
++25% code for **+186% compile time**, and it pushed the file past the runner's 30s `cc` budget — which
+is why that budget is now 90s. The `-O2` cost is superlinear in unit size: the same file is 0.35s at
+`-O0`, a 77x optimiser multiplier.
+
+**The question is not the timeout, it is the semantics.** A program that asks for `std/sys/process`
+gets two modules it never named and cannot use. Package-scoped `internal` visibility is the reason the
+injection exists, so this is a genuine trade rather than an oversight — but nothing charges for it and
+no ruling states it. Options, unpriced: inject siblings only for a PACKAGE import (`(import
+"std/sys")`) and not a module one; inject lazily, only when an `internal` reference actually crosses;
+or accept the cost and say so.
+
+**This is the same machinery** that made moving contracts into `std/core/protocols` unsafe — there it
+surfaced as `std/core/string`'s free `join` shadowing the native array method, which is why the
+protocols relocation targets a sibling-free package instead. Compile time and name shadowing are two
+faces of one unruled decision.
+
 ### `l-lang run` cannot read stdin on the JS path — WONTFIX by D66
 
 Found while fixing the same defect on the C path (D103's round). `echo hi | l-lang run f.lisp`, where

@@ -1621,11 +1621,75 @@ const CASES: Case[] = [
 
 ];
 
+/**
+ * EVERY SHIPPED PACKAGE MUST CONTAIN AT LEAST ONE FILE.
+ *
+ * `std/sys` declared `sources: ["**\/*.lisp"]` -- the only manifest of seventeen that did -- and
+ * `expandSources` silently ignored the shape, so the package expanded to ZERO files and was a phantom
+ * for its whole life: `(import "std/sys")` was ELL0217, `packageOf` answered undefined for its three
+ * modules, sibling injection returned early for them, and package-scoped `internal` was off. Nothing
+ * anywhere said so.
+ *
+ * The glob shape is supported now, but a manifest can still expand to nothing by a typo, a rename or
+ * a moved file -- and an EMPTY PACKAGE IS NEVER INTENTIONAL, so it needs no per-case judgment. This
+ * is the cheap invariant that makes creating a new package verifiable instead of hopeful.
+ */
+function packagesAreNonEmpty(): { ok: boolean; detail: string } {
+  const registry = PackageRegistry.forPaths(ModuleResolver.defaultLibPaths());
+  const manifests: string[] = [];
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 5) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.isDirectory()) walk(path.join(dir, e.name), depth + 1);
+      else if (e.name === "package.yaml") manifests.push(path.join(dir, e.name));
+    }
+  };
+  for (const root of ModuleResolver.defaultLibPaths()) walk(root, 0);
+
+  const empty: string[] = [];
+  for (const m of manifests) {
+    const raw = fs.readFileSync(m, "utf8");
+    const name = /^name:\s*(\S+)/m.exec(raw)?.[1];
+    if (!name) {
+      empty.push(`${m} (no name:)`);
+      continue;
+    }
+    const info = registry.get(name);
+    if (!info || info.files.length === 0) empty.push(`${name} (${m})`);
+  }
+
+  return manifests.length === 0
+    ? { ok: false, detail: "no package.yaml found at all -- the walk is broken, not the manifests" }
+    : {
+        ok: empty.length === 0,
+        detail: empty.length
+          ? `${empty.length} package(s) expand to ZERO files: ${empty.join(", ")}`
+          : `${manifests.length} manifests, all non-empty`,
+      };
+}
+
 function main() {
   fs.mkdirSync(TMP, { recursive: true });
 
   let failed = 0;
   console.log("=== module system ===\n");
+
+  {
+    const { ok, detail } = packagesAreNonEmpty();
+    console.log(`  ${ok ? "PASS" : "FAIL"}  every shipped package contains at least one file`);
+    if (!ok) {
+      failed++;
+      console.log(`          ${detail}`);
+    } else if (VERBOSE) {
+      console.log(`          ${detail}`);
+    }
+  }
 
   for (const c of CASES) {
     let ok = false;
@@ -1646,7 +1710,9 @@ function main() {
     }
   }
 
-  console.log(`\n${CASES.length - failed}/${CASES.length} passed`);
+  // +1 for the package-non-emptiness invariant above, which is not a CASE.
+  const total = CASES.length + 1;
+  console.log(`\n${total - failed}/${total} passed`);
   process.exit(failed === 0 ? 0 : 1);
 }
 

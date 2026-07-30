@@ -1,2 +1,10 @@
+# The RECURSIVE glob is deliberate, and it is the only one in the tree -- please do not "tidy" it to
+# `*.lisp` for consistency with the other sixteen manifests. This shape used to fall through an
+# `// other glob shapes are ignored` branch in `PackageRegistry.expandSources` and expand to ZERO
+# files, silently, which made std/sys a PHANTOM PACKAGE: `(import "std/sys")` was ELL0217, `packageOf`
+# answered undefined for path/process/timers, sibling injection returned early for them, and
+# package-scoped `internal` visibility was off. The shape is supported now, and this manifest is what
+# keeps that code path exercised by every gate run. `test:imports` separately asserts that no shipped
+# package expands to nothing.
 name: std/sys
 sources: ["**/*.lisp"]
