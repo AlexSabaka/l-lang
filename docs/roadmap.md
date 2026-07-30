@@ -699,6 +699,19 @@ zero call sites, so nothing is waiting on it.
 The gap is general: it hits any user writing `deftype MyMap <- Map`, which is the obvious way to name
 a domain dictionary type.
 
+### A runtime quasiquote is refused as "no lowering exists", which misreads as a gap
+
+`` `(+ 1 ~n) `` outside a `:comptime` context is `ELL0106 Cannot generate C for 'quasiquote': no
+lowering exists` on C and `ELL0100` on JS. The refusal is CORRECT -- a quasiquote is a compile-time
+template constructor, and `80-adversarial/quasiquote.lisp` states it: *"EVERYTHING HERE IS FOLDED
+BEFORE CODEGEN … the templates are built and consumed inside the compiler."*
+
+But the wording says "no lowering exists", which is how this project spells an unbuilt feature — and
+`CLAUDE.md` claims there is no longer a construct the reference backend declines for that reason. A
+reader checking that claim finds this and cannot tell a ruling from a gap. It wants a message naming
+the tier ("a quasiquote is a compile-time template; it has no runtime value"), which is a diagnostics
+change with its own snapshot rather than part of a typing round.
+
 ### `findCommonType` does not dedup a union — `Int | Int | String`
 
 Pre-existing, found while typing `cond` (D112) and confirmed NOT to be caused by it. Both the

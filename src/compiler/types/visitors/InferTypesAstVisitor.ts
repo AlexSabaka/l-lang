@@ -4231,6 +4231,30 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         break;
       }
 
+      // A `quote` YIELDS THE AST DATUM, and it was untyped -- the sixth instance of this hole, after
+      // `if`'s condition, `match`'s arms, `try` (D110) and `when`/`cond` (D112). Measured: silent
+      // under `<- String`, `<- Int` AND `<- Boolean`, where an indexer, a `new` and a member access
+      // all report LL0200.
+      //
+      // THE DATUM IS A MAP, and that is measured rather than asserted: `(q :of Map)` answers **true**
+      // at run time, `q._type` is `"list"`, `q.nodes.length` is 3. D3d says the same -- "a quoted form
+      // is a MAP whose `_type` names its kind" -- and D101 makes that datum the source of truth with
+      // cons/list derived from it.
+      //
+      // Deliberately UNPARAMETERISED. A datum's keys are its kind's field names, which differ per
+      // node kind and are not expressible as one key/value pair; `std/llang/ast` exists precisely
+      // because member access cannot tell you a kind's shape. An unparameterised map is the honest
+      // answer, and it is the one `keyType`/`valueType` treat as "not stated" rather than "none".
+      case "quote": {
+        const q = node as ast.QuoteNode;
+        // The quoted form is DATA, not code -- nothing inside it is evaluated, so nothing inside it
+        // is inferred. Inferring would resolve names the quote deliberately does not evaluate, which
+        // is the difference D101 draws between the datum and what it denotes.
+        void q;
+        inferredType = { kind: "map", name: "Map" } as InferredType;
+        break;
+      }
+
       // A `when` YIELDS, and it was UNTYPED -- the fourth instance of this hole, after `if`'s
       // condition, `match`'s arms and `try`. Measured against a control: `(let a <- String (f))` where
       // `f -> Int` is LL0200, and the same annotation over `(when true (f))` was SILENT.

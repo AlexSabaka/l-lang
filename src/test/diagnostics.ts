@@ -645,6 +645,23 @@ const PROBES: Probe[] = [
       "(deftype Loopy <- Real :satisfies (/ Loopy Meter))\n(console.log 1)",
     stage: "types",
   },
+  // D113 -- a `quote` YIELDS THE AST DATUM, and the datum is a MAP. Untyped before, which is the
+  // sixth instance of this hole (if's condition, match's arms, try, when, cond, quote). Measured:
+  // silent under String, Int AND Boolean, where an indexer/`new`/member access all report LL0200.
+  // The map is unparameterised on purpose -- a datum's keys are its kind's field names, which differ
+  // per kind and are not one key/value pair.
+  {
+    name: "LL0200 a quoted datum is a Map, not a String",
+    source: "(let a <- String '(+ 1 2))\n(console.log a)",
+    stage: "types",
+  },
+  // The GUARD: the datum still reads as a map at run time, so typing it must not have narrowed it
+  // into something its own members cannot be read off.
+  {
+    name: "a quoted datum's fields are readable (GUARD, no diagnostic)",
+    source: "(let q '(+ 1 2))\n(console.log q._type q.nodes.length)",
+    stage: "types",
+  },
   // LL0231 / D111 -- TYPES AND VALUES ARE SEPARATE NAMESPACES.
   //
   // An annotation used to accept any symbol carrying an `inferredType`, i.e. every value. The

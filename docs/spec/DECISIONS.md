@@ -8474,3 +8474,44 @@ rather than fixed: the function is core to type identity, and widening a form-ty
 the wrong trade.
 
 C 310 → **311** over 366.
+
+## D113 — a `quote` yields the AST datum, and the datum is a MAP (2026-07-31)
+
+The **sixth** instance of one hole. `if`'s condition, `match`'s arms, `try` (D110), `when` and `cond`
+(D112) were the first five. A `quote` had **no case at all** in `inferExpressionType`, so it was
+silent under every annotation:
+
+```
+(let a <- String '(+ 1 2))     SILENT      (an indexer, a `new`, a member access: all LL0200)
+(let a <- Int    '(+ 1 2))     SILENT
+(let a <- Boolean '(+ 1 2))    SILENT
+```
+
+**The datum is a map, measured rather than asserted.** `(q :of Map)` answers **true** at run time,
+`q._type` is `"list"`, `q.nodes.length` is `3`. D3d already says it — *"a quoted form is a MAP whose
+`_type` names its kind"* — and D101 makes that datum the source of truth with cons/list derived from
+it. The type now says what the value already was.
+
+**Unparameterised, deliberately.** A datum's keys are its kind's *field names*, which differ per node
+kind and are not expressible as one key/value pair — `std/llang/ast` exists precisely because member
+access cannot tell you a kind's shape. An unparameterised map is the honest answer.
+
+**Nothing inside the quote is inferred.** The quoted form is data, not code; inferring it would
+resolve names the quote deliberately does not evaluate, which is the distinction D101 draws between
+the datum and what it denotes.
+
+Cost: **zero.** C 312 over 367, unmoved; JS 311.
+
+### Quasiquote, checked and NOT a defect
+
+`` `(+ 1 ~n) `` at run time is `ELL0106` on C and `ELL0100` on JS — both refuse. That looks like the
+"construct the reference backend declines because nobody built it" that `CLAUDE.md` says no longer
+exists, and it is not: `80-adversarial/quasiquote.lisp` states the design in its own header —
+*"EVERYTHING HERE IS FOLDED BEFORE CODEGEN. These are `:comptime` functions, so what reaches the
+backends is literals; the templates are built and consumed inside the compiler."* A quasiquote is a
+compile-time template constructor and has no runtime meaning to lower.
+
+Worth recording anyway: the **message** misrepresents the refusal. "no lowering exists" reads as an
+unbuilt feature, where the truth is that this form does not survive to codegen by design. Logged in
+`docs/roadmap.md` rather than reworded here — renaming a refusal is a diagnostics change with its own
+snapshot, not part of a typing round.
