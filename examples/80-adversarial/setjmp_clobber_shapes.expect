@@ -1,0 +1,6 @@
+nested: 108
+in-loop: 33
+with-finally: 7
+closed: 21
+vec-local: 3
+boxed: 6

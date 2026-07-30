@@ -562,6 +562,16 @@ export const C_PASSING: readonly string[] = [
   // matches -- and `(:else b)` is SUGAR that `AstBuilder.condCase` rewrites to a literal `true`
   // condition, so the keyword is gone before the checker sees it. Also pins the combinations, which
   // is where a form-level rule usually breaks: nested each way, and in a call-argument position.
+  // THE SETJMP-CLOBBER CLASS, in the five shapes `18-error-handling/11` does not reach. That file
+  // pins ONE: a mutable SCALAR written in the try and read in catch and finally. These add two
+  // landings, repeated landings from a loop, catch-and-finally both writing, and -- the three that
+  // matter most -- a closure-captured local, a vector, and a struct field, which are correct for a
+  // DIFFERENT reason than volatility: a captured mutable is heap-promoted to a cell by
+  // `computeCellVars` and never lives in the frame the longjmp discards. If cell promotion ever
+  // stopped covering a captured mutable, the scalar guard would not notice. NO DEFECT was found
+  // writing this -- every row agrees at -O0 and -O2 today, which is exactly what makes it a guard
+  // for a class the contract says only an optimised run can falsify.
+  "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",
   "80-adversarial/try_as_expression.lisp",
   "80-adversarial/trap_kinds_registered.lisp",
