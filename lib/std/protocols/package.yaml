@@ -1,0 +1,15 @@
+# DELIBERATELY A PACKAGE OF ITS OWN, WITH NO SIBLINGS. That is the whole design, and it is measured
+# rather than tidy-minded: a package injects its siblings into every importer, so a contract living
+# beside other modules drags them along. Putting these interfaces in `std/core/protocols` -- the
+# obvious home, and where Comparable/Hashable/Formattable/Ring already live -- was measured at
+# 302 pass / 1 error on the JS lane, because `std/core/string`'s free `join` then becomes reachable
+# from every `std/iter` consumer and shadows the native array `.join`.
+#
+# The same machinery has a second face: making `std/sys` a real package (B0) added `path.lisp` and
+# `timers.lisp` to every program that wanted `args`, for +186% `cc -O2` time. Whether a MODULE import
+# should pull package siblings at all is unruled and recorded in docs/roadmap.md.
+#
+# A package with no siblings contributes exactly the names in its own export list. So do not add a
+# second module here without re-reading that entry first.
+name: std/protocols
+sources: ["*.lisp"]

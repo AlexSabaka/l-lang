@@ -1,6 +1,8 @@
 ;; std/iter Range -- the `..` operator (D46/B-0): INCLUSIVE integer ranges, a lazy Iterable<Int>.
 ;; `(lo .. hi)` desugars to a Range; `.by` sets the step magnitude (sign follows direction),
-;; `.exclusive` drops the top bound. Permissive spacing: `0..2` lexes the same as `0 .. 2`.
+;; `.exclusive` drops the top bound. `..` binds by ADJACENCY -- `0..2` is a range and `0 .. 2` is
+;; a SPAN (ELL0034), which is a different form and not implemented. The claim that spacing was
+;; permissive was here for a year and was never true.
 (
     (import "std/iter")
 

@@ -8022,3 +8022,69 @@ form, a nested `if` whose inner comment must not steal the outer else, and `when
 controls that must not move if the fix ever over-reaches.
 
 C 304 → **305** over 358.
+
+## D107 — cross-cutting contracts live in `std/protocols`, a package with no siblings (2026-07-30)
+
+**Ruling (Sabaka, 2026-07-30), prompted by "`Disposable` lives in iter":** the iteration protocol and
+`Disposable` move out of `std/iter` into **`std/protocols`**. `std/iter` keeps `Range` and imports
+them.
+
+`Disposable` was the clearest case and it argues its own relocation. Its twenty-line header exists to
+explain that it is **deliberately not part of the iteration protocol** (D58) — and it was declared in
+the iteration module, because that is where the first consumer happened to be. It also had **zero
+implementors anywhere**, which made it the tenth instance of this project's named failure mode.
+`Iterable`/`Iterator` follow for a different reason: they *define a language form* (`for :each`,
+`:gen`, every lazy operator, lowered per backend by D29), and types in unrelated packages implement
+them, so they are the language's contract rather than one module's.
+
+### Why not `std/core/protocols`, which already exists
+
+That was the obvious home — `Comparable`, `Hashable`, `Formattable` and `Ring` live there — and it is
+**measured wrong**: moving the tower there gives **302 pass / 1 error** on the JS lane. Not a cycle.
+`std/core` has siblings, a package injects its siblings into every importer, and `std/core/string`'s
+free `join` therefore becomes reachable from every `std/iter` consumer, where it shadows the native
+array `.join`.
+
+**The same machinery had already been measured that morning wearing different clothes.** Fixing
+`std/sys` from a phantom package into a real one (B0) added `path.lisp` and `timers.lisp` to every
+program that wanted `args` — 242 KB → 303 KB, `cc -O2` **9.4s → 26.9s**. Name shadowing and compile
+cost are two faces of one unruled decision: *should a MODULE import pull its package siblings?* That
+question is recorded in `docs/roadmap.md`, unruled. **A sibling-free package is the shape that cannot
+be bitten by either face**, which is why this is its own package rather than a file in an existing
+one. The cost is a second protocol home until `Comparable`/`Hashable`/`Formattable`/`Ring` follow.
+
+### Re-export is not available, and that is what made B1 a prerequisite
+
+A module cannot re-export a symbol it does not declare (recorded at `DECISIONS.md:2436`), so
+`std/iter` cannot forward the three names. Consumers reach them **directly** or **transitively**, and
+transitive resolution is what keeps all fourteen existing importers working untouched — a name
+reachable only through an import chain still resolves, by the flat first-wins union S1b deliberately
+kept.
+
+That transparency is exactly the hazard. `:implements` is verified only when the interface name
+RESOLVES, so before **B1/LL0249** a missed import did not fail — it silently switched conformance off:
+LL0209 stopped firing, `:of` transitivity stopped holding, nominal extension dispatch stopped
+resolving, and the build stayed green. Landing the diagnostic first is what made this move
+*checkable* rather than hopeful, and it paid immediately: a struct with no import is now LL0249.
+
+Verified after the move, on all three paths: direct import runs; transitive import still enforces
+LL0209 and still answers `(c :of Iterator)` **and** `(c :of Iterable)` true; no import is LL0249.
+Pinned by `80-adversarial/protocols_relocation.lisp`, which also drives `Range` — interface
+resolution across a package boundary — and puts `Disposable` on a type with no iteration in sight.
+
+### The compiler never cared where they were declared
+
+`Iterable`/`Iterator` are hardcoded **by name** at four sites (`TypeChecker.ts:416`,
+`InferTypesAstVisitor.ts:2477/2482/2981`) and by erased name in `extensionResolution.ts` and the JS
+class builder. None reads a module, so the move required no compiler change at all — which is the
+evidence that these were always language contracts wearing a library's address.
+
+### Corrected in passing
+
+`std/iter`'s header and `16-stdlib/12_range.lisp` both documented **`(0 .. 5)`** with spaces, and
+`12_range.lisp` asserted outright that *"`0..2` lexes the same as `0 .. 2`"*. It does not and never
+did: spaced `..` is a **span**, `ELL0034`, a different form that is not implemented. Every runnable
+example in the corpus already wrote the adjacent form, so the claim had been false and unexercised
+for its whole life.
+
+C 305 → **306** over 360.

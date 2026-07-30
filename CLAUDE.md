@@ -23,9 +23,9 @@ There is **no `package.json` at the repository root**. Every `npm run` is from `
 
 ```
 src/            the compiler (TypeScript). package.json lives HERE.
-lib/std/        the standard library, written in l-lang — 17 packages, 39 modules
-examples/       359 .lisp programs. This is the end-to-end suite, not a demo folder.
-docs/spec/      DECISIONS.md is the spec. Rulings D1–D106.
+lib/std/        the standard library, written in l-lang — 18 packages, 40 modules
+examples/       360 .lisp programs. This is the end-to-end suite, not a demo folder.
+docs/spec/      DECISIONS.md is the spec. Rulings D1–D107.
 ```
 
 `cd src` before any npm command. Every path in this file is relative to the repo root.
@@ -56,8 +56,8 @@ never compared the two, so every JS↔C comparison in this project's history was
 is the per-commit ceremony, not the capability. See D103 for the measurement, including why the ledger
 made the oracle look useless when it had in fact surfaced ~17–20 C defects.
 
-Baseline to hold, measured at B1 (2026-07-30): **C 305 passing / 0 failing / 2 refused / 0
-not-yet**, over a 359-file total (13 library, 1 fixture, 30 negative). Any movement is a finding —
+Baseline to hold, measured at D107 (2026-07-30): **C 306 passing / 0 failing / 2 refused / 0
+not-yet**, over a 360-file total (13 library, 1 fixture, 30 negative). Any movement is a finding —
 report the number, do not adjust it silently.
 
 The JS lane's figures are a **timestamped observation, not a figure that must hold** — re-measure when

@@ -1,0 +1,7 @@
+countdown sum: 10
+of Iterator: true
+of Iterable: true
+range sum: 6
+before dispose: true
+after dispose: false
+of Disposable: true

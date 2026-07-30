@@ -512,6 +512,17 @@ export const C_PASSING: readonly string[] = [
   // purpose -- the previous guard used `(if true ...)`, under which "ran as then" and "escaped and
   // ran unconditionally" are the same observation, so it passed while the defect was live.
   "80-adversarial/comment_occupies_no_slot.lisp",
+  // THE PROTOCOL MOVED PACKAGES (D107), and this pins the reachability paths that created. `Iterable`
+  // / `Iterator` / `Disposable` now live in the sibling-free `std/protocols`; `std/iter` keeps `Range`
+  // and imports them. Three paths, and they are not obviously the same thing: DIRECT (import the
+  // contract's module), TRANSITIVE (import `std/iter` alone -- what every pre-existing corpus file
+  // does, and it works because a transitively reachable name resolves), and NEITHER, which is LL0249
+  // since B1 and used to be silence. The `:of` lines are the load-bearing half: a missed import used
+  // to switch the conformance CLOSURE off rather than report it, so `Iterator :implements Iterable`
+  // would stop holding with a green build. `Range` exercises interface resolution across a package
+  // boundary, and `Disposable` is here on a type with no iteration in sight, which is the argument
+  // for it having left `std/iter` at all.
+  "80-adversarial/protocols_relocation.lisp",
   // ERASING A TYPE MUST NOT CHANGE THE ARITHMETIC. `binopMode` returned "real" for `/` BEFORE the
   // boxed check every other operator makes, so `(/ 7 2)` was 3 statically and 3.5 through an Unknown.
   // The audit recorded only the corner of this it could see -- boxed `(/ 1 0)` yielding Infinity
