@@ -24,7 +24,7 @@ There is **no `package.json` at the repository root**. Every `npm run` is from `
 ```
 src/            the compiler (TypeScript). package.json lives HERE.
 lib/std/        the standard library, written in l-lang — 17 packages, 39 modules
-examples/       356 .lisp programs. This is the end-to-end suite, not a demo folder.
+examples/       357 .lisp programs. This is the end-to-end suite, not a demo folder.
 docs/spec/      DECISIONS.md is the spec. Rulings D1–D102.
 ```
 
@@ -50,9 +50,9 @@ npx tsc --noEmit
 ../l-lang-games/verify.sh    # from the repo root — the games parity suite, both backends
 ```
 
-Baseline to hold, measured at `fa00b3a` (2026-07-30): **JS 302 passing / 0 failing / 9
-oracle-divergent / 8 xfail. C 303 passing / 0 failing / 2 refused / 0 not-yet.** Both over the same
-356-file total (13 library, 1 fixture, 29 negative). Any movement is a finding — report the number,
+Baseline to hold, measured at `7dc5159` (2026-07-30): **JS 303 passing / 0 failing / 9
+oracle-divergent / 8 xfail. C 304 passing / 0 failing / 2 refused / 0 not-yet.** Both over the same
+357-file total (13 library, 1 fixture, 29 negative). Any movement is a finding — report the number,
 do not adjust it silently.
 
 **Both remaining C refusals are `:async`, refused by RULING (D60), not by gap.** There is no longer a
