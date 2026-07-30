@@ -8269,3 +8269,75 @@ counts, which is the cut `moduleOffering` already documents. Both directions are
 
 C 309 over 363, unmoved — the tree was made clean before the diagnostic went live, which is the only
 order in which this could land.
+
+## D110 — a `try` is an EXPRESSION; a bare `(try e)` is the OPTIONAL TRY (2026-07-30)
+
+**Ruling (Sabaka, 2026-07-30):** a `try` yields a value — from the try block or a catch arm, **never
+from `finally`** — and `(try e)` with neither catch nor finally is legal, yielding the block's value
+or `nil`, typed `T?`.
+
+Three clauses, and they had to land in this order because the first is what made the other two
+sayable.
+
+### 1. A `try` expression was UNTYPED, and that is the third instance of one hole
+
+`InferTypesAstVisitor` had **no case for `try-catch`**. Measured against a control:
+
+```
+(let a <- String (risky 5))                    LL0200 cannot assign Int to String
+(let a <- String (try (risky 5) catch e …))    SILENT -- and prints 10
+```
+
+Its own neighbours record the same failure twice already: `if`'s condition ("an `if` used as a VALUE
+never type-checked its own condition") and `match`'s arms ("the checker contained ZERO references to
+MatchNode … the consequence was not 'less type safety' but a SILENT WRONG ANSWER"). A `try` is the
+third. The fix is the same rule they use — `findCommonType` over the try block and the catch arms.
+
+**The finalizer is inferred but its type is discarded.** Folding it in would make
+`(try 1 catch e 2 finally "x")` infer `Int | String` for an expression that can only ever be an `Int`.
+Inferring it anyway is what populates the type channel and lets its own checks fire.
+
+This is a **shared** hole, not a divergence: the checker is frontend, so both backends accepted it
+equally, and the oracle is structurally blind to it — the same class as D73's comptime fold and D74's
+match escapes.
+
+### 2. `(try e)` was refused; LL0007 is RETIRED
+
+The rule read *"Try-Catch-Finally statement must have either catch or finally block"*, which made
+`(let x (try (risky-int)))` unwritable. Retired rather than re-aimed: with the bare form legal there
+is no remaining shape of `try` that is structurally invalid.
+
+### 3. Its type is `T?`, and that falls out rather than being added
+
+The bare form **desugars** to `(try e catch <fresh> nil)`. One rewrite buys the whole feature: the
+value is the block's or `nil`, **both backends get it with no codegen change** (each already lowers a
+catch arm), and the type is `findCommonType([T, Nil])` — `T?` — from the rule clause 1 just added.
+
+A layer-3 trap is not swallowed, and that falls out too: `ll_trap_as_error` excludes `OutOfMemory` and
+`ControlError` **by name** (D87), so they never become a throwable value and no catch arm can see them.
+
+### `finally` without `catch` still PROPAGATES, deliberately
+
+Catch is what handles; finally is cleanup. So the bare form is a **distinct form**, not a degenerate
+case of the statement one — and `(try e finally f)` keeps propagating. That is worth stating because
+"adding a `finally` changes whether errors escape" is otherwise something a reader has to discover.
+The corpus file asserts it directly.
+
+### What the measurement changed about the request
+
+The type is exactly `Int | Nil`, as asked. Two adjacent facts, both **pre-existing** and neither
+introduced here: `Int?` does **not** accept `Int | Nil` (an `if`-union hits the identical wall), and
+`Nil` is not a writable type name (`ELL0231`). So the optional-try result is currently **unspellable
+as an annotation** — it works by inference, and D9 narrowing on it works on both backends
+(`(if (!= x nil) …)` recovers the `Int`). The `T?`-vs-`T | Nil` split is already on record as an open
+question; this ruling does not close it.
+
+### The regression this caused, and what it teaches
+
+The desugar first returned the node without calling `rebuild` — which **is** the traversal — so
+nothing inside any `try` was desugared. Two corpus files broke, both with catch arms the method does
+not even rewrite: `40-math/03_rational.lisp` writes fraction literals inside a `try` and they reached
+codegen as raw `FractionNumberNode`s. The gate named both.
+
+C 309 → **310** over 364. `90-diagnostics/00_errors.lisp` loses `LL0007` from its `codes`; the line
+that raised it is now ordinary code.

@@ -139,14 +139,11 @@ const ConstantVariableMustHaveInitializer = createRule<ast.VariableNode>()
   .addTest((node) => !node.extern)
   .build();
 
-const TryCatchHasEitherCatchOrFinally = createRule<ast.TryCatchNode>()
-  .addTypeFilter("try-catch")
-  .addSeverity(RuleSeverity.Error)
-  .addCode("LL0007")
-  .addMessage("Try-Catch-Finally statement must have either catch or finally block")
-  .addTest((node) => node.catch.length === 0)
-  .addTest((node) => !node.finally)
-  .build();
+// LL0007 IS RETIRED (D110). It refused a `try` with neither catch nor finally -- "Try-Catch-Finally
+// statement must have either catch or finally block" -- which made `(let x (try (risky-int)))`
+// unwritable. That shape is now the OPTIONAL-TRY form: it yields the block's value, or `nil` if the
+// block threw, typed `T?`. Retired rather than re-aimed, because with the bare form legal there is no
+// remaining shape of `try` that is structurally invalid.
 
 /**
  * A DEFAULT catch has no TYPE -- not no filter OBJECT.
@@ -340,7 +337,6 @@ export const Rules = {
   RestPatternMustBeTrailing,
   VariableMustHaveName,
   ConstantVariableMustHaveInitializer,
-  TryCatchHasEitherCatchOrFinally,
   OnlyOneDefaultCatchBlockAllowed,
   OnlyOneVisibilityModifierAllowed,
   InvalidInterfaceMembers,

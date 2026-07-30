@@ -4206,6 +4206,31 @@ class InferAndCheckPass extends BaseAstTreeWalker {
         break;
       }
 
+      // A `try` is the common type of its TRY BLOCK and its CATCH ARMS -- the same rule as the `if`
+      // above and the `match` below, because it is the same thing: a form that yields a value by one
+      // of several routes.
+      //
+      // THERE WAS NO CASE FOR IT, and that is the third time this exact hole has been found here --
+      // `if`'s condition, then `match`'s arms, now this. A `try` expression was UNKNOWN, so the
+      // checker turned off for whatever it was assigned to. Measured against a control:
+      //
+      //     (let a <- String (risky 5))                  LL0200 cannot assign Int to String
+      //     (let a <- String (try (risky 5) catch e ...)) SILENT -- and prints 10
+      //
+      // THE FINALLY BLOCK IS DELIBERATELY NOT INCLUDED. `finally` runs for its effect and never
+      // supplies the value -- measured, `(try 1 catch e 2 finally 3)` is 1 on both backends -- so
+      // folding its type in would make `(try 1 catch e 2 finally "x")` infer `Int | String` for an
+      // expression that can only ever be an Int. It is still INFERRED, because inferring is what
+      // populates the type channel and lets its own checks fire; only its type is discarded.
+      case "try-catch": {
+        const tryNode = node as ast.TryCatchNode;
+        const armTypes = [this.inferExpressionType(tryNode.try)];
+        for (const c of tryNode.catch ?? []) armTypes.push(this.inferExpressionType(c.body));
+        if (tryNode.finally) this.inferExpressionType(tryNode.finally);
+        inferredType = TypeChecker.findCommonType(armTypes) ?? TypeEnvironment.unknown();
+        break;
+      }
+
       // `(x :of T)` is a Boolean (D41). It asks a question; the answer is yes or no.
       case "type-guard": {
         this.inferExpressionType((node as ast.TypeGuardNode).value);

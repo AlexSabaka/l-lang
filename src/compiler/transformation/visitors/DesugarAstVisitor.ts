@@ -967,6 +967,54 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
    * A user who defines their own `Rational` captures the name, exactly as they would for `Range`. That
    * is the existing precedent's behaviour, not a new hazard.
    */
+  /**
+   * THE OPTIONAL TRY (D110). `(try e)` -- neither catch nor finally -- desugars to
+   * `(try e catch <fresh> nil)`.
+   *
+   * That single rewrite buys the whole form: the value is `e`'s or `nil`, BOTH backends get it with
+   * no codegen change (each already lowers a catch arm), and the TYPE falls out of the existing rule
+   * rather than needing a special case -- `findCommonType([T, Nil])` is `T?`, which is exactly what
+   * the form promises.
+   *
+   * `(try e finally f)` is deliberately NOT rewritten and still PROPAGATES. Catch is what handles;
+   * finally is cleanup, in this language as in every other. So the bare form is a distinct form
+   * rather than a degenerate case of the statement one -- worth stating, because "adding a finally
+   * changes whether errors escape" is the kind of thing a reader would otherwise have to discover.
+   *
+   * A layer-3 trap (`OutOfMemory`, `ControlError`) is NOT swallowed, and that falls out rather than
+   * being arranged: `ll_trap_as_error` excludes both BY NAME (D87), so they never become a throwable
+   * value and no catch arm -- including this one -- can see them.
+   */
+  visitTryCatch(node: ast.TryCatchNode): ast.ASTNode {
+    // RECURSE FIRST. `rebuild` is the traversal -- returning `node` raw skips desugaring everything
+    // INSIDE the try, which is not a subtle failure: `40-math/03_rational.lisp` writes fraction
+    // literals inside a `try`, and they reached codegen un-desugared as a raw `FractionNumberNode`
+    // (`Cannot read properties of null (reading 'startsWith')`). Two corpus files, both with catch
+    // arms this method does not even rewrite.
+    const recursed = this.rebuild(node) as ast.TryCatchNode;
+    if ((recursed.catch?.length ?? 0) > 0 || recursed.finally) return recursed;
+    node = recursed;
+
+    const name: ast.SimpleIdentifierNode = {
+      _type: "simple-identifier",
+      // Not user-writable, so the binding cannot capture or shadow anything the author named.
+      id: "__ll_opt_try_err",
+      _location: { ...node._location },
+      _parent: node._parent,
+    } as ast.SimpleIdentifierNode;
+
+    const nilBody: ast.ASTNode = {
+      _type: "null",
+      _location: { ...node._location },
+      _parent: node._parent,
+    } as unknown as ast.ASTNode;
+
+    return {
+      ...node,
+      catch: [{ filter: { name, type: null as unknown as ast.TypeNameNode }, body: nilBody }],
+    } as ast.TryCatchNode;
+  }
+
   visitFractionNumber(node: ast.FractionNumberNode): ast.ASTNode {
     return this.construct(node, "Rational", [
       this.intLit(node, node.numerator),

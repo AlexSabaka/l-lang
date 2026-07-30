@@ -1,0 +1,8 @@
+try arm: 10
+catch arm: -1
+finally never wins: 10
+finally ran: 7 TF
+optional, success: 10
+optional, threw: nil
+narrowed: 84
+propagated past finally: yes!

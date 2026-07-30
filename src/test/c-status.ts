@@ -548,6 +548,15 @@ export const C_PASSING: readonly string[] = [
   // (it had zero callers; every caller in the tree wanted reflect's meaning). This file pins that the
   // two stay DISTINGUISHABLE: merge them again and its two columns become identical.
   "80-adversarial/sibling_name_collision.lisp",
+  // D110 -- a `try` IS AN EXPRESSION, and the OPTIONAL TRY. Three things, and the first is why the
+  // others could not be stated: a try expression was UNTYPED (`InferTypesAstVisitor` had no case, so
+  // `(let a <- String (try ...))` was silently accepted where the control is LL0200 -- the third time
+  // that hole has been found in that file, after `if`'s condition and `match`'s arms); `(try e)` was
+  // refused by LL0007; and its type is `T?`, which falls out of the typing once the bare form
+  // desugars to a nil-yielding catch arm. The `finally` rows were already correct and UNGUARDED --
+  // nothing stopped a lowering change from making the finalizer supply the value. The last row is
+  // the one that keeps the two forms distinct: `finally` without `catch` still PROPAGATES.
+  "80-adversarial/try_as_expression.lisp",
   "80-adversarial/trap_kinds_registered.lisp",
   "80-adversarial/iterator_done_flag.lisp",
   // ERASING A TYPE MUST NOT CHANGE THE ARITHMETIC. `binopMode` returned "real" for `/` BEFORE the

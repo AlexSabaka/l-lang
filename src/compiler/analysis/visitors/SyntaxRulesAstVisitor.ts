@@ -344,7 +344,8 @@ export class SyntaxRulesAstVisitor extends BaseAstTreeWalker {
   visitTryCatch(node: ast.TryCatchNode) {
     checkRules(
       node,
-      [r.TryCatchHasEitherCatchOrFinally, r.OnlyOneDefaultCatchBlockAllowed],
+      // LL0007 retired by D110 -- a `try` with neither catch nor finally is the OPTIONAL-TRY form.
+      [r.OnlyOneDefaultCatchBlockAllowed],
       this.context
     );
   }

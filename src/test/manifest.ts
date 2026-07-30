@@ -78,7 +78,9 @@ export const MANIFEST: Record<string, ManifestEntry> = {
   },
   "90-diagnostics/00_errors.lisp": {
     status: "negative",
-    codes: ["LL0002", "LL0006", "LL0007"],
+    // LL0007 left this list when D110 retired it -- `(try e)` with neither catch nor finally is the
+    // OPTIONAL TRY now, so the line that used to raise it is ordinary code.
+    codes: ["LL0002", "LL0006"],
     reason:
       "It demonstrates diagnostics ON PURPOSE -- the codes are written in its own comments -- so it " +
       "can never produce stdout, and running it as a POSITIVE test made it a permanent ERROR for the " +
