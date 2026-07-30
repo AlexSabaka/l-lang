@@ -7,9 +7,20 @@
   ;; below and reachable from anywhere anyway, because `(export ...)` was decorative. It also omitted
   ;; `Complex`, which `complex_math_test/main.lisp` constructs. Nine leaked names; the whole corpus
   ;; blast radius of D20 was this one list.
-  (export sqr sqrt sin cos tan log exp
-          abs floor ceil round truncate pow min max inc dec
-          E PI TAU)
+  ;; NINE NAMES LEFT THIS LIST (D109): `abs floor ceil round min max E PI TAU` are all defined by a
+  ;; package SIBLING -- `elementary.lisp` and `constants.lisp` -- and a package injects its siblings
+  ;; into every importer, so exporting them here made which definition a program got depend on module
+  ;; ORDER. `min`/`max` genuinely disagreed: this file's were `Math.min`/`Math.max`, whose C arm does
+  ;; not propagate NaN, so `(min NAN 5)` answered 5 on C and NaN on JS -- the D50 divergence
+  ;; `elementary.lisp`'s own header says a module must not re-export.
+  ;;
+  ;; Nothing loses reachability. `(import "std/math")` still reaches all nine through the same sibling
+  ;; injection that reaches `clamp`, `gcd`, `sign`, `hypot`, `PHI` and `mean` -- now resolving to the
+  ;; one correct definition instead of whichever came first.
+  ;;
+  ;; `dec` goes with them for a different reason: zero call sites anywhere, and `inc` stays because it
+  ;; has them.
+  (export sqr sqrt sin cos tan log exp truncate pow inc)
   ;; NOT `Number`. It belongs to std/types now, and a module cannot re-export a symbol it does not
   ;; define -- `visitExport` refuses ("Cannot export undefined symbol"). Anyone who wants the type
   ;; imports std/types, which is where it is declared, once.
@@ -22,19 +33,11 @@
   ;; `(import "std/math")` because they are package siblings. This file keeps only the everyday scalar
   ;; layer -- the `Math.*` wrappers and the three constants -- which is the umbrella most callers want.
 
-  (let E 2.718281828459045)
-  (let PI 3.141592653589793)
-
-  (let TAU (* 2 PI))
-
   (fn sqr [x <- Number] -> Number
     (* x x)
   )
 
   (fn inc [n <- Number] -> Number (+ n 1))
-  (fn dec [n <- Number] -> Number (- n 1))
-
-  (fn abs [n <- Number] -> Number (Math.abs n))
 
   ;; -> Real, NOT -> Int (D51 amendment (b)). These map onto the integers as VALUES, but their
   ;; representation stays Real, and the distinction is load-bearing in two places:
@@ -56,10 +59,6 @@
   ;; ("static types decide") asks for. The previous version of this comment argued the opposite and
   ;; cited `(fn random-int [...] -> Int (floor (rand min max)))`'s LL0213 as justification; that call
   ;; site is now `(truncate (rand ...))`, which says what it means.
-  (fn floor [n <- Number] -> Real (Math.floor n))
-  (fn ceil [n <- Number] -> Real (Math.ceil n))
-  (fn round [n <- Number] -> Real (Math.round n))
-
   ;; The SOLE Real -> Int door (D51 amendment (b)). Truncates toward zero, agreeing with D49d's
   ;; `Int / Int` and with C's `int64_t` cast. A builtin conversion, so it does not collide with
   ;; D46/B-3's `(cast<T> x)`, which is the explicit-cast syntax for USER-DEFINED `defcast`s; when
@@ -69,9 +68,6 @@
 
   (fn pow [base <- Number exp <- Number] -> Number (Math.pow base exp))
   
-  (fn min [a <- Number b <- Number] -> Number (Math.min a b))
-  (fn max [a <- Number b <- Number] -> Number (Math.max a b))
-
   (fn sqrt [x <- Number] -> Number
     (Math.sqrt x)
   )

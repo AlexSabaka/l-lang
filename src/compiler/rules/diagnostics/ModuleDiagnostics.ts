@@ -29,6 +29,38 @@ export const ModuleDiagnostics = {
       `Namespace import '${p.namespace}' is not supported. Import the file instead: (import "${p.path}").`
   ),
 
+  // LL0301 -- two modules in one package offer the same name.
+  //
+  // A package's modules are INJECTED into every importer of any one of them, so a duplicate is not
+  // shadowing-by-choice: which definition a program gets is decided by module processing order, and
+  // nothing said so. Measured before this existed, all with zero diagnostics:
+  //
+  //   * `is-class` asked two different questions -- `std/llang/ast` tests an AST node's `_type`,
+  //     `std/llang/reflect` a type descriptor's `kind`. The SAME descriptor answered `true` under one
+  //     import and `false` under the other, and flipped on import ORDER when both were present.
+  //   * `min`/`max` in `std/math/math` were `Math.min`/`Math.max`, whose C arm does not propagate
+  //     NaN, while `std/math/elementary`'s were the portable ones -- `(min NAN 5)` answered 5 or NaN
+  //     depending on which module came first. A D50 divergence that `elementary.lisp`'s own header
+  //     exists to forbid.
+  //   * `read-lines` differed in ARITY between `std/io/console` and `std/io/files`, and arity does
+  //     NOT disambiguate: one of them was simply unreachable, `LL0211` if you called it.
+  //
+  // ERROR rather than a warning, because it is the only severity that cannot produce a silent wrong
+  // answer -- and the set is small and closed (10 names across two packages when this landed).
+  //
+  // LL0240 is the neighbour that could not see this: it reports the same hazard for two DIRECTLY
+  // IMPORTED modules, and a sibling arrives by injection rather than by import, so it is not in the
+  // set that diagnostic examines.
+  DuplicatePackageExport: def<{ name: string; pkg: string; a: string; b: string }>(
+    "LL0301",
+    Error,
+    (p) =>
+      `'${p.name}' is offered by two modules in the package '${p.pkg}': ${p.a} and ${p.b}. A ` +
+      `package's modules are injected together, so which definition a program gets would be decided ` +
+      `by module order. Rename one, or delete the duplicate -- a module cannot re-export a sibling's ` +
+      `symbol, so an "umbrella" module has to redefine it, which is how the two drift apart.`
+  ),
+
   // LL0300 -- an import cycle: a warning, the program still compiles
   ImportCycle: def<{ name: string }>(
     "LL0300",

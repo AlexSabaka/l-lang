@@ -22,7 +22,7 @@ import {
   CTransformer
 } from "./codegen";
 
-import { ASTNode } from "./frontend/ast";
+import { ASTNode, symbolName } from "./frontend/ast";
 import { HirModule, LowerAstToHirVisitor } from "./hir";
 import { SymbolTable, InferredType } from "./analysis/SymbolTable";
 import { AstProvider } from "./frontend/AstProvider";
@@ -400,6 +400,67 @@ export class Context {
       // leaves importBinds permissive, while the actual visibility is decided package-scoped.
       this.recordImport(file, sibling, null);
       this.process(sibling, "types");
+    }
+
+    this.checkPackageForDuplicateOfferings(pkgName, pkg.files);
+  }
+
+  /** Packages already checked for duplicate offerings -- the check is per PACKAGE, not per importer. */
+  private duplicateOfferingsChecked = new Set<string>();
+
+  /**
+   * LL0301 -- two modules in one package must not offer the same name.
+   *
+   * A package injects its siblings into every importer, so a duplicate is not shadowing-by-choice:
+   * which definition a program gets is decided by module processing order. `is-class` answered `true`
+   * or `false` for the SAME descriptor depending on which of two siblings was imported first;
+   * `(min NAN 5)` answered 5 or NaN the same way. Neither reported anything.
+   *
+   * Run once per package, after the siblings have been processed to `types` so their tables exist.
+   * Every clause is a way of NOT reporting, the posture `checkImportedNamesExist` documents: this
+   * runs over the stdlib's own packages on every compile, so missing information must never become a
+   * diagnostic. A module whose table is absent is skipped rather than assumed empty.
+   */
+  private checkPackageForDuplicateOfferings(pkgName: string, files: readonly string[]): void {
+    if (this.duplicateOfferingsChecked.has(pkgName)) return;
+    this.duplicateOfferingsChecked.add(pkgName);
+
+    // name -> the first module that offered it. Only EXPORTED names collide across the boundary in a
+    // way a consumer can observe, which is what the ruling names; a private helper shared by two
+    // siblings is their own business.
+    const firstOwner = new Map<string, string>();
+    for (const f of files) {
+      const abs = path.resolve(f);
+      const table = this.getModule(abs)?.symbols;
+      if (!table) continue; // not processed, or failed -- its own diagnostics are the report
+      const root = (table as any).rootFor?.(abs);
+      if (!root?.table) continue;
+
+      for (const [declared, entry] of root.table as Map<string, any>) {
+        if (!entry?.isExported && !entry?.exportName) continue;
+        // ONLY WHAT THIS MODULE DECLARES. An imported binding lives in the importer's top-level table
+        // too -- `bindAlias` SHARES the entry rather than copying it -- so reading the table raw made
+        // `std/io/console`, which imports `LineReader` from its sibling `stream`, look like a second
+        // OFFERER of it. The declaration's own source location is the discriminator, and it is the
+        // same cut `moduleOffering` describes: "a module offers a name if it DECLARES it".
+        const declSrc = entry?.value?._location?.source;
+        if (declSrc && path.resolve(declSrc) !== abs) continue;
+        const offered = entry.exportName ? symbolName(entry.exportName) : declared;
+        const prior = firstOwner.get(offered);
+        if (prior === undefined) {
+          firstOwner.set(offered, abs);
+          continue;
+        }
+        if (prior === abs) continue;
+        const ast = this.astProvider.getAst(abs) as ASTNode;
+        if (!ast) continue;
+        report(this, ModuleDiagnostics.DuplicatePackageExport, ast, {
+          name: offered,
+          pkg: pkgName,
+          a: path.basename(prior),
+          b: path.basename(abs),
+        });
+      }
     }
   }
 

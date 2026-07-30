@@ -8211,3 +8211,61 @@ three-element pair 1 → **3**. The divergence record on `iterator_done_flag.lis
 six to **four of nine**, and names which four and why the other five agree.
 
 C 306 → **307** over 361.
+
+## D109 — two modules in one package may not offer the same name (2026-07-30)
+
+**Ruling (Sabaka, 2026-07-30):** a same-package duplicate export is an **error**, `LL0301`.
+
+A package **injects its siblings** into every importer, so a duplicate is not shadowing-by-choice:
+which definition a program gets is decided by module processing order, and nothing said so. Three
+live cases, all measured, all silent:
+
+| names | package | what was wrong |
+|---|---|---|
+| `is-class` `is-struct` `is-interface` `is-function` `is-enum` | `std/llang` | **two different questions.** `ast` tests an AST node's `_type`, `reflect` a type descriptor's `kind`. The SAME descriptor answered `true` or `false` depending on which module was imported, and flipped on import ORDER when both were present. |
+| `min` `max` | `std/math` | **a D50 divergence.** `math.lisp`'s were `Math.min`/`Math.max`, whose C arm does not propagate NaN: `(min NAN 5)` answered **5 on C and NaN on JS**. `elementary.lisp`'s header exists to forbid exactly this, and it is the sibling. |
+| `read-lines` | `std/io` | **different ARITY, which does not disambiguate.** Under `(import "std/io")` the `files` version won and `console`'s was simply unreachable — `LL0211 expects 1 argument, got 0`. A dead export that looked alive. |
+| `abs` `ceil` `floor` `round` `PI` `E` `TAU` | `std/math` | benign: same value, differing only in parameter type or form. Measured to agree — but only by measurement, not by construction. |
+
+**ERROR rather than a warning**, because it is the only severity that cannot produce a silent wrong
+answer, and because the set is small and closed: **10 names across two packages**, after `std/llang`
+was fixed separately.
+
+### LL0240 is the neighbour that could not see it
+
+LL0240 already means *"which one you get depends on module order"*, and its own text warns that "a
+program that reads correctly today can change meaning when an import is added". It fires for two
+**directly imported** modules and never for siblings, because a sibling arrives by **injection**, so
+it is not in the set `ambiguousDirectImports` examines. The diagnostic existed, the hazard existed,
+and they could not meet.
+
+### What moved, and why each
+
+**`math.lisp` drops nine definitions and `dec`.** It was an umbrella that **re-defines** rather than
+re-exports — because re-export is unsupported (`DECISIONS.md:2436`) — and re-defining is how the two
+drifted apart. Nothing loses reachability: `(import "std/math")` still reaches all nine through the
+same sibling injection that already reaches `clamp`, `gcd`, `sign`, `hypot`, `PHI` and `mean`, now
+resolving to the one correct definition. `dec` went with them for a different reason: zero call sites.
+
+**`std/io/console`'s `read-lines` becomes `read-all-lines`.** It was the unreachable one, and `files`'
+has a caller.
+
+**A prerequisite that was its own defect.** Dropping `math.lisp`'s `min`/`max` exposed that
+`elementary`'s guards used `isNaN`, a floor entry declared `[Any] -> Boolean`. On JS it resolves to
+the HOST `isNaN`, which is only handed `__ll_hostnum`-converted arguments when the declared parameter
+is `Real` — so `(isNaN 5)` reached the host with a **BigInt** and threw, while C answered `false`. The
+fix is in the stdlib and needs no backend change: **`(!= x x)`** is true for NaN and false otherwise,
+on both backends, for Real *and* Int. That is what D50 means by "everything else is l-lang written ON
+the floor and is therefore portable by construction". The `isNaN` boundary defect itself is recorded
+in `docs/roadmap.md`.
+
+### The false positive that shaped the implementation
+
+The check reads each module's top-level table — and `bindAlias` **shares** an imported entry rather
+than copying it, so a raw read made `std/io/console`, which imports `LineReader` from its sibling
+`stream`, look like a second offerer of it. The whole corpus went red. Only what a module **declares**
+counts, which is the cut `moduleOffering` already documents. Both directions are pinned in
+`test:imports`: the duplicate is refused, and a name declared once and merely used by a sibling is not.
+
+C 309 over 363, unmoved — the tree was made clean before the diagnostic went live, which is the only
+order in which this could land.

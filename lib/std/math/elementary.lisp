@@ -69,18 +69,31 @@
     (fn sign [x <- Real] -> Real (Math.sign x))
 
     ;; `min`/`max` are l-lang, not `Math.min`/`Math.max`, for the reason in the header: the floor's
-    ;; C arm disagrees with JS on NaN and on -0. The `isNaN` guards make NaN PROPAGATE (either operand
+    ;; C arm disagrees with JS on NaN and on -0. The guards make NaN PROPAGATE (either operand
     ;; NaN -> NaN) identically on both, which is both the mathematically defensible reading and the
     ;; portable one. The -0-vs-0 tie is resolved by argument order and is deliberately not special
     ;; -cased -- nobody may depend on which zero `min` returns, only that both backends return it.
+    ;;
+    ;; THE NaN TEST IS `(!= x x)`, NOT `isNaN`, and that is a portability fix rather than a style
+    ;; choice. `isNaN` is a FLOOR entry declared `[Any] -> Boolean`, and on JS it resolves to the HOST
+    ;; `isNaN`, which is only handed `__ll_hostnum`-converted arguments when the declared parameter is
+    ;; `Real`. An `Any` parameter is passed through raw -- so `(isNaN 5)` on an Int reached the host
+    ;; with a BigInt and threw `TypeError: Cannot convert a BigInt value to a number`, while C
+    ;; answered `false`. These functions declare `Real` parameters, but Int literals reach them
+    ;; through the gradual boundary, and `(min 1 2)` is the ordinary way to call them.
+    ;;
+    ;; `(!= x x)` is true for NaN and false for everything else, on both backends, for Real AND Int --
+    ;; measured. It needs no floor entry at all, which is what D50 means by "everything else is
+    ;; l-lang written ON the floor and is therefore portable by construction". The `isNaN` boundary
+    ;; defect is real and is recorded in docs/roadmap.md; it is no longer in anyone's way.
     (fn min [a <- Real b <- Real] -> Real
-        (if (isNaN a) (return a))
-        (if (isNaN b) (return b))
+        (if (!= a a) (return a))
+        (if (!= b b) (return b))
         (if (< a b) (return a))
         (return b))
     (fn max [a <- Real b <- Real] -> Real
-        (if (isNaN a) (return a))
-        (if (isNaN b) (return b))
+        (if (!= a a) (return a))
+        (if (!= b b) (return b))
         (if (> a b) (return a))
         (return b))
 

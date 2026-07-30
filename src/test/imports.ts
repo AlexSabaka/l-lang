@@ -822,6 +822,100 @@ const CASES: Case[] = [
     },
   },
   {
+    name: "LL0301: two modules in one package may not offer the same name",
+    why:
+      "A package INJECTS its siblings into every importer, so a duplicate is not shadowing-by-choice " +
+      "-- which definition a program gets is decided by module processing order, and nothing said so. " +
+      "Measured live before this diagnostic: `is-class` answered true or false for the SAME descriptor " +
+      "depending on which of two `std/llang` siblings was imported first; `(min NAN 5)` answered 5 or " +
+      "NaN across two `std/math` siblings; `read-lines` differed in ARITY across two `std/io` siblings " +
+      "and one of them was simply unreachable. LL0240 is the neighbour that cannot see this -- it " +
+      "reports the hazard for two DIRECTLY IMPORTED modules, and a sibling arrives by injection.",
+    run: () => {
+      const root = path.join(TMP, "ll0301-root");
+      fs.rmSync(root, { recursive: true, force: true });
+      const pkgDir = path.join(root, "dupdemo");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "package.yaml"), `name: dupdemo\nsources: ["*.lisp"]\n`);
+      fs.writeFileSync(
+        path.join(pkgDir, "alpha.lisp"),
+        `(\n  (fn scale [n <- Int] -> Int (return (* n 2)))\n  (export scale)\n)\n`
+      );
+      // A DIFFERENT `scale`, which is the point: the two disagree and nothing picked between them.
+      fs.writeFileSync(
+        path.join(pkgDir, "beta.lisp"),
+        `(\n  (fn scale [n <- Int] -> Int (return (* n 10)))\n  (export scale)\n)\n`
+      );
+
+      const entry = fixture(
+        "ll0301-consumer",
+        { "main.lisp": `(\n  (import "dupdemo")\n  (console.log (scale 3))\n)\n` },
+        "main.lisp"
+      );
+
+      PackageRegistry.clear();
+      const ctx = new Context(entry, {
+        ...options(),
+        libPaths: [root, ...ModuleResolver.defaultLibPaths()],
+      });
+      try {
+        ctx.process(entry);
+      } catch (e: any) {
+        return { ok: false, detail: `crash: ${String(e?.message ?? e).split("\n")[0]}` };
+      }
+      const codes = ctx.results.all.map((m: any) => m.code);
+      return codes.includes("LL0301")
+        ? { ok: true, detail: "the duplicate offering is refused, not resolved by module order" }
+        : { ok: false, detail: `expected LL0301, got ${codes.join(",") || "no diagnostics"}` };
+    },
+  },
+  {
+    name: "LL0301 GUARD: a name DECLARED once and merely used by a sibling is not a duplicate",
+    why:
+      "The check reads each module's top-level table, and `bindAlias` SHARES an imported entry rather " +
+      "than copying it -- so a raw read made `std/io/console`, which imports `LineReader` from its " +
+      "sibling `stream`, look like a second OFFERER of it. Measured: the whole corpus went red on that " +
+      "false positive. Only what a module DECLARES counts, which is the cut `moduleOffering` already " +
+      "describes.",
+    run: () => {
+      const root = path.join(TMP, "ll0301-ok-root");
+      fs.rmSync(root, { recursive: true, force: true });
+      const pkgDir = path.join(root, "okdemo");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "package.yaml"), `name: okdemo\nsources: ["*.lisp"]\n`);
+      fs.writeFileSync(
+        path.join(pkgDir, "base.lisp"),
+        `(\n  (fn shared [] -> Int (return 7))\n  (export shared)\n)\n`
+      );
+      // Uses the sibling's name without declaring it. Not an offering.
+      fs.writeFileSync(
+        path.join(pkgDir, "user.lisp"),
+        `(\n  (fn doubled [] -> Int (return (* (shared) 2)))\n  (export doubled)\n)\n`
+      );
+
+      const entry = fixture(
+        "ll0301-ok-consumer",
+        { "main.lisp": `(\n  (import "okdemo")\n  (console.log (doubled))\n)\n` },
+        "main.lisp"
+      );
+
+      PackageRegistry.clear();
+      const ctx = new Context(entry, {
+        ...options(),
+        libPaths: [root, ...ModuleResolver.defaultLibPaths()],
+      });
+      try {
+        ctx.process(entry);
+      } catch (e: any) {
+        return { ok: false, detail: `crash: ${String(e?.message ?? e).split("\n")[0]}` };
+      }
+      const codes = ctx.results.all.map((m: any) => m.code);
+      return codes.includes("LL0301")
+        ? { ok: false, detail: "false positive: a shared sibling name reported as a duplicate offering" }
+        : { ok: true, detail: "declared once, used by a sibling -- not a duplicate" };
+    },
+  },
+  {
     name: "Mb: package visibility does NOT leak across a package boundary (guard)",
     why:
       "The widening is to the PACKAGE, not the world. A consumer that references another package's " +

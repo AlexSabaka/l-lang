@@ -29,7 +29,14 @@
         (return (stdin.read-line)))
 
     ;; Every remaining line. Useful for the `prog < file` shape, where the whole input is available.
-    (fn read-lines [] -> String[] (
+    ;;
+    ;; NAMED `read-all-lines`, NOT `read-lines` (D109). `std/io/files` exports a `read-lines` that
+    ;; takes a PATH, and the two are package siblings -- so both were injected into any importer of
+    ;; either and the winner was decided by module order. They differ in ARITY, which does not
+    ;; disambiguate: under `(import "std/io")` the files version won and this one was simply
+    ;; UNREACHABLE, `(read-lines)` answering `LL0211 expects 1 argument, got 0`. A dead export that
+    ;; looked alive.
+    (fn read-all-lines [] -> String[] (
         (mut out [])
         (mut line (stdin.read-line))
         (while (!= line nil) (
@@ -39,5 +46,5 @@
         (return out)
     ))
 
-    (export stdin read-line read-lines)
+    (export stdin read-line read-all-lines)
 )
