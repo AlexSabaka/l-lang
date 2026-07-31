@@ -427,6 +427,19 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "and an ambient `std/js` extern. `Zorg` is deliberately absent: a name resolving to NOTHING was " +
       "already caught, which is what made the hole look handled.",
   },
+  "90-diagnostics/ll0200_forms_are_typed.lisp": {
+    status: "negative", codes: ["LL0200"],
+    reason:
+      "A CENSUS TURNED INTO A GUARD: 21 forms whose value the checker DOES type, each given a " +
+      "deliberately wrong annotation, so the file goes red if any of them stops being checked. This " +
+      "session found TEN untyped forms one at a time -- try (D110), when/cond (D112), quote (D113), " +
+      "then a bound loop, a user-operator result, an enum member, a `catch e :of T` binding and four " +
+      "D47 condition forms -- and every one was SILENT. That failure mode is invisible by " +
+      "construction: an untyped form does not fail, it stops being CHECKED, so no golden moves and " +
+      "nothing goes red, which is how ten accumulated under a green gate. The forms known to be " +
+      "untyped are deliberately absent (mapped in docs/roadmap.md, six of them sharing one cause); " +
+      "including them would make this red today rather than on a regression.",
+  },
   "90-diagnostics/ll0233_immutable_assignment.lisp": {
     status: "negative", codes: ["LL0233"],
     reason:

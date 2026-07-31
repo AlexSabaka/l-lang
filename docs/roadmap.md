@@ -1802,6 +1802,38 @@ from `80-adversarial/typed_catch_arms.lisp` so that file stays gradeable on both
 An adjacent observation with no ruling behind it: an UNREACHABLE catch arm draws no diagnostic. A
 `Base` arm before a `Derived` arm makes the second dead, on both backends, silently.
 
+### THE UNTYPED-FORM CENSUS — 29 forms asked, 21 typed, 8 not, and only FIVE distinct causes
+
+Ten untyped forms were found this session one at a time, each by accident while asking about
+something else. Rather than wait for an eleventh, every form in the mandate's list was asked the same
+question directly: bind its result to a deliberately wrong annotation and see whether the checker
+objects. **The map is now complete**, and it is much smaller than ten scattered findings suggested.
+
+**Typed (21)** — a call, `if`, `when`, `cond`, `match`, `try`, a block, an indexer, a member access,
+`new`, `:of`, a vector, a map, an f-string, a lambda, a pipeline, a written `cast`, a macro
+expansion's result, `quote`, a generator call, and a `for :each` element binding. These are pinned by
+`90-diagnostics/ll0200_forms_are_typed.lisp` so that a form silently *leaving* this list goes red.
+
+**Untyped (8), from five causes:**
+
+| cause | forms affected | status |
+|---|---|---|
+| the D47 group is assigned `Unknown` wholesale | `restart-case`, a restart ARM's parameter, `signal`, `handle`, a handler clause's binder | ONE fix; the visitor's stated reason ("no join to compute yet, and JS refuses the D47 four anyway") has expired — `try` was in this group until D110 lifted it out |
+| `canJudgeOperator` requires every operand to be a primitive | a user-type `:operator` result | conservative by design; judging it means resolving the overload set |
+| enums have no nominal type at all | an enum member access | the root cause of four other enum symptoms |
+| `InferTypesAstVisitor` types every loop `nil` | a BOUND loop | D100's bound half is unrepresented |
+| **deliberate, and documented** | an assignment's value | typing it broke THIRTEEN corpus files through `lib/std/io/files.lisp`; not a gap |
+
+So the family is not ten independent bugs. **Six of the eight are two fixes** — the D47 group and the
+enum type — and one of the remaining is ruled. The `catch e :of T` binding, recorded separately above,
+is a sixth cause of its own kind: the type is *known and discarded* rather than never computed.
+
+**Why this went unnoticed for so long is the part worth keeping.** An untyped form does not fail. It
+stops being *checked*, so no golden moves, no test goes red, and the corpus cannot express the defect
+at all — the same structural blindness that let a catch arm go unreached by every rewriting pass. The
+only instrument that finds it is asking the question of each form deliberately, which is what the new
+guard now does in the other direction.
+
 ### A METHOD cannot be a `:gen` on C — so the idiomatic `Iterable` cannot be written
 
 The shape `std/protocols`' `Iterable<T>` invites — the required `iterator` method *being* the
