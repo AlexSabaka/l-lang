@@ -1471,6 +1471,55 @@ inside an arm. Pinned by `80-adversarial/rewrites_reach_catch_arms.lisp` (both b
 `rewrites_reach_restart_arms.lisp` (C-native; `RestartArm` and `HandleClause` hold `body: ASTNode[]`
 rather than a nested record and reach a different branch).
 
+### A modifier on a METHOD is SILENTLY IGNORED — accepted, undiagnosed, and does nothing
+
+**The worst class in this project's taxonomy: both backends agree and both are wrong**, so the
+differential that surfaced ~17-20 C defects is structurally blind to it. One modifier, two positions:
+
+```lisp
+(defmodifier dbl [] (fn [original ...args] (* (original ...args) 2)))
+(fn :dbl free [x <- Int] -> Int (+ x 1))              ;; (4+1)*2 -> 10   correct
+(defclass P (mut :ctor n <- Int)
+    (fn :dbl meth [] -> Int this.n)                    ;; expect 10 -> got 5
+    (fn :dbl meth-arg [k <- Int] -> Int (+ this.n k))) ;; expect 12 -> got 6
+```
+
+No diagnostic on either backend. The user writes a decorator and gets silence.
+
+**D75's own reasoning says a method decoration SHOULD work.** LL0036 refuses a decorator "applied
+with a non-constant argument, or inside a function body", because "a decoration inside a function
+body is a NEW decoration on every call, each needing its own setup state". A method *declaration* is
+not inside a function body — it is a static declaration in a class, exactly as compile-time-known as
+a free function's. So this is a gap, not a ruled refusal, and the current behaviour is neither.
+
+**Not fixed here** because decoration is applied SEPARATELY IN EACH BACKEND — `JSTransformerAstVisitor`
+for JS, the resolver/emitter pair for C — so implementing it means teaching two method-emission paths
+one rule, which is this project's failure mode #2 by construction. And whether a method may carry a
+decorator at all is a D75 clarification. At minimum the silence should become a diagnostic: a clean
+refusal beats a wrong answer, and today it is neither.
+
+### A decorated SELF-RECURSIVE function emits C that will not compile
+
+```lisp
+(defmodifier dbl [] (fn [original ...args] (* (original ...args) 2)))
+(fn :dbl countdown [n <- Int] -> Int (if (<= n 0) 0 (countdown (- n 1))))
+```
+
+C: `error: incompatible integer to pointer conversion passing 'long long' to parameter of type
+'ll_vec *'` — the self-call is routed to the decorated wrapper, whose C signature takes the `...args`
+REST VECTOR, with the raw `int64_t` argument. JS runs it.
+
+**Bounded**: it is self-recursion specifically. A decorated function calling a *different* decorated
+function is correct on both backends (8), and undecorated recursion is correct on both (0). Only the
+self-call breaks.
+
+**And the SEMANTICS are unpinned, which is the part that needs a ruling before the fix.** JS re-enters
+the decorator on a self-call — `(fn :dbl fact ...)` answers 48 for `fact 3`, which is `6 * 2^3`, one
+doubling per level. That is Python's behaviour and follows from rebinding the name to the wrapper. The
+other reading — a self-call means the original, so the decorator applies once at the boundary — is
+equally defensible and is what a reader of the C signature would expect. D75 does not say. Fixing the
+emission without ruling the semantics would freeze whichever answer fell out.
+
 ### A METHOD cannot be a `:gen` on C — so the idiomatic `Iterable` cannot be written
 
 The shape `std/protocols`' `Iterable<T>` invites — the required `iterator` method *being* the

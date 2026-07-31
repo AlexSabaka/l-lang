@@ -638,6 +638,14 @@ export const C_PASSING: readonly string[] = [
   // nested record, so they reach a different branch of the descent. Separate file because D47 is
   // C-native -- folding these rows into the catch-arm file would have cost that file its JS grading.
   "80-adversarial/rewrites_reach_restart_arms.lisp",
+  // D75 modifiers crossed with the other forms -- combinations `10-modifiers/`'s nine files never
+  // make. Decoration is implemented SEPARATELY IN EACH BACKEND, which is failure mode #2 waiting to
+  // happen, so this runs both against one golden. The load-bearing row is STACKING ORDER: `:dbl
+  // :plus1` is 9, not 10, so the first-listed modifier is the INNERMOST wrapper -- measured, since
+  // nothing stated it and both orders are defensible. Two modifier defects are deliberately NOT here
+  // (roadmap): a modifier on a METHOD is silently ignored on both backends, and a decorated
+  // SELF-RECURSIVE function emits C that will not compile.
+  "80-adversarial/modifier_combinations.lisp",
   "80-adversarial/interface_conformance_of.lisp",
   "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",

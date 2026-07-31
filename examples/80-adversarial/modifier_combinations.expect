@@ -1,0 +1,8 @@
+plain: 10
+stacked: 9
+fn has try: 10
+guarded ok: 5
+guarded caught: 99
+decorator loops: 15
+with macro: 10
+decorated calls decorated: 8
