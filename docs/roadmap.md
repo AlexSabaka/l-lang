@@ -1428,6 +1428,29 @@ statically. Guarded by `80-adversarial/pipeline_head_closure.lisp`, which pins t
 **`nested_generator.lisp` was written around this** — it uses the raw `iter`/`next` cursor and says
 why. That comment is now describing a closed defect rather than a live one.
 
+### A nested `fn` inside a generator emits invalid C
+
+```lisp
+(fn :gen g [] -> Iterator<Int> (
+    (fn helper [x <- Int] -> Int (return (* x 2)))
+    (yield (helper 4))))
+```
+
+C: `error: use of undeclared identifier '__ll_gen_state'`. JS: `8`, correct. The generator's
+completion store (`__ll_gen_state = -1`, D58's `GEN_DONE`) is emitted into a context where the frame
+reference `__f` is not in scope — the nested function is lifted out, and the state store goes with it
+or is emitted against the wrong function's scope.
+
+`GEN_STATE_NAME` is seeded into `promoteFrame`'s slot map at slot 0 precisely so the store rewrites
+into a field store "by exactly the same rule as every user binding, with no special case in the
+rewriter" (that file's header). A lifted nested function is the case where that rule does not reach
+it. Note this is a *different* failure from the mutable-capture refusal beside it: `promoteFrame`
+already refuses `local '<x>' is captured mutably by a nested closure` with an honest
+`FramePromotionRefusal`, and the helper above captures nothing — so it slips past the refusal and
+reaches codegen, where it produces C that will not compile rather than a diagnostic.
+
+Found by the same forms-inside-a-generator sweep as D115/D116 and the coercion-recursion fix.
+
 ### D9's narrowing does NOT reach a `T | Nil` — so D110's optional `try` cannot be opened
 
 **The sharpest consequence yet of the parked `T?` vs `T | Nil` question, and it makes a shipped

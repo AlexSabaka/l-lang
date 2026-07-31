@@ -277,7 +277,18 @@ export class InsertCoercions {
       case "c-box":
       case "c-unbox":
       case "c-cast":
-        return e; // only this pass mints them; nested ones are already coherent
+        // "Only this pass mints them" was FALSE, and stopped being true without the comment saying so:
+        // `ResolveHirToCir` mints `c-box` in four places. Returning `e` unvisited then leaves whatever
+        // P1 put inside one permanently uncoerced -- and `promoteFrame` (also P1) rewrites a `c-temp`
+        // into a `c-field-get` AFTER those boxes exist, so a P1 box could end up wrapping an
+        // already-boxed frame slot with no unbox between them. That emitted `ll_box_int((__f)->fields[2])`
+        // -- an `ll_value` passed where `int64_t` is expected -- so `match` inside a generator produced
+        // C that would not compile, while `if (== i 1)` on the same binding was fine.
+        //
+        // Recursing is safe rather than double-coercing: `expr()` PRESERVES a node's ctype (the
+        // `c-field-get` arm coerces back to the field's static type), so the outer node's `from`/`to`
+        // stay accurate, and the pass visits each node once.
+        return { ...e, inner: this.expr(e.inner) };
 
       default: {
         const never: never = e;

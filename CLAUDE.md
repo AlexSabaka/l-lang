@@ -24,7 +24,7 @@ There is **no `package.json` at the repository root**. Every `npm run` is from `
 ```
 src/            the compiler (TypeScript). package.json lives HERE.
 lib/std/        the standard library, written in l-lang — 18 packages, 40 modules
-examples/       371 .lisp programs. This is the end-to-end suite, not a demo folder.
+examples/       372 .lisp programs. This is the end-to-end suite, not a demo folder.
 docs/spec/      DECISIONS.md is the spec. Rulings D1–D116.
 ```
 
@@ -56,32 +56,35 @@ never compared the two, so every JS↔C comparison in this project's history was
 is the per-commit ceremony, not the capability. See D103 for the measurement, including why the ledger
 made the oracle look useless when it had in fact surfaced ~17–20 C defects.
 
-Baseline to hold, measured at D116 (2026-07-31): **C 316 passing / 0 failing / 2 refused / 0
-not-yet**, over a 371-file total (13 library, 1 fixture, 31 negative). Any movement is a finding —
-report the number, do not adjust it silently.
+Baseline to hold, measured at the coercion-recursion fix (2026-07-31): **C 317 passing / 0 failing /
+2 refused / 0 not-yet**, over a 372-file total (13 library, 1 fixture, 31 negative). Any movement is
+a finding — report the number, do not adjust it silently.
 
 The JS lane's figures are a **timestamped observation, not a figure that must hold** — re-measure when
 you pick the instrument up. Last measured at `b102475` (2026-07-30): JS 303 passing / 0 failing / 9
 oracle-divergent / 8 xfail, over the same 357.
 
 **Both remaining C refusals in the CORPUS are `:async`, refused by RULING (D60), not by gap** — so a
-new refusal *among the 371* is a regression, not a backlog item, and should be read that way.
+new refusal *among the 372* is a regression, not a backlog item, and should be read that way.
 
 **That is a claim about the corpus, and it does not generalise.** This line used to say there was no
 longer any construct the reference backend declined because nobody built it. D115 falsified it in one
-afternoon by writing programs the corpus never contained — four constructs, every one green on JS, two
-now fixed and two still open:
+afternoon by writing programs the corpus never contained — six constructs, every one green on JS,
+three now fixed and three still open:
 
 | the construct | how it fails | recorded |
 |---|---|---|
 | an INDEX store in a `for` `:step` | uncaught `Error`, Node stack trace — **and no `:gen` involved** | `docs/roadmap.md` |
+| a nested `fn` in a generator | invalid C: undeclared `__ll_gen_state` | `docs/roadmap.md` |
 | `restart-case` / `handle` in a generator | `ELL0106` refusal, honest | `promoteFrame.ts:180` |
 | `try` in a generator | **fixed by D115** | `80-adversarial/try_inside_generator.lisp` |
 | `for :init` + `yield` in a generator | **fixed by D116** | `80-adversarial/for_loop_inside_generator.lisp` |
+| `match` in a generator | **fixed** — P2 now visits P1's boxes | `80-adversarial/forms_inside_generator.lisp` |
 
 The first row is the one to read twice: it needs no generator, no `try` and no import, and it crashed
 the compiler rather than refusing. **A crash is worse than a refusal**, and this one sat under a green
-gate because no corpus file happened to write an indexed `:step`.
+gate because no corpus file happened to write an indexed `:step`. Rows two and six are worse still —
+they emit C that does not compile, which is a defect the corpus cannot even express as a failing test.
 
 The corpus is a floor, not a census: what it does not contain, it cannot refuse. Ask *"who calls
 it?"* of a claim of coverage exactly as of a claim of implementation.

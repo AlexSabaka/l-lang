@@ -602,6 +602,13 @@ export const C_PASSING: readonly string[] = [
   // clause is one expression, so it cannot use the temp the ordinary assign path interposes to stop a
   // slot address outliving a `realloc`, and a field is a fixed slot in an object that never grows.
   "80-adversarial/for_loop_inside_generator.lisp",
+  // `match` in a generator emitted C that would not COMPILE -- `ll_box_int((__f)->fields[2])`, an
+  // ll_value where an int64_t belongs, while every sibling read in the same function was correctly
+  // unboxed. `InsertCoercions` returned `c-box`/`c-unbox`/`c-cast` unvisited on the premise that only
+  // it mints them; `ResolveHirToCir` mints `c-box` in four places, and `promoteFrame` rewrites a
+  // `c-temp` into a `c-field-get` after those boxes exist. Recursing changed the emitted C for 0 of
+  // 45 sampled corpus files, byte-for-byte -- nothing in the corpus reached the broken path.
+  "80-adversarial/forms_inside_generator.lisp",
   "80-adversarial/interface_conformance_of.lisp",
   "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",
