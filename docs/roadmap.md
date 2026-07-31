@@ -1761,6 +1761,47 @@ bindings.
 D10's binding half is now pinned by `90-diagnostics/ll0233_immutable_assignment.lisp`, which had no
 negative file at all despite the rule having been switched on recently.
 
+### A `catch e :of T` binding is NOT typed as `T` — the tenth untyped form
+
+The filter that selects the arm does not type the name it binds. Measured against the identical
+annotation on an ordinary binding of the same class:
+
+| | |
+|---|---|
+| `(let n <- Int p.label)` — ordinary binding, `label` is `String` | `LL0200` |
+| `(let n <- Int d.message)` — ordinary binding of the thrown class | `LL0200` |
+| `(let n <- Int e.message)` — inside `catch e :of Derived` | **SILENT** |
+
+So the checker has the filter type in hand — it is written right there and drives arm selection
+correctly — and does not apply it to the binding. Consequences: a member is usable at the wrong type
+with no report, and a member that does not exist at all is a RUNTIME trap (`TypeError: value has no
+such member` on C, `nil` on JS) where the type was available to reject it at compile time.
+
+Worth separating from a broader gap it sits next to: member EXISTENCE is not checked statically on an
+ordinary binding either — `p.nosuchfield` traps at runtime rather than reporting. That is its own
+question. What is specific to the catch binding is that its declared type is *known and discarded*,
+which is why this belongs with the untyped-form family (after `if`'s condition, `match`'s arms, `try`,
+`when`/`cond`, `quote`, `restart-case`, a bound loop, a user-operator result, and an enum member).
+
+### JS picks a catch arm by TYPE where C picks by ORDER
+
+```lisp
+(try ((throw (new Derived "d")))
+  catch (console.log "generic")            ;; a bare catch-all, FIRST
+  catch e :of Derived (console.log "derived"))
+```
+
+C prints `generic` — first match wins, which is the ordinary semantics and matches every other arm
+row measured. JS prints `derived`, preferring the typed arm regardless of position.
+
+**C is correct and this is left wrong deliberately.** D103 ended the obligation to add new
+`oracleDivergent` entries: "a C-correct feature that JS gets wrong is now simply left wrong." Recorded
+here so the divergence is not rediscovered as a mystery during a hand-run differential, and excluded
+from `80-adversarial/typed_catch_arms.lisp` so that file stays gradeable on both backends.
+
+An adjacent observation with no ruling behind it: an UNREACHABLE catch arm draws no diagnostic. A
+`Base` arm before a `Derived` arm makes the second dead, on both backends, silently.
+
 ### A METHOD cannot be a `:gen` on C — so the idiomatic `Iterable` cannot be written
 
 The shape `std/protocols`' `Iterable<T>` invites — the required `iterator` method *being* the

@@ -1,0 +1,9 @@
+derived throw -> derived arm
+base throw -> base arm
+base arm first -> base arm
+unmatched type -> propagated to outer
+rethrown derived -> outer base arm
+binding message: payload
+threw an Int -> caught
+threw a String -> caught
+thrown from a generator, seen: 1

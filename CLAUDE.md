@@ -24,7 +24,7 @@ There is **no `package.json` at the repository root**. Every `npm run` is from `
 ```
 src/            the compiler (TypeScript). package.json lives HERE.
 lib/std/        the standard library, written in l-lang — 18 packages, 40 modules
-examples/       384 .lisp programs. This is the end-to-end suite, not a demo folder.
+examples/       385 .lisp programs. This is the end-to-end suite, not a demo folder.
 docs/spec/      DECISIONS.md is the spec. Rulings D1–D116.
 ```
 
@@ -56,8 +56,8 @@ never compared the two, so every JS↔C comparison in this project's history was
 is the per-commit ceremony, not the capability. See D103 for the measurement, including why the ledger
 made the oracle look useless when it had in fact surfaced ~17–20 C defects.
 
-Baseline to hold, measured at the D10 immutability guard (2026-07-31): **C 326 passing /
-0 failing / 2 refused / 0 not-yet**, over a 384-file total (13 library, 1 fixture, 34 negative).
+Baseline to hold, measured at the typed-catch guard (2026-07-31): **C 327 passing /
+0 failing / 2 refused / 0 not-yet**, over a 385-file total (13 library, 1 fixture, 34 negative).
 Any movement is a finding — report the number, do not adjust it silently.
 
 The JS lane's figures are a **timestamped observation, not a figure that must hold** — re-measure when
@@ -65,7 +65,7 @@ you pick the instrument up. Last measured at `b102475` (2026-07-30): JS 303 pass
 oracle-divergent / 8 xfail, over the same 357.
 
 **Both remaining C refusals in the CORPUS are `:async`, refused by RULING (D60), not by gap** — so a
-new refusal *among the 384* is a regression, not a backlog item, and should be read that way.
+new refusal *among the 385* is a regression, not a backlog item, and should be read that way.
 
 **That is a claim about the corpus, and it does not generalise.** This line used to say there was no
 longer any construct the reference backend declined because nobody built it. D115 falsified it in one

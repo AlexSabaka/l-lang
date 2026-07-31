@@ -681,6 +681,14 @@ export const C_PASSING: readonly string[] = [
   // index, deliberately, so a growing RHS cannot realloc the slot out from under the write; JS the
   // reverse). Pinning either would freeze an open answer.
   "80-adversarial/indexer_combinations.lisp",
+  // Type-filtered catch arms, and the questions that only matter when arms OVERLAP: a Derived is-a
+  // Base, so two arms can both match one throw. FIRST MATCH WINS -- a Base arm written before a
+  // Derived arm takes a Derived throw, which makes the later arm unreachable, silently and with no
+  // diagnostic. Ordinary semantics, but nothing stated it. Deliberately excluded (roadmap): a bare
+  // catch-all written FIRST takes the throw on C and the LATER TYPED arm takes it on JS -- C is
+  // right, and under D103 no new `oracleDivergent` entry is owed for a C-correct feature the frozen
+  // backend gets wrong. Also excluded: the `:of` filter does not TYPE the binding.
+  "80-adversarial/typed_catch_arms.lisp",
   "80-adversarial/interface_conformance_of.lisp",
   "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",
