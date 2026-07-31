@@ -7,7 +7,6 @@ import { Command } from "commander";
 
 import {
   Context,
-  LogLevel,
   CompilationStage,
   logCompilationMessages,
 } from "../../compiler/Context";
@@ -300,10 +299,24 @@ export function transform(file: string, command: Command) {
       return v;
     }, 2);
 
+    // `console.log`, NOT `context.log` -- the same call its codegen sibling makes forty lines up.
+    //
+    // `--stdout` ASKED for this output; it is the point of the flag, not a log line. Routing it
+    // through `context.log(LogLevel.Info, …)` gated it on `minimumLogLevel`, which defaults to
+    // `Warning` -- and `Info < Warning`, so every intermediate stage printed NOTHING at the default
+    // level and exited 0. Silent, and indistinguishable from a stage that produced no output.
+    //
+    // The prefix was the second half of the same mistake: `context.log` stamps each line with
+    // "Info    from transform:", so even at `-L info` the JSON came back interleaved with log
+    // furniture and could not be parsed by anything downstream.
+    //
+    // Two branches of one function, forty lines apart, disagreeing about how to print. D104 recorded
+    // this exact shape once before -- `command.run.ts` hardcoding the JavaScript highlighter for
+    // `--stdout` while `command.transform.ts` already keyed it off `isC`.
     if (options.stdout) {
-      context.log(LogLevel.Info, chalk.strikethrough.dim(" ".repeat(stdout.columns)));
-      context.log(LogLevel.Info, highlight(output, { language: "json" }));
-      context.log(LogLevel.Info, chalk.strikethrough.dim(" ".repeat(stdout.columns)));
+      console.log(chalk.strikethrough.dim(" ".repeat(stdout.columns)));
+      console.log(highlight(output, { language: "json" }));
+      console.log(chalk.strikethrough.dim(" ".repeat(stdout.columns)));
     }
 
     // Determine output filename based on stage
