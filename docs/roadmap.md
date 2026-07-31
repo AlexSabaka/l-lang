@@ -1731,6 +1731,36 @@ records real memory corruption. So C is right to do what it does, JS does the or
 thing, and nothing states which is the language's answer. D-number needed; the corpus file pins the
 rows that agree and deliberately leaves this one out.
 
+### Does `(let :ctor n)` mean an immutable FIELD? Today it means nothing, and 185 sites use it
+
+`(let :ctor n <- Int)` and `(mut :ctor n <- Int)` are both used heavily and deliberately contrasted —
+**185 `let :ctor` against 99 `mut :ctor`** across `examples/` and `lib/`. Measured, on a class and a
+struct, on both backends: assignment to a `let :ctor` field is **accepted**, identically to a
+`mut :ctor` field.
+
+```lisp
+(defclass CK (let :ctor n <- Int))
+(let c (new CK 1))
+(c.n := 9)              ;; accepted -> 9, no diagnostic on either backend
+```
+
+**This is NOT the same thing D10 already rules, and the difference is the whole question.** LL0233's
+enforcement site states that only a bare-name target is a rebinding: `x.field := v` and `x[i] := v`
+mutate what `x` points at rather than the binding, stay legal on a `let`-bound value, and the games
+CP-cluster relies on exactly that. So the *binding* side is settled. What is unstated is whether the
+FIELD's own spelling carries a contract of its own — and if it does not, then `let :ctor` versus
+`mut :ctor` is decorative, which 185 call sites suggest is not what anyone writing it believes.
+
+Three coherent answers and nothing picks one: `let :ctor` means an immutable field and should be
+enforced (a new diagnostic, and a survey of those 185 sites to see how many currently violate it);
+`let :ctor` binds a constructor parameter only and field mutability is governed elsewhere; or the two
+spellings are genuinely interchangeable and one should be deprecated. Recorded rather than guessed —
+enforcing it is a behaviour change across a large surface, and D10 deliberately scoped itself to
+bindings.
+
+D10's binding half is now pinned by `90-diagnostics/ll0233_immutable_assignment.lisp`, which had no
+negative file at all despite the rule having been switched on recently.
+
 ### A METHOD cannot be a `:gen` on C — so the idiomatic `Iterable` cannot be written
 
 The shape `std/protocols`' `Iterable<T>` invites — the required `iterator` method *being* the

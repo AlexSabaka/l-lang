@@ -427,6 +427,19 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "and an ambient `std/js` extern. `Zorg` is deliberately absent: a name resolving to NOTHING was " +
       "already caught, which is what made the hole look handled.",
   },
+  "90-diagnostics/ll0233_immutable_assignment.lisp": {
+    status: "negative", codes: ["LL0233"],
+    reason:
+      "D10's immutability, which had no negative file. The enforcement site records that D10 was " +
+      "'ruled and then deliberately parked (P8), enforced only by the accident of `let`->`const` at " +
+      "the JS backend' and is only now checked -- a rule dormant for most of its life, switched on " +
+      "recently, with nothing asking whether it fires. Three targets because `mutability` is computed " +
+      "per symbol and they arrive by different routes: an ordinary `let`, a PLAIN PARAMETER (bound " +
+      "once, like Rust -- the ruled stance), and a name bound by DESTRUCTURING, the one most likely " +
+      "to be missed since it never passes through a `variable` node of its own. Legal and " +
+      "deliberately absent: `x.field := v` and `x[i] := v` on a `let`-bound value, which mutate what " +
+      "`x` points at rather than the binding and are relied on by the games CP-cluster.",
+  },
   "90-diagnostics/ll0200_explicit_cast_never_implicit.lisp": {
     status: "negative", codes: ["LL0200", "LL0202", "LL0203", "LL0213", "LL0225"],
     reason:
