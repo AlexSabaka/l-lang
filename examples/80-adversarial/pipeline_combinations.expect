@@ -1,0 +1,13 @@
+forward: -2
+backward: 2
+mixed: 3
+bare name: 25
+lambda: 15
+long chain: 60
+as argument: 18
+in tail: 25
+in a generator: 32
+try body and catch arm: 31
+catch arm alone: 9
+in a loop: 18
+into a decorated fn: 18

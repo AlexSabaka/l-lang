@@ -655,6 +655,15 @@ export const C_PASSING: readonly string[] = [
   // `setjmp_clobber_shapes.lisp`. The class row is the control that proves the experiment can detect
   // sharing at all -- if it ever prints 1, every other row is worthless.
   "80-adversarial/value_semantics_containers.lisp",
+  // Pipelines crossed with the other forms, and `<|`'s ARGUMENT ORDER pinned -- it has FOUR uses in
+  // the entire tree, and its whole meaning is that the piped value becomes the RIGHT argument where
+  // `|>` makes it the left. The forward/backward pair is the same call with the operands swapped, so
+  // if the two operators ever agreed one would silently become a synonym for the other. Also puts a
+  // pipeline in the two positions this project broke repeatedly -- a generator frame and a CATCH ARM
+  // -- where it survives for a different reason than the fixes: it is resolved BEFORE the rewriting
+  // passes run, measured by reverting the `mapChildArray` record fix and finding these rows still
+  // green. No defect found.
+  "80-adversarial/pipeline_combinations.lisp",
   "80-adversarial/interface_conformance_of.lisp",
   "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",
