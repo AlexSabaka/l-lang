@@ -1645,6 +1645,46 @@ conservative guard was written to avoid. Whether the checker should model user o
 design call, and `:operator` is a MODIFIER mechanism rather than a `std/protocols` interface, so there
 is no conformance surface to hang it on either. Recorded rather than guessed.
 
+### An enum MEMBER ACCESS is untyped — one root cause, five symptoms, and a THIRD nominal/structural split
+
+`(let s <- String Color:RED)` is **silent**. That single fact explains everything else measured about
+enums, on both backends:
+
+| symptom | mechanism |
+|---|---|
+| `(let s <- String Color:RED)` accepted | the member access is `Unknown`, which flows anywhere |
+| `Signal:STOP` accepted where `Color` is declared | same — `Unknown` satisfies `Color` |
+| a raw `0` there is `LL0203` | `Int` **is** typed, and `Int` is not `Color` |
+| `(c :of Color)` is **false** | at runtime the value is an ordinal `Int`, not a `Color` |
+| `(== Color:RED Signal:STOP)` is **true** | both are ordinal 0; `Color:RED` prints `0` |
+
+**The checker plainly intends enums to be nominal** — it rejects an `Int` literal at a `<- Color`
+annotation and at a `Color` parameter. What it does not do is distinguish one enum from another, so
+the nominal guarantee is one-directional and hollow: `(takes-color Signal:STOP)` compiles, runs, and
+answers `true` because `Signal:STOP` and `Color:RED` are both zero. A type annotation is present and
+does not prevent it.
+
+The ordinal-Int runtime representation is a defensible design choice on its own — it is what C enums
+are. The defect is the type-level hole beside it, and it is the **ninth instance of the untyped-form
+family** (after `if`'s condition, `match`'s arms, `try`, `when`/`cond`, `quote`, `restart-case`, a
+bound loop, and a user-operator result).
+
+**And it is the THIRD place the same nominal-versus-structural split has now been measured**, after
+disposal (`ll_dispose` recognising a `dispose` member rather than testing `Disposable`) and iteration
+(`for :each` duck-typing what `:of Iterable` denies). Three independent surfaces where dispatch is
+structural and the type answer is nominal, or the reverse. That is no longer a series of one-offs; it
+is an unstated language default that wants a single ruling.
+
+**Not fixed here**: giving an enum member access its enum's type is small in principle, but it decides
+whether two enums are related at all, whether an enum is assignable to `Int` (today it is, by
+equality), and what `:of` should answer for one — none of which D-numbered anywhere. 10 `defenum`
+declarations across 7 files is a small blast radius, so this is cheap to do once ruled.
+
+Separately open: an enum `match` is **not** checked for exhaustiveness. A partial match with no
+catch-all yields nil, which is D112's ruled answer for "no clause matched" rather than a bug — but
+`visitEnum` does record the full member set in `codegenMetadata`, so the information to check it
+exists. Pinned as nil in `80-adversarial/enum_combinations.lisp` until ruled otherwise.
+
 ### A METHOD cannot be a `:gen` on C — so the idiomatic `Iterable` cannot be written
 
 The shape `std/protocols`' `Iterable<T>` invites — the required `iterator` method *being* the

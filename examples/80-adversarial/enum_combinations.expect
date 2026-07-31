@@ -1,0 +1,10 @@
+full match: g
+full match, last member: b
+partial match, omitted member: nil
+same member: true
+sibling member: false
+annotated holds: true
+through a generator: 2 true
+assigned in a catch arm: true
+as a parameter: true false
+piped into a parameter: true

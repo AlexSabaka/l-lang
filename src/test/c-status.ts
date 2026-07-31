@@ -664,6 +664,14 @@ export const C_PASSING: readonly string[] = [
   // passes run, measured by reverting the `mapChildArray` record fix and finding these rows still
   // green. No defect found.
   "80-adversarial/pipeline_combinations.lisp",
+  // defenum crossed with the other forms, pinning only what holds regardless of the open ruling: a
+  // full match, a partial match yielding nil (a D112 consequence -- no clause matched -- not an
+  // exhaustiveness check), identity within one enum, a declared annotation, a generator frame, a
+  // catch-arm assignment, a declared parameter and a pipeline into one. Deliberately NOT pinned:
+  // an enum MEMBER ACCESS IS UNTYPED, which is one root cause behind a member of one enum being
+  // accepted where a DIFFERENT enum is declared, `:of` answering false, and two enums comparing equal
+  // by ordinal. Measured in docs/roadmap.md; pinning any of it would freeze the defect.
+  "80-adversarial/enum_combinations.lisp",
   "80-adversarial/interface_conformance_of.lisp",
   "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",
