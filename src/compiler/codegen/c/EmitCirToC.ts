@@ -604,7 +604,7 @@ export class EmitCirToC {
         let update = "";
         if (s.update) {
           if (s.update.kind === "c-expr-stmt") update = `(void)(${this.expr(s.update.expr)})`;
-          else if (s.update.kind === "c-assign" && s.update.target.kind === "name") {
+          else if (s.update.kind === "c-assign" && (s.update.target.kind === "name" || s.update.target.kind === "field")) {
             // `this.lvalue(...)`, NOT `target.cName`. Writing the name directly was a SECOND COPY of
             // the lvalue decision, and it had drifted from the first: `lvalue()` derefs a heap cell
             // (`(*u_j)`) and this did not, so a mutable-captured induction variable was READ through
@@ -612,6 +612,20 @@ export class EmitCirToC {
             // error, not a silent wrong answer, but only because the types happened to differ.
             //
             // It was unreachable until the cell analysis started seeing `for :init` bindings at all.
+            //
+            // `field` IS ADMITTED HERE, and the two other store kinds are not, for a reason that is
+            // about C rather than about tidiness. An update clause must be ONE expression, so it
+            // cannot use the temp that `emitStmt`'s `c-assign` arm interposes -- and that temp exists
+            // to stop a slot address being taken before a right-hand side that may `realloc` the
+            // storage it points into (see the comment there; it records real memory corruption). A
+            // `field` renders as `(obj)->fields[n]`, a fixed slot in an object that never grows, so
+            // there is nothing for a right-hand side to invalidate; `index`, `map` and `dyn-field`
+            // all hand back a pointer INTO growable storage and genuinely need the temp.
+            //
+            // Reachable only through a generator: frame promotion rewrites `(i := ...)` in a `:step`
+            // into a field store, and without this arm `(for :init (mut i 0) :cond (< i 3) :step
+            // (i := (+ i 1)) :then (yield i))` died on the throw below -- an uncaught Error with a
+            // Node stack trace, not a diagnostic, while JS ran the same program.
             update = `${this.lvalue(s.update.target)} = ${this.expr(s.update.value)}`;
           } else throw new Error("C emit: for update must be an expression or a simple assignment");
         }

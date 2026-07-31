@@ -8601,3 +8601,45 @@ ruling, not a patch in a narrowing pass.
 C 314 → **315** over 370, identical at `-O2` — which is the only run that could falsify the claim that
 a slot written in a catch and read after a later suspension is immune to the C11 clobber class by
 living in the frame rather than the activation.
+
+## D116 — a `for :init/:cond/:step` may contain a `yield`; only a FIELD store is expression-safe (2026-07-31)
+
+**The most basic counting generator anyone would write CRASHED the C compiler**, and had for the whole
+life of the backend:
+
+```lisp
+(fn :gen g [] -> Iterator<Int> (
+    (for :init (mut i 0) :cond (< i 3) :step (i := (+ i 1)) :then (yield i))))
+```
+
+Not a diagnostic and not a wrong answer — an uncaught `Error: C emit: for update must be an expression
+or a simple assignment`, a Node stack trace and a non-zero exit. JS ran it correctly. D58's frame
+promotion rewrites every binding into a frame slot, so the `:step` assignment stops being a store to a
+NAME and becomes a store to a FIELD, and the update arm accepted only names.
+
+**370 files and a green gate never saw it**, because no corpus file contained the shape. Found by
+asking the mandate's combination question of `for` — *does it work inside a generator?* — immediately
+after D115 asked the same of `try`. The corpus is a floor, not a census.
+
+**Only `field` is admitted, and the boundary is about C, not tidiness.** An update clause must be ONE
+expression, so it cannot use the temp that `emitStmt`'s `c-assign` arm interposes — and that temp is
+not decoration: it stops a slot address being taken before a right-hand side that may `realloc` the
+storage it points into, which is memory corruption this project has already paid for once and recorded
+at that site. A `field` renders as `(obj)->fields[n]`, a fixed slot in an object that never grows, so
+no right-hand side can invalidate it. `ll_index_slot`, `ll_map_slot` and `ll_member_slot` all hand back
+a pointer INTO growable storage and genuinely need the temp.
+
+**So an INDEX store in a `:step` still crashes, and it has nothing to do with generators:**
+
+```lisp
+(for :init (mut i 0) :cond (< i 3) :step (v[0] := (+ v[0] 1)) :then (i := (+ i 1)))
+```
+
+Ordinary l-lang, no `:gen`, no `try`, no import — a Node stack trace on C and `[3 0]` on JS. Left open
+deliberately rather than widened by guess: the shape that closes it is a runtime store *helper* rather
+than a slot pointer, because a call is an expression whose arguments are all fully evaluated before the
+store inside it happens, which is exactly the ordering the temp buys. `ll_map_set` exists; `ll_index_set`
+and a member equivalent do not. Recorded in `docs/roadmap.md` with the note that a crash is the worse
+of the two failures and it should be an `LL01xx` diagnostic even before it is made to work.
+
+C 315 → **316** over 371, identical at `-O2`. Games 15/15.

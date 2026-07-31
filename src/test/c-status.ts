@@ -595,6 +595,13 @@ export const C_PASSING: readonly string[] = [
   // arm was missing. The `-O2` run is the load-bearing one: a slot written in a catch and read after
   // a later suspension lives in the frame, not the activation, and that is an argument until measured.
   "80-adversarial/try_inside_generator.lisp",
+  // The most basic counting generator CRASHED the C compiler -- an uncaught `Error`, a Node stack
+  // trace and a non-zero exit, not a diagnostic, while JS ran it. Frame promotion turns a `:step`
+  // assignment into a FIELD store and the update arm accepted only names. 370 files and a green gate
+  // never saw it because the corpus never contained the shape. Only `field` is admitted: an update
+  // clause is one expression, so it cannot use the temp the ordinary assign path interposes to stop a
+  // slot address outliving a `realloc`, and a field is a fixed slot in an object that never grows.
+  "80-adversarial/for_loop_inside_generator.lisp",
   "80-adversarial/interface_conformance_of.lisp",
   "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",

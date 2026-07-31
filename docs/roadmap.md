@@ -1453,25 +1453,37 @@ exactly the open question, and answering it sideways in a narrowing pass is how 
 surface nobody agreed to. `80-adversarial/try_inside_generator.lisp:60` carries the row that would
 pin it and states why it does not.
 
-### A `for :init/:cond/:step` containing a `yield` CRASHES the C emitter
+### ~~A `for :init/:cond/:step` containing a `yield` CRASHES the C emitter~~ — **CLOSED (D116)**, but an INDEX `:step` still crashes
 
-Not a diagnostic — an uncaught `Error: C emit: for update must be an expression or a simple
-assignment` (`EmitCirToC.ts:616`), with a Node stack trace and a non-zero exit. JS runs the same
-program (`[0 1 2]`). Reproduced with **no `try` anywhere**, and confirmed on the build *before* the
-`promoteFrame` fix below, so it is pre-existing rather than exposed by it:
+The generator half is fixed: frame promotion turns a `:step` assignment into a **field** store, and
+the update arm now admits that kind. `80-adversarial/for_loop_inside_generator.lisp` pins it.
+
+**What remains is not about generators at all.** The same uncaught `Error: C emit: for update must be
+an expression or a simple assignment` (`EmitCirToC.ts`) still fires for an INDEX store in a `:step` —
+ordinary l-lang with no `:gen` anywhere:
 
 ```lisp
-(fn :gen g [] -> Iterator<Int> (
-    (for :init (mut i 0) :cond (< i 3) :step (i := (+ i 1)) :then (yield i))))
+(mut v [0 0])
+(for :init (mut i 0) :cond (< i 3) :step (v[0] := (+ v[0] 1)) :then (i := (+ i 1)))
 ```
 
-Frame promotion rewrites `(i := ...)` into a **field** store, and the for-update arm accepts only
-`target.kind === "name"`. It is not a one-line widening: a non-`name` store deliberately emits a
-multi-statement block with a temp (`EmitCirToC.ts:541`, whose comment records the `realloc`
-memory-corruption bug that shape exists to prevent), and a `for(;;update)` clause needs a single
-expression. A generator frame is fixed-size and never `realloc`s, so the temp is arguably unnecessary
-*for this target kind* — but that is an argument about which lvalue kinds are expression-safe, and it
-wants its own commit and its own measurement. The `while` spelling of the same loop works.
+C: a Node stack trace and a non-zero exit. JS: `index step: [3 0]`, correct. Same for a `map` store
+and a `dyn-field` store.
+
+**Why those three were not widened with `field`.** An update clause must be ONE expression, so it
+cannot use the temp that `emitStmt`'s `c-assign` arm interposes — and that temp is not decoration: it
+stops a slot address being taken before a right-hand side that may `realloc` the storage it points
+into, which is memory corruption this project has already paid for once (the comment at that site
+records it). A `field` renders as `(obj)->fields[n]`, a fixed slot in an object that never grows, so
+there is nothing to invalidate. `ll_index_slot`, `ll_map_slot` and `ll_member_slot` all hand back a
+pointer INTO growable storage.
+
+**The shape that would close it** is a runtime store *helper* rather than a slot pointer — a call is
+an expression, and all its arguments are fully evaluated before the store inside it happens, which is
+exactly the ordering the temp buys. `ll_map_set` already exists; `ll_index_set` and a member
+equivalent do not. Until then the failure is a CRASH rather than a refusal, which is the worse of the
+two: at minimum it should be an `LL01xx` diagnostic (the codegen band had 10 taken when this was
+written; `npm run test:diagnostics` prints the allocator and the next free code).
 
 ### An l-lang comment containing `*/` emits invalid JavaScript
 
