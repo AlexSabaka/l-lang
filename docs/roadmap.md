@@ -1428,6 +1428,51 @@ statically. Guarded by `80-adversarial/pipeline_head_closure.lisp`, which pins t
 **`nested_generator.lisp` was written around this** — it uses the raw `iter`/`next` cursor and says
 why. That comment is now describing a closed defect rather than a live one.
 
+### D9's narrowing does NOT reach a `T | Nil` — so D110's optional `try` cannot be opened
+
+**The sharpest consequence yet of the parked `T?` vs `T | Nil` question, and it makes a shipped
+feature hollow.** D110 rules that `(try e)` with no catch yields `T | Nil`, which is the type Sabaka
+asked for by name. But the same `(!= x nil)` guard that narrows a declared `Int?` does **not** narrow
+that union, so the value can be tested and never used. One probe, two spellings of one type:
+
+```lisp
+(let a (maybe 10))                    ;; maybe -> Int?
+(if (!= a nil) (twice a))             ;; "T? narrows: 20"
+(let b (try (risky 10)))              ;; D110 -- Int | Nil
+(if (!= b nil) (twice b))             ;; ELL0203 Argument 1 of 'twice'
+```
+
+Measured on **both** backends, in three positions that agree: a call argument (`LL0203`), a `return`
+(`LL0213 declares it returns Int, but returns Int | Nil`) and a `yield` (`LL0225 produces Int, but
+yields Int | Nil`). So it is not a `yield` hole and not a C hole — the narrowing simply keys on the
+`optional` spelling.
+
+**Not fixed, because the fix IS the parked ruling.** "`(!= x nil)` narrows any type admitting nil"
+reads like a completion of D9 rather than a new rule, but whether `T?` and `T | Nil` are one type is
+exactly the open question, and answering it sideways in a narrowing pass is how a language grows a
+surface nobody agreed to. `80-adversarial/try_inside_generator.lisp:60` carries the row that would
+pin it and states why it does not.
+
+### A `for :init/:cond/:step` containing a `yield` CRASHES the C emitter
+
+Not a diagnostic — an uncaught `Error: C emit: for update must be an expression or a simple
+assignment` (`EmitCirToC.ts:616`), with a Node stack trace and a non-zero exit. JS runs the same
+program (`[0 1 2]`). Reproduced with **no `try` anywhere**, and confirmed on the build *before* the
+`promoteFrame` fix below, so it is pre-existing rather than exposed by it:
+
+```lisp
+(fn :gen g [] -> Iterator<Int> (
+    (for :init (mut i 0) :cond (< i 3) :step (i := (+ i 1)) :then (yield i))))
+```
+
+Frame promotion rewrites `(i := ...)` into a **field** store, and the for-update arm accepts only
+`target.kind === "name"`. It is not a one-line widening: a non-`name` store deliberately emits a
+multi-statement block with a temp (`EmitCirToC.ts:541`, whose comment records the `realloc`
+memory-corruption bug that shape exists to prevent), and a `for(;;update)` clause needs a single
+expression. A generator frame is fixed-size and never `realloc`s, so the temp is arguably unnecessary
+*for this target kind* — but that is an argument about which lvalue kinds are expression-safe, and it
+wants its own commit and its own measurement. The `while` spelling of the same loop works.
+
 ### An l-lang comment containing `*/` emits invalid JavaScript
 
 `;; a comment containing */ a block-comment terminator` compiles and runs on C and is **LL0101** on JS

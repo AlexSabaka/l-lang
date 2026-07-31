@@ -8554,3 +8554,50 @@ The same probe surfaced the parked `T?`-vs-`T | Nil` question in a new place: a 
 against it.
 
 C 313 → **314** over 369.
+
+## D115 — a `try` inside a GENERATOR is permitted; D58 constrains `yield`, not the region (2026-07-31)
+
+**The C backend refused a construct the ruling allows, and the ruling's own guarantee is what makes it
+safe.** D58 rule 3 forbids `yield` inside a protected region (LL0239), language-wide and on both
+backends, because a generator suspends by *returning* and C11 7.13.2.1 makes landing in a destroyed
+activation undefined. `promoteFrame` implemented something broader: it refused **any** protected region
+inside a generator body. So this was `ELL0106 ... no lowering exists (collectGenerator)` on C and
+correct on JS, with no `yield` inside any region at all:
+
+```lisp
+(fn :gen g [] -> Iterator<Int> (
+    (let v (try (risky 5) catch e 0))     ;; the region COMPLETES here
+    (yield v)))                            ;; the suspend is a separate statement
+```
+
+**LL0239 is load-bearing, not incidental.** The emitter's `ll_frame` (`EmitCirToC.ts` `c-try`) is a
+*stack* local whose address is published to the global `ll_handler_top`. A suspend inside the region
+would return from the step function and leave that global pointing into a dead activation — precisely
+the hazard D58 names. Because D58 forbids that suspend, every label stays outside the region, so the
+region always completes and pops (`ll_handler_top = ca.prev`) within the one step call that entered
+it. `volatiles.ts:116` and `runtime.c:2495` already reason from this same guarantee **in prose**; the
+promotion pass was the sibling that did not, and refused the whole construct rather than the part D58
+rules out.
+
+**Nothing was missing but the rewrite arm.** `subBlocks` has always listed a try's blocks, so
+`collectDecls` was already promoting every declaration inside one — the slot layout was correct before
+the fix and unchanged after it. This is the project's second failure mode *within a single file*: one
+walk knew protected regions carry blocks, its sibling walk threw on them.
+
+**`restart-case` and `handle` still refuse, each for a stated reason** rather than by association. A
+`handle` captures enclosing locals by name into an env struct and those names now resolve to frame
+slots — threading the promotion through `captures` is missing work, not an argument. `restart-case` is
+shaped like `try` and is probably as mechanical, but nothing measured says so, and this file's own
+history is a refusal that outran its evidence.
+
+**Found by asking the mandate's combination question**, not by a bug report: *does this form work
+inside a generator?* The same probe turned up two things this ruling does **not** close, both recorded
+in `docs/roadmap.md` with measurements — a `for :init` loop containing a `yield` crashes the C emitter
+with an uncaught `Error` rather than a diagnostic (pre-existing, confirmed against the prior build),
+and D9's narrowing does not reach a `T | Nil`, which leaves D110's optional `try` testable but not
+usable. The second is the third live consequence of the parked `T?` vs `T | Nil` question and wants a
+ruling, not a patch in a narrowing pass.
+
+C 314 → **315** over 370, identical at `-O2` — which is the only run that could falsify the claim that
+a slot written in a catch and read after a later suspension is immune to the C11 clobber class by
+living in the frame rather than the activation.

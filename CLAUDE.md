@@ -24,8 +24,8 @@ There is **no `package.json` at the repository root**. Every `npm run` is from `
 ```
 src/            the compiler (TypeScript). package.json lives HERE.
 lib/std/        the standard library, written in l-lang — 18 packages, 40 modules
-examples/       369 .lisp programs. This is the end-to-end suite, not a demo folder.
-docs/spec/      DECISIONS.md is the spec. Rulings D1–D114.
+examples/       370 .lisp programs. This is the end-to-end suite, not a demo folder.
+docs/spec/      DECISIONS.md is the spec. Rulings D1–D115.
 ```
 
 `cd src` before any npm command. Every path in this file is relative to the repo root.
@@ -56,17 +56,30 @@ never compared the two, so every JS↔C comparison in this project's history was
 is the per-commit ceremony, not the capability. See D103 for the measurement, including why the ledger
 made the oracle look useless when it had in fact surfaced ~17–20 C defects.
 
-Baseline to hold, measured at D114 (2026-07-31): **C 314 passing / 0 failing / 2 refused / 0
-not-yet**, over a 369-file total (13 library, 1 fixture, 31 negative). Any movement is a finding —
+Baseline to hold, measured at D115 (2026-07-31): **C 315 passing / 0 failing / 2 refused / 0
+not-yet**, over a 370-file total (13 library, 1 fixture, 31 negative). Any movement is a finding —
 report the number, do not adjust it silently.
 
 The JS lane's figures are a **timestamped observation, not a figure that must hold** — re-measure when
 you pick the instrument up. Last measured at `b102475` (2026-07-30): JS 303 passing / 0 failing / 9
 oracle-divergent / 8 xfail, over the same 357.
 
-**Both remaining C refusals are `:async`, refused by RULING (D60), not by gap.** There is no longer a
-construct the reference backend declines because nobody built it — so a new refusal is a regression,
-not a backlog item, and should be read that way.
+**Both remaining C refusals in the CORPUS are `:async`, refused by RULING (D60), not by gap** — so a
+new refusal *among the 370* is a regression, not a backlog item, and should be read that way.
+
+**That is a claim about the corpus, and it does not generalise.** This line used to say there was no
+longer any construct the reference backend declined because nobody built it; D115 falsified it by
+writing one program the corpus never contained. Three still stand, all inside a `:gen` frame, all
+green on JS:
+
+| the construct | how it fails | recorded |
+|---|---|---|
+| `restart-case` / `handle` in a generator | `ELL0106` refusal, honest | `promoteFrame.ts:180` |
+| `for :init/:cond/:step` + `yield` | uncaught `Error`, Node stack trace | `docs/roadmap.md` |
+| `try` in a generator | **fixed by D115** | `80-adversarial/try_inside_generator.lisp` |
+
+The corpus is a floor, not a census: what it does not contain, it cannot refuse. Ask *"who calls
+it?"* of a claim of coverage exactly as of a claim of implementation.
 
 *Adjusting this line is not the same as adjusting a number silently.* It moves only when every step
 between the old figure and the new one was reported in a commit message, and each of the 28 files

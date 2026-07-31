@@ -164,8 +164,32 @@ function rewriteStmt(s: CStmt, slots: Map<string, FrameSlot>, selfRef: CExpr): C
       // emitter-synthesised and invisible here, so a promoted body must not contain one at all.
       throw new FramePromotionRefusal("`for :each` survived into a generator frame");
     case "c-try":
+      // A `try` inside a generator is SOUND, and LL0239 is what makes it so. The hazard would be the
+      // emitter's `ll_frame` (EmitCirToC `c-try`): it is a STACK local whose address is published to
+      // the global `ll_handler_top`, and a generator suspends by RETURNING -- so a suspend inside the
+      // region would leave that global pointing into a dead activation. D58 forbids exactly that
+      // suspend, language-wide and on both backends, so the region always completes and pops
+      // (`ll_handler_top = ca.prev`) within the one step call that entered it. `volatiles.ts:116` and
+      // `runtime.c:2495` already reason from this same guarantee; this arm did not, and refused the
+      // whole construct rather than the part D58 rules out.
+      //
+      // Nothing extra is needed for the goto hazard in the header: `subBlocks` already lists a try's
+      // blocks, so `collectDecls` has ALWAYS promoted the declarations inside one -- the slot layout
+      // was already right and only the rewrite was missing. `errVar` is deliberately NOT promoted; the
+      // emitter declares it in the landing arm, and no suspend can cross it.
+      return [{
+        ...s,
+        tryBlock: B(s.tryBlock),
+        catches: s.catches.map((c) => ({ ...c, body: B(c.body) })),
+        finalizer: s.finalizer ? B(s.finalizer) : null,
+      }];
     case "c-restart-case":
     case "c-handle":
+      // Still refused, and for a REASON each rather than by association with `c-try`. A `c-handle`
+      // captures enclosing locals by name into an env struct, and those names now resolve to frame
+      // slots -- threading the promotion through `captures` is the missing work, not an argument.
+      // `c-restart-case` is shaped like `c-try` and is probably as mechanical, but nothing measured
+      // says so, and this file's own history is a refusal that was broader than its evidence.
       throw new FramePromotionRefusal(`protected region (${s.kind}) inside a generator`);
     case "c-dispatch":
     case "c-label":

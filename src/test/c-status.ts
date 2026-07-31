@@ -586,6 +586,15 @@ export const C_PASSING: readonly string[] = [
   // nil, and only a BOUND loop becomes a sequence, because 364 of 367 corpus loops are statements.
   // Pinning both directions is what stops this fix being over-applied to them.
   "80-adversarial/try_in_tail_position.lisp",
+  // A `try` inside a GENERATOR, which `promoteFrame` refused for a reason broader than D58. The
+  // ruling forbids `yield` inside a protected region (LL0239); the pass refused ANY protected region
+  // in a frame, so a try containing no suspend at all was `ELL0106 ... no lowering exists` while JS
+  // ran it correctly. LL0239 is exactly what makes the fix sound -- it keeps every label, and so
+  // every suspend, out of the region, so the emitter's stack `ll_frame` cannot outlive its activation.
+  // `subBlocks` already listed a try's blocks, so the slot layout was ALWAYS right; only the rewrite
+  // arm was missing. The `-O2` run is the load-bearing one: a slot written in a catch and read after
+  // a later suspension lives in the frame, not the activation, and that is an argument until measured.
+  "80-adversarial/try_inside_generator.lisp",
   "80-adversarial/interface_conformance_of.lisp",
   "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",
