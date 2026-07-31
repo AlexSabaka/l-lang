@@ -1444,6 +1444,29 @@ broken — measured — because a nested `fn` is lifted and never reaches it. Pi
 `80-adversarial/nested_fn_inside_generator.lisp`, whose last row is the control: the generator's own
 `return` must still end the sequence.
 
+### There is NO loop early-exit in the language — `return` is the only way out
+
+Not a defect; an open design question, recorded because it was measured rather than assumed.
+`npm run grammar:ebnf` has **zero** occurrences of `break` or `continue`, and the three `(continue`
+call sites in the corpus (`03-loops/02_more_for_loops.lisp`) are a **user-defined function of that
+name** used as a `:cond`, not a keyword. `(break)` is `ELL0210 'break' is not defined` — an honest
+undefined identifier on both backends.
+
+**The consequences are narrow but real.** A loop cannot be left early at module top level at all,
+because there is no enclosing function to `return` from; and the inner of two nested loops cannot be
+left without a flag in the outer condition, since `return` exits the whole function.
+
+**The mitigating half was measured and is clean**: `return` as a loop exit is correct through every
+protected-region combination tried — out of `while`, `for`, `for :each`, and a `for :each` over a
+generator; out of a loop inside a `try`, a loop inside a `try` with a `finally`, a `try` inside a
+loop, and a `try` inside a loop inside a `try`. All twelve agree on both backends, which matters
+because each one has to pop `ll_handler_top` on the way out; a leak there would be silent corruption
+rather than a crash.
+
+So the question for a D-number is whether the absence is a deliberate minimalism (a `while` with a
+compound condition expresses it, and D100's loop-as-sequence direction may prefer `take-while`) or a
+gap to close. Not invented here either way.
+
 ### A function nested in a METHOD that references `this` emits invalid C
 
 ```lisp

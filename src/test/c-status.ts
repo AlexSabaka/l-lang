@@ -616,6 +616,14 @@ export const C_PASSING: readonly string[] = [
   // inline duplicate) were both missing the field; only the lifter's copy is load-bearing, measured.
   // The `parks:` row is the control: the generator's OWN return must still end the sequence (D31/D58).
   "80-adversarial/nested_fn_inside_generator.lisp",
+  // The condition system crossed with LIFTED functions and coroutine frames -- the two machineries
+  // that moved today, and the one combination `19-conditions/` (21 files) never makes. NO ORACLE
+  // EXISTS for it: D47 restarts are C-native and JS refuses the construct wholesale with LL0108, so
+  // the differential that catches C defects elsewhere is structurally absent. The sharp rows signal
+  // FROM, and invoke-restart FROM, inside a lifted lambda -- `ll_handler_top` points at a frame in a
+  // caller's activation, two up from where the call is made. No defect found writing it; it is a
+  // guard for a class that would fail as a wrong transfer, not a crash.
+  "80-adversarial/conditions_across_lifted_frames.lisp",
   "80-adversarial/interface_conformance_of.lisp",
   "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",
