@@ -1,0 +1,8 @@
+bare: 9
+with-catch: 9
+catch-taken: 42
+with-finally: 9
+bound bare: 9
+bound catch-taken: 42
+if: 1  match: 11  when: 5  cond: 7
+while: nil  for-each: nil  for: nil

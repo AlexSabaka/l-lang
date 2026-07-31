@@ -578,6 +578,14 @@ export const C_PASSING: readonly string[] = [
   // the gap ledger said `:implements A B` records only the first. Neither is true, and nothing in the
   // corpus asked, which is why nobody noticed. The live consequence -- `ll_dispose` still duck-types
   // on that expired premise -- is a ruling, recorded in docs/roadmap.md, not taken here.
+  // D114 -- a `try` IN TAIL POSITION yields its value, and the loops beside it still do not. D110
+  // ruled `try` an expression with no carve-out for statement position; `isValueTail` listed
+  // `try-catch` among the "statements in a tail", so the implicit return skipped it and the value was
+  // dropped: `(let x (try 9))` was 9 while `(fn f [] (try 9))` was nil, on BOTH backends. The loop
+  // rows are the other half and are NOT a bug -- D100 rules a loop in statement position still yields
+  // nil, and only a BOUND loop becomes a sequence, because 364 of 367 corpus loops are statements.
+  // Pinning both directions is what stops this fix being over-applied to them.
+  "80-adversarial/try_in_tail_position.lisp",
   "80-adversarial/interface_conformance_of.lisp",
   "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",

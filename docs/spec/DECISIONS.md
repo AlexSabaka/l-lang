@@ -8515,3 +8515,42 @@ Worth recording anyway: the **message** misrepresents the refusal. "no lowering 
 unbuilt feature, where the truth is that this form does not survive to codegen by design. Logged in
 `docs/roadmap.md` rather than reworded here — renaming a refusal is a diagnostics change with its own
 snapshot, not part of a typing round.
+
+## D114 — a `try` in TAIL position yields its value (2026-07-31)
+
+D110 ruled a `try` is an expression whose value comes from the try block or a catch arm, with **no
+carve-out for statement position**. The desugarer disagreed: `isValueTail` listed `try-catch` among
+the forms that are "statements in a tail", so the implicit return skipped it and the value was
+dropped. The same form, two positions, measured on both backends:
+
+```
+(let x (try 9))          ->  9
+(fn f [] (try 9))        ->  nil
+```
+
+Every shape: bare, with a catch, with the catch taken, and with a finally. All four were nil in a
+tail and correct when bound. Fixed by removing the entry — the ruling was already made, the desugarer
+had not been told.
+
+### The loops STAY on that list, and this file pins that too
+
+`while`, `for` and `for-each` still yield `nil` in a tail, and that is **D100**, not an oversight:
+*"a loop in statement position is untouched and still yields nil"* — only a loop **bound to a name**
+becomes a lazy sequence. The measurement behind it is the reason: **364 of the corpus's 367 loops are
+in statement position**, and rewriting them all into coroutines would allocate frames nobody asked
+for. So `80-adversarial/try_in_tail_position.lisp` asserts both directions at once — the `try` rows
+must yield, the loop rows must not. Pinning only the fix would leave the next reader free to
+"finish the job" across forms that D100 deliberately excluded.
+
+### Found while looking, and left alone
+
+`when` and `cond` are still on the `notAValue` list and are **not honoured** — they return their tail
+value anyway, measured. An entry that changes nothing is worth removing, but removing it is its own
+measurement and this round is about the entry that changed something.
+
+The same probe surfaced the parked `T?`-vs-`T | Nil` question in a new place: a function returning a
+`when` **cannot be annotated**, because `ELL0213` reports "declares it returns `Int?`, but returns
+`Int | Nil`". That is not new and is not closed here; it now has a second live consequence recorded
+against it.
+
+C 313 → **314** over 369.

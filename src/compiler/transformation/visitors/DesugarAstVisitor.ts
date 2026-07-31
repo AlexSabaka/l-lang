@@ -906,7 +906,15 @@ export class DesugarAstVisitor extends BaseAstTreeWalker {
       "while",
       "for",
       "for-each",
-      "try-catch",
+      // `try-catch` LEFT THIS LIST (D114). D110 ruled a `try` is an EXPRESSION that yields -- from the
+      // try block or a catch arm -- with no carve-out for statement position, and listing it here
+      // dropped that value in a function tail: `(let x (try 9))` was 9 while `(fn f [] (try 9))` was
+      // nil, on both backends. The loops STAY: D100 rules that "a loop in statement position is
+      // untouched and still yields nil", and only a loop BOUND to a name becomes a sequence.
+      //
+      // `when` and `cond` are still listed and are NOT honoured -- they return their tail value
+      // anyway, measured. Left in place rather than tidied: removing an entry that changes nothing is
+      // a separate measurement, and this round is about the entry that changed something.
       // declarations -- nothing to return
       "variable",
       "class",
