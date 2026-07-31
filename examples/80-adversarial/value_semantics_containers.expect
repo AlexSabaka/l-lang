@@ -1,0 +1,10 @@
+struct assign: 1
+class assign: 99
+gen frame -- original: 1 frame copy: 99
+yielded out, generator's own: 1
+map slot: 1
+vector slot -- source: 1 slot: 1
+lambda -- original: 1 local: 99
+catch arm -- original: 1 arm copy: 99
+nested struct: 1
+returned, second call: 1

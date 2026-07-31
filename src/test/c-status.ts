@@ -646,6 +646,15 @@ export const C_PASSING: readonly string[] = [
   // (roadmap): a modifier on a METHOD is silently ignored on both backends, and a decorated
   // SELF-RECURSIVE function emits C that will not compile.
   "80-adversarial/modifier_combinations.lisp",
+  // D11 value semantics in the containers `06-value-semantics/`'s seven files never use: a GENERATOR
+  // FRAME, a catch arm, a map value and a lambda. The generator row is the reason it exists --
+  // `promoteFrame` moves every binding into a BOXED `ll_obj.fields[]` slot with a different read and
+  // a different write from a C local, and nothing asked whether a struct stays a value after that
+  // move. A lost copy is a SILENT WRONG ANSWER, the one shape a green gate cannot notice, and three
+  // passes deciding where a value lives changed today. No defect found; a guard, like
+  // `setjmp_clobber_shapes.lisp`. The class row is the control that proves the experiment can detect
+  // sharing at all -- if it ever prints 1, every other row is worthless.
+  "80-adversarial/value_semantics_containers.lisp",
   "80-adversarial/interface_conformance_of.lisp",
   "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",

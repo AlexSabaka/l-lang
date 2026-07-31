@@ -1590,6 +1590,33 @@ which means it is not a one-off in the disposal path but the language's unstated
 should settle both, and it is a design choice — structural typing is a coherent position, nominal is
 a coherent position, and silently doing one for dispatch and the other for `:of` is neither.
 
+### `(expr).field` is not a member access — and the diagnostic blames the field name
+
+A parenthesised expression can be the receiver of a METHOD CALL and not of a FIELD READ. Measured,
+same file, same class:
+
+| receiver | result |
+|---|---|
+| `bound.n` — a plain identifier | `1` |
+| `v[0].n` — an index | `5` |
+| `((new K 1).m)` — a **method** on a parenthesised expression | `7` |
+| `(new K 3).n` — a **field** on the same shape | `LL0210 'n' is not defined` |
+| `(make).n` — a field off a call result | `LL0210` |
+| **`(bound).n`** — merely parenthesising a receiver that works bare | `LL0210` |
+
+The last row is the one that identifies it: `bound.n` is fine and `(bound).n` is not, so this is not
+about calls or about `new` — a parenthesised expression simply cannot be a field-read receiver.
+Both backends agree, so it is frontend-side.
+
+**The diagnostic is actively misleading.** `'n' is not defined` reports the FIELD NAME as though it
+were an undefined variable, which sends a reader looking for a missing binding rather than at the
+receiver form. The practical consequence is that a field cannot be read off a call result at all
+without binding it first — `(let r (make))` then `r.n`.
+
+Two separable things here: whether `(expr).field` SHOULD parse is a language-surface question (D-number
+needed — the method-call form already does, so the asymmetry is at least unexplained), while the
+diagnostic pointing at the wrong token is a defect regardless of how that is ruled.
+
 ### A METHOD cannot be a `:gen` on C — so the idiomatic `Iterable` cannot be written
 
 The shape `std/protocols`' `Iterable<T>` invites — the required `iterator` method *being* the
