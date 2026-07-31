@@ -1444,6 +1444,56 @@ broken — measured — because a nested `fn` is lifted and never reaches it. Pi
 `80-adversarial/nested_fn_inside_generator.lisp`, whose last row is the control: the generator's own
 `return` must still end the sequence.
 
+### A BOUND loop's type is `nil` in the checker and an `Iterator<T>` at runtime — D100 vs the checker
+
+**The sharpest of the untyped-form family, because it is not a hole but a disagreement.** D100 rules
+that a loop bound to a name becomes a lazy sequence while a loop in statement position still yields
+nil. `InferTypesAstVisitor`'s `case "while": case "for":` types **every** loop `nil`, with no
+value-versus-statement distinction, so the bound half of D100 is unrepresented in the type system.
+
+Measured — the same binding accepts two incompatible annotations, and one of them is a lie:
+
+```lisp
+(let s <- Int           (while (< i 3) ((i := (+ i 1)) i)))   ;; accepted
+(let s <- Iterator<Int> (while (< i 3) ((i := (+ i 1)) i)))   ;; accepted
+```
+
+The runtime agrees with the second: draining `s` sums to 6. Using the first is where it lands —
+`(+ s 1)` after the `<- Int` annotation gives **`TypeError: expected a number` on C** (a trap, honest)
+and **`[object Generator]1` on JS** (a silent wrong answer). `LL0200` is exactly the diagnostic that
+should have fired at compile time, and it is the annotation check that never looked.
+
+**Not fixed here, deliberately.** The fix needs the checker to know value-versus-statement position —
+the distinction `isValueTail` already draws in the desugarer — and 364 of 367 corpus loops are
+statements, so typing them differently has a blast radius across the whole corpus. D100's own text
+warns that the statement case must stay nil "because rewriting them all into coroutines would
+allocate frames nobody asked for", and getting the split wrong in the checker is the same mistake
+one layer up. Its own round, with the corpus measured before and after.
+
+D100's *runtime* halves are already pinned by `80-adversarial/loop_sequence.lisp` and
+`statement_value_position.lisp`; what neither pins is the type, and pinning today's answer would pin
+the bug.
+
+### `restart-case` yields a value and the checker does not type it — the sixth instance
+
+`(let a <- String (restart-case ((return (f))) (:sub [v] v)))` where `f -> Int` is **silent**, while
+the same annotation over a plain call is `LL0200`. After `if`'s condition, `match`'s arms, `try`
+(D110), `when` and `cond` (D112), and `quote` (D113), this is the sixth form found by asking one
+question of a different construct.
+
+It yields, measurably: `(let x (restart-case (7) (:sub [v] v)))` is **7** from the body, and **42**
+when a handler invokes `:sub 42` — the arm's value substitutes for the whole form.
+
+Unlike the earlier five this one is **deliberate, and its reason has expired**. The visitor groups
+`restart-case` with `try-catch`/`handle`/`signal`/`invoke-restart` and comments that the value "stays
+Unknown (these forms have no join to compute yet, and JS refuses the D47 four anyway)". There is a
+join now and it is the same one D110 and D112 already compute: the body's tail type unioned with each
+restart arm's type. `try` was in that same group and was lifted out of it by D110, which is the
+precedent. The JS half of the reason is irrelevant to a C-native form under D86.
+
+Tractable — smaller than the loop entry above — but it is a ruling about what a D47 form's static
+type IS, and D47 is Sabaka's design; recorded rather than assumed.
+
 ### There is NO loop early-exit in the language — `return` is the only way out
 
 Not a defect; an open design question, recorded because it was measured rather than assumed.
