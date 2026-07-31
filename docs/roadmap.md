@@ -1492,6 +1492,22 @@ body is a NEW decoration on every call, each needing its own setup state". A met
 not inside a function body — it is a static declaration in a class, exactly as compile-time-known as
 a free function's. So this is a gap, not a ruled refusal, and the current behaviour is neither.
 
+**And the position IS already validated, which makes the silence worse rather than excusable.** The
+sibling check — every other modifier in the same slot — shows the diagnostic machinery reaches a
+method fine:
+
+| on a method | result |
+|---|---|
+| `:pure`, `:inline` (undeclared) | `LL0015 Unknown modifier ':pure' on function` |
+| `:gen` | `LL0105`, an honest refusal |
+| `:comptime` | `LL0106`, an honest refusal |
+| `:static` | works |
+| **a `defmodifier`-declared modifier** | **silently dropped** |
+
+So a *misspelled* modifier on a method is caught and a *correct* one vanishes. The failure is not a
+missing validation point — LL0015 already fires exactly there — it is that a declared modifier passes
+that check and then never reaches an application path.
+
 **Not fixed here** because decoration is applied SEPARATELY IN EACH BACKEND — `JSTransformerAstVisitor`
 for JS, the resolver/emitter pair for C — so implementing it means teaching two method-emission paths
 one rule, which is this project's failure mode #2 by construction. And whether a method may carry a
