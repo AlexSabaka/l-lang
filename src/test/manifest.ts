@@ -427,6 +427,19 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "and an ambient `std/js` extern. `Zorg` is deliberately absent: a name resolving to NOTHING was " +
       "already caught, which is what made the hole look handled.",
   },
+  "90-diagnostics/ll0200_explicit_cast_never_implicit.lisp": {
+    status: "negative", codes: ["LL0200", "LL0202", "LL0203", "LL0213", "LL0225"],
+    reason:
+      "D46's whole safety story, and it had no negative file: an `:explicit` defcast fires ONLY at a " +
+      "written `(cast<T> x)` and at NO coercion site. `16-stdlib/17_defcast.lisp` and " +
+      "`18_defcast_implicit.lisp` are both POSITIVES -- they check that a conversion DID happen, which " +
+      "cannot catch the explicit one starting to fire implicitly. `defcast` appeared in no manifest " +
+      "entry and there was no negative cast file at all. Eight destination-type sites, five codes: " +
+      "let-init and a declared vector element (LL0200), assignment (LL0202), a call argument and both " +
+      "constructor paths (LL0203), a declared return (LL0213), and a generator's element type through " +
+      "the coroutine lowering (LL0225). If any row ever compiles, `:explicit` has stopped being " +
+      "explicit and the conversion is silent -- the C++ mistake D46 names by name.",
+  },
   "90-diagnostics/ll0209_missing_interface_method.lisp": {
     status: "negative", codes: ["LL0209"],
     reason:

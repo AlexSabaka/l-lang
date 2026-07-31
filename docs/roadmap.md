@@ -1617,6 +1617,34 @@ Two separable things here: whether `(expr).field` SHOULD parse is a language-sur
 needed — the method-call form already does, so the asymmetry is at least unexplained), while the
 diagnostic pointing at the wrong token is a defect regardless of how that is ruled.
 
+### An operator on a USER TYPE is not type-checked in either direction
+
+`canJudgeOperator` is `types.every(t => t.kind === "primitive" && !t.isArray)`, so the moment either
+operand is a class or a struct the checker declines to judge — and that turns out to mean *both*
+directions, not just the permissive one. Measured on one struct that HAS an `:operator +`:
+
+| | C | JS |
+|---|---|---|
+| `(+ p q)` — the DEFINED pair | `4 6`, correct | `4 6` |
+| `(let s <- String (+ p q))` — is the result typed? | **silent** | silent |
+| `(+ p 1.0)` — an UNDEFINED pair on the same type | `ELL0106 ... 'cast'` at CODEGEN | **`[object Object]1`** |
+
+So the checker neither rejects the wrong pair nor types the right one. Operator resolution happens
+entirely in the backends: C refuses at codegen — honest, but far later than a type error, and `LL0204`
+already exists for exactly this message — while JS produces a silent wrong answer by falling into
+JavaScript string concatenation.
+
+**This is also another instance of the untyped-form family** (after `if`'s condition, `match`'s arms,
+`try`, `when`/`cond`, `quote`, `restart-case` and a bound loop): `(+ p q)` demonstrably yields a `Cx`
+and the checker calls it Unknown.
+
+**Not fixed, and the guard is not obviously wrong.** `:operator` overloads are ordinary declarations
+that can be imported or extended, so judging a user-type pair means the checker must resolve the full
+overload set at the operator site or risk rejecting valid programs — the exact false-positive risk the
+conservative guard was written to avoid. Whether the checker should model user operators at all is a
+design call, and `:operator` is a MODIFIER mechanism rather than a `std/protocols` interface, so there
+is no conformance surface to hang it on either. Recorded rather than guessed.
+
 ### A METHOD cannot be a `:gen` on C — so the idiomatic `Iterable` cannot be written
 
 The shape `std/protocols`' `Iterable<T>` invites — the required `iterator` method *being* the
