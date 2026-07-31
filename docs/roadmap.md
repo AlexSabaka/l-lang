@@ -1536,6 +1536,60 @@ other reading — a self-call means the original, so the decorator applies once 
 equally defensible and is what a reader of the C signature would expect. D75 does not say. Fixing the
 emission without ruling the semantics would freeze whichever answer fell out.
 
+### Interface conformance checks a method's NAME and not its SIGNATURE
+
+The mandate's protocol question, answered: the protocol exists (D107), lives in `std/protocols`, and
+IS conformance-checked — but only for presence. A member with the right name and the wrong shape
+satisfies the claim:
+
+```lisp
+(defclass Wrong :implements Disposable
+    (mut :ctor n <- Int)
+    (fn dispose [k <- Int] -> Int (return k)))   ;; Disposable declares [] -> Void
+```
+
+`(w :of Disposable)` answers **true on both backends**, with no diagnostic. The missing-member case
+IS caught (`LL0209`, now pinned by `90-diagnostics/ll0209_missing_interface_method.lisp`); only the
+shape goes unchecked.
+
+**The consequence is a runtime failure where a compile-time one was available.** Driving a
+signature-mismatched cursor through `for :each` — `next` taking an argument, `done` returning `Int`
+instead of `Boolean` — gives `TypeError: expected an Int` on C and a **silent `0` on JS**. So the
+protocol's whole purpose, guaranteeing the caller what it may invoke, does not hold at its own
+boundary.
+
+**Not fixed: the strictness is a ruling and the blast radius is real.** There are 92 `:implements`
+declarations across `examples/` and `lib/` (14 files in `lib/` alone), and exact-match is only one of
+several defensible rules — a return type may reasonably be covariant (an implementation returning
+`Int` where the protocol says `T?` is safe), and parameters contravariant. Choosing wrongly turns
+green corpus files red for no benefit. D107 does not say which.
+
+### Iteration is DUCK-TYPED on C and NOMINAL on JS — and on C it disagrees with `:of`
+
+```lisp
+(defclass Ducky                      ;; NO :implements at all
+    (mut :ctor n <- Int) (mut :ctor spent <- Boolean false)
+    (fn iterator [] -> Any (return this))
+    (fn next [] -> Int? ...) (fn done [] -> Boolean (return this.spent)))
+(for :each x :from (new Ducky 3) :then ...)
+```
+
+| | C | JS |
+|---|---|---|
+| `for :each` over it | **iterates — sums 6** | **`Error: Ducky is not a function or its return value is not iterable`** |
+| `(x :of Iterable)` | **false** | — |
+
+Two disagreements in one measurement. Across backends: C accepts the shape, JS requires the
+declaration. And *within* C: `for :each` drives a value that `:of Iterable` denies is `Iterable`, so
+the language answers "no" about a capability it just exercised.
+
+**This is the parked disposal question, generalised.** That entry records `ll_dispose` recognising its
+target by looking for a `dispose` MEMBER rather than by testing `Disposable`, on a premise that has
+since expired. The same nominal-versus-structural split is now measured for the iteration protocol,
+which means it is not a one-off in the disposal path but the language's unstated default. One ruling
+should settle both, and it is a design choice — structural typing is a coherent position, nominal is
+a coherent position, and silently doing one for dispatch and the other for `:of` is neither.
+
 ### A METHOD cannot be a `:gen` on C — so the idiomatic `Iterable` cannot be written
 
 The shape `std/protocols`' `Iterable<T>` invites — the required `iterator` method *being* the

@@ -427,6 +427,18 @@ export const MANIFEST: Record<string, ManifestEntry> = {
       "and an ambient `std/js` extern. `Zorg` is deliberately absent: a name resolving to NOTHING was " +
       "already caught, which is what made the hole look handled.",
   },
+  "90-diagnostics/ll0209_missing_interface_method.lisp": {
+    status: "negative", codes: ["LL0209"],
+    reason:
+      "`:implements` claiming an interface whose methods are NOT defined -- the half that fires when " +
+      "the name resolves, which had no negative file of its own. Class AND struct, because the entry " +
+      "below records that the check was typed for both and wired only for class, so a regression that " +
+      "re-broke the struct arm alone would pass on the class row. What it deliberately does NOT pin: " +
+      "conformance checks a method's NAME and not its SIGNATURE -- a `dispose` declared " +
+      "`[k <- Int] -> Int` satisfies `:implements Disposable` and answers `:of` true on both backends, " +
+      "then traps on C and answers silently wrong on JS. Recorded in docs/roadmap.md instead; pinning " +
+      "today's answer would pin the defect.",
+  },
   "90-diagnostics/ll0249_unresolved_implements.lisp": {
     status: "negative", codes: ["LL0231", "LL0249"],
     reason:
