@@ -609,6 +609,13 @@ export const C_PASSING: readonly string[] = [
   // `c-temp` into a `c-field-get` after those boxes exist. Recursing changed the emitted C for 0 of
   // 45 sampled corpus files, byte-for-byte -- nothing in the corpus reached the broken path.
   "80-adversarial/forms_inside_generator.lisp",
+  // A nested `fn` inside a generator LOST ITS OWN BODY. `inGenerator` is a resolver flag but
+  // describes the function being resolved, so a lifted helper inherited it and its `return` became
+  // the enclosing generator's park-and-nil epilogue -- naming a frame slot outside its scope, so the
+  // C would not compile. Two copies of one save/reset list (`isolated()` and the lambda lifter's
+  // inline duplicate) were both missing the field; only the lifter's copy is load-bearing, measured.
+  // The `parks:` row is the control: the generator's OWN return must still end the sequence (D31/D58).
+  "80-adversarial/nested_fn_inside_generator.lisp",
   "80-adversarial/interface_conformance_of.lisp",
   "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",

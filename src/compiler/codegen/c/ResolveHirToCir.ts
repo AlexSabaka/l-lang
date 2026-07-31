@@ -4158,8 +4158,23 @@ export class ResolveHirToCir {
     const savedCells = this.cellVars;
     const savedInFn = this.inFunctionBody;
     const savedSelf = this.selfClass;
+    // `inGenerator` BELONGS IN THIS LIST, and its absence was a silent mis-emission rather than a
+    // refusal. The flag describes the function being resolved, not the resolver, so a nested `fn`
+    // declared inside a `:gen` body inherited it -- and the `return` arm rewrites a return into the
+    // generator's park-and-answer-nil epilogue when it is set. The helper below LOST ITS OWN BODY:
+    //
+    //     (fn :gen g [] (fn helper [x <- Int] -> Int (return (* x 2))) (yield (helper 4)))
+    //
+    // emitted `__ll_gen_state = -1; return ll_nil();` as the whole of `helper`, referencing a name
+    // that exists only as a frame slot in `g`'s step function -- so the C did not compile. Had it
+    // compiled it would have been worse: `helper` would answer nil instead of 8.
+    //
+    // A generator re-sets the flag INSIDE this helper (`collectGenerator`), so clearing it here costs
+    // the generator path nothing and only reaches functions nested within one.
+    const savedInGen = this.inGenerator;
     (this as any).scopes = [new Map<string, VarInfo>()];
     this.inFunctionBody = true;
+    this.inGenerator = false;
     try {
       this.cellVars = this.computeCellVars(fn.body ?? []);
       const result = run();
@@ -4178,6 +4193,7 @@ export class ResolveHirToCir {
       this.cellVars = savedCells;
       this.inFunctionBody = savedInFn;
       this.selfClass = savedSelf;
+      this.inGenerator = savedInGen;
     }
   }
 
@@ -4690,11 +4706,19 @@ export class ResolveHirToCir {
 
     // Resolve the lifted body in an ISOLATED scope (params + captures only -- a C function cannot see
     // the enclosing frame except through its env).
+    //
+    // THIS IS A SECOND COPY of `isolated()`'s save/reset, and both copies were missing `inGenerator`.
+    // Fixing only the other one left this path broken, because a nested `fn` inside a `:gen` body is
+    // LIFTED and reaches here, never `isolated()`. See the note there for what the flag leaking in
+    // does: the lifted function's `return` becomes the enclosing generator's park-and-nil epilogue,
+    // so it loses its own body and names a frame slot that does not exist in its scope.
     const savedScopes = this.scopes.slice();
     const savedCells = this.cellVars;
     const savedInFn = this.inFunctionBody;
+    const savedInGen = this.inGenerator;
     (this as any).scopes = [new Map<string, VarInfo>()];
     this.inFunctionBody = true;
+    this.inGenerator = false;
     const liftedParams: CParam[] = [];
     try {
       this.cellVars = this.computeCellVars(fn.body ?? []);
@@ -4716,6 +4740,7 @@ export class ResolveHirToCir {
       (this as any).scopes = savedScopes;
       this.cellVars = savedCells;
       this.inFunctionBody = savedInFn;
+      this.inGenerator = savedInGen;
     }
 
     const paramCTypes = liftedParams.map((p) => p.ctype);
