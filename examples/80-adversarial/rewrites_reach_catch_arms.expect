@@ -1,0 +1,10 @@
+body macro: 10
+arm macro: 12
+body and: true
+arm and: false
+arm or: true
+body fraction: 3/4
+arm fraction: 3/4
+arm again: 14
+finally macro: 16
+nested arm macro: 18

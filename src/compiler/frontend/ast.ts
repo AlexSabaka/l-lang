@@ -38,8 +38,51 @@ export function isAstNode(node: any): node is ASTNode {
  */
 export function mapChildArray(value: any[], visit: (node: ASTNode) => any): any[] {
   return value.map((item: any) =>
-    Array.isArray(item) ? mapChildArray(item, visit) : isAstNode(item) ? visit(item) : item
+    Array.isArray(item) ? mapChildArray(item, visit)
+      : isAstNode(item) ? visit(item)
+      : isPlainRecord(item) ? mapChildRecord(item, visit)
+      : item
   );
+}
+
+/** A child container that is neither an array nor an AST node -- a plain `{...}` record. */
+function isPlainRecord(v: any): boolean {
+  return v !== null && typeof v === "object" && !Array.isArray(v) && !isAstNode(v);
+}
+
+/**
+ * D89 AGAIN, one container over: an array of RECORDS.
+ *
+ * The note above records that a matrix ROW is not an AST node, so it came back untouched and no
+ * rewrite ever reached a matrix cell. The same sentence is true of a CATCH ARM. `TryCatchNode.catch`
+ * is `TryCatchFilter[]`, `RestartCaseNode.arms` is `RestartArm[]` and a handle's clauses are
+ * `HandleClause[]` -- each element a plain `{...}` holding the arm's body. Not an array, not an AST
+ * node, so `mapChildArray` returned it unchanged and NOTHING inside those three positions was ever
+ * rewritten by ANY pass: every rewriting visitor in the tree routes through this one function.
+ *
+ * Measured before the fix, all three symptoms inside a `catch` arm and agreeing on both backends:
+ *   * a `defsyntax` macro -> `LL0210 '<name>' is not defined`
+ *   * `(and a b)`         -> `LL0210 'and' is not defined`   <- the D89 note's own symptom, verbatim
+ *   * `1/2`               -> `ELL0106 Cannot generate C for 'fraction-number'`, a raw literal
+ *                            reaching codegen
+ * and every one of them correct in the try BODY beside it, which is an ordinary `ASTNode` child.
+ *
+ * READING passes were never affected -- `BaseAstTreeWalker` recurses structurally -- which is why an
+ * undefined name inside a catch arm is reported at all, and is the same "two halves of the compiler
+ * disagreed about whether this had children" split D89 names.
+ *
+ * `_`-prefixed keys are skipped: `_parent` is a back-reference and descending it would not terminate.
+ */
+function mapChildRecord(rec: any, visit: (node: ASTNode) => any): any {
+  const out: any = { ...rec };
+  for (const k of Object.keys(rec)) {
+    if (k.startsWith("_")) continue;
+    const v = rec[k];
+    if (Array.isArray(v)) out[k] = mapChildArray(v, visit);
+    else if (isAstNode(v)) out[k] = visit(v);
+    else if (isPlainRecord(v)) out[k] = mapChildRecord(v, visit);
+  }
+  return out;
 }
 
 /**

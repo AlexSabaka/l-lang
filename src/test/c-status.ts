@@ -624,6 +624,20 @@ export const C_PASSING: readonly string[] = [
   // caller's activation, two up from where the call is made. No defect found writing it; it is a
   // guard for a class that would fail as a wrong transfer, not a crash.
   "80-adversarial/conditions_across_lifted_frames.lisp",
+  // D89's bug ONE CONTAINER OVER: no rewriting pass ever reached inside a catch arm, a restart arm or
+  // a handler clause. `TryCatchNode.catch` is `TryCatchFilter[]` whose elements are plain RECORDS --
+  // not arrays, not AST nodes -- so `mapChildArray` returned them unchanged, and EVERY rewriting
+  // visitor routes through that one function. Three passes, three symptoms, all inside an arm and all
+  // correct in the try body beside it: a macro was `LL0210 not defined`, `(and a b)` was `LL0210 'and'
+  // is not defined` (D89's own symptom verbatim), and `1/2` was `ELL0106 fraction-number` -- a raw
+  // literal reaching codegen. Reading passes were never affected, which is why an undefined name in an
+  // arm is reported at all: the same two-halves-disagree split D89 names. Fixing it moved the corpus
+  // by ZERO -- no file had written any of the three inside an arm.
+  "80-adversarial/rewrites_reach_catch_arms.lisp",
+  // The other two record shapes: `RestartArm` and `HandleClause` hold `body: ASTNode[]` rather than a
+  // nested record, so they reach a different branch of the descent. Separate file because D47 is
+  // C-native -- folding these rows into the catch-arm file would have cost that file its JS grading.
+  "80-adversarial/rewrites_reach_restart_arms.lisp",
   "80-adversarial/interface_conformance_of.lisp",
   "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",

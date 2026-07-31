@@ -1444,6 +1444,33 @@ broken — measured — because a nested `fn` is lifted and never reaches it. Pi
 `80-adversarial/nested_fn_inside_generator.lisp`, whose last row is the control: the generator's own
 `return` must still end the sequence.
 
+### ~~No rewriting pass reached inside a catch arm, a restart arm or a handler clause~~ — **CLOSED**
+
+**D89's bug, one container over.** That note records a matrix ROW being `ASTNode[]` inside
+`ASTNode[][]` — not an AST node, so it came back untouched and no rewrite ever reached a matrix cell.
+The same sentence was true of a catch arm: `TryCatchNode.catch` is `TryCatchFilter[]` and each element
+is a plain `{filter, body}` RECORD, so `mapChildArray` returned it unchanged. Every rewriting visitor
+in the tree routes through that one function, so every rewrite stopped at the arm boundary.
+
+Three independent passes, three symptoms, all inside a catch arm, all agreeing on both backends, and
+every one correct in the try BODY beside it:
+
+| what | inside an arm, before |
+|---|---|
+| a `defsyntax` macro | `LL0210 '<name>' is not defined` |
+| `(and a b)` | `LL0210 'and' is not defined` — D89's own symptom, verbatim |
+| `1/2` | `ELL0106 Cannot generate C for 'fraction-number'` — a raw literal reaching codegen |
+
+Reading passes were never affected (`BaseAstTreeWalker` recurses structurally), which is why an
+undefined name inside an arm is reported at all — the same "two halves of the compiler disagreed
+about whether this had children" split D89 names.
+
+Fixed by teaching the descent to enter plain records, D89-consistently. **The corpus moved by zero**:
+321 passing before and after the behaviour change, because no file had ever written any of the three
+inside an arm. Pinned by `80-adversarial/rewrites_reach_catch_arms.lisp` (both backends) and
+`rewrites_reach_restart_arms.lisp` (C-native; `RestartArm` and `HandleClause` hold `body: ASTNode[]`
+rather than a nested record and reach a different branch).
+
 ### A METHOD cannot be a `:gen` on C — so the idiomatic `Iterable` cannot be written
 
 The shape `std/protocols`' `Iterable<T>` invites — the required `iterator` method *being* the
