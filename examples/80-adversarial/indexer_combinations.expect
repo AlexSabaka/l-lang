@@ -1,0 +1,10 @@
+vector read: 20
+nested read: 3
+string read: e
+map read: 2
+impure index, read: 20 1
+impure index, store: 99 1
+call argument order: ab 3
+indexed in a generator: 12
+indexed in a catch arm: 6
+in-bounds store: 42 3

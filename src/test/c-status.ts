@@ -672,6 +672,15 @@ export const C_PASSING: readonly string[] = [
   // accepted where a DIFFERENT enum is declared, `:of` answering false, and two enums comparing equal
   // by ordinal. Measured in docs/roadmap.md; pinning any of it would freeze the defect.
   "80-adversarial/enum_combinations.lisp",
+  // Indexers: the rows that AGREE. The impure-index rows are the point -- this project's contract
+  // names evaluation order as a class it has shipped green bugs in, and nothing in the corpus had a
+  // side-effecting index. Both the read and the store call it EXACTLY ONCE; a double evaluation is
+  // what a naive lowering produces, since the index is needed twice (bounds-check, then address).
+  // Deliberately NOT pinned, both in docs/roadmap.md: an out-of-bounds STORE is silently dropped on C
+  // while a read at the same index traps, and the store's evaluation ORDER diverges (C value-then-
+  // index, deliberately, so a growing RHS cannot realloc the slot out from under the write; JS the
+  // reverse). Pinning either would freeze an open answer.
+  "80-adversarial/indexer_combinations.lisp",
   "80-adversarial/interface_conformance_of.lisp",
   "80-adversarial/setjmp_clobber_shapes.lisp",
   "80-adversarial/when_cond_yield.lisp",

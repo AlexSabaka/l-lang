@@ -1590,7 +1590,7 @@ which means it is not a one-off in the disposal path but the language's unstated
 should settle both, and it is a design choice — structural typing is a coherent position, nominal is
 a coherent position, and silently doing one for dispatch and the other for `:of` is neither.
 
-### `(expr).field` is not a member access — and the diagnostic blames the field name
+### A RECEIVER must be a simple name — `(expr).field` and `literal[i]` are both not accesses
 
 A parenthesised expression can be the receiver of a METHOD CALL and not of a FIELD READ. Measured,
 same file, same class:
@@ -1616,6 +1616,13 @@ without binding it first — `(let r (make))` then `r.n`.
 Two separable things here: whether `(expr).field` SHOULD parse is a language-surface question (D-number
 needed — the method-call form already does, so the asymmetry is at least unexplained), while the
 diagnostic pointing at the wrong token is a defect regardless of how that is ruled.
+
+**The same restriction applies to INDEXING, which generalises the finding.** `v[1]` on a binding is
+20; `[10 20 30][1]` prints `[10 20 30] [1]` — the literal and a *separate vector* `[1]`, two adjacent
+expressions rather than an index. `"hello"[1]` is likewise `hello [1]`. So an index receiver, like a
+field receiver, must be a simple name; a literal or a parenthesised expression silently becomes
+something else. Indexing at least misparses into a printable value rather than a misleading
+diagnostic, which is arguably worse — nothing reports anything at all.
 
 ### An operator on a USER TYPE is not type-checked in either direction
 
@@ -1684,6 +1691,45 @@ Separately open: an enum `match` is **not** checked for exhaustiveness. A partia
 catch-all yields nil, which is D112's ruled answer for "no clause matched" rather than a bug — but
 `visitEnum` does record the full member set in `codegenMetadata`, so the information to check it
 exists. Pinned as nil in `80-adversarial/enum_combinations.lisp` until ruled otherwise.
+
+### An OUT-OF-BOUNDS indexed STORE is silently dropped on C — while a read at the same index traps
+
+Three behaviours were available and C picked the only silent one:
+
+```lisp
+(mut v [10 20 30])
+(v[7] := 99)          ;; C: nothing happens.  JS: the vector extends to length 8
+(console.log v[7])    ;; C: RangeError IndexOutOfRange: 7 (length 3).  JS: 99
+```
+
+**C is internally inconsistent**: a read at index 7 traps loudly, a write at index 7 is ignored
+silently, and the program continues as though the store had happened. Either behaviour would be
+defensible on its own — trapping matches the read, extending matches JS — but a dropped write with no
+diagnostic is a silent wrong answer on the reference backend, which is this project's worst class.
+
+Reads are fine in every other direction, and are pinned by
+`80-adversarial/indexer_combinations.lisp`: in-bounds vector, nested vector, string, map, an impure
+index evaluated EXACTLY ONCE on both the read and the store side, inside a generator frame, and inside
+a catch arm. A negative index and an out-of-bounds READ both trap on both backends.
+
+### The evaluation ORDER of an indexed store is unruled, and the backends differ
+
+```lisp
+(v[(index-fn)] := (value-fn))
+```
+
+C runs **value then index** (`VI`); JS runs **index then value** (`IV`). Measured with two
+side-effecting functions appending to a log, and with call arguments as a control — those are
+left-to-right and agree on both backends, so the harness detects order correctly and the divergence is
+specific to this form.
+
+**C's order is deliberate, not an accident**, which is why this is a ruling question rather than a bug
+report: `EmitCirToC`'s `c-assign` arm evaluates the value into a temp *before* taking the slot address
+because `ll_index_slot`/`ll_map_slot` hand back a pointer INTO the container's storage, and a
+right-hand side that grows the container would `realloc` it out from under the write. That comment
+records real memory corruption. So C is right to do what it does, JS does the ordinary JavaScript
+thing, and nothing states which is the language's answer. D-number needed; the corpus file pins the
+rows that agree and deliberately leaves this one out.
 
 ### A METHOD cannot be a `:gen` on C — so the idiomatic `Iterable` cannot be written
 
