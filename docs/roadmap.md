@@ -1444,6 +1444,39 @@ broken — measured — because a nested `fn` is lifted and never reaches it. Pi
 `80-adversarial/nested_fn_inside_generator.lisp`, whose last row is the control: the generator's own
 `return` must still end the sequence.
 
+### A METHOD cannot be a `:gen` on C — so the idiomatic `Iterable` cannot be written
+
+The shape `std/protocols`' `Iterable<T>` invites — the required `iterator` method *being* the
+generator — is refused by the reference backend:
+
+```lisp
+(defclass Range :implements Iterable<Int>
+    (mut :ctor hi <- Int)
+    (fn :gen iterator [] -> Iterator<Int> (
+        (mut i 0)
+        (while (< i this.hi) ((i := (+ i 1)) (yield i))))))
+```
+
+`ELL0105`. So a class that wants to be iterable must keep its cursor in a *separate top-level*
+generator and have `iterator` return a call to it — the protocol is satisfiable, but not in the form
+its own signature suggests. This is the mandate's protocol axis: the protocol exists, is in
+`std/protocols` (D107), and is conformance-checked (`:of Iterable` answers true, pinned by
+`80-adversarial/interface_conformance_of.lisp`) — what is missing is the natural way to implement it.
+
+**The diagnostic's own text is now partly FALSE, which is the second half of this finding.** LL0105
+says "a nested or lambda generator has no lowering yet (spec A8)". Measured today:
+
+| shape | C |
+|---|---|
+| a top-level `:gen` | works (D58) |
+| a `:gen` NESTED inside a plain function | **works** — C2 closed this, the message never caught up |
+| a `:gen` LAMBDA | `ELL0105` |
+| a `:gen` METHOD | `ELL0105` |
+
+So the message tells a user that a nested generator is unsupported when it is supported, and does not
+mention the method case at all — which is the one a protocol implementation actually hits. Correcting
+the text is small and separable from closing the gap.
+
 ### A BOUND loop's type is `nil` in the checker and an `Iterator<T>` at runtime — D100 vs the checker
 
 **The sharpest of the untyped-form family, because it is not a hole but a disagreement.** D100 rules
@@ -1532,15 +1565,25 @@ gap to close. Not invented here either way.
 C: `error: use of undeclared identifier '__self'`. JS: `36`, correct. Ordinary OOP code, and it does
 not build on the reference backend.
 
-**Bounded by measurement**, so the shape is unambiguous:
+**Bounded by measurement, and the boundary is exactly "is the function LIFTED?"** — `this` inside a
+method is correct in every ordinary form, and fails only where a nested function is lifted to a
+separate C function:
 
-| case | C | JS |
+| `this` used inside… | C | JS |
 |---|---|---|
-| a lambda in a method that does NOT touch `this` | `6` | `6` |
-| a lambda in a method that DOES touch `this` | invalid C | `36` |
-| a nested **named** `fn` touching `this` | invalid C | `7` |
+| the method body directly | `5` | `5` |
+| a `while`, a `for :each` | `15`, `13` | same |
+| a `try` body **and** its catch arm | `10` | `10` |
+| a `match` arm, a `cond` clause | `5`, `5` | same |
+| an f-string — `f"n={(this.n)}"` | `n=5` | `n=5` |
+| another method call — `(this.helper)` | `10` | `10` |
+| a `restart-case` body **and** its restart arm | `15` | (LL0108, C-native) |
+| **a lambda** | **invalid C** | `6` |
+| **a nested named `fn`** | **invalid C** | `5` |
 
-Both surfaces reach the same lambda lifter, so it is one defect, not two.
+The last two reach the same lambda lifter, so it is one defect, not two — and the eight rows above
+them show the receiver is otherwise threaded correctly everywhere, including through both longjmp
+families.
 
 **Found by the sibling check on the `inGenerator` fix**, not by a separate hunt. That fix aligned the
 two copies of the "state a C function must not inherit" list on `inGenerator` — and the copies still
