@@ -1444,6 +1444,45 @@ broken — measured — because a nested `fn` is lifted and never reaches it. Pi
 `80-adversarial/nested_fn_inside_generator.lisp`, whose last row is the control: the generator's own
 `return` must still end the sequence.
 
+### A function nested in a METHOD that references `this` emits invalid C
+
+```lisp
+(defclass Counter
+    (mut :ctor n <- Int)
+    (fn bump-all [xs <- Any] -> Int (
+        (mut total 0)
+        (let add (fn [x <- Int] -> Void (total := (+ total (+ x this.n)))))
+        (for :each x :from xs :then (add x))
+        (return total))))
+```
+
+C: `error: use of undeclared identifier '__self'`. JS: `36`, correct. Ordinary OOP code, and it does
+not build on the reference backend.
+
+**Bounded by measurement**, so the shape is unambiguous:
+
+| case | C | JS |
+|---|---|---|
+| a lambda in a method that does NOT touch `this` | `6` | `6` |
+| a lambda in a method that DOES touch `this` | invalid C | `36` |
+| a nested **named** `fn` touching `this` | invalid C | `7` |
+
+Both surfaces reach the same lambda lifter, so it is one defect, not two.
+
+**Found by the sibling check on the `inGenerator` fix**, not by a separate hunt. That fix aligned the
+two copies of the "state a C function must not inherit" list on `inGenerator` — and the copies still
+diverge on ONE field: `isolated()` resets `selfClass`, the lifter's inline duplicate does not. This is
+what that divergence costs. The leak makes the resolver emit `__self` references into a lifted
+function that has no `__self` parameter.
+
+**Not fixed here because the fix is not a flag reset.** Clearing `selfClass` in the lifter would turn
+invalid C into an unresolved name — the same program failing differently. The real fix is to CAPTURE
+the receiver: add `__self` to the lifter's `captures`/env struct (it already builds both) and route
+`this` inside a lifted body through that env field, which is what the JS backend effectively does and
+what a user expects. That touches capture detection (`freeVariables` and the modeled D48/Q3 capture
+set list names, and `this` is an implicit receiver rather than a named free variable), the env struct,
+and the `this` resolution path — a round of its own.
+
 ### D9's narrowing does NOT reach a `T | Nil` — so D110's optional `try` cannot be opened
 
 **The sharpest consequence yet of the parked `T?` vs `T | Nil` question, and it makes a shipped

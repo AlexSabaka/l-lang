@@ -69,12 +69,13 @@ new refusal *among the 373* is a regression, not a backlog item, and should be r
 
 **That is a claim about the corpus, and it does not generalise.** This line used to say there was no
 longer any construct the reference backend declined because nobody built it. D115 falsified it in one
-afternoon by writing programs the corpus never contained — six constructs, every one green on JS,
-four now fixed and two still open:
+afternoon by writing programs the corpus never contained — seven constructs, every one green on JS,
+four now fixed and three still open:
 
 | the construct | how it fails | recorded |
 |---|---|---|
 | an INDEX store in a `for` `:step` | uncaught `Error`, Node stack trace — **and no `:gen` involved** | `docs/roadmap.md` |
+| a nested `fn`/lambda using `this` in a method | invalid C: undeclared `__self` — **no `:gen` either** | `docs/roadmap.md` |
 | `restart-case` / `handle` in a generator | `ELL0106` refusal, honest | `promoteFrame.ts:180` |
 | `try` in a generator | **fixed by D115** | `80-adversarial/try_inside_generator.lisp` |
 | `for :init` + `yield` in a generator | **fixed by D116** | `80-adversarial/for_loop_inside_generator.lisp` |
